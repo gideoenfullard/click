@@ -5397,6 +5397,14 @@ def register_pos_routes(app, db, login_required, Auth, render_page,
         else:
             date_desc = f"{date_from} to {date_to}"
         
+        # ═══ Load today's cash-up records for display ═══
+        _today_cashups = []
+        try:
+            _today_cashups = db.get("cash_ups", {"business_id": biz_id, "date": today()}) or []
+        except:
+            pass
+        _today_cashups_json = json.dumps(_today_cashups, default=str)
+
         # Build date filter HTML (staff can't see date controls)
         if is_staff_pos:
             date_filter_html = ""
@@ -5405,7 +5413,7 @@ def register_pos_routes(app, db, login_required, Auth, render_page,
             date_filter_html = f'''<input type="date" id="dateFrom" value="{date_from}" style="padding:8px 12px;border-radius:6px;border:1px solid var(--border);background:var(--card);color:var(--text);">
                 <span style="color:var(--text-muted);">to</span>
                 <input type="date" id="dateTo" value="{date_to}" style="padding:8px 12px;border-radius:6px;border:1px solid var(--border);background:var(--card);color:var(--text);">'''
-            zread_buttons_html = '<button onclick="printXRead()" class="btn btn-secondary">X-Read</button><button onclick="printZRead()" class="btn btn-primary">Z-Read (Close Day)</button>'
+            zread_buttons_html = '<a href="/cashup" class="btn btn-secondary" style="text-decoration:none;">Blind Cash Up</a><button onclick="printXRead()" class="btn btn-secondary">X-Read</button><button onclick="printZRead()" class="btn btn-primary">Z-Read (Close Day)</button>'
         
         # Pre-build Z-read invoice section (avoids nested f-strings in JS template)
         _zr_inv_section = ""
@@ -5484,6 +5492,9 @@ def register_pos_routes(app, db, login_required, Auth, render_page,
                 </div>
             </div>
             
+            <!-- Today's Cash Ups Section -->
+            <div id="cashupHistorySection" style="margin-bottom:25px;"></div>
+            
             <!-- Transactions Table -->
             <table class="table">
                 <thead>
@@ -5557,7 +5568,7 @@ def register_pos_routes(app, db, login_required, Auth, render_page,
                         </tr>
                     </table>
                     <div id="cashStatus" style="text-align:center;padding:10px;margin-top:10px;border-radius:6px;font-weight:bold;font-size:13px;background:#fef3c7;color:#92400e;">
-                        Tel die geld en vul die hoeveelhede in
+                        Count the cash and enter quantities below
                     </div>
                 </div>
                 <div style="padding:15px;border-top:1px solid #eee;display:flex;gap:10px;">
@@ -5568,6 +5579,60 @@ def register_pos_routes(app, db, login_required, Auth, render_page,
         </div>
         
         <script>
+        // ═══ TODAY'S CASH UPS ═══
+        const TODAY_CASHUPS = {_today_cashups_json};
+        (function renderCashupHistory() {{
+            const section = document.getElementById('cashupHistorySection');
+            if (!section || !TODAY_CASHUPS || TODAY_CASHUPS.length === 0) return;
+            
+            let html = '<div style="background:var(--card);border:1px solid var(--border);border-radius:12px;padding:20px;">';
+            html += '<h3 style="margin:0 0 15px 0;font-size:16px;">Today\'s Cash Ups</h3>';
+            
+            const sorted = TODAY_CASHUPS.sort((a, b) => (b.created_at || '').localeCompare(a.created_at || ''));
+            sorted.forEach(h => {{
+                const type = h.type || 'unknown';
+                let badge = '', detail = '';
+                
+                if (type === 'blind_cashup') {{
+                    badge = '<span style="background:#065f46;color:#6ee7b7;padding:2px 10px;border-radius:4px;font-size:12px;font-weight:bold;">BLIND CASH UP</span>';
+                    const disc = h.total_discrepancy || 0;
+                    const discColor = Math.abs(disc) < 0.01 ? '#10b981' : disc > 0 ? '#10b981' : '#ef4444';
+                    const discText = Math.abs(disc) < 0.01 ? 'Exact match' : (disc > 0 ? '+R' + disc.toFixed(2) + ' over' : '-R' + Math.abs(disc).toFixed(2) + ' short');
+                    detail = '<div style="margin-top:8px;display:grid;grid-template-columns:1fr 1fr;gap:4px 20px;font-size:13px;">';
+                    detail += '<span style="color:var(--text-muted);">Cashier:</span><span style="font-weight:600;">' + (h.cashier_name || '—') + '</span>';
+                    detail += '<span style="color:var(--text-muted);">Declared:</span><span style="font-weight:600;">R' + (h.declared_total || 0).toFixed(2) + '</span>';
+                    detail += '<span style="color:var(--text-muted);">System:</span><span style="font-weight:600;">R' + (h.system_total || 0).toFixed(2) + '</span>';
+                    detail += '<span style="color:var(--text-muted);">Float:</span><span style="font-weight:600;">R' + (h.float_amount || 0).toFixed(2) + '</span>';
+                    detail += '<span style="color:var(--text-muted);">Cash Counted:</span><span style="font-weight:600;">R' + (h.cash_counted || 0).toFixed(2) + '</span>';
+                    detail += '<span style="color:var(--text-muted);">Cash Diff:</span><span style="font-weight:600;color:' + (Math.abs(h.cash_discrepancy || 0) < 0.01 ? '#10b981' : (h.cash_discrepancy||0) < 0 ? '#ef4444' : '#10b981') + ';">' + ((h.cash_discrepancy||0) > 0 ? '+' : '') + 'R' + (h.cash_discrepancy || 0).toFixed(2) + '</span>';
+                    detail += '<span style="color:var(--text-muted);">Card Declared:</span><span style="font-weight:600;">R' + (h.card_declared || 0).toFixed(2) + '</span>';
+                    detail += '<span style="color:var(--text-muted);">Card Diff:</span><span style="font-weight:600;color:' + (Math.abs(h.card_discrepancy || 0) < 0.01 ? '#10b981' : (h.card_discrepancy||0) < 0 ? '#ef4444' : '#10b981') + ';">' + ((h.card_discrepancy||0) > 0 ? '+' : '') + 'R' + (h.card_discrepancy || 0).toFixed(2) + '</span>';
+                    detail += '</div>';
+                    detail += '<div style="margin-top:8px;padding:6px 12px;border-radius:6px;text-align:center;font-weight:bold;font-size:13px;background:' + (Math.abs(disc) < 0.01 ? '#d1fae5' : disc > 0 ? '#dbeafe' : '#fee2e2') + ';color:' + (Math.abs(disc) < 0.01 ? '#065f46' : disc > 0 ? '#1e40af' : '#991b1b') + ';">' + discText + '</div>';
+                }} else if (type === 'x_reading') {{
+                    badge = '<span style="background:#1e3a5f;color:#7dd3fc;padding:2px 10px;border-radius:4px;font-size:12px;font-weight:bold;">X-READ</span>';
+                    detail = '<div style="margin-top:6px;font-size:13px;">Total: <strong>R' + (h.system_total || 0).toFixed(2) + '</strong> | ' + (h.sale_count || 0) + ' sales</div>';
+                }} else if (type === 'z_reading') {{
+                    badge = '<span style="background:#78350f;color:#fde68a;padding:2px 10px;border-radius:4px;font-size:12px;font-weight:bold;">Z-READ</span>';
+                    const cashDiff = h.cash_difference || 0;
+                    const zStatus = h.cash_status || (Math.abs(cashDiff) < 0.01 ? 'Balanced' : 'R' + Math.abs(cashDiff).toFixed(2) + (cashDiff > 0 ? ' over' : ' short'));
+                    detail = '<div style="margin-top:6px;font-size:13px;">Day closed | System: <strong>R' + (h.system_total || 0).toFixed(2) + '</strong> | ' + (h.sale_count || 0) + ' sales';
+                    if (h.cash_counted) detail += ' | Counted: <strong>R' + (h.cash_counted || 0).toFixed(2) + '</strong> | ' + zStatus;
+                    if (h.created_by_name) detail += ' | By: <strong>' + h.created_by_name + '</strong>';
+                    detail += '</div>';
+                }}
+                
+                const time = h.created_at ? new Date(h.created_at).toLocaleTimeString() : '';
+                html += '<div style="background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:14px;margin-bottom:10px;">';
+                html += '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px;">' + badge + '<span style="color:var(--text-muted);font-size:13px;">' + time + '</span></div>';
+                html += detail;
+                html += '</div>';
+            }});
+            
+            html += '</div>';
+            section.innerHTML = html;
+        }})();
+
         function applyFilters() {{
             const from = document.getElementById('dateFrom').value;
             const to = document.getElementById('dateTo').value;
@@ -5678,19 +5743,19 @@ def register_pos_routes(app, db, login_required, Auth, render_page,
                 diffRow.style.color = '#059669';
                 statusEl.style.background = '#d1fae5';
                 statusEl.style.color = '#065f46';
-                statusEl.textContent = 'Cash balanseer perfek!';
+                statusEl.textContent = 'Cash balances perfectly!';
             }} else if (diff > 0) {{
                 diffEl.style.color = '#2563eb';
                 diffRow.style.color = '#2563eb';
                 statusEl.style.background = '#dbeafe';
                 statusEl.style.color = '#1e40af';
-                statusEl.textContent = 'R' + diff.toFixed(2) + ' OOR (surplus)';
+                statusEl.textContent = 'R' + diff.toFixed(2) + ' OVER (surplus)';
             }} else {{
                 diffEl.style.color = '#dc2626';
                 diffRow.style.color = '#dc2626';
                 statusEl.style.background = '#fee2e2';
                 statusEl.style.color = '#991b1b';
-                statusEl.textContent = 'R' + Math.abs(diff).toFixed(2) + ' KORT (tekort)';
+                statusEl.textContent = 'R' + Math.abs(diff).toFixed(2) + ' SHORT (deficit)';
             }}
         }}
         
@@ -5702,7 +5767,7 @@ def register_pos_routes(app, db, login_required, Auth, render_page,
                     if (data.success && data.cash_ups) {{
                         const existing = (data.cash_ups || []).filter(c => c.type === 'z_reading');
                         if (existing.length > 0) {{
-                            alert('Dag is reeds afgesluit met n Z-Read. Jy kan nie weer n Z-Read doen nie.');
+                            alert('Day has already been closed with a Z-Read. You cannot do another Z-Read.');
                             return;
                         }}
                     }}
@@ -5722,7 +5787,7 @@ def register_pos_routes(app, db, login_required, Auth, render_page,
             document.getElementById('cashDiff').textContent = 'R0.00';
             document.getElementById('cashDiff').style.color = '#000';
             document.getElementById('diffRow').style.color = '#000';
-            document.getElementById('cashStatus').textContent = 'Tel die geld en vul die hoeveelhede in';
+            document.getElementById('cashStatus').textContent = 'Count the cash and enter quantities below';
             document.getElementById('cashStatus').style.background = '#fef3c7';
             document.getElementById('cashStatus').style.color = '#92400e';
             

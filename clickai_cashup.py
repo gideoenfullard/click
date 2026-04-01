@@ -77,9 +77,10 @@ def register_cashup_routes(app, db, login_required, Auth, generate_id, now, toda
         cash_ups = cash_ups or []
 
         # Check if current user already submitted a blind cashup today
+        # Check both cashier_id (when they select themselves) and created_by (who pressed submit)
         user_id = user.get("id", "") if user else ""
         user_already_submitted = any(
-            c.get("type") == "blind_cashup" and c.get("cashier_id") == user_id
+            c.get("type") == "blind_cashup" and (c.get("cashier_id") == user_id or c.get("created_by") == user_id)
             for c in cash_ups
         )
 
