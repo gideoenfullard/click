@@ -152,6 +152,9 @@ def register_cashup_routes(app, db, login_required, Auth, generate_id, now, toda
             <span class="btn-label">X-Reading</span>
         </button>''' if is_manager else ''
 
+        _sales_tab_btn = '''<button class="tab-btn" onclick="switchTab('sales')">Sales by Staff</button>''' if is_manager else ''
+        _sales_tab_content = '<div class="tab-content" id="tab-sales"><div id="salesmanList"></div></div>' if is_manager else ''
+
         html = f"""<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -707,7 +710,7 @@ select.form-input {{
     </div>
 
     <!-- BLIND CASH UP PANEL -->
-    <div class="panel" id="panel-blind">
+    <div class="panel" id="panel-blind" {'style="display:none !important;"' if user_already_submitted and not is_manager else ''}>
         <div class="panel-title">Blind Cash Up</div>
         <p style="color: var(--text-dim); font-size: 0.9rem; margin-bottom: 16px;">
             Count your cash, card slips, and vouchers. Enter totals below.<br>
@@ -764,15 +767,15 @@ select.form-input {{
         </div>
     </div>
 
-    <!-- TAB SWITCHER: TODAY / WEEKLY HISTORY -->
+    <!-- TAB SWITCHER -->
     <div class="tab-bar">
-        <button class="tab-btn{'  active' if user_already_submitted and not is_manager else ''}" onclick="switchTab('today')">Today</button>
-        <button class="tab-btn{'' if user_already_submitted and not is_manager else ' active'}" onclick="switchTab('sales')">Sales by Staff</button>
+        <button class="tab-btn active" onclick="switchTab('today')">Today</button>
+        {_sales_tab_btn}
         <button class="tab-btn" onclick="switchTab('weekly')">Weekly History</button>
     </div>
 
     <!-- TAB: TODAY'S HISTORY -->
-    <div class="tab-content{'  active' if user_already_submitted and not is_manager else ''}" id="tab-today">
+    <div class="tab-content active" id="tab-today">
         <div id="historyList">
             <div class="empty-state" id="emptyHistory">
                 <div class="icon">🧾</div>
@@ -781,10 +784,8 @@ select.form-input {{
         </div>
     </div>
 
-    <!-- TAB: SALES BY STAFF (per-salesman breakdown) -->
-    <div class="tab-content{' active' if not (user_already_submitted and not is_manager) else ''}" id="tab-sales">
-        <div id="salesmanList"></div>
-    </div>
+    <!-- TAB: SALES BY STAFF (managers only) -->
+    {_sales_tab_content}
 
     <!-- TAB: WEEKLY HISTORY -->
     <div class="tab-content" id="tab-weekly">
@@ -1219,8 +1220,16 @@ async function submitBlindCashUp() {{
 function renderHistory() {{
     const list = document.getElementById('historyList');
     if (!HISTORY || HISTORY.length === 0) return;
+
+    // Non-managers only see their own cashup records
+    let visible = HISTORY;
+    if (!IS_MANAGER) {{
+        visible = HISTORY.filter(h => h.cashier_id === USER_ID || h.created_by === USER_ID);
+    }}
+    if (visible.length === 0) return;
+
     document.getElementById('emptyHistory').style.display = 'none';
-    const sorted = HISTORY.sort((a, b) => (b.created_at || '').localeCompare(a.created_at || ''));
+    const sorted = visible.sort((a, b) => (b.created_at || '').localeCompare(a.created_at || ''));
     list.innerHTML = sorted.map(h => renderHistoryItem(h, IS_MANAGER)).join('');
 }}
 
@@ -1234,12 +1243,12 @@ function renderHistoryItem(h, showManagerDetail) {{
     if (type === 'x_reading') {{
         detail = `Total: <span>R${{(h.system_total || 0).toFixed(2)}}</span> | ${{h.sale_count || 0}} sales`;
     }} else if (type === 'blind_cashup') {{
-        const disc = h.total_discrepancy || 0;
-        const discCls = disc > 0.01 ? 'disc-over' : disc < -0.01 ? 'disc-short' : 'disc-match';
-        const discTxt = disc > 0.01 ? '+R' + disc.toFixed(2) + ' over' : disc < -0.01 ? '-R' + Math.abs(disc).toFixed(2) + ' short' : 'Exact match';
-        detail = `Cashier: <span>${{h.cashier_name || '—'}}</span> | Declared: <span>R${{(h.declared_total || 0).toFixed(2)}}</span> | <span class="${{discCls}}">${{discTxt}}</span>`;
-        
         if (showManagerDetail) {{
+            // Manager sees full detail
+            const disc = h.total_discrepancy || 0;
+            const discCls = disc > 0.01 ? 'disc-over' : disc < -0.01 ? 'disc-short' : 'disc-match';
+            const discTxt = disc > 0.01 ? '+R' + disc.toFixed(2) + ' over' : disc < -0.01 ? '-R' + Math.abs(disc).toFixed(2) + ' short' : 'Exact match';
+            detail = `Cashier: <span>${{h.cashier_name || '—'}}</span> | Declared: <span>R${{(h.declared_total || 0).toFixed(2)}}</span> | <span class="${{discCls}}">${{discTxt}}</span>`;
             const cashDisc = h.cash_discrepancy || 0;
             const cardDisc = h.card_discrepancy || 0;
             const cDiscCls = cashDisc > 0.01 ? 'disc-over' : cashDisc < -0.01 ? 'disc-short' : 'disc-match';
@@ -1255,6 +1264,9 @@ function renderHistoryItem(h, showManagerDetail) {{
                     <div class="dl">System Card</div><div class="dv">R${{(h.system_card || 0).toFixed(2)}}</div>
                     <div class="dl">Card Diff</div><div class="dv ${{cdDiscCls}}">${{cardDisc > 0 ? '+' : ''}}R${{cardDisc.toFixed(2)}}</div>
                 </div>`;
+        }} else {{
+            // Non-manager sees only their declared total — no system info, no discrepancies
+            detail = `Declared: <span>R${{(h.declared_total || 0).toFixed(2)}}</span> — submitted to management`;
         }}
     }} else if (type === 'z_reading') {{
         const cashDiff = h.cash_difference || 0;
