@@ -1143,14 +1143,12 @@ def register_banking_routes(app, db, login_required, Auth, render_page,
                         except Exception as plumber_err:
                             logger.warning(f"[BANK IMPORT] pdfplumber failed: {plumber_err}")
                     
-                    # If text extraction failed (scanned PDF), use Claude AI via images
+                    # If text extraction failed (scanned PDF), use Claude AI via direct PDF
                     if not pdf_text or len(pdf_text) < 50:
-                        logger.info(f"[BANK IMPORT] Scanned PDF detected (text={len(pdf_text) if pdf_text else 0} chars) - using AI to read")
+                        logger.info(f"[BANK IMPORT] Scanned PDF detected (text={len(pdf_text) if pdf_text else 0} chars) - sending PDF directly to Claude")
                         
                         try:
                             import base64
-                            from PIL import Image as PILImage
-                            import io as _io
                             all_transactions = []
                             
                             api_key = os.environ.get("ANTHROPIC_API_KEY", "")
@@ -1158,89 +1156,17 @@ def register_banking_routes(app, db, login_required, Auth, render_page,
                                 os.unlink(tmp_path)
                                 return jsonify({"success": False, "error": "AI API key not configured"})
                             
-                            # Convert PDF pages to images — 150 DPI is enough for bank statements
-                            page_images = []
-                            try:
-                                from pdf2image import convert_from_path
-                                pil_images = convert_from_path(tmp_path, dpi=150)
-                                for img in pil_images:
-                                    buf = _io.BytesIO()
-                                    img.convert('RGB').save(buf, format='JPEG', quality=75)
-                                    page_images.append(buf.getvalue())
-                                logger.info(f"[BANK IMPORT] pdf2image converted {len(page_images)} pages at 150dpi")
-                            except Exception as img_err:
-                                logger.warning(f"[BANK IMPORT] pdf2image failed ({img_err}), trying pdfplumber")
-                                page_images = []
-                                try:
-                                    import pdfplumber as _plumber
-                                    with _plumber.open(tmp_path) as pdf_doc:
-                                        for page in pdf_doc.pages:
-                                            try:
-                                                page_img = page.to_image(resolution=150)
-                                                pil_img = page_img.annotated if hasattr(page_img, 'annotated') else page_img.original
-                                                # Force RGB - handles mode P, RGBA, LA, L etc
-                                                if pil_img.mode != 'RGB':
-                                                    pil_img = pil_img.convert('RGBA').convert('RGB')
-                                                buf = _io.BytesIO()
-                                                pil_img.save(buf, format='JPEG', quality=75)
-                                                page_images.append(buf.getvalue())
-                                            except Exception as page_err:
-                                                logger.warning(f"[BANK IMPORT] pdfplumber page {page.page_number} error: {page_err}")
-                                                # Try alternative: render without annotations
-                                                try:
-                                                    pil_img = page_img.original
-                                                    if pil_img.mode != 'RGB':
-                                                        pil_img = pil_img.convert('RGBA').convert('RGB')
-                                                    buf = _io.BytesIO()
-                                                    pil_img.save(buf, format='JPEG', quality=75)
-                                                    page_images.append(buf.getvalue())
-                                                except Exception as page_err2:
-                                                    logger.error(f"[BANK IMPORT] pdfplumber page {page.page_number} total failure: {page_err2}")
-                                    logger.info(f"[BANK IMPORT] pdfplumber converted {len(page_images)} pages at 150dpi")
-                                except Exception as plumber_img_err:
-                                    logger.error(f"[BANK IMPORT] pdfplumber image conversion failed: {plumber_img_err}")
+                            # Send PDF directly to Claude as a document (no image conversion needed)
+                            pdf_b64 = base64.standard_b64encode(pdf_bytes).decode("utf-8")
                             
-                            # Prepare all page images — compress large ones
-                            prepared_images = []
-                            for page_num, img_bytes in enumerate(page_images):
-                                try:
-                                    _test_img = PILImage.open(_io.BytesIO(img_bytes))
-                                    if _test_img.mode != 'RGB':
-                                        _test_img = _test_img.convert('RGB')
-                                        buf = _io.BytesIO()
-                                        _test_img.save(buf, format='JPEG', quality=75)
-                                        img_bytes = buf.getvalue()
-                                except Exception:
-                                    pass
-                                
-                                # Compress if over 2MB
-                                if len(img_bytes) > 2000000:
-                                    img = PILImage.open(_io.BytesIO(img_bytes))
-                                    img = img.convert('RGB')
-                                    w, h = img.size
-                                    if max(w, h) > 1400:
-                                        ratio = 1400 / max(w, h)
-                                        img = img.resize((int(w*ratio), int(h*ratio)), PILImage.LANCZOS)
-                                    buf = _io.BytesIO()
-                                    img.save(buf, format='JPEG', quality=65)
-                                    img_bytes = buf.getvalue()
-                                
-                                prepared_images.append(img_bytes)
+                            # Check PDF size — Claude accepts up to ~32MB base64
+                            if len(pdf_b64) > 30_000_000:
+                                os.unlink(tmp_path)
+                                return jsonify({"success": False, "error": "PDF too large for AI processing (max ~22MB)"})
                             
-                            # ═══════════════════════════════════════════════════════════
-                            # BATCH PAGES INTO GROUPS — send multiple pages per API call
-                            # Each image ~200-600KB at 150dpi, API limit ~20MB
-                            # Batch 4 pages per call to stay safe and fast
-                            # Uses Haiku for OCR — 10x cheaper, just as accurate for data extraction
-                            # ═══════════════════════════════════════════════════════════
-                            PAGES_PER_BATCH = 4
-                            batches = []
-                            for i in range(0, len(prepared_images), PAGES_PER_BATCH):
-                                batches.append(prepared_images[i:i + PAGES_PER_BATCH])
+                            logger.info(f"[BANK IMPORT] Sending PDF ({len(pdf_bytes)} bytes) directly to Claude")
                             
-                            logger.info(f"[BANK IMPORT] Processing {len(prepared_images)} pages in {len(batches)} batch(es)")
-                            
-                            prompt = """Extract ALL bank transactions from these bank statement page(s).
+                            prompt = """Extract ALL bank transactions from this bank statement PDF.
     
     Return ONLY a valid JSON array, no other text. Each transaction must have:
     - "date": "YYYY-MM-DD" format
@@ -1253,95 +1179,76 @@ def register_banking_routes(app, db, login_required, Auth, render_page,
     - Each transaction may span MULTIPLE LINES. The first line has the transaction type (e.g. "ELECTRONIC BANKING PAYMENT TO") and the next line(s) have the beneficiary/reference details (e.g. "MAR20 M FULLARD ERY5310:21")
     - You MUST combine ALL lines of a transaction into ONE description string
     - Example: if you see "CREDIT TRANSFER" on one line and "KHUPHUKANI" on the next, the description must be "CREDIT TRANSFER KHUPHUKANI"
-    - Example: "ELECTRONIC BANKING PAYMENT TO" + "PRE10 PRESIDENT BOL ERY5310:21" = "ELECTRONIC BANKING PAYMENT TO PRE10 PRESIDENT BOL ERY5310:21"
     - NEVER use generic text like "Transaction" — always use the actual text from the statement
     
     RULES:
     - Payments OUT (debits, purchases, fees) go in "debit" field as POSITIVE numbers
-    - Money IN (credits, deposits, settlements) go in "credit" field as POSITIVE numbers
-    - Skip "BALANCE BROUGHT FORWARD" and "CLOSING BALANCE" rows
-    - Read EVERY transaction row on EVERY page, do not skip any
-    - Extract amounts exactly as shown on the statement
-    - Include service fees, bank charges etc as debits
-    - The "Page" column number is NOT the date — dates are in the "Date" column in YYYYMMDD format"""
+    - Payments IN (credits, deposits) go in "credit" field as POSITIVE numbers
+    - Never use negative numbers
+    - Include ALL transactions, not just a sample
+    - Skip header rows, opening balances, closing balances, and summary lines
+    - For year: if month is Jan-Mar, year is likely the current year. For Oct-Dec with Jan-Mar statements, Oct-Dec is previous year
+    
+    Return ONLY the JSON array. No markdown, no explanation."""
                             
-                            import requests as req
+                            import requests as _req
+                            resp = _req.post(
+                                "https://api.anthropic.com/v1/messages",
+                                headers={
+                                    "x-api-key": api_key,
+                                    "anthropic-version": "2023-06-01",
+                                    "content-type": "application/json"
+                                },
+                                json={
+                                    "model": "claude-haiku-4-5-20251001",
+                                    "max_tokens": 8000,
+                                    "messages": [{
+                                        "role": "user",
+                                        "content": [
+                                            {
+                                                "type": "document",
+                                                "source": {
+                                                    "type": "base64",
+                                                    "media_type": "application/pdf",
+                                                    "data": pdf_b64
+                                                }
+                                            },
+                                            {"type": "text", "text": prompt}
+                                        ]
+                                    }]
+                                },
+                                timeout=120
+                            )
                             
-                            def process_batch(batch_info):
-                                """Process a batch of page images in a single API call"""
-                                batch_idx, batch_imgs = batch_info
-                                batch_txns = []
-                                
-                                # Build content array with all page images + prompt
-                                content_parts = []
-                                for img_bytes in batch_imgs:
-                                    b64_img = base64.b64encode(img_bytes).decode('utf-8')
-                                    content_parts.append({
-                                        "type": "image",
-                                        "source": {"type": "base64", "media_type": "image/jpeg", "data": b64_img}
-                                    })
-                                content_parts.append({"type": "text", "text": prompt})
-                                
-                                try:
-                                    resp = req.post(
-                                        "https://api.anthropic.com/v1/messages",
-                                        headers={
-                                            "x-api-key": api_key,
-                                            "anthropic-version": "2023-06-01",
-                                            "content-type": "application/json"
-                                        },
-                                        json={
-                                            "model": "claude-haiku-4-5-20251001",
-                                            "max_tokens": 16000,
-                                            "messages": [{"role": "user", "content": content_parts}]
-                                        },
-                                        timeout=90
-                                    )
-                                    
-                                    if resp.status_code != 200:
-                                        logger.error(f"[BANK IMPORT] Batch {batch_idx+1} API error: {resp.status_code} - {resp.text[:500]}")
-                                        return batch_txns
-                                    
-                                    ai_result = resp.json()
-                                    ai_text = ""
-                                    for block in ai_result.get("content", []):
-                                        if block.get("type") == "text":
-                                            ai_text += block["text"]
-                                    
-                                    logger.info(f"[BANK IMPORT] Batch {batch_idx+1} AI response: {len(ai_text)} chars, first 200: {ai_text[:200]}")
-                                    
-                                    import re as _re
-                                    json_match = _re.search(r'\[.*\]', ai_text, _re.DOTALL)
-                                    if json_match:
-                                        try:
-                                            batch_txns = json.loads(json_match.group(0))
-                                            logger.info(f"[BANK IMPORT] Batch {batch_idx+1}: {len(batch_txns)} transactions from {len(batch_imgs)} pages")
-                                        except json.JSONDecodeError as jde:
-                                            logger.error(f"[BANK IMPORT] Batch {batch_idx+1} JSON decode error: {jde} - text around error: {ai_text[max(0,jde.pos-50):jde.pos+50]}")
-                                    else:
-                                        logger.error(f"[BANK IMPORT] Batch {batch_idx+1}: No JSON array found in AI response. Full text: {ai_text[:1000]}")
-                                except Exception as batch_err:
-                                    logger.error(f"[BANK IMPORT] Batch {batch_idx+1} error: {batch_err}")
-                                
-                                return batch_txns
+                            if resp.status_code != 200:
+                                logger.error(f"[BANK IMPORT] Claude API error: {resp.status_code} {resp.text[:300]}")
+                                os.unlink(tmp_path)
+                                return jsonify({"success": False, "error": f"AI reading failed (HTTP {resp.status_code})"})
                             
-                            # Process batches concurrently if multiple
-                            if len(batches) > 1:
-                                from concurrent.futures import ThreadPoolExecutor as _TPE
-                                with _TPE(max_workers=min(len(batches), 3)) as executor:
-                                    results = list(executor.map(process_batch, enumerate(batches)))
-                                for batch_txns in results:
-                                    all_transactions.extend(batch_txns)
-                            else:
-                                # Single batch — just call directly
-                                all_transactions.extend(process_batch((0, batches[0])))
+                            ai_result = resp.json()
+                            ai_text = ""
+                            for block in ai_result.get("content", []):
+                                if block.get("type") == "text":
+                                    ai_text += block["text"]
                             
+                            # Parse JSON from AI response
+                            ai_text = ai_text.strip()
+                            if ai_text.startswith("```"):
+                                ai_text = ai_text.split("\n", 1)[-1].rsplit("```", 1)[0].strip()
+                            
+                            try:
+                                all_transactions = json.loads(ai_text)
+                                logger.info(f"[BANK IMPORT] Claude extracted {len(all_transactions)} transactions from PDF")
+                            except json.JSONDecodeError as je:
+                                logger.error(f"[BANK IMPORT] JSON parse failed: {je}")
+                                logger.error(f"[BANK IMPORT] Raw AI response: {ai_text[:500]}")
+                                os.unlink(tmp_path)
+                                return jsonify({"success": False, "error": "AI could not parse the bank statement. Try a clearer scan or CSV export."})
                             
                             os.unlink(tmp_path)
                             
                             if not all_transactions:
-                                logger.error(f"[BANK IMPORT] AI returned 0 transactions from {len(prepared_images)} pages in {len(batches)} batches")
-                                return jsonify({"success": False, "error": "AI could not read any transactions from the PDF — check logs for details"})
+                                return jsonify({"success": False, "error": "AI could not read any transactions from the PDF. Try a clearer scan or CSV export."})
                             
                             # Convert to standard format
                             data_rows = []
