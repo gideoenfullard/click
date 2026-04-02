@@ -33,9 +33,14 @@ def register_purchases_routes(app, db, login_required, Auth, render_page,
 
     # Import form helpers from clickai module level (defined in clickai.py)
     # These are needed by supplier_new and supplier_edit
-    import clickai as _main
-    _supplier_form = _main._supplier_form
-    _get_form_fields = _main._get_form_fields
+    # Lazy import wrappers — avoids circular import with clickai.py
+    def _supplier_form(v=None, is_edit=False):
+        import clickai as _main
+        return _main._supplier_form(v=v, is_edit=is_edit)
+
+    def _get_form_fields(*args, **kwargs):
+        import clickai as _main
+        return _main._get_form_fields(*args, **kwargs)
 
     # === SUPPLIERS ===
 
