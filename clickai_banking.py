@@ -1201,7 +1201,7 @@ def register_banking_routes(app, db, login_required, Auth, render_page,
                                 },
                                 json={
                                     "model": "claude-haiku-4-5-20251001",
-                                    "max_tokens": 8000,
+                                    "max_tokens": 16000,
                                     "messages": [{
                                         "role": "user",
                                         "content": [
@@ -1240,10 +1240,23 @@ def register_banking_routes(app, db, login_required, Auth, render_page,
                                 all_transactions = json.loads(ai_text)
                                 logger.info(f"[BANK IMPORT] Claude extracted {len(all_transactions)} transactions from PDF")
                             except json.JSONDecodeError as je:
-                                logger.error(f"[BANK IMPORT] JSON parse failed: {je}")
-                                logger.error(f"[BANK IMPORT] Raw AI response: {ai_text[:500]}")
-                                os.unlink(tmp_path)
-                                return jsonify({"success": False, "error": "AI could not parse the bank statement. Try a clearer scan or CSV export."})
+                                # Try to recover truncated JSON — find last complete object
+                                logger.warning(f"[BANK IMPORT] JSON truncated at pos {je.pos}, attempting recovery...")
+                                recovered = ai_text[:je.pos].rstrip().rstrip(",")
+                                # Close the array if it was cut off
+                                if not recovered.endswith("]"):
+                                    # Find last complete } and close the array there
+                                    last_brace = recovered.rfind("}")
+                                    if last_brace > 0:
+                                        recovered = recovered[:last_brace + 1] + "]"
+                                try:
+                                    all_transactions = json.loads(recovered)
+                                    logger.info(f"[BANK IMPORT] Recovered {len(all_transactions)} transactions from truncated JSON")
+                                except json.JSONDecodeError:
+                                    logger.error(f"[BANK IMPORT] JSON recovery also failed")
+                                    logger.error(f"[BANK IMPORT] Raw AI response (first 500): {ai_text[:500]}")
+                                    os.unlink(tmp_path)
+                                    return jsonify({"success": False, "error": "AI could not parse the bank statement. Try a clearer scan or CSV export."})
                             
                             os.unlink(tmp_path)
                             
