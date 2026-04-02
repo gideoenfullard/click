@@ -7,6 +7,7 @@ WORKDIR /app
 # Install system dependencies
 RUN apt-get update && apt-get install -y \
     gcc \
+    poppler-utils \
     && rm -rf /var/lib/apt/lists/*
 
 # Copy requirements and install Python packages
@@ -21,4 +22,3 @@ EXPOSE 8080
 
 # Run the app
 CMD ["gunicorn", "-c", "gunicorn_config.py", "clickai:app"]
-
