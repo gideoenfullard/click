@@ -3108,17 +3108,16 @@ def register_pos_routes(app, db, login_required, Auth, render_page,
                     <p style="color:rgba(255,255,255,0.5);font-size:12px;margin:0;">Adding custom items for existing customer</p>
                 `;
             } else {
-                // New customer - reset to editable
-                document.getElementById('qqCustName').value = '';
-                document.getElementById('qqCustName').readOnly = false;
-                document.getElementById('qqCustName').style.background = '#1a1a2e';
+                // New customer - reset to editable with autocomplete from customer list
                 document.getElementById('qqCustSection').innerHTML = `
                     <h3 style="margin:0 0 15px 0;color:#10b981;font-size:16px;">👤 Customer Details</h3>
                     <div style="display:grid;grid-template-columns:1fr 1fr;gap:15px;">
-                        <div>
+                        <div style="position:relative;">
                             <label style="display:block;margin-bottom:5px;color:white;font-size:13px;">Name *</label>
-                            <input type="text" id="qqCustName" placeholder="Company or person" 
+                            <input type="text" id="qqCustName" placeholder="Type to search customers..." autocomplete="off"
+                                oninput="qqCustSearch(this.value)"
                                 style="width:100%;padding:10px;border-radius:6px;border:1px solid rgba(255,255,255,0.2);background:#1a1a2e;color:white;font-size:14px;box-sizing:border-box;">
+                            <div id="qqCustDropdown" style="display:none;position:absolute;top:100%;left:0;right:0;background:#1e1e32;border:1px solid rgba(16,185,129,0.4);border-radius:6px;max-height:180px;overflow-y:auto;z-index:9999;box-shadow:0 4px 12px rgba(0,0,0,0.5);"></div>
                         </div>
                         <div>
                             <label style="display:block;margin-bottom:5px;color:white;font-size:13px;">Phone</label>
@@ -3161,6 +3160,43 @@ def register_pos_routes(app, db, login_required, Auth, render_page,
         
         function closeQuickQuoteModal() {
             document.getElementById('quickQuoteModal').style.display = 'none';
+        }
+        
+        // Quick Quote customer name autocomplete
+        function qqCustSearch(query) {
+            const dd = document.getElementById('qqCustDropdown');
+            if (!dd) return;
+            if (!query || query.length < 1) { dd.style.display = 'none'; return; }
+            const q = query.toLowerCase();
+            const matches = (window.customerList || []).filter(c => 
+                (c.name || c.label || '').toLowerCase().includes(q)
+            ).slice(0, 8);
+            if (matches.length === 0) { dd.style.display = 'none'; return; }
+            let html = '';
+            matches.forEach(c => {
+                const name = (c.name || c.label || '').replace(/'/g, "\\'");
+                const cid = (c.id || '').replace(/'/g, "\\'");
+                const phone = (c.phone || '').replace(/'/g, "\\'");
+                const email = (c.email || '').replace(/'/g, "\\'");
+                html += `<div style="padding:10px 12px;cursor:pointer;border-bottom:1px solid rgba(255,255,255,0.1);color:white;font-size:13px;" 
+                    onmousedown="qqPickCustomer('${cid}','${name}','${phone}','${email}')"
+                    onmouseover="this.style.background='rgba(16,185,129,0.3)'" 
+                    onmouseout="this.style.background=''">${c.name || c.label || ''} <span style="color:rgba(255,255,255,0.4);font-size:11px;">${c.phone || ''}</span></div>`;
+            });
+            dd.innerHTML = html;
+            dd.style.display = 'block';
+        }
+        
+        function qqPickCustomer(id, name, phone, email) {
+            qqSelectedCustomerId = id || null;
+            const nameEl = document.getElementById('qqCustName');
+            if (nameEl) nameEl.value = name;
+            const phoneEl = document.getElementById('qqCustPhone');
+            if (phoneEl) phoneEl.value = phone;
+            const emailEl = document.getElementById('qqCustEmail');
+            if (emailEl) emailEl.value = email;
+            const dd = document.getElementById('qqCustDropdown');
+            if (dd) dd.style.display = 'none';
         }
         
         function qqAddLine() {

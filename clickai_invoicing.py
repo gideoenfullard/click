@@ -2206,22 +2206,54 @@ def register_invoicing_routes(app, db, login_required, Auth, render_page,
                                 pass
                 except:
                     pass
-            status_color = "var(--green)" if status == "accepted" else "var(--red)" if status in ("declined", "expired") else "#3b82f6" if status == "converted" else "var(--orange)"
+            status_color = "var(--green)" if status == "accepted" else "var(--red)" if status in ("declined", "expired") else "#3b82f6" if status in ("converted", "invoiced") else "var(--orange)"
+            status_label = "Invoiced" if status in ("converted", "invoiced") else status.title()
             rows += f'''
-            <tr style="cursor:pointer;" onclick="window.location='/quote/{q.get("id")}'">
-                <td><strong>{q.get("quote_number", "-")}</strong></td>
-                <td>{q.get("date", "-")}</td>
-                <td>{safe_string(q.get("customer_name", "-"))}</td>
-                <td>{money(q.get("total", 0))}</td>
-                <td style="color:{status_color};">{status}</td>
+            <tr style="cursor:pointer;" data-status="{status}">
+                <td onclick="window.location='/quote/{q.get("id")}'" ><strong>{q.get("quote_number", "-")}</strong></td>
+                <td onclick="window.location='/quote/{q.get("id")}'">{q.get("date", "-")}</td>
+                <td onclick="window.location='/quote/{q.get("id")}'">{safe_string(q.get("customer_name", "-"))}</td>
+                <td onclick="window.location='/quote/{q.get("id")}'">{money(q.get("total", 0))}</td>
+                <td style="color:{status_color};cursor:pointer;" onclick="event.stopPropagation();showStatusModal('{q.get("id")}','{safe_string(q.get("quote_number", "-"))}','{status}')">{status_label} ▾</td>
             </tr>
             '''
         
         content = f'''
+        <!-- Update Quote Status Modal -->
+        <div id="statusModal" style="display:none;position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.6);z-index:9999;align-items:center;justify-content:center;">
+            <div style="background:var(--card);padding:30px;border-radius:12px;width:90%;max-width:400px;box-shadow:0 20px 40px rgba(0,0,0,0.4);">
+                <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:20px;">
+                    <h3 style="margin:0;">Update Quote Status</h3>
+                    <span style="cursor:pointer;font-size:20px;color:var(--text-muted);" onclick="closeStatusModal()">✕</span>
+                </div>
+                <p style="color:var(--text-muted);margin-bottom:15px;">Quote: <strong id="smQuoteNum"></strong></p>
+                <div style="margin-bottom:20px;">
+                    <label style="display:block;margin-bottom:8px;font-weight:600;">Quote Status</label>
+                    <select id="smStatusSelect" style="width:100%;padding:12px;border-radius:8px;border:1px solid var(--border);background:var(--bg);color:var(--text);font-size:15px;">
+                        <option value="draft">Draft</option>
+                        <option value="pending">Pending</option>
+                        <option value="accepted">Accepted</option>
+                        <option value="declined">Declined</option>
+                        <option value="invoiced">Invoiced</option>
+                    </select>
+                </div>
+                <button class="btn btn-primary" style="width:100%;" onclick="saveQuoteStatus()">Save</button>
+            </div>
+        </div>
+        
         <div class="card">
             <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:15px;">
                 <h3 class="card-title" style="margin:0;">Quotes ({len(quotes)})</h3>
                 <a href="/quote/new" class="btn btn-primary">+ New Quote</a>
+            </div>
+            <div style="display:flex;gap:8px;margin-bottom:15px;flex-wrap:wrap;">
+                <button class="btn btn-secondary statusTab" data-filter="all" onclick="filterQuoteStatus('all',this)" style="font-size:12px;padding:6px 12px;font-weight:700;background:var(--primary);color:white;">All</button>
+                <button class="btn btn-secondary statusTab" data-filter="draft" onclick="filterQuoteStatus('draft',this)" style="font-size:12px;padding:6px 12px;">Draft</button>
+                <button class="btn btn-secondary statusTab" data-filter="pending" onclick="filterQuoteStatus('pending',this)" style="font-size:12px;padding:6px 12px;">Pending</button>
+                <button class="btn btn-secondary statusTab" data-filter="accepted" onclick="filterQuoteStatus('accepted',this)" style="font-size:12px;padding:6px 12px;">Accepted</button>
+                <button class="btn btn-secondary statusTab" data-filter="declined" onclick="filterQuoteStatus('declined',this)" style="font-size:12px;padding:6px 12px;">Declined</button>
+                <button class="btn btn-secondary statusTab" data-filter="invoiced" onclick="filterQuoteStatus('invoiced',this)" style="font-size:12px;padding:6px 12px;">Invoiced</button>
+                <button class="btn btn-secondary statusTab" data-filter="expired" onclick="filterQuoteStatus('expired',this)" style="font-size:12px;padding:6px 12px;">Expired</button>
             </div>
             <div style="margin-bottom:15px;">
                 <input type="text" id="searchQuotes" placeholder="🔍 Search by customer, quote number, amount..." oninput="filterTable('searchQuotes','quoteTable')" style="width:100%;padding:10px 15px;border-radius:8px;border:1px solid var(--border);background:var(--bg);color:var(--text);font-size:14px;">
@@ -2235,6 +2267,77 @@ def register_invoicing_routes(app, db, login_required, Auth, render_page,
                 </tbody>
             </table>
         </div>
+        
+        <script>
+        let smQuoteId = null;
+        
+        function showStatusModal(quoteId, quoteNum, currentStatus) {{
+            smQuoteId = quoteId;
+            document.getElementById('smQuoteNum').textContent = quoteNum;
+            // Map converted → invoiced for display
+            const mappedStatus = (currentStatus === 'converted') ? 'invoiced' : currentStatus;
+            document.getElementById('smStatusSelect').value = mappedStatus;
+            document.getElementById('statusModal').style.display = 'flex';
+        }}
+        
+        function closeStatusModal() {{
+            document.getElementById('statusModal').style.display = 'none';
+            smQuoteId = null;
+        }}
+        
+        async function saveQuoteStatus() {{
+            if (!smQuoteId) return;
+            const newStatus = document.getElementById('smStatusSelect').value;
+            try {{
+                const response = await fetch('/api/quote/' + smQuoteId + '/status', {{
+                    method: 'POST',
+                    headers: {{'Content-Type': 'application/json'}},
+                    body: JSON.stringify({{status: newStatus}})
+                }});
+                const data = await response.json();
+                if (data.success) {{
+                    closeStatusModal();
+                    location.reload();
+                }} else {{
+                    alert('Error: ' + (data.error || 'Update failed'));
+                }}
+            }} catch (err) {{
+                alert('Error: ' + err.message);
+            }}
+        }}
+        
+        function filterQuoteStatus(status, btn) {{
+            // Highlight active tab
+            document.querySelectorAll('.statusTab').forEach(b => {{
+                b.style.background = '';
+                b.style.color = '';
+                b.style.fontWeight = '';
+            }});
+            btn.style.background = 'var(--primary)';
+            btn.style.color = 'white';
+            btn.style.fontWeight = '700';
+            
+            // Filter rows
+            const rows = document.querySelectorAll('#quoteTable tbody tr');
+            rows.forEach(row => {{
+                if (status === 'all') {{
+                    row.style.display = '';
+                }} else {{
+                    const rowStatus = row.getAttribute('data-status') || '';
+                    // "invoiced" filter also matches "converted"
+                    if (status === 'invoiced') {{
+                        row.style.display = (rowStatus === 'invoiced' || rowStatus === 'converted') ? '' : 'none';
+                    }} else {{
+                        row.style.display = (rowStatus === status) ? '' : 'none';
+                    }}
+                }}
+            }});
+        }}
+        
+        document.addEventListener('keydown', function(e) {{
+            if (e.key === 'Escape') closeStatusModal();
+        }});
+        </script>
         '''
         
         return render_page("Quotes", content, user, "quotes")
@@ -2633,20 +2736,37 @@ def register_invoicing_routes(app, db, login_required, Auth, render_page,
             pass
         
         action_buttons = ""
+        # Edit button - available for draft, pending, accepted (not converted/invoiced)
+        can_edit = status in ("draft", "pending", "accepted", "expired")
+        edit_btn = f'<a href="/quote/{quote_id}/edit" class="btn btn-secondary">✏️ Edit</a>' if can_edit else ''
+        
+        # Status dropdown - always available (like Sage)
+        status_dropdown = f'''
+        <select id="qvStatusSelect" onchange="updateQuoteStatus(this.value)" style="padding:8px 12px;border-radius:8px;border:1px solid var(--border);background:var(--bg);color:var(--text);font-size:14px;cursor:pointer;">
+            <option value="draft" {"selected" if status == "draft" else ""}>Draft</option>
+            <option value="pending" {"selected" if status == "pending" else ""}>Pending</option>
+            <option value="accepted" {"selected" if status == "accepted" else ""}>Accepted</option>
+            <option value="declined" {"selected" if status == "declined" else ""}>Declined</option>
+            <option value="invoiced" {"selected" if status in ("invoiced", "converted") else ""}>Invoiced</option>
+        </select>
+        '''
+        
         if status == "expired":
             action_buttons = f'''
-            <span style="background:#ef4444;color:white;padding:8px 16px;border-radius:8px;font-weight:700;font-size:13px;">⚠ QUOTE EXPIRED</span>
-            <form action="/quote/{quote_id}/convert-to-invoice" method="POST" style="display:inline;margin-left:10px;">
-                <button type="submit" class="btn btn-secondary">➜ Convert to Invoice Anyway</button>
+            <span style="background:#ef4444;color:white;padding:8px 16px;border-radius:8px;font-weight:700;font-size:13px;">⚠ EXPIRED</span>
+            {edit_btn}
+            {status_dropdown}
+            <form action="/quote/{quote_id}/convert-to-invoice" method="POST" style="display:inline;">
+                <button type="submit" class="btn btn-secondary">➜ Invoice Anyway</button>
             </form>
             '''
         elif status in ("pending", "draft"):
             action_buttons = f'''
+            {edit_btn}
+            {status_dropdown}
             <form action="/quote/{quote_id}/convert-to-invoice" method="POST" style="display:inline;">
                 <button type="submit" class="btn btn-primary">➜ Convert to Invoice</button>
             </form>
-            <button class="btn btn-secondary" onclick="updateQuoteStatus('accepted')">GOOD: Accepted</button>
-            <button class="btn btn-secondary" onclick="updateQuoteStatus('declined')">✕ Declined</button>
             '''
         elif status == "accepted":
             # Check if job card already exists
@@ -2659,6 +2779,8 @@ def register_invoicing_routes(app, db, login_required, Auth, render_page,
             
             if existing_job:
                 action_buttons = f'''
+                {edit_btn}
+                {status_dropdown}
                 <a href="/job-card/{existing_job.get("id")}" class="btn btn-primary">View Job Card</a>
                 <form action="/quote/{quote_id}/convert-to-invoice" method="POST" style="display:inline;">
                     <button type="submit" class="btn btn-secondary">➜ Invoice</button>
@@ -2666,6 +2788,8 @@ def register_invoicing_routes(app, db, login_required, Auth, render_page,
                 '''
             else:
                 action_buttons = f'''
+                {edit_btn}
+                {status_dropdown}
                 <form action="/quote/{quote_id}/create-job-card" method="POST" style="display:inline;">
                     <button type="submit" class="btn btn-primary">Create Job Card</button>
                 </form>
@@ -2673,10 +2797,20 @@ def register_invoicing_routes(app, db, login_required, Auth, render_page,
                     <button type="submit" class="btn btn-secondary">➜ Invoice</button>
                 </form>
                 '''
-        elif status == "converted":
+        elif status in ("converted", "invoiced"):
             inv_id = quote.get("converted_invoice_id", "")
             if inv_id:
-                action_buttons = f'<a href="/invoice/{inv_id}" class="btn btn-secondary">View Invoice</a>'
+                action_buttons = f'{status_dropdown} <a href="/invoice/{inv_id}" class="btn btn-secondary">View Invoice</a>'
+            else:
+                action_buttons = f'{status_dropdown}'
+        elif status == "declined":
+            action_buttons = f'''
+            {edit_btn}
+            {status_dropdown}
+            <form action="/quote/{quote_id}/convert-to-invoice" method="POST" style="display:inline;">
+                <button type="submit" class="btn btn-secondary">➜ Invoice Anyway</button>
+            </form>
+            '''
         
         # Build business details section
         biz_address = safe_string(business.get("address", "")).replace("\n", "<br>") if business else ""
@@ -2959,6 +3093,330 @@ def register_invoicing_routes(app, db, login_required, Auth, render_page,
         return render_page(f"Quote {quote.get('quote_number', '')}", content, user, "quotes")
     
     
+    @app.route("/quote/<quote_id>/edit", methods=["GET", "POST"])
+    @login_required
+    def quote_edit(quote_id):
+        """Edit an existing quote - items, customer, salesman"""
+        user = Auth.get_current_user()
+        business = Auth.get_current_business()
+        biz_id = business.get("id") if business else None
+        
+        quote = db.get_one("quotes", quote_id)
+        if not quote:
+            return redirect("/quotes")
+        
+        # Don't allow editing converted/invoiced quotes
+        if quote.get("status") in ("converted", "invoiced"):
+            flash("Cannot edit a converted/invoiced quote", "error")
+            return redirect(f"/quote/{quote_id}")
+        
+        if request.method == "POST":
+            customer_id = request.form.get("customer_id", "")
+            customer_name = request.form.get("customer_name", "")
+            salesman_id = request.form.get("salesman_id", "")
+            salesman_name_form = request.form.get("salesman_name", "")
+            
+            items = []
+            descriptions = request.form.getlist("item_desc[]")
+            quantities = request.form.getlist("item_qty[]")
+            prices = request.form.getlist("item_price[]")
+            units = request.form.getlist("item_unit[]")
+            
+            subtotal = Decimal("0")
+            for i, desc in enumerate(descriptions):
+                if desc.strip():
+                    qty = Decimal(quantities[i] or "1")
+                    price = Decimal(prices[i] or "0")
+                    line_total = qty * price
+                    subtotal += line_total
+                    unit_val = units[i].strip() if i < len(units) else ""
+                    items.append({
+                        "description": desc,
+                        "unit": unit_val,
+                        "quantity": float(qty),
+                        "price": float(price),
+                        "total": float(line_total)
+                    })
+            
+            if not items:
+                return redirect(f"/quote/{quote_id}/edit?error=No+items")
+            
+            vat = (subtotal * VAT_RATE).quantize(Decimal("0.01"))
+            total = subtotal + vat
+            
+            updates = {
+                "customer_id": safe_uuid(customer_id) or quote.get("customer_id"),
+                "customer_name": customer_name or quote.get("customer_name"),
+                "items": items,
+                "subtotal": float(subtotal),
+                "vat": float(vat),
+                "total": float(total),
+                "salesman": salesman_id,
+                "salesman_name": salesman_name_form,
+                "updated_at": now()
+            }
+            
+            try:
+                db.update("quotes", quote_id, updates)
+                logger.info(f"[QUOTE] Edited {quote.get('quote_number')}")
+            except Exception as e:
+                logger.error(f"[QUOTE] Edit error: {e}")
+            
+            return redirect(f"/quote/{quote_id}")
+        
+        # GET - show edit form
+        from concurrent.futures import ThreadPoolExecutor
+        with ThreadPoolExecutor(max_workers=2) as executor:
+            fut_customers = executor.submit(db.get, "customers", {"business_id": biz_id})
+            fut_team = executor.submit(db.get, "team_members", {"business_id": biz_id})
+        customers = fut_customers.result() if biz_id else []
+        team_members = fut_team.result() if biz_id else []
+        
+        # Parse existing items
+        raw_items = quote.get("items", [])
+        if isinstance(raw_items, str):
+            try:
+                raw_items = json.loads(raw_items)
+            except:
+                raw_items = []
+        
+        existing_customer_id = quote.get("customer_id", "")
+        existing_customer_name = quote.get("customer_name", "")
+        existing_salesman_id = quote.get("salesman", "")
+        existing_salesman_name = quote.get("salesman_name", "")
+        
+        # Build customer options
+        customer_options = '<option value="">-- Select Customer --</option>'
+        customer_options += '<option value="WALKIN" style="color:var(--green);">Walk-in Customer (type name below)</option>'
+        for c in sorted(customers, key=lambda x: x.get("name", "")):
+            sel = "selected" if c.get("id") == existing_customer_id else ""
+            customer_options += f'<option value="{c.get("id")}" data-name="{safe_string(c.get("name", ""))}" {sel}>{safe_string(c.get("name", ""))}</option>'
+        
+        # If customer not found in list (walk-in), show name
+        walkin_name_display = ""
+        if existing_customer_name and not existing_customer_id:
+            walkin_name_display = existing_customer_name
+        
+        # Salesman options
+        salesman_options = '<option value="">-- Select Salesman --</option>'
+        if user:
+            sel_me = "selected" if user.get("id", "") == existing_salesman_id or not existing_salesman_id else ""
+            salesman_options += f'<option value="{user.get("id", "")}" data-name="{safe_string(user.get("name", ""))}" {sel_me}>{safe_string(user.get("name", ""))} (me)</option>'
+        seen_ids = {user.get("id", "") if user else ""}
+        for tm in sorted(team_members, key=lambda x: x.get("name", "")):
+            tm_uid = tm.get("user_id") or tm.get("id", "")
+            if tm_uid not in seen_ids:
+                seen_ids.add(tm_uid)
+                sel_tm = "selected" if tm_uid == existing_salesman_id else ""
+                salesman_options += f'<option value="{tm_uid}" data-name="{safe_string(tm.get("name", ""))}" {sel_tm}>{safe_string(tm.get("name", ""))}</option>'
+        
+        # Build existing item rows
+        existing_rows = ""
+        for item in raw_items:
+            desc = safe_string(item.get("description") or item.get("desc") or "")
+            unit = safe_string(item.get("unit", ""))
+            qty = item.get("quantity") or item.get("qty") or 1
+            price = item.get("price") or item.get("unit_price") or 0
+            total_val = float(qty) * float(price)
+            existing_rows += f'''
+            <tr>
+                <td style="position:relative;"><input type="text" name="item_desc[]" value="{desc}" autocomplete="off" oninput="stockSearch(this)" onfocus="stockSearch(this)" placeholder="Type 2+ chars to search stock..." style="width:100%;padding:8px;border:1px solid var(--border);border-radius:4px;background:var(--bg);color:var(--text);"><input type="hidden" name="item_stock_id[]" value=""><div class="stock-dropdown" style="display:none;"></div></td>
+                <td><input type="text" name="item_unit[]" value="{unit}" placeholder="ea" style="width:100%;padding:8px;border:1px solid var(--border);border-radius:4px;background:var(--bg);color:var(--text);text-align:center;"></td>
+                <td><input type="number" name="item_qty[]" value="{qty}" min="0.01" step="any" onchange="calcRow(this)" style="width:100%;padding:8px;border:1px solid var(--border);border-radius:4px;background:var(--bg);color:var(--text);"></td>
+                <td><input type="number" name="item_price[]" value="{price}" step="0.01" onchange="calcRow(this)" style="width:100%;padding:8px;border:1px solid var(--border);border-radius:4px;background:var(--bg);color:var(--text);"></td>
+                <td class="row-total">R{total_val:.2f}</td>
+                <td><button type="button" onclick="deleteRow(this)" style="background:var(--red);color:white;border:none;border-radius:4px;padding:6px 10px;cursor:pointer;">✕</button></td>
+            </tr>
+            '''
+        
+        if not existing_rows:
+            existing_rows = '''
+            <tr>
+                <td style="position:relative;"><input type="text" name="item_desc[]" autocomplete="off" oninput="stockSearch(this)" onfocus="stockSearch(this)" placeholder="Type 2+ chars to search stock..." style="width:100%;padding:8px;border:1px solid var(--border);border-radius:4px;background:var(--bg);color:var(--text);"><input type="hidden" name="item_stock_id[]" value=""><div class="stock-dropdown" style="display:none;"></div></td>
+                <td><input type="text" name="item_unit[]" placeholder="ea" style="width:100%;padding:8px;border:1px solid var(--border);border-radius:4px;background:var(--bg);color:var(--text);text-align:center;"></td>
+                <td><input type="number" name="item_qty[]" value="1" min="0.01" step="any" onchange="calcRow(this)" style="width:100%;padding:8px;border:1px solid var(--border);border-radius:4px;background:var(--bg);color:var(--text);"></td>
+                <td><input type="number" name="item_price[]" step="0.01" onchange="calcRow(this)" style="width:100%;padding:8px;border:1px solid var(--border);border-radius:4px;background:var(--bg);color:var(--text);"></td>
+                <td class="row-total">R0.00</td>
+                <td><button type="button" onclick="deleteRow(this)" style="background:var(--red);color:white;border:none;border-radius:4px;padding:6px 10px;cursor:pointer;">✕</button></td>
+            </tr>
+            '''
+        
+        error_msg = request.args.get("error", "")
+        error_html = f'<div style="background:var(--red);color:white;padding:10px;border-radius:8px;margin-bottom:15px;">{error_msg}</div>' if error_msg else ""
+        
+        _dd_css = '<style>.stock-dropdown{position:absolute;top:100%;left:0;right:0;background:var(--card);border:1px solid var(--border);border-radius:6px;max-height:220px;overflow-y:auto;z-index:999;box-shadow:0 4px 12px rgba(0,0,0,0.3);}.stock-dd-item{padding:8px 10px;cursor:pointer;font-size:13px;border-bottom:1px solid var(--border);}.stock-dd-item:hover{background:var(--primary);color:white;}</style>'
+        
+        content = f'''
+        {_dd_css}
+        {error_html}
+        <div class="card">
+            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:20px;">
+                <h3 style="margin:0;">Edit Quote — {quote.get("quote_number", "")}</h3>
+                <span style="color:var(--text-muted);font-size:13px;">Status: {quote.get("status", "draft").title()}</span>
+            </div>
+            
+            <form method="POST" id="quoteForm">
+                <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:20px;margin-bottom:20px;">
+                    <div>
+                        <label>Customer</label>
+                        <select name="customer_id" id="customerSelect" onchange="handleCustomerChange()" style="width:100%;padding:10px;border-radius:6px;border:1px solid var(--border);background:var(--card);color:var(--text);">
+                            {customer_options}
+                        </select>
+                        <input type="text" name="customer_name" id="customerName" placeholder="Type walk-in customer name" value="{safe_string(walkin_name_display)}" style="{"display:block" if walkin_name_display else "display:none"};width:100%;padding:10px;border-radius:6px;border:1px solid var(--border);background:var(--card);color:var(--text);margin-top:6px;">
+                    </div>
+                    <div>
+                        <label>Salesman</label>
+                        <select name="salesman_id" id="salesmanSelect" onchange="handleSalesmanChange()" style="width:100%;padding:10px;border-radius:6px;border:1px solid var(--border);background:var(--card);color:var(--text);">
+                            {salesman_options}
+                        </select>
+                        <input type="hidden" name="salesman_name" id="salesmanName" value="{safe_string(existing_salesman_name)}">
+                    </div>
+                    <div>
+                        <label>Date</label>
+                        <input type="date" value="{quote.get('date', today())}" disabled style="width:100%;padding:10px;border-radius:6px;border:1px solid var(--border);background:var(--card);color:var(--text);">
+                    </div>
+                </div>
+                
+                <h4>Line Items</h4>
+                
+                <table class="table" id="lineItems">
+                    <thead>
+                        <tr>
+                            <th style="width:38%">Description</th>
+                            <th style="width:10%">Unit</th>
+                            <th style="width:10%">Qty</th>
+                            <th style="width:17%">Price</th>
+                            <th style="width:15%">Total</th>
+                            <th style="width:10%"></th>
+                        </tr>
+                    </thead>
+                    <tbody id="itemRows">
+                        {existing_rows}
+                    </tbody>
+                </table>
+                
+                <button type="button" onclick="addRow()" class="btn btn-secondary" style="margin:10px 0;">+ Add Line</button>
+                
+                <div style="text-align:right;margin-top:20px;padding:15px;background:rgba(0,0,0,0.2);border-radius:8px;">
+                    <div style="margin-bottom:10px;">Subtotal: <strong id="subtotal">R0.00</strong></div>
+                    <div style="margin-bottom:10px;">VAT (15%): <strong id="vat">R0.00</strong></div>
+                    <div style="font-size:24px;">Total: <strong id="total" style="color:var(--green);">R0.00</strong></div>
+                </div>
+                
+                <div style="display:flex;gap:10px;margin-top:20px;">
+                    <button type="submit" class="btn btn-primary" style="flex:1;">Save Changes</button>
+                    <a href="/quote/{quote_id}" class="btn btn-secondary">Cancel</a>
+                </div>
+            </form>
+        </div>
+        
+        <script>
+        function handleCustomerChange() {{
+            const sel = document.getElementById('customerSelect');
+            const nameInput = document.getElementById('customerName');
+            if (sel.value === 'WALKIN') {{
+                nameInput.style.display = 'block';
+                nameInput.focus();
+                nameInput.value = '';
+                return;
+            }}
+            nameInput.style.display = 'none';
+            const name = sel.options[sel.selectedIndex]?.dataset?.name || '';
+            nameInput.value = name;
+        }}
+        
+        function handleSalesmanChange() {{
+            const sel = document.getElementById('salesmanSelect');
+            const nameInput = document.getElementById('salesmanName');
+            nameInput.value = sel.options[sel.selectedIndex]?.dataset?.name || '';
+        }}
+        
+        let _searchTimer = null;
+        function stockSearch(input) {{
+            const q = input.value.trim();
+            const dd = input.closest('td').querySelector('.stock-dropdown');
+            if (q.length < 2) {{ dd.style.display='none'; return; }}
+            clearTimeout(_searchTimer);
+            _searchTimer = setTimeout(()=>{{
+                fetch('/api/stock/lookup?q='+encodeURIComponent(q)).then(r=>r.json()).then(items=>{{
+                    if(!items.length){{ dd.style.display='none'; return; }}
+                    let h='';
+                    items.forEach(s=>{{
+                        const lb=(s.label||'').replace(/'/g,"\\\\'"), un=(s.unit||'').replace(/'/g,"\\\\'");
+                        h+='<div class="stock-dd-item" onmousedown="pickStock(this,\\\\''+s.id+'\\\\',\\\\''+lb+'\\\\','+s.price+',\\\\''+un+'\\\\')">'
+                          +'<b>'+(s.code||'')+'</b> '+(s.desc||'')+' <span style="float:right;color:#22c55e;">R'+s.price.toFixed(2)+'</span>'
+                          +(s.unit?'<span style="color:#888;font-size:11px;margin-left:4px;">'+s.unit+'</span>':'')+'</div>';
+                    }});
+                    dd.innerHTML=h; dd.style.display='block';
+                }});
+            }}, 250);
+        }}
+        function pickStock(el,stockId,label,price,unit){{
+            const row=el.closest('tr');
+            row.querySelector('input[name="item_desc[]"]').value=label;
+            const sid=row.querySelector('input[name="item_stock_id[]"]'); if(sid) sid.value=stockId;
+            const p=row.querySelector('input[name="item_price[]"]'); p.value=price;
+            const u=row.querySelector('input[name="item_unit[]"]'); if(u&&unit) u.value=unit;
+            el.closest('.stock-dropdown').style.display='none'; calcRow(p);
+        }}
+        document.addEventListener('click',function(e){{
+            if(!e.target.closest('.stock-dropdown')&&!e.target.matches('input[name="item_desc[]"]'))
+                document.querySelectorAll('.stock-dropdown').forEach(d=>d.style.display='none');
+        }});
+        
+        function addRow() {{
+            const tbody = document.getElementById('itemRows');
+            const row = document.createElement('tr');
+            row.innerHTML = `
+                <td style="position:relative;"><input type="text" name="item_desc[]" autocomplete="off" oninput="stockSearch(this)" onfocus="stockSearch(this)" placeholder="Type 2+ chars to search stock..." style="width:100%;padding:8px;border:1px solid var(--border);border-radius:4px;background:var(--bg);color:var(--text);"><input type="hidden" name="item_stock_id[]" value=""><div class="stock-dropdown" style="display:none;"></div></td>
+                <td><input type="text" name="item_unit[]" placeholder="ea" style="width:100%;padding:8px;border:1px solid var(--border);border-radius:4px;background:var(--bg);color:var(--text);text-align:center;"></td>
+                <td><input type="number" name="item_qty[]" value="1" min="0.01" step="any" onchange="calcRow(this)" style="width:100%;padding:8px;border:1px solid var(--border);border-radius:4px;background:var(--bg);color:var(--text);"></td>
+                <td><input type="number" name="item_price[]" step="0.01" onchange="calcRow(this)" style="width:100%;padding:8px;border:1px solid var(--border);border-radius:4px;background:var(--bg);color:var(--text);"></td>
+                <td class="row-total">R0.00</td>
+                <td><button type="button" onclick="deleteRow(this)" style="background:var(--red);color:white;border:none;border-radius:4px;padding:6px 10px;cursor:pointer;">✕</button></td>
+            `;
+            tbody.appendChild(row);
+        }}
+        
+        function deleteRow(btn) {{
+            const tbody = document.getElementById('itemRows');
+            if (tbody.children.length > 1) {{
+                btn.closest('tr').remove();
+                calcTotals();
+            }} else {{
+                alert('Need at least one line item');
+            }}
+        }}
+        
+        function calcRow(input) {{
+            const row = input.closest('tr');
+            const qty = parseFloat(row.querySelector('input[name="item_qty[]"]').value) || 0;
+            const price = parseFloat(row.querySelector('input[name="item_price[]"]').value) || 0;
+            const total = qty * price;
+            row.querySelector('.row-total').textContent = 'R' + total.toFixed(2);
+            calcTotals();
+        }}
+        
+        function calcTotals() {{
+            let subtotal = 0;
+            document.querySelectorAll('.row-total').forEach(cell => {{
+                subtotal += parseFloat(cell.textContent.replace('R', '')) || 0;
+            }});
+            const vat = subtotal * 0.15;
+            const total = subtotal + vat;
+            document.getElementById('subtotal').textContent = 'R' + subtotal.toFixed(2);
+            document.getElementById('vat').textContent = 'R' + vat.toFixed(2);
+            document.getElementById('total').textContent = 'R' + total.toFixed(2);
+        }}
+        
+        // Calculate totals on page load
+        calcTotals();
+        </script>
+        '''
+        
+        return render_page(f"Edit Quote {quote.get('quote_number', '')}", content, user, "quotes")
+    
+    
     @app.route("/api/quote/<quote_id>/status", methods=["POST"])
     @login_required
     def api_quote_status(quote_id):
@@ -2967,10 +3425,10 @@ def register_invoicing_routes(app, db, login_required, Auth, render_page,
             data = request.get_json()
             new_status = data.get("status", "")
             
-            if new_status not in ("pending", "accepted", "declined", "converted"):
+            if new_status not in ("draft", "pending", "accepted", "declined", "converted", "invoiced", "expired"):
                 return jsonify({"success": False, "error": "Invalid status"})
             
-            db.update("quotes", quote_id, {"status": new_status})
+            db.update("quotes", quote_id, {"status": new_status, "updated_at": now()})
             return jsonify({"success": True})
         except Exception as e:
             return jsonify({"success": False, "error": str(e)})
