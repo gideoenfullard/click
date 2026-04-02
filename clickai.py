@@ -238,6 +238,12 @@ try:
 except ImportError:
     PULSE_ROUTES_LOADED = False
 
+try:
+    from clickai_contracts import register_contract_routes
+    CONTRACTS_ROUTES_LOADED = True
+except ImportError:
+    CONTRACTS_ROUTES_LOADED = False
+
 import io
 
 # Fulltech Smart Quote addon (optional - only loads if file exists)
@@ -19473,6 +19479,7 @@ def render_page(title: str, content: str, user: dict = None, active: str = "") -
             ("expenses", "/expenses", "Expenses"),
             ("banking", "/banking", "Banking"),
             ("payroll", "/payroll", "Payroll"),
+            ("hr", "/hr", "HR"),
             ("reports", "/reports", "Reports"),
             ("ledger", "/ledger", "Ledger"),
             ("intelligence", "/intelligence", "AI"),
@@ -52868,6 +52875,18 @@ try:
         logger.info("[PULSE] Routes registered ✓")
 except Exception as e:
     logger.error(f"[PULSE] Failed to register routes: {e}")
+
+# Register HR & Contracts routes (separate module)
+try:
+    if CONTRACTS_ROUTES_LOADED:
+        register_contract_routes(
+            app, db, login_required, Auth, render_page,
+            generate_id, money, safe_string, now, today,
+            RecordFactory
+        )
+        logger.info("[HR/CONTRACTS] Routes registered ✓")
+except Exception as e:
+    logger.error(f"[HR/CONTRACTS] Failed to register routes: {e}")
 
 
 class NightlyScheduler:
