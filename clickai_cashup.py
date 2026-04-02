@@ -86,8 +86,10 @@ def register_cashup_routes(app, db, login_required, Auth, generate_id, now, toda
         cash_ups = cash_ups or []
 
         # Check if current user already submitted a blind cashup today
-        # Check both cashier_id (when they select themselves) and created_by (who pressed submit)
         user_id = user.get("id", "") if user else ""
+        user_name = user.get("name", user.get("email", "")) if user else ""
+        if user_name and " " in user_name:
+            user_name = user_name.split()[0]
         user_already_submitted = any(
             c.get("type") == "blind_cashup" and (c.get("cashier_id") == user_id or c.get("created_by") == user_id)
             for c in cash_ups
@@ -110,10 +112,34 @@ def register_cashup_routes(app, db, login_required, Auth, generate_id, now, toda
                     better_name = better_name.split()[0]
                 cdata["name"] = better_name
 
+        # Per-salesman sales breakdown (salesman who made the sale, not cashier)
+        salesman_sales = {}
+        for s in sales:
+            sid = s.get("salesman") or s.get("created_by") or "unknown"
+            sname = s.get("salesman_name") or s.get("cashier_name") or s.get("created_by_name") or ""
+            if sid not in salesman_sales:
+                salesman_sales[sid] = {"id": sid, "name": sname or sid[:8], "cash": 0, "card": 0, "account": 0, "count": 0, "total": 0}
+            elif sname and salesman_sales[sid]["name"] == sid[:8]:
+                salesman_sales[sid]["name"] = sname
+            pm = s.get("payment_method", "cash")
+            amt = float(s.get("total", 0) or 0)
+            salesman_sales[sid][pm] = salesman_sales[sid].get(pm, 0) + amt
+            salesman_sales[sid]["total"] = salesman_sales[sid].get("total", 0) + amt
+            salesman_sales[sid]["count"] += 1
+        # Enrich salesman names from team
+        for sid, sdata in salesman_sales.items():
+            if sid in team_name_map and team_name_map[sid]:
+                better = team_name_map[sid]
+                if " " in better:
+                    better = better.split()[0]
+                sdata["name"] = better
+
         # Per-cashier sales dict keyed by cashier_id — used in JS for per-cashier blind cashup
         cashier_sales_json = json.dumps(cashier_sales, default=str)
+        salesman_sales_json = json.dumps(salesman_sales, default=str)
         cashups_json = json.dumps(cash_ups, default=str)
         team_json = json.dumps([{"id": t.get("id", ""), "name": t.get("name", t.get("email", ""))} for t in team], default=str)
+        _safe_user_name = (user_name or "").replace("'", "").replace('"', '').replace("&", "")
 
         is_manager = user_role in ("owner", "admin", "manager")
 
@@ -486,31 +512,6 @@ select.form-input {{
 }}
 .empty-state .icon {{ font-size: 2.5rem; margin-bottom: 10px; }}
 
-.submitted-confirmation {{
-    text-align: center;
-    padding: 30px 20px;
-    background: var(--surface);
-    border: 1px solid var(--green);
-    border-radius: 10px;
-    margin: 16px 0;
-}}
-.submitted-confirmation .check-icon {{
-    font-size: 3rem;
-    margin-bottom: 12px;
-}}
-.submitted-confirmation .confirm-title {{
-    font-family: 'Orbitron', monospace;
-    font-size: 0.85rem;
-    letter-spacing: 2px;
-    color: var(--green);
-    margin-bottom: 8px;
-    text-transform: uppercase;
-}}
-.submitted-confirmation .confirm-detail {{
-    color: var(--text-dim);
-    font-size: 0.95rem;
-}}
-
 .tab-bar {{
     display: flex;
     gap: 0;
@@ -666,18 +667,7 @@ select.form-input {{
 
     <div class="actions" id="actionButtons">
         {_xread_btn}
-        <button class="action-btn primary" id="blindCashUpBtn" onclick="showPanel('blind')">
-            <span class="btn-icon">🔒</span>
-            <span class="btn-label">Blind Cash Up</span>
-        </button>
-    </div>
-
-    <!-- Submitted confirmation (shown after cashier submits) -->
-    <div class="submitted-confirmation" id="submittedConfirm" style="display:none;">
-        <div class="check-icon">✅</div>
-        <div class="confirm-title">Cash Up Submitted</div>
-        <div class="confirm-detail" id="confirmDetail">Your cash up has been recorded. Your manager will review the results.</div>
-        <button onclick="dismissSubmitted()" style="display:inline-block;padding:10px 24px;background:var(--accent);color:#000;border:none;border-radius:6px;cursor:pointer;font-weight:700;font-family:Orbitron,monospace;font-size:0.75rem;letter-spacing:2px;margin-top:12px;">OK</button>
+        {'<div style="text-align:center;padding:14px;color:var(--green);font-family:Orbitron,monospace;font-size:0.7rem;letter-spacing:2px;">✅ CASH UP SUBMITTED</div>' if user_already_submitted and not is_manager else '<button class="action-btn primary" id="blindCashUpBtn" onclick="showPanel(\'blind\')"><span class="btn-icon">🔒</span><span class="btn-label">Blind Cash Up</span></button>'}
     </div>
 
     <!-- X-READING PANEL (managers only) -->
@@ -722,10 +712,9 @@ select.form-input {{
 
         <div class="form-group">
             <label>Cashier / Till Operator</label>
-            <select class="form-input" id="blindCashier" onchange="updateCashierInfo()">
-                <option value="">— Select —</option>
-            </select>
-            <div id="cashierInfo" style="font-size:0.8rem;color:var(--text-dim);margin-top:6px;min-height:1.2em;"></div>
+            <div style="padding:12px 14px;background:var(--bg);border:1px solid var(--green);border-radius:6px;color:var(--green);font-family:'Rajdhani',sans-serif;font-size:1.1rem;font-weight:700;">
+                🧑‍💼 {_safe_user_name}
+            </div>
         </div>
 
         <div class="form-group">
@@ -773,18 +762,24 @@ select.form-input {{
 
     <!-- TAB SWITCHER: TODAY / WEEKLY HISTORY -->
     <div class="tab-bar">
-        <button class="tab-btn active" onclick="switchTab('today')">Today</button>
+        <button class="tab-btn{'  active' if user_already_submitted and not is_manager else ''}" onclick="switchTab('today')">Today</button>
+        <button class="tab-btn{'' if user_already_submitted and not is_manager else ' active'}" onclick="switchTab('sales')">Sales by Staff</button>
         <button class="tab-btn" onclick="switchTab('weekly')">Weekly History</button>
     </div>
 
     <!-- TAB: TODAY'S HISTORY -->
-    <div class="tab-content active" id="tab-today">
+    <div class="tab-content{'  active' if user_already_submitted and not is_manager else ''}" id="tab-today">
         <div id="historyList">
             <div class="empty-state" id="emptyHistory">
                 <div class="icon">🧾</div>
                 <div>No cash ups recorded today</div>
             </div>
         </div>
+    </div>
+
+    <!-- TAB: SALES BY STAFF (per-salesman breakdown) -->
+    <div class="tab-content{' active' if not (user_already_submitted and not is_manager) else ''}" id="tab-sales">
+        <div id="salesmanList"></div>
     </div>
 
     <!-- TAB: WEEKLY HISTORY -->
@@ -815,8 +810,10 @@ const TODAY_DATE = '{today()}';
 const TEAM = {team_json};
 const HISTORY = {cashups_json};
 const USER_ID = '{user_id}';
+const USER_NAME = '{_safe_user_name}';
 const USER_ALREADY_SUBMITTED = {'true' if user_already_submitted else 'false'};
 const CASHIER_SALES = {cashier_sales_json};
+const SALESMAN_SALES = {salesman_sales_json};
 
 const DENOMINATIONS = [
     {{ label: 'R200', value: 200, type: 'note' }},
@@ -836,12 +833,11 @@ let weekOffset = 0;
 
 document.addEventListener('DOMContentLoaded', () => {{
     buildDenomGrid();
-    buildTeamDropdown();
     renderHistory();
     buildXReadPerCashier();
+    renderSalesmanBreakdown();
     if (USER_ALREADY_SUBMITTED && !IS_MANAGER) {{
-        // Show brief reminder that they already submitted, but don't lock them out
-        showSubmittedState();
+        // Already submitted — tabs handle showing history, nothing else needed
     }}
     document.getElementById('statsRow').style.display = 'none';
 }});
@@ -857,14 +853,54 @@ function buildDenomGrid() {{
     `).join('');
 }}
 
-function buildTeamDropdown() {{
-    const sel = document.getElementById('blindCashier');
-    TEAM.forEach(t => {{
-        const opt = document.createElement('option');
-        opt.value = t.id;
-        opt.textContent = t.name;
-        sel.appendChild(opt);
+// Build per-salesman sales breakdown
+function renderSalesmanBreakdown() {{
+    const container = document.getElementById('salesmanList');
+    if (!container) return;
+    const ids = Object.keys(SALESMAN_SALES);
+    if (ids.length === 0) {{
+        container.innerHTML = '<div class="empty-state"><div class="icon">🧑‍💼</div><div>No sales recorded today</div></div>';
+        return;
+    }}
+
+    // Sort by total descending
+    ids.sort((a, b) => (SALESMAN_SALES[b].total || 0) - (SALESMAN_SALES[a].total || 0));
+
+    let html = '';
+    ids.forEach(sid => {{
+        const ss = SALESMAN_SALES[sid];
+        const sTotal = (ss.cash || 0) + (ss.card || 0) + (ss.account || 0);
+        html += `<div class="result-box" style="margin-bottom:12px;">
+            <div style="font-family:Orbitron,monospace;font-size:0.75rem;letter-spacing:2px;color:var(--green);margin-bottom:10px;text-transform:uppercase;">🧑‍💼 ${{ss.name || sid.substring(0,8)}}</div>
+            <div class="detail-grid">
+                <div class="dl">Cash</div><div class="dv" style="color:var(--green)">R${{(ss.cash || 0).toFixed(2)}}</div>
+                <div class="dl">Card</div><div class="dv" style="color:var(--orange)">R${{(ss.card || 0).toFixed(2)}}</div>
+                <div class="dl">Account</div><div class="dv" style="color:var(--accent)">R${{(ss.account || 0).toFixed(2)}}</div>
+                <div class="dl" style="font-weight:700;color:var(--text)">Total</div><div class="dv" style="font-weight:700;font-size:1.1rem;">R${{sTotal.toFixed(2)}}</div>
+                <div class="dl">Sales</div><div class="dv">${{ss.count || 0}}</div>
+            </div>
+        </div>`;
     }});
+
+    // Grand total
+    let grandTotal = 0;
+    let grandCount = 0;
+    ids.forEach(sid => {{
+        grandTotal += (SALESMAN_SALES[sid].total || 0);
+        grandCount += (SALESMAN_SALES[sid].count || 0);
+    }});
+    html += `<div class="result-box" style="border-color:var(--accent);">
+        <div class="result-row total">
+            <span class="rl" style="font-size:1rem;">ALL STAFF TOTAL</span>
+            <span class="rv" style="font-size:1.1rem;">R${{grandTotal.toFixed(2)}}</span>
+        </div>
+        <div class="result-row">
+            <span class="rl">Total Transactions</span>
+            <span class="rv">${{grandCount}}</span>
+        </div>
+    </div>`;
+
+    container.innerHTML = html;
 }}
 
 // Helper: get system totals for a specific cashier (or global if no match)
@@ -909,21 +945,7 @@ function buildXReadPerCashier() {{
     container.innerHTML = html;
 }}
 
-// Show cashier's sales info when selected in blind cashup dropdown
-function updateCashierInfo() {{
-    const sel = document.getElementById('blindCashier');
-    const info = document.getElementById('cashierInfo');
-    if (!sel.value) {{
-        info.textContent = '';
-        return;
-    }}
-    const ct = getCashierTotals(sel.value);
-    if (ct.count > 0) {{
-        info.innerHTML = '<span style="color:var(--accent);">' + ct.count + ' sale' + (ct.count !== 1 ? 's' : '') + ' recorded for this cashier today</span>';
-    }} else {{
-        info.innerHTML = '<span style="color:var(--orange);">No sales recorded for this cashier today</span>';
-    }}
-}}
+// Cashier is auto-assigned from logged-in user — no dropdown needed
 
 let activePanel = null;
 function showPanel(id) {{
@@ -943,37 +965,33 @@ function showPanel(id) {{
 }}
 
 function showSubmittedState(declaredTotal) {{
-    // Hide blind panel if open
+    // Hide blind panel
     const blindPanel = document.getElementById('panel-blind');
     if (blindPanel) blindPanel.classList.remove('active');
     activePanel = null;
 
-    // Show confirmation banner
-    const confirmEl = document.getElementById('submittedConfirm');
-    if (confirmEl) {{
-        let detailText = 'Your cash up has been recorded. Your manager will review the results.';
-        if (declaredTotal !== undefined && declaredTotal > 0) {{
-            detailText = 'Your declared total: <strong>R' + declaredTotal.toFixed(2) + '</strong><br>Your manager will review the results.';
-        }}
-        document.getElementById('confirmDetail').innerHTML = detailText;
-        confirmEl.style.display = 'block';
-
-        // Auto-dismiss after 8 seconds
-        setTimeout(() => {{ dismissSubmitted(); }}, 8000);
+    // Hide the blind cash up button completely
+    const blindBtn = document.getElementById('blindCashUpBtn');
+    if (blindBtn) {{
+        blindBtn.outerHTML = '<div style="text-align:center;padding:14px;color:var(--green);font-family:Orbitron,monospace;font-size:0.7rem;letter-spacing:2px;">✅ CASH UP SUBMITTED</div>';
     }}
-}}
 
-function dismissSubmitted() {{
-    const confirmEl = document.getElementById('submittedConfirm');
-    if (confirmEl) confirmEl.style.display = 'none';
+    // Switch to Today tab to show the new record
+    switchTab('today');
+
+    // Reload the page after short delay so the new record shows in history
+    setTimeout(() => location.reload(), 1500);
 }}
 
 function switchTab(tab) {{
     document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
     document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
-    const btn = document.querySelector(`.tab-btn[onclick="switchTab('${{tab}}')"]`);
-    if (btn) btn.classList.add('active');
-    document.getElementById('tab-' + tab).classList.add('active');
+    // Find the correct button by matching tab name
+    document.querySelectorAll('.tab-btn').forEach(b => {{
+        if (b.getAttribute('onclick') === "switchTab('" + tab + "')") b.classList.add('active');
+    }});
+    const tabEl = document.getElementById('tab-' + tab);
+    if (tabEl) tabEl.classList.add('active');
     if (tab === 'weekly') loadWeeklyHistory();
 }}
 
@@ -1040,12 +1058,12 @@ async function saveXReading() {{
 }}
 
 async function submitBlindCashUp() {{
-    const cashier = document.getElementById('blindCashier');
-    const cashierName = cashier.options[cashier.selectedIndex]?.text || '';
-    const cashierId = cashier.value;
+    // Cashier is the logged-in user (auto-assigned)
+    const cashierName = USER_NAME;
+    const cashierId = USER_ID;
 
     if (!cashierId) {{
-        alert('Please select a cashier first');
+        alert('Error: Could not identify user. Please refresh and try again.');
         return;
     }}
 
@@ -1054,10 +1072,10 @@ async function submitBlindCashUp() {{
         const histData = await histResp.json();
         if (histData.success && histData.cash_ups) {{
             const existing = histData.cash_ups.filter(c => 
-                c.type === 'blind_cashup' && c.cashier_id === cashierId
+                c.type === 'blind_cashup' && (c.cashier_id === cashierId || c.created_by === cashierId)
             );
             if (existing.length > 0) {{
-                alert(cashierName + ' has already submitted a blind cash up today. Only one per cashier per day.');
+                alert('You have already submitted a blind cash up today. Only one per cashier per day.');
                 return;
             }}
         }}
