@@ -3290,7 +3290,9 @@ def register_pos_routes(app, db, login_required, Auth, render_page,
                             vat_number: custVat,
                             address: custAddress
                         },
-                        items: items
+                        items: items,
+                        salesman_id: currentCashierId,
+                        salesman_name: currentCashierName
                     })
                 });
                 
@@ -3589,10 +3591,9 @@ def register_pos_routes(app, db, login_required, Auth, render_page,
             
             const total = items.reduce((sum, item) => sum + item.total, 0);
             
-            // Get salesman from quick quote modal
-            const salesmanSel = document.getElementById('quickQuoteSalesman');
-            const salesmanId = salesmanSel ? salesmanSel.value : currentCashierId;
-            const salesmanName = salesmanSel ? (salesmanSel.options[salesmanSel.selectedIndex]?.dataset?.name || '') : currentCashierName;
+            // Salesman = currently logged-in cashier (auto)
+            const salesmanId = currentCashierId;
+            const salesmanName = currentCashierName;
             
             try {
                 const response = await fetch('/api/pos/quote', {
@@ -4308,6 +4309,12 @@ def register_pos_routes(app, db, login_required, Auth, render_page,
                     </div>
                 </div>
                 
+                <!-- Salesman (auto from logged-in user) -->
+                <div style="background:rgba(0,0,0,0.2);padding:15px 20px;border-radius:12px;margin-bottom:20px;display:flex;align-items:center;gap:10px;">
+                    <span style="color:white;font-size:14px;font-weight:bold;">🧑‍💼 Salesman:</span>
+                    <span style="color:#10b981;font-size:16px;font-weight:bold;" id="qqSalesmanDisplay">{current_user_name}</span>
+                </div>
+                
                 <!-- Line Items Section -->
                 <div style="background:rgba(0,0,0,0.2);padding:20px;border-radius:12px;margin-bottom:20px;">
                     <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:15px;">
@@ -4519,9 +4526,9 @@ def register_pos_routes(app, db, login_required, Auth, render_page,
                 
                 <div style="margin-bottom:20px;">
                     <label style="display:block;margin-bottom:8px;color:white;font-size:16px;font-weight:bold;">🧑‍💼 Salesman</label>
-                    <select id="quickQuoteSalesman" style="width:100%;padding:12px;border-radius:8px;border:2px solid rgba(16,185,129,0.3);background:#1a1a2e;color:white;font-size:16px;box-sizing:border-box;-webkit-appearance:menulist;appearance:menulist;">
-                        {pos_salesman_options}
-                    </select>
+                    <div style="width:100%;padding:12px;border-radius:8px;border:2px solid rgba(16,185,129,0.3);background:#2a2a4a;color:#10b981;font-size:16px;box-sizing:border-box;font-weight:bold;">
+                        <span id="quickQuoteSalesmanDisplay">{current_user_name}</span>
+                    </div>
                 </div>
                 
                 <div style="display:flex;gap:15px;">
