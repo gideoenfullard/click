@@ -724,7 +724,7 @@ def register_banking_routes(app, db, login_required, Auth, render_page,
             const btn = event.target.closest('label');
             const originalText = btn.innerHTML;
             const isPDF = file.name.toLowerCase().endsWith('.pdf');
-            btn.innerHTML = isPDF ? '🤖 AI Reading PDF... (30-60s)' : '⏳ Importing...';
+            btn.innerHTML = isPDF ? '🤖 AI Reading PDF... (1-3 min)' : '⏳ Importing...';
             
             try {{
                 const response = await fetch('/api/banking/import', {{
@@ -1201,7 +1201,7 @@ def register_banking_routes(app, db, login_required, Auth, render_page,
                                 },
                                 json={
                                     "model": "claude-haiku-4-5-20251001",
-                                    "max_tokens": 16000,
+                                    "max_tokens": 32000,
                                     "messages": [{
                                         "role": "user",
                                         "content": [
@@ -1217,7 +1217,7 @@ def register_banking_routes(app, db, login_required, Auth, render_page,
                                         ]
                                     }]
                                 },
-                                timeout=120
+                                timeout=180
                             )
                             
                             if resp.status_code != 200:
