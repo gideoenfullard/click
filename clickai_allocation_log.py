@@ -142,9 +142,6 @@ def log_allocation(
             "reference": reference,
             "created_by": created_by,
             "created_by_name": created_by_name,
-            "transaction_date": txn_date,
-            "match_key": auto_match_key,
-            "linked_id": "",
             "extra": json.dumps(extra_data),
             "status": "active",
             "created_at": _now()
@@ -152,15 +149,9 @@ def log_allocation(
         
         success, err = _db.save("allocation_log", record)
         
-        # If save failed (likely missing columns), retry without new fields
         if not success:
-            logger.warning(f"[ALLOC LOG] First save failed ({err}), retrying without new columns...")
-            for col in ["transaction_date", "match_key", "linked_id"]:
-                record.pop(col, None)
-            success, err = _db.save("allocation_log", record)
-            if not success:
-                logger.error(f"[ALLOC LOG] Retry also failed: {err}")
-                return False
+            logger.error(f"[ALLOC LOG] Save failed: {err}")
+            return False
         
         alloc_id = record["id"]
         

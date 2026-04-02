@@ -13396,14 +13396,15 @@ class Context:
                 "customers_summary": [], "recent_invoices": [], "low_stock": []
             }
         
-        # SESSION CACHE — reuse for 60 seconds
+        # IN-MEMORY CACHE — reuse for 60 seconds (not session — session cookie overflows 4KB)
         import time as _time
         _cache_key = f"dash_stats_{biz_id}"
-        _cached = session.get(_cache_key)
-        _cache_ts = session.get(f"{_cache_key}_ts", 0)
-        if _cached and (_time.time() - _cache_ts) < 60:
+        if not hasattr(app, '_dash_cache'):
+            app._dash_cache = {}
+        _cached_entry = app._dash_cache.get(_cache_key)
+        if _cached_entry and (_time.time() - _cached_entry.get("ts", 0)) < 60:
             logger.info("[DASHBOARD] Using cached stats (< 60s old)")
-            return _cached
+            return _cached_entry["data"]
         
         # PARALLEL DB CALLS — run all at once instead of sequential
         from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -13482,10 +13483,9 @@ class Context:
             "low_stock": low_stock
         }
         
-        # Cache in session
+        # Cache in-memory (not session)
         try:
-            session[_cache_key] = result
-            session[f"{_cache_key}_ts"] = _time.time()
+            app._dash_cache[_cache_key] = {"data": result, "ts": _time.time()}
         except Exception:
             pass
         
