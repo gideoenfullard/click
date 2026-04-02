@@ -143,6 +143,10 @@ def register_cashup_routes(app, db, login_required, Auth, generate_id, now, toda
 
         is_manager = user_role in ("owner", "admin", "manager")
 
+        _submitted_html = '<div style="text-align:center;padding:14px;color:var(--green);font-family:Orbitron,monospace;font-size:0.7rem;letter-spacing:2px;">✅ CASH UP SUBMITTED</div>'
+        _blind_btn_html = '<button class="action-btn primary" id="blindCashUpBtn" onclick="showPanel(\'blind\')"><span class="btn-icon">🔒</span><span class="btn-label">Blind Cash Up</span></button>'
+        _cashup_action = _submitted_html if user_already_submitted and not is_manager else _blind_btn_html
+
         _xread_btn = '''<button class="action-btn" onclick="showPanel('xread')">
             <span class="btn-icon">📊</span>
             <span class="btn-label">X-Reading</span>
@@ -667,7 +671,7 @@ select.form-input {{
 
     <div class="actions" id="actionButtons">
         {_xread_btn}
-        {'<div style="text-align:center;padding:14px;color:var(--green);font-family:Orbitron,monospace;font-size:0.7rem;letter-spacing:2px;">✅ CASH UP SUBMITTED</div>' if user_already_submitted and not is_manager else '<button class="action-btn primary" id="blindCashUpBtn" onclick="showPanel(\'blind\')"><span class="btn-icon">🔒</span><span class="btn-label">Blind Cash Up</span></button>'}
+        {_cashup_action}
     </div>
 
     <!-- X-READING PANEL (managers only) -->
