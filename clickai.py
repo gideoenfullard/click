@@ -16180,7 +16180,6 @@ class InvoiceMatch:
             
             if match:
                 txn["invoice_matched"] = True
-                txn["invoice_match"] = match
                 txn["suggested_category"] = match["category"]
                 txn["suggestion_confidence"] = match["confidence"]
                 txn["match_reference"] = match.get("reason", "")
