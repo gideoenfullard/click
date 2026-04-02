@@ -676,7 +676,8 @@ select.form-input {{
     <div class="submitted-confirmation" id="submittedConfirm" style="display:none;">
         <div class="check-icon">✅</div>
         <div class="confirm-title">Cash Up Submitted</div>
-        <div class="confirm-detail" id="confirmDetail">Your declared total has been recorded. Your manager will review the results.</div>
+        <div class="confirm-detail" id="confirmDetail">Your cash up has been recorded. Your manager will review the results.</div>
+        <button onclick="dismissSubmitted()" style="display:inline-block;padding:10px 24px;background:var(--accent);color:#000;border:none;border-radius:6px;cursor:pointer;font-weight:700;font-family:Orbitron,monospace;font-size:0.75rem;letter-spacing:2px;margin-top:12px;">OK</button>
     </div>
 
     <!-- X-READING PANEL (managers only) -->
@@ -839,6 +840,7 @@ document.addEventListener('DOMContentLoaded', () => {{
     renderHistory();
     buildXReadPerCashier();
     if (USER_ALREADY_SUBMITTED && !IS_MANAGER) {{
+        // Show brief reminder that they already submitted, but don't lock them out
         showSubmittedState();
     }}
     document.getElementById('statsRow').style.display = 'none';
@@ -941,26 +943,29 @@ function showPanel(id) {{
 }}
 
 function showSubmittedState(declaredTotal) {{
-    // Completely hide the action buttons
-    const actionsDiv = document.getElementById('actionButtons');
-    if (actionsDiv) actionsDiv.style.display = 'none';
-
     // Hide blind panel if open
     const blindPanel = document.getElementById('panel-blind');
-    if (blindPanel) blindPanel.style.display = 'none';
+    if (blindPanel) blindPanel.classList.remove('active');
     activePanel = null;
 
     // Show confirmation banner
     const confirmEl = document.getElementById('submittedConfirm');
     if (confirmEl) {{
         let detailText = 'Your cash up has been recorded. Your manager will review the results.';
-        if (declaredTotal !== undefined) {{
+        if (declaredTotal !== undefined && declaredTotal > 0) {{
             detailText = 'Your declared total: <strong>R' + declaredTotal.toFixed(2) + '</strong><br>Your manager will review the results.';
         }}
-        detailText += '<br><br><a href="/pos/history" style="display:inline-block;padding:10px 24px;background:#00d4ff;color:#000;border-radius:6px;text-decoration:none;font-weight:700;font-family:Orbitron,monospace;font-size:0.75rem;letter-spacing:2px;">GO TO HISTORY</a>';
         document.getElementById('confirmDetail').innerHTML = detailText;
         confirmEl.style.display = 'block';
+
+        // Auto-dismiss after 8 seconds
+        setTimeout(() => {{ dismissSubmitted(); }}, 8000);
     }}
+}}
+
+function dismissSubmitted() {{
+    const confirmEl = document.getElementById('submittedConfirm');
+    if (confirmEl) confirmEl.style.display = 'none';
 }}
 
 function switchTab(tab) {{
@@ -1068,6 +1073,13 @@ async function submitBlindCashUp() {{
     const cashSalesDeclared = cashCounted - floatAmt;
     const declaredTotal = cashSalesDeclared + cardDeclared + accountDeclared;
 
+    // Validation: prevent empty cashup submission
+    if (cashCounted === 0 && cardDeclared === 0 && accountDeclared === 0) {{
+        if (!confirm('You have not entered any cash, card, or account amounts.\\n\\nAre you sure you want to submit a R0.00 cash up?')) {{
+            return;
+        }}
+    }}
+
     // Use PER-CASHIER system totals (not global)
     const ct = getCashierTotals(cashierId);
     const sysCash = ct.cash;
@@ -1174,7 +1186,8 @@ async function submitBlindCashUp() {{
         `;
         document.getElementById('statsRow').style.display = '';
         document.getElementById('systemReveal').classList.add('show');
-        setTimeout(() => location.reload(), 1500);
+        // Give manager time to review discrepancy results before refreshing
+        setTimeout(() => location.reload(), 6000);
     }} else {{
         showSubmittedState(declaredTotal);
     }}
