@@ -2359,6 +2359,16 @@ def register_invoicing_routes(app, db, login_required, Auth, render_page,
             salesman_id = request.form.get("salesman_id", "")
             salesman_name_form = request.form.get("salesman_name", "")
             
+            # FAILSAFE: If customer_name is empty but customer_id is set, look it up from DB
+            if not customer_name and customer_id and customer_id not in ("", "WALKIN", "NEW"):
+                try:
+                    _cust = db.get_one("customers", customer_id)
+                    if _cust:
+                        customer_name = _cust.get("name", "")
+                        logger.info(f"[QUOTE NEW] Resolved customer name from DB: {customer_name}")
+                except:
+                    pass
+            
             items = []
             descriptions = request.form.getlist("item_desc[]")
             quantities = request.form.getlist("item_qty[]")
@@ -2521,6 +2531,23 @@ def register_invoicing_routes(app, db, login_required, Auth, render_page,
         </div>
         
         <script>
+        // FAILSAFE: Sync customer name from dropdown before form submit
+        document.addEventListener('DOMContentLoaded', function() {{
+            const form = document.getElementById('quoteForm');
+            if (form) {{
+                form.addEventListener('submit', function() {{
+                    const sel = document.getElementById('customerSelect');
+                    const nameInput = document.getElementById('customerName');
+                    // If a real customer is selected (not WALKIN/NEW/empty) and nameInput is empty, sync it
+                    if (sel && nameInput && sel.value && sel.value !== 'WALKIN' && sel.value !== 'NEW') {{
+                        if (!nameInput.value.trim()) {{
+                            nameInput.value = sel.options[sel.selectedIndex]?.dataset?.name || '';
+                        }}
+                    }}
+                }});
+            }}
+        }});
+        
         function handleCustomerChange() {{
             const sel = document.getElementById('customerSelect');
             const nameInput = document.getElementById('customerName');
@@ -3116,6 +3143,17 @@ def register_invoicing_routes(app, db, login_required, Auth, render_page,
             salesman_id = request.form.get("salesman_id", "")
             salesman_name_form = request.form.get("salesman_name", "")
             
+            # FAILSAFE: If customer_name is empty but customer_id is set, look it up from DB
+            _resolved_cid = safe_uuid(customer_id) or quote.get("customer_id")
+            if not customer_name and _resolved_cid:
+                try:
+                    _cust = db.get_one("customers", _resolved_cid)
+                    if _cust:
+                        customer_name = _cust.get("name", "")
+                        logger.info(f"[QUOTE EDIT] Resolved customer name from DB: {customer_name}")
+                except:
+                    pass
+            
             items = []
             descriptions = request.form.getlist("item_desc[]")
             quantities = request.form.getlist("item_qty[]")
@@ -3192,8 +3230,10 @@ def register_invoicing_routes(app, db, login_required, Auth, render_page,
             sel = "selected" if c.get("id") == existing_customer_id else ""
             customer_options += f'<option value="{c.get("id")}" data-name="{safe_string(c.get("name", ""))}" {sel}>{safe_string(c.get("name", ""))}</option>'
         
-        # If customer not found in list (walk-in), show name
+        # If customer not found in list (walk-in), show name input visibly
+        # ALWAYS pre-populate the customer_name hidden input with existing name as failsafe
         walkin_name_display = ""
+        customer_name_prefill = existing_customer_name  # Always prefill for hidden input
         if existing_customer_name and not existing_customer_id:
             walkin_name_display = existing_customer_name
         
@@ -3262,7 +3302,7 @@ def register_invoicing_routes(app, db, login_required, Auth, render_page,
                         <select name="customer_id" id="customerSelect" onchange="handleCustomerChange()" style="width:100%;padding:10px;border-radius:6px;border:1px solid var(--border);background:var(--card);color:var(--text);">
                             {customer_options}
                         </select>
-                        <input type="text" name="customer_name" id="customerName" placeholder="Type walk-in customer name" value="{safe_string(walkin_name_display)}" style="{"display:block" if walkin_name_display else "display:none"};width:100%;padding:10px;border-radius:6px;border:1px solid var(--border);background:var(--card);color:var(--text);margin-top:6px;">
+                        <input type="text" name="customer_name" id="customerName" placeholder="Type walk-in customer name" value="{safe_string(customer_name_prefill)}" style="{"display:block" if walkin_name_display else "display:none"};width:100%;padding:10px;border-radius:6px;border:1px solid var(--border);background:var(--card);color:var(--text);margin-top:6px;">
                     </div>
                     <div>
                         <label>Salesman</label>
@@ -3311,6 +3351,22 @@ def register_invoicing_routes(app, db, login_required, Auth, render_page,
         </div>
         
         <script>
+        // FAILSAFE: Sync customer name from dropdown before form submit
+        document.addEventListener('DOMContentLoaded', function() {{
+            const form = document.getElementById('quoteForm');
+            if (form) {{
+                form.addEventListener('submit', function() {{
+                    const sel = document.getElementById('customerSelect');
+                    const nameInput = document.getElementById('customerName');
+                    if (sel && nameInput && sel.value && sel.value !== 'WALKIN' && sel.value !== 'NEW') {{
+                        if (!nameInput.value.trim()) {{
+                            nameInput.value = sel.options[sel.selectedIndex]?.dataset?.name || '';
+                        }}
+                    }}
+                }});
+            }}
+        }});
+        
         function handleCustomerChange() {{
             const sel = document.getElementById('customerSelect');
             const nameInput = document.getElementById('customerName');
