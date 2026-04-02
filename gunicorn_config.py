@@ -14,8 +14,8 @@ workers = int(os.environ.get("WEB_CONCURRENCY", "3"))
 # Threads per worker (good for I/O-bound work like API calls)
 threads = 2
 
-# Timeout: 120s to handle Sonnet API calls (they can take 30-60s)
-timeout = 120
+# Timeout: 300s to handle PDF bank imports + Claude API calls
+timeout = 300
 
 # Graceful timeout for shutdown
 graceful_timeout = 30

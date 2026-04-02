@@ -1108,6 +1108,7 @@ def register_banking_routes(app, db, login_required, Auth, render_page,
                 return jsonify({"success": False, "error": "No file uploaded"})
             
             filename = file.filename.lower()
+            logger.info(f"[BANK IMPORT] === START === File: {filename}, Size: {request.content_length or 'unknown'} bytes")
             
             # ═══════════════════════════════════════════════════════════════
             # PDF PARSING - Standard Bank, ABSA, FNB, Nedbank, Capitec
