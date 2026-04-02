@@ -5282,6 +5282,18 @@ def register_pos_routes(app, db, login_required, Auth, render_page,
         today_cash_invoices = sum(float(i.get("total", 0)) for i in all_invoices 
                                  if i.get("payment_method") in ("cash",) and (i.get("date") or "") == today_str)
         expected_cash_drawer = today_cash_sales + today_cash_invoices
+
+        # === TODAY-ONLY TOTALS FOR Z-READ SLIP (never use date-range totals) ===
+        today_sales = [s for s in all_sales if (s.get("date") or "") == today_str]
+        zr_cash = sum(float(s.get("total", 0)) for s in today_sales if s.get("payment_method") == "cash")
+        zr_card = sum(float(s.get("total", 0)) for s in today_sales if s.get("payment_method") == "card")
+        zr_account = sum(float(s.get("total", 0)) for s in today_sales if s.get("payment_method") == "account")
+        zr_total = zr_cash + zr_card + zr_account
+        zr_count = len(today_sales)
+        today_invoices = [i for i in all_invoices if (i.get("date") or "") == today_str]
+        zr_inv_cash = sum(float(i.get("total", 0)) for i in today_invoices if i.get("payment_method") == "cash")
+        zr_inv_card = sum(float(i.get("total", 0)) for i in today_invoices if i.get("payment_method") == "card")
+        zr_inv_eft = sum(float(i.get("total", 0)) for i in today_invoices if i.get("payment_method") == "eft")
         
         # Build transaction rows
         rows = ""
@@ -5436,17 +5448,17 @@ def register_pos_routes(app, db, login_required, Auth, render_page,
                 <input type="date" id="dateTo" value="{date_to}" style="padding:8px 12px;border-radius:6px;border:1px solid var(--border);background:var(--card);color:var(--text);">'''
             zread_buttons_html = '<a href="/cashup" class="btn btn-secondary" style="text-decoration:none;">Blind Cash Up</a><button onclick="printXRead()" class="btn btn-secondary">X-Read</button><button onclick="printZRead()" class="btn btn-primary">Z-Read (Close Day)</button>'
         
-        # Pre-build Z-read invoice section (avoids nested f-strings in JS template)
+        # Pre-build Z-read invoice section — ALWAYS uses today-only totals
         _zr_inv_section = ""
-        if inv_cash_total or inv_card_total or inv_eft_total:
-            _zr_inv_rows = f'<tr><td>Cash Invoices:</td><td style="text-align:right;">{money(inv_cash_total)}</td></tr>'
-            if inv_card_total:
-                _zr_inv_rows += f'<tr><td>Card Invoices:</td><td style="text-align:right;">{money(inv_card_total)}</td></tr>'
-            if inv_eft_total:
-                _zr_inv_rows += f'<tr><td>EFT Invoices:</td><td style="text-align:right;">{money(inv_eft_total)}</td></tr>'
+        if zr_inv_cash or zr_inv_card or zr_inv_eft:
+            _zr_inv_rows = f'<tr><td>Cash Invoices:</td><td style="text-align:right;">{money(zr_inv_cash)}</td></tr>'
+            if zr_inv_card:
+                _zr_inv_rows += f'<tr><td>Card Invoices:</td><td style="text-align:right;">{money(zr_inv_card)}</td></tr>'
+            if zr_inv_eft:
+                _zr_inv_rows += f'<tr><td>EFT Invoices:</td><td style="text-align:right;">{money(zr_inv_eft)}</td></tr>'
             _zr_inv_section = f'<hr style="border:1px dashed #000;margin:12px 0;"><div style="margin-bottom:8px;"><strong>INVOICES (Cash Paid)</strong></div><table style="width:100%;border-collapse:collapse;">{_zr_inv_rows}</table>'
         
-        _zr_cash_inv_row = f'<tr><td style="font-size:12px;">+ Cash Invoices:</td><td style="text-align:right;font-size:12px;">{money(inv_cash_total)}</td></tr>' if inv_cash_total else ''
+        _zr_cash_inv_row = f'<tr><td style="font-size:12px;">+ Cash Invoices:</td><td style="text-align:right;font-size:12px;">{money(zr_inv_cash)}</td></tr>' if zr_inv_cash else ''
         
         content = f'''
         <div class="card">
@@ -5823,11 +5835,11 @@ def register_pos_routes(app, db, login_required, Auth, render_page,
     <strong>POS SALES</strong>
     </div>
     <table style="width:100%;border-collapse:collapse;">
-    <tr><td>Cash (POS):</td><td style="text-align:right;">{money(cash_total)}</td></tr>
-    <tr><td>Card (POS):</td><td style="text-align:right;">{money(card_total)}</td></tr>
-    <tr><td>Account (POS):</td><td style="text-align:right;">{money(account_total)}</td></tr>
-    <tr style="font-weight:bold;border-top:1px solid #000;"><td>POS Total:</td><td style="text-align:right;">{money(grand_total)}</td></tr>
-    <tr><td style="font-size:11px;">Transactions:</td><td style="text-align:right;font-size:11px;">{transaction_count}</td></tr>
+    <tr><td>Cash (POS):</td><td style="text-align:right;">{money(zr_cash)}</td></tr>
+    <tr><td>Card (POS):</td><td style="text-align:right;">{money(zr_card)}</td></tr>
+    <tr><td>Account (POS):</td><td style="text-align:right;">{money(zr_account)}</td></tr>
+    <tr style="font-weight:bold;border-top:1px solid #000;"><td>POS Total:</td><td style="text-align:right;">{money(zr_total)}</td></tr>
+    <tr><td style="font-size:11px;">Transactions:</td><td style="text-align:right;font-size:11px;">{zr_count}</td></tr>
     </table>
     {_zr_inv_section}
     <hr style="border:2px solid #000;margin:15px 0;">
@@ -5835,7 +5847,7 @@ def register_pos_routes(app, db, login_required, Auth, render_page,
     <strong>CASH IN DRAWER (Expected)</strong>
     </div>
     <table style="width:100%;border-collapse:collapse;">
-    <tr><td style="font-size:12px;">POS Cash Sales:</td><td style="text-align:right;font-size:12px;">{money(cash_total)}</td></tr>
+    <tr><td style="font-size:12px;">POS Cash Sales:</td><td style="text-align:right;font-size:12px;">{money(zr_cash)}</td></tr>
     {_zr_cash_inv_row}
     <tr style="font-size:18px;font-weight:bold;border-top:1px solid #000;">
     <td>EXPECTED CASH:</td>
@@ -5895,11 +5907,11 @@ def register_pos_routes(app, db, login_required, Auth, render_page,
                     headers: {{ 'Content-Type': 'application/json' }},
                     body: JSON.stringify({{
                         type: 'z_reading',
-                        system_cash: {cash_total},
-                        system_card: {card_total},
-                        system_account: {account_total},
-                        system_total: {grand_total},
-                        sale_count: {transaction_count},
+                        system_cash: {zr_cash},
+                        system_card: {zr_card},
+                        system_account: {zr_account},
+                        system_total: {zr_total},
+                        sale_count: {zr_count},
                         cash_counted: countedNum,
                         cash_difference: diffNum,
                         cash_status: status
