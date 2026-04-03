@@ -727,16 +727,10 @@ def register_banking_routes(app, db, login_required, Auth, render_page,
             btn.innerHTML = isPDF ? '🤖 AI Reading PDF... (1-3 min)' : '⏳ Importing...';
             
             try {{
-                // 5 minute timeout to prevent hanging forever
-                const controller = new AbortController();
-                const timeout = setTimeout(() => controller.abort(), 300000);
-                
                 const response = await fetch('/api/banking/import', {{
                     method: 'POST',
-                    body: formData,
-                    signal: controller.signal
+                    body: formData
                 }});
-                clearTimeout(timeout);
                 
                 const data = await response.json();
                 
@@ -751,11 +745,7 @@ def register_banking_routes(app, db, login_required, Auth, render_page,
                     alert('❌ ' + data.error);
                 }}
             }} catch (err) {{
-                if (err.name === 'AbortError') {{
-                    alert('⏰ Import is taking too long. Refresh the page — your transactions may still be importing in the background.');
-                }} else {{
-                    alert('❌ Upload failed: ' + (err.message || 'Unknown error'));
-                }}
+                alert('❌ Upload failed');
             }} finally {{
                 btn.innerHTML = originalText;
             }}
@@ -1327,7 +1317,7 @@ def register_banking_routes(app, db, login_required, Auth, render_page,
                                 raw_date = date_match.group(1)
                                 tx_date = f"{raw_date[:4]}-{raw_date[4:6]}-{raw_date[6:8]}"
                                 
-                                # Validate date is real (e.g. reject 2026-02-29 in non-leap year)
+                                # Validate date is real (e.g. reject 2026-02-29)
                                 try:
                                     datetime.strptime(tx_date, "%Y-%m-%d")
                                 except ValueError:
@@ -1512,16 +1502,73 @@ def register_banking_routes(app, db, login_required, Auth, render_page,
             
             logger.info(f"[BANK IMPORT] Dedup: {len(existing_fingerprints)} existing fingerprints loaded")
             
+            # ═══════════════════════════════════════════════════════════════
+            # PRE-CACHE: Load all bank patterns ONCE instead of per-transaction
+            # ═══════════════════════════════════════════════════════════════
+            _cached_patterns = []
+            try:
+                _cached_patterns = db.get("bank_patterns", {"business_id": biz_id}) or []
+                logger.info(f"[BANK IMPORT] Cached {len(_cached_patterns)} bank patterns for matching")
+            except Exception:
+                pass
+            
+            def _fast_pattern_match(description):
+                """Match against cached patterns — NO DB calls"""
+                normalized = description.upper().strip()
+                # Remove common prefixes
+                for prefix in ['ELECTRONIC BANKING PAYMENT TO ', 'ELECTRONIC BANKING PAYMENT FR ', 
+                              'CREDIT TRANSFER ', 'DEBIT TRANSFER ', 'CREDIT CARD EFTPOS SETTLEMENT ',
+                              'IB PAYMENT FROM ', 'MAGTAPE CREDIT ', 'INTERBANK CREDIT TRANSFER ']:
+                    if normalized.startswith(prefix):
+                        normalized = normalized[len(prefix):]
+                        break
+                import re as _re
+                normalized = _re.sub(r'\b(ERY|CR EFTPOS|DR EFTPOS)\s*\d+[:\s]*\d*', '', normalized).strip()
+                normalized = _re.sub(r'\s+', ' ', normalized).strip()[:80]
+                
+                if not normalized:
+                    return {"category": None, "confidence": 0}
+                
+                # Exact match
+                for p in _cached_patterns:
+                    if p.get("pattern", "") == normalized:
+                        return {
+                            "category": p.get("category"),
+                            "confidence": p.get("confidence", 0.5),
+                        }
+                
+                # Partial match (80%+ word overlap)
+                norm_words = set(normalized.split())
+                if len(norm_words) >= 3:
+                    for p in _cached_patterns:
+                        known = p.get("pattern", "")
+                        known_words = set(known.split())
+                        if len(known_words) < 3:
+                            continue
+                        common = norm_words & known_words
+                        ratio = len(common) / max(len(known_words), len(norm_words))
+                        if ratio >= 0.8:
+                            return {
+                                "category": p.get("category"),
+                                "confidence": p.get("confidence", 0.5) * 0.8,
+                            }
+                
+                return {"category": None, "confidence": 0}
+            
+            # ═══════════════════════════════════════════════════════════════
+            # PROCESS ROWS — build list first, then batch save
+            # ═══════════════════════════════════════════════════════════════
+            txns_to_save = []
+            
             for row in data_rows:
                 try:
                     txn_date = row[date_col] if date_col is not None else today()
                     description = row[desc_col] if desc_col is not None else ""
                     
-                    # Validate date — fix invalid dates like Feb 29 in non-leap years
+                    # Validate date — skip invalid dates like Feb 29 in non-leap years
                     try:
                         datetime.strptime(str(txn_date)[:10], "%Y-%m-%d")
                     except (ValueError, TypeError):
-                        logger.warning(f"[BANK IMPORT] Invalid date '{txn_date}', skipping row")
                         continue
                     
                     # Validate date before saving — fix invalid dates (e.g. Feb 29 non-leap year)
@@ -1629,9 +1676,9 @@ def register_banking_routes(app, db, login_required, Auth, render_page,
                                 suggested += 1
                                 break
                     
-                    # 4. TRY: Check learned patterns
+                    # 4. TRY: Check learned patterns (CACHED — no DB calls)
                     if not match_type:
-                        pattern_match = BankLearning.suggest_category(biz_id, description)
+                        pattern_match = _fast_pattern_match(description)
                         if pattern_match.get("confidence", 0) > 0.5:
                             match_type = "learned_pattern"
                             match_category = pattern_match.get("category")
@@ -1658,26 +1705,30 @@ def register_banking_routes(app, db, login_required, Auth, render_page,
                         "created_at": now()
                     }
                     
-                    db.save("bank_transactions", txn)
+                    txns_to_save.append(txn)
                     imported += 1
                     
                 except Exception as row_err:
                     logger.warning(f"[BANK] Row error: {row_err}")
                     continue
             
-            # Run invoice matching on imported transactions (was previously on every page load)
-            try:
-                all_txns = db.get("bank_transactions", {"business_id": biz_id}) or []
-                unmatched = [t for t in all_txns if not t.get("matched") and not t.get("invoice_matched")]
-                if unmatched:
-                    InvoiceMatch.match_all_transactions(biz_id, unmatched)
-                    # Save matched results
-                    for t in unmatched:
-                        if t.get("invoice_matched"):
-                            db.save("bank_transactions", t)
-                    logger.info(f"[BANK IMPORT] Invoice matching completed on {len(unmatched)} transactions")
-            except Exception as match_err:
-                logger.warning(f"[BANK IMPORT] Invoice matching failed (non-critical): {match_err}")
+            # ═══════════════════════════════════════════════════════════════
+            # BATCH SAVE — save all transactions at once
+            # ═══════════════════════════════════════════════════════════════
+            logger.info(f"[BANK IMPORT] Saving {len(txns_to_save)} transactions...")
+            save_errors = 0
+            for txn in txns_to_save:
+                try:
+                    db.save("bank_transactions", txn)
+                except Exception as save_err:
+                    save_errors += 1
+                    if save_errors <= 3:
+                        logger.warning(f"[BANK] Save error: {save_err}")
+            if save_errors > 0:
+                logger.warning(f"[BANK IMPORT] {save_errors} save errors out of {len(txns_to_save)}")
+            
+            # Invoice matching skipped during import for speed — runs on-demand via Zane
+            logger.info(f"[BANK IMPORT] Skipping invoice matching during import (will run on-demand)")
             
             needs_attention = imported - auto_matched - suggested
             
