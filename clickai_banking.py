@@ -727,10 +727,16 @@ def register_banking_routes(app, db, login_required, Auth, render_page,
             btn.innerHTML = isPDF ? '🤖 AI Reading PDF... (1-3 min)' : '⏳ Importing...';
             
             try {{
+                // 5 minute timeout to prevent hanging forever
+                const controller = new AbortController();
+                const timeout = setTimeout(() => controller.abort(), 300000);
+                
                 const response = await fetch('/api/banking/import', {{
                     method: 'POST',
-                    body: formData
+                    body: formData,
+                    signal: controller.signal
                 }});
+                clearTimeout(timeout);
                 
                 const data = await response.json();
                 
@@ -745,7 +751,11 @@ def register_banking_routes(app, db, login_required, Auth, render_page,
                     alert('❌ ' + data.error);
                 }}
             }} catch (err) {{
-                alert('❌ Upload failed');
+                if (err.name === 'AbortError') {{
+                    alert('⏰ Import is taking too long. Refresh the page — your transactions may still be importing in the background.');
+                }} else {{
+                    alert('❌ Upload failed: ' + (err.message || 'Unknown error'));
+                }}
             }} finally {{
                 btn.innerHTML = originalText;
             }}
@@ -1317,6 +1327,13 @@ def register_banking_routes(app, db, login_required, Auth, render_page,
                                 raw_date = date_match.group(1)
                                 tx_date = f"{raw_date[:4]}-{raw_date[4:6]}-{raw_date[6:8]}"
                                 
+                                # Validate date is real (e.g. reject 2026-02-29 in non-leap year)
+                                try:
+                                    datetime.strptime(tx_date, "%Y-%m-%d")
+                                except ValueError:
+                                    i += 1
+                                    continue
+                                
                                 # Validate date is real (e.g. reject 2026-02-29)
                                 try:
                                     datetime.strptime(tx_date, "%Y-%m-%d")
@@ -1499,6 +1516,13 @@ def register_banking_routes(app, db, login_required, Auth, render_page,
                 try:
                     txn_date = row[date_col] if date_col is not None else today()
                     description = row[desc_col] if desc_col is not None else ""
+                    
+                    # Validate date — fix invalid dates like Feb 29 in non-leap years
+                    try:
+                        datetime.strptime(str(txn_date)[:10], "%Y-%m-%d")
+                    except (ValueError, TypeError):
+                        logger.warning(f"[BANK IMPORT] Invalid date '{txn_date}', skipping row")
+                        continue
                     
                     # Validate date before saving — fix invalid dates (e.g. Feb 29 non-leap year)
                     try:
