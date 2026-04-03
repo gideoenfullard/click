@@ -20374,7 +20374,12 @@ def render_page(title: str, content: str, user: dict = None, active: str = "") -
         toast.className = 'clickai-toast toast-' + type;
         toast.innerHTML = '<span class="toast-icon">' + (icons[type]||'') + '</span>'
             + '<span class="toast-msg">' + message + '</span>'
-            + '<button class="toast-close" onclick="this.parentElement.classList.add(\'toast-out\');setTimeout(function(){{this.parentElement.remove()}}.bind(this),250)">&times;</button>';
+            + '<button class="toast-close">&times;</button>';
+        toast.querySelector('.toast-close').addEventListener('click', function() {{
+            this.parentElement.classList.add('toast-out');
+            var el = this.parentElement;
+            setTimeout(function(){{ el.remove(); }}, 250);
+        }});
         container.appendChild(toast);
         var _t = toast;
         setTimeout(function(){{ _t.classList.add('toast-out'); setTimeout(function(){{ _t.remove(); }}, 250); }}, duration);
