@@ -111,7 +111,7 @@ def register_banking_routes(app, db, login_required, Auth, render_page,
                     suggestion_html += f'<div style="font-size:10px;color:var(--text-muted);">{match_ref}</div>'
             # Action buttons
             txn_date = txn.get("date", "")
-            safe_desc = desc.replace("'", "\\'").replace('"', '&quot;')
+            safe_desc = desc  # Already escaped by safe_string (HTML entities for quotes, backticks, backslashes)
             if show_approve and suggested_cat and confidence >= 0.6:
                 action_html = f'''
                 <div style="display:flex;gap:5px;flex-wrap:wrap;align-items:center;">
@@ -367,6 +367,12 @@ def register_banking_routes(app, db, login_required, Auth, render_page,
         </div>
         
         <script>
+        // Safe escape for user data injected into JS strings/template literals
+        function _safeJS(s) {{
+            if (!s) return '';
+            return String(s).replace(/\\/g,'\\\\').replace(/'/g,"\\'").replace(/`/g,'\\`').replace(/"/g,'&quot;').replace(/</g,'&lt;').replace(/\n/g,' ');
+        }}
+        
         function showTab(tab) {{
             // Hide all sections
             document.querySelectorAll('.recon-section').forEach(s => s.classList.remove('active'));
@@ -460,7 +466,7 @@ def register_banking_routes(app, db, login_required, Auth, render_page,
                 // Zane asks with clickable plain-language options
                 if (data.success && data.needs_clarification && data.options) {{
                     let optionsHtml = '';
-                    const safeDesc = description.replace(/'/g, "\\\\'");
+                    const safeDesc = _safeJS(description);
                     data.options.forEach(opt => {{
                         if (opt.value === 'manual') {{
                             // "None of these" -> show full dropdown
@@ -515,29 +521,29 @@ def register_banking_routes(app, db, login_required, Auth, render_page,
                             splits: data.matched_splits || []
                         }};
                         actionButtons = `
-                            <button onclick="openSplitWithMatch('${{txnId}}', '${{description.replace(/'/g, "\\\\'")}}', ${{debit}}, ${{credit}}, '${{date}}')" 
+                            <button onclick="openSplitWithMatch('${{txnId}}', '${{_safeJS(description)}}', ${{debit}}, ${{credit}}, '${{date}}')" 
                                     style="padding:7px 16px;font-size:12px;background:#f59e0b;border:none;color:black;border-radius:6px;cursor:pointer;font-weight:600;">
-                                ✂️ Gebruik Split
+                                ✂️ Use Split
                             </button>
-                            <button onclick="categorizeTransaction('${{txnId}}', '${{data.category}}', '${{description.replace(/'/g, "\\\\'")}}')" 
+                            <button onclick="categorizeTransaction('${{txnId}}', '${{data.category}}', '${{_safeJS(description)}}')" 
                                     style="padding:7px 16px;font-size:12px;background:var(--green);border:none;color:white;border-radius:6px;cursor:pointer;font-weight:600;">
-                                As een boek
+                                Book as one
                             </button>
-                            <button onclick="showAllCategories('${{txnId}}', '${{description.replace(/'/g, "\\\\'")}}')" 
+                            <button onclick="showAllCategories('${{txnId}}', '${{_safeJS(description)}}')" 
                                     style="padding:7px 16px;font-size:12px;background:var(--card);border:1px solid var(--border);color:var(--text);border-radius:6px;cursor:pointer;">
-                                Ander
+                                Other
                             </button>`;
                     }} else {{
                         actionButtons = `
-                            <button onclick="categorizeTransaction('${{txnId}}', '${{data.category}}', '${{description.replace(/'/g, "\\\\'")}}')" 
+                            <button onclick="categorizeTransaction('${{txnId}}', '${{data.category}}', '${{_safeJS(description)}}')" 
                                     style="padding:7px 16px;font-size:12px;background:var(--green);border:none;color:white;border-radius:6px;cursor:pointer;font-weight:600;">
                                 Yes, Allocate
                             </button>
-                            <button onclick="openSplitModal('${{txnId}}', '${{description.replace(/'/g, "\\\\'")}}', ${{debit}}, ${{credit}}, '${{date}}')" 
+                            <button onclick="openSplitModal('${{txnId}}', '${{_safeJS(description)}}', ${{debit}}, ${{credit}}, '${{date}}')" 
                                     style="padding:7px 16px;font-size:12px;background:rgba(245,158,11,0.2);border:1px solid #f59e0b;color:#f59e0b;border-radius:6px;cursor:pointer;">
                                 Split
                             </button>
-                            <button onclick="showAllCategories('${{txnId}}', '${{description.replace(/'/g, "\\\\'")}}')" 
+                            <button onclick="showAllCategories('${{txnId}}', '${{_safeJS(description)}}')" 
                                     style="padding:7px 16px;font-size:12px;background:var(--card);border:1px solid var(--border);color:var(--text);border-radius:6px;cursor:pointer;">
                                 Different category
                             </button>`;
@@ -545,7 +551,7 @@ def register_banking_routes(app, db, login_required, Auth, render_page,
                     
                     actionCell.innerHTML = `
                         <div style="background:rgba(139,92,246,0.08);border:1px solid rgba(139,92,246,0.25);border-radius:10px;padding:12px;min-width:260px;position:relative;">
-                            <button onclick="resetAskZane('${{txnId}}', '${{description.replace(/'/g, "\\\\'")}}', ${{debit}}, ${{credit}}, '${{date}}')" 
+                            <button onclick="resetAskZane('${{txnId}}', '${{_safeJS(description)}}', ${{debit}}, ${{credit}}, '${{date}}')" 
                                     style="position:absolute;top:6px;right:8px;background:none;border:none;color:var(--text-muted);cursor:pointer;font-size:16px;padding:2px 6px;border-radius:4px;line-height:1;" 
                                     title="Close">✕</button>
                             <div style="font-size:11px;color:var(--text-muted);margin-bottom:6px;">${{confText}}${{learnedBadge}}</div>
@@ -562,7 +568,7 @@ def register_banking_routes(app, db, login_required, Auth, render_page,
                 }}
                 
             }} catch (err) {{
-                const safeDesc = description.replace(/'/g, "\\'");
+                const safeDesc = _safeJS(description);
                 actionCell.innerHTML = `<div style="color:var(--red);font-size:12px;position:relative;padding-right:22px;">
                     <button onclick="resetAskZane('${{txnId}}', '${{safeDesc}}', ${{debit}}, ${{credit}}, '${{date}}')" 
                             style="position:absolute;top:-2px;right:0;background:none;border:none;color:var(--text-muted);cursor:pointer;font-size:14px;line-height:1;" title="Close">✕</button>
@@ -576,7 +582,7 @@ def register_banking_routes(app, db, login_required, Auth, render_page,
             const actionCell = row ? row.querySelectorAll('td')[row.querySelectorAll('td').length - 1] : null;
             if (!actionCell) return;
             
-            const safeDesc = description.replace(/'/g, "\\'");
+            const safeDesc = _safeJS(description);
             const catOptions = (window._allCategories || []).map(c => `<option value="${{c}}">${{c}}</option>`).join('');
             actionCell.innerHTML = `
                 <div style="display:flex;gap:5px;flex-wrap:wrap;align-items:center;">
@@ -594,7 +600,7 @@ def register_banking_routes(app, db, login_required, Auth, render_page,
             if (!actionCell) return;
             
             if (!cats || !cats.length) cats = window._allCategories || [];
-            const safeDesc = description.replace(/'/g, "\\\\'");
+            const safeDesc = _safeJS(description);
             const uid = 'sc_' + txnId;
             
             // Get debit/credit from the row for resetAskZane
@@ -628,7 +634,7 @@ def register_banking_routes(app, db, login_required, Auth, render_page,
             const listEl = document.getElementById(uid + '_list');
             if (!listEl) return;
             listEl.innerHTML = cats.map(c => 
-                `<div onclick="categorizeTransaction('${{txnId}}', '${{c.replace(/'/g, "\\\\'")}}', '${{safeDesc}}')" 
+                `<div onclick="categorizeTransaction('${{txnId}}', '${{_safeJS(c)}}', '${{safeDesc}}')" 
                       style="padding:8px 12px;cursor:pointer;font-size:13px;border-bottom:1px solid var(--border);color:var(--text);transition:background 0.15s;"
                       onmouseover="this.style.background='rgba(139,92,246,0.15)'" 
                       onmouseout="this.style.background='transparent'">${{c}}</div>`
@@ -643,7 +649,7 @@ def register_banking_routes(app, db, login_required, Auth, render_page,
             const txnId = uid.replace('sc_', '');
             const row = document.querySelector(`tr[data-id="${{txnId}}"]`);
             const desc = row?.querySelector('td:nth-child(2)')?.textContent?.trim() || '';
-            renderCatList(uid, filtered, txnId, desc.replace(/'/g, "\\\\'"));
+            renderCatList(uid, filtered, txnId, _safeJS(desc));
         }}
         
         function showAllCategories(txnId, description, categoriesFromApi, message) {{
@@ -902,18 +908,18 @@ def register_banking_routes(app, db, login_required, Auth, render_page,
             
             if (Math.abs(diff) < 0.01 && lines.length >= 2) {{
                 el.className = 'split-balance balanced';
-                el.innerHTML = `✅ Gebalanseer — R${{total.toFixed(2)}} van R${{_splitTotalAmount.toFixed(2)}}`;
+                el.innerHTML = `✅ Balanced — R${{total.toFixed(2)}} of R${{_splitTotalAmount.toFixed(2)}}`;
                 btn.disabled = false;
                 btn.style.opacity = '1';
             }} else {{
                 el.className = 'split-balance unbalanced';
                 const diffAbs = Math.abs(diff).toFixed(2);
                 if (lines.length < 2) {{
-                    el.innerHTML = `⚠️ Minimum 2 lyne nodig`;
+                    el.innerHTML = `⚠️ Minimum 2 lines required`;
                 }} else if (diff > 0) {{
-                    el.innerHTML = `⚠️ Nog R${{diffAbs}} oor om te verdeel (totaal: R${{_splitTotalAmount.toFixed(2)}})`;
+                    el.innerHTML = `⚠️ R${{diffAbs}} remaining to allocate (total: R${{_splitTotalAmount.toFixed(2)}})`;
                 }} else {{
-                    el.innerHTML = `❌ R${{diffAbs}} te veel — verminder bedrae (totaal: R${{_splitTotalAmount.toFixed(2)}})`;
+                    el.innerHTML = `❌ R${{diffAbs}} over — reduce amounts (total: R${{_splitTotalAmount.toFixed(2)}})`;
                 }}
                 btn.disabled = true;
                 btn.style.opacity = '0.5';
@@ -996,7 +1002,7 @@ def register_banking_routes(app, db, login_required, Auth, render_page,
                     
                     // Show matched badge
                     const container = document.getElementById('splitMatchedExpense');
-                    container.innerHTML = `<div class="split-matched-badge">🔗 Splits van gescande slip gebruik</div>`;
+                    container.innerHTML = `<div class="split-matched-badge">🔗 Splits from scanned receipt applied</div>`;
                     container.style.display = 'block';
                     
                     updateSplitBalance();
@@ -1007,7 +1013,7 @@ def register_banking_routes(app, db, login_required, Auth, render_page,
         
         async function saveSplitAllocation() {{
             const lines = getSplitLines();
-            if (lines.length < 2) {{ alert('Minimum 2 lyne nodig'); return; }}
+            if (lines.length < 2) {{ alert('Minimum 2 lines required'); return; }}
             
             const total = lines.reduce((s, l) => s + l.amount, 0);
             if (Math.abs(total - _splitTotalAmount) > 0.01) {{

@@ -2137,10 +2137,16 @@ def safe_string(s: Any, max_len: int = 1000) -> str:
     if s is None:
         return ""
     text = str(s)[:max_len]
+    # Escape backslashes FIRST (before adding any new ones)
+    text = text.replace("\\", "&#92;")
     # Escape HTML special chars
     text = text.replace("<", "&lt;").replace(">", "&gt;").replace('"', "&quot;")
     # Escape single quotes for JavaScript onclick handlers
     text = text.replace("'", "&#39;")
+    # Escape backticks to prevent JS template literal injection
+    text = text.replace("`", "&#96;")
+    # Escape newlines/tabs that could break JS strings
+    text = text.replace("\n", " ").replace("\r", " ").replace("\t", " ")
     return text
 
 def format_extra_data(data) -> str:
