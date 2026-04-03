@@ -6,13 +6,8 @@
 # Contains: Banking page, Bank import, Categorize, Zane suggest, Delete all
 # ==============================================================================
 
-import os
-import re
-import io
-import csv
 import json
 import logging
-import requests
 from datetime import datetime, timedelta
 from decimal import Decimal
 from flask import request, jsonify, session, redirect, flash
@@ -53,7 +48,7 @@ def register_banking_routes(app, db, login_required, Auth, render_page,
         already_done = [t for t in all_transactions if t.get("matched")]
         
         # Get expense categories
-        expense_categories = IndustryKnowledge.get_expense_categories(biz_id) if biz_id else ["Sundry Expenses"]
+        expense_categories = IndustryKnowledge.get_expense_categories(biz_id) if biz_id else ["General Expenses"]
         category_options = "".join([f'<option value="{c}">{c}</option>' for c in expense_categories])
         
         # Add common categories
@@ -61,13 +56,6 @@ def register_banking_routes(app, db, login_required, Auth, render_page,
         for cat in extra_cats:
             if cat not in expense_categories:
                 category_options += f'<option value="{cat}">{cat}</option>'
-        
-        # JSON list for split modal JS
-        all_cats_for_split = list(expense_categories)
-        for cat in extra_cats:
-            if cat not in all_cats_for_split:
-                all_cats_for_split.append(cat)
-        json_cat_list = json.dumps(all_cats_for_split)
         
         # Stats
         total_count = len(all_transactions)
@@ -111,20 +99,18 @@ def register_banking_routes(app, db, login_required, Auth, render_page,
                     suggestion_html += f'<div style="font-size:10px;color:var(--text-muted);">{match_ref}</div>'
             # Action buttons
             txn_date = txn.get("date", "")
-            safe_desc = desc  # Already escaped by safe_string (HTML entities for quotes, backticks, backslashes)
+            safe_desc = desc.replace("'", "\\'").replace('"', '&quot;')
             if show_approve and suggested_cat and confidence >= 0.6:
                 action_html = f'''
                 <div style="display:flex;gap:5px;flex-wrap:wrap;align-items:center;">
                     <button onclick="approveMatch('{txn_id}', '{suggested_cat}')" class="btn" style="padding:5px 10px;font-size:11px;background:var(--green);border:none;color:white;border-radius:6px;">GOOD: {suggested_cat}</button>
                     <button onclick="askZaneBank('{txn_id}', '{safe_desc}', {debit}, {credit}, '{txn_date}')" class="btn" style="padding:5px 10px;font-size:11px;background:var(--primary);border:none;color:white;border-radius:6px;">Ask Zane</button>
-                    <button onclick="openSplitModal('{txn_id}', '{safe_desc}', {debit}, {credit}, '{txn_date}')" class="btn" style="padding:5px 10px;font-size:11px;background:rgba(245,158,11,0.2);border:1px solid #f59e0b;color:#f59e0b;border-radius:6px;" title="Split into multiple categories">Split</button>
                 </div>
                 '''
             else:
                 action_html = f'''
                 <div style="display:flex;gap:5px;flex-wrap:wrap;align-items:center;">
                     <button onclick="askZaneBank('{txn_id}', '{safe_desc}', {debit}, {credit}, '{txn_date}')" class="btn" style="padding:7px 14px;font-size:12px;background:var(--primary);border:none;color:white;border-radius:6px;font-weight:600;">Ask Zane</button>
-                    <button onclick="openSplitModal('{txn_id}', '{safe_desc}', {debit}, {credit}, '{txn_date}')" class="btn" style="padding:7px 14px;font-size:12px;background:rgba(245,158,11,0.2);border:1px solid #f59e0b;color:#f59e0b;border-radius:6px;" title="Split into multiple categories">Split</button>
                     <select class="form-input" style="width:120px;padding:4px;font-size:11px;" onchange="categorizeTransaction('{txn_id}', this.value, '{safe_desc}')">
                         <option value="">Manual...</option>
                         {category_options}
@@ -159,27 +145,13 @@ def register_banking_routes(app, db, login_required, Auth, render_page,
             desc = safe_string(t.get("description", "-"))
             cat = t.get("category", t.get("suggested_category", ""))
             matched_at = str(t.get("matched_at", ""))[:10]
-            is_split = t.get("is_split", False)
-            split_cats = t.get("split_categories", [])
-            
-            if is_split and split_cats:
-                cat_html = '<div style="display:flex;flex-wrap:wrap;gap:3px;">'
-                cat_html += '<span style="background:#f59e0b;color:black;padding:3px 8px;border-radius:4px;font-size:11px;font-weight:700;">SPLIT</span>'
-                for sc in split_cats[:4]:
-                    sc_cat = sc.get("category", "")[:20]
-                    sc_amt = sc.get("amount", 0)
-                    cat_html += f'<span style="background:rgba(99,102,241,0.2);color:var(--text);padding:3px 6px;border-radius:4px;font-size:10px;">{sc_cat} R{sc_amt:,.0f}</span>'
-                cat_html += '</div>'
-            else:
-                cat_html = f'<span style="background:var(--green);color:white;padding:4px 10px;border-radius:4px;font-size:12px;">{cat}</span>'
-            
             done_rows_html += f'''
             <tr data-id="{txn_id}">
                 <td style="white-space:nowrap;">{t.get("date", "-")}</td>
                 <td><div style="max-width:300px;">{desc}</div></td>
                 <td style="text-align:right;color:var(--red);white-space:nowrap;">{money(debit) if debit > 0 else "-"}</td>
                 <td style="text-align:right;color:var(--green);white-space:nowrap;">{money(credit) if credit > 0 else "-"}</td>
-                <td>{cat_html}
+                <td><span style="background:var(--green);color:white;padding:4px 10px;border-radius:4px;font-size:12px;">{cat}</span>
                     <div style="font-size:10px;color:var(--text-muted);margin-top:3px;">{matched_at}</div></td>
             </tr>
             '''
@@ -194,20 +166,6 @@ def register_banking_routes(app, db, login_required, Auth, render_page,
         .recon-section {{ display: none; }}
         .recon-section.active {{ display: block; }}
         .bulk-bar {{ background: linear-gradient(135deg, rgba(16,185,129,0.2), rgba(16,185,129,0.1)); padding: 15px; border-radius: 8px; margin-bottom: 15px; display: flex; justify-content: space-between; align-items: center; }}
-        /* Split Modal */
-        .split-overlay {{ position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,0.6);z-index:9998;display:none;justify-content:center;align-items:center; }}
-        .split-overlay.active {{ display:flex; }}
-        .split-modal {{ background:var(--card);border-radius:16px;padding:24px;width:95%;max-width:560px;max-height:85vh;overflow-y:auto;box-shadow:0 20px 60px rgba(0,0,0,0.4);border:1px solid var(--border); }}
-        .split-modal h3 {{ margin:0 0 6px 0;font-size:18px; }}
-        .split-line {{ display:grid;grid-template-columns:2fr 100px 40px;gap:8px;align-items:center;padding:8px 0;border-bottom:1px solid rgba(255,255,255,0.06); }}
-        .split-line select, .split-line input {{ padding:8px 10px;border-radius:6px;border:1px solid var(--border);background:var(--input-bg,var(--bg));color:var(--text);font-size:13px; }}
-        .split-line input[type=number] {{ text-align:right; }}
-        .split-line .remove-split {{ background:none;border:none;color:var(--red);cursor:pointer;font-size:18px;padding:4px 8px;border-radius:4px; }}
-        .split-line .remove-split:hover {{ background:rgba(239,68,68,0.15); }}
-        .split-balance {{ padding:10px 0;font-size:14px;font-weight:600;display:flex;justify-content:space-between;align-items:center; }}
-        .split-balance.balanced {{ color:var(--green); }}
-        .split-balance.unbalanced {{ color:var(--red); }}
-        .split-matched-badge {{ background:linear-gradient(135deg,#6366f1,#8b5cf6);color:white;padding:6px 12px;border-radius:8px;font-size:12px;margin-bottom:12px;display:flex;align-items:center;gap:6px; }}
         </style>
         
         <!-- HEADER -->
@@ -367,12 +325,6 @@ def register_banking_routes(app, db, login_required, Auth, render_page,
         </div>
         
         <script>
-        // Safe escape for user data injected into JS strings/template literals
-        function _safeJS(s) {{
-            if (!s) return '';
-            return String(s).replace(/\\/g,'\\\\').replace(/'/g,"\\'").replace(/`/g,'\\`').replace(/"/g,'&quot;').replace(/</g,'&lt;').replace(/\n/g,' ');
-        }}
-        
         function showTab(tab) {{
             // Hide all sections
             document.querySelectorAll('.recon-section').forEach(s => s.classList.remove('active'));
@@ -466,7 +418,7 @@ def register_banking_routes(app, db, login_required, Auth, render_page,
                 // Zane asks with clickable plain-language options
                 if (data.success && data.needs_clarification && data.options) {{
                     let optionsHtml = '';
-                    const safeDesc = _safeJS(description);
+                    const safeDesc = description.replace(/'/g, "\\\\'");
                     data.options.forEach(opt => {{
                         if (opt.value === 'manual') {{
                             // "None of these" -> show full dropdown
@@ -509,49 +461,12 @@ def register_banking_routes(app, db, login_required, Auth, render_page,
                 // CASE 3: Zane knows the answer — show confirm
                 if (data.success && data.category) {{
                     const confText = data.confidence >= 0.85 ? 'High confidence' : data.confidence >= 0.6 ? 'Medium' : 'Low';
-                    const learnedBadge = data.source === 'learned' ? ' <span style="background:var(--green);color:white;padding:2px 6px;border-radius:3px;font-size:10px;">Learned</span>' : data.source === 'invoice_match' ? ' <span style="background:#22d3ee;color:black;padding:2px 6px;border-radius:3px;font-size:10px;">Invoice Match</span>' : data.source === 'expense_split_match' ? ' <span style="background:#f59e0b;color:black;padding:2px 6px;border-radius:3px;font-size:10px;">Scan Split Match</span>' : '';
+                    const learnedBadge = data.source === 'learned' ? ' <span style="background:var(--green);color:white;padding:2px 6px;border-radius:3px;font-size:10px;">Learned</span>' : data.source === 'invoice_match' ? ' <span style="background:#22d3ee;color:black;padding:2px 6px;border-radius:3px;font-size:10px;">Invoice Match</span>' : '';
                     const vatWarning = data.vat_warning ? `<div style="background:#fef3c7;border-left:3px solid #f59e0b;padding:6px 8px;border-radius:4px;font-size:11px;color:#000;margin-top:8px;">${{data.vat_warning}}</div>` : '';
-                    
-                    // If this is a split match, show Split button as primary action
-                    let actionButtons = '';
-                    if (data.has_split_match && data.matched_splits) {{
-                        // Store matched data for the split modal
-                        window._pendingSplitMatch = {{
-                            expense_id: data.matched_expense_id || '',
-                            splits: data.matched_splits || []
-                        }};
-                        actionButtons = `
-                            <button onclick="openSplitWithMatch('${{txnId}}', '${{_safeJS(description)}}', ${{debit}}, ${{credit}}, '${{date}}')" 
-                                    style="padding:7px 16px;font-size:12px;background:#f59e0b;border:none;color:black;border-radius:6px;cursor:pointer;font-weight:600;">
-                                ✂️ Use Split
-                            </button>
-                            <button onclick="categorizeTransaction('${{txnId}}', '${{data.category}}', '${{_safeJS(description)}}')" 
-                                    style="padding:7px 16px;font-size:12px;background:var(--green);border:none;color:white;border-radius:6px;cursor:pointer;font-weight:600;">
-                                Book as one
-                            </button>
-                            <button onclick="showAllCategories('${{txnId}}', '${{_safeJS(description)}}')" 
-                                    style="padding:7px 16px;font-size:12px;background:var(--card);border:1px solid var(--border);color:var(--text);border-radius:6px;cursor:pointer;">
-                                Other
-                            </button>`;
-                    }} else {{
-                        actionButtons = `
-                            <button onclick="categorizeTransaction('${{txnId}}', '${{data.category}}', '${{_safeJS(description)}}')" 
-                                    style="padding:7px 16px;font-size:12px;background:var(--green);border:none;color:white;border-radius:6px;cursor:pointer;font-weight:600;">
-                                Yes, Allocate
-                            </button>
-                            <button onclick="openSplitModal('${{txnId}}', '${{_safeJS(description)}}', ${{debit}}, ${{credit}}, '${{date}}')" 
-                                    style="padding:7px 16px;font-size:12px;background:rgba(245,158,11,0.2);border:1px solid #f59e0b;color:#f59e0b;border-radius:6px;cursor:pointer;">
-                                Split
-                            </button>
-                            <button onclick="showAllCategories('${{txnId}}', '${{_safeJS(description)}}')" 
-                                    style="padding:7px 16px;font-size:12px;background:var(--card);border:1px solid var(--border);color:var(--text);border-radius:6px;cursor:pointer;">
-                                Different category
-                            </button>`;
-                    }}
                     
                     actionCell.innerHTML = `
                         <div style="background:rgba(139,92,246,0.08);border:1px solid rgba(139,92,246,0.25);border-radius:10px;padding:12px;min-width:260px;position:relative;">
-                            <button onclick="resetAskZane('${{txnId}}', '${{_safeJS(description)}}', ${{debit}}, ${{credit}}, '${{date}}')" 
+                            <button onclick="resetAskZane('${{txnId}}', '${{description.replace(/'/g, "\\\\'")}}', ${{debit}}, ${{credit}}, '${{date}}')" 
                                     style="position:absolute;top:6px;right:8px;background:none;border:none;color:var(--text-muted);cursor:pointer;font-size:16px;padding:2px 6px;border-radius:4px;line-height:1;" 
                                     title="Close">✕</button>
                             <div style="font-size:11px;color:var(--text-muted);margin-bottom:6px;">${{confText}}${{learnedBadge}}</div>
@@ -559,7 +474,14 @@ def register_banking_routes(app, db, login_required, Auth, render_page,
                             <div style="font-size:12px;color:var(--text-muted);margin-bottom:10px;line-height:1.4;">${{data.reason}}</div>
                             ${{vatWarning}}
                             <div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:8px;">
-                                ${{actionButtons}}
+                                <button onclick="categorizeTransaction('${{txnId}}', '${{data.category}}', '${{description.replace(/'/g, "\\\\'")}}')" 
+                                        style="padding:7px 16px;font-size:12px;background:var(--green);border:none;color:white;border-radius:6px;cursor:pointer;font-weight:600;">
+                                    Yes, Allocate
+                                </button>
+                                <button onclick="showAllCategories('${{txnId}}', '${{description.replace(/'/g, "\\\\'")}}')" 
+                                        style="padding:7px 16px;font-size:12px;background:var(--card);border:1px solid var(--border);color:var(--text);border-radius:6px;cursor:pointer;">
+                                    Different category
+                                </button>
                             </div>
                         </div>`;
                     row.dataset.categories = JSON.stringify(data.all_categories || []);
@@ -568,7 +490,7 @@ def register_banking_routes(app, db, login_required, Auth, render_page,
                 }}
                 
             }} catch (err) {{
-                const safeDesc = _safeJS(description);
+                const safeDesc = description.replace(/'/g, "\\'");
                 actionCell.innerHTML = `<div style="color:var(--red);font-size:12px;position:relative;padding-right:22px;">
                     <button onclick="resetAskZane('${{txnId}}', '${{safeDesc}}', ${{debit}}, ${{credit}}, '${{date}}')" 
                             style="position:absolute;top:-2px;right:0;background:none;border:none;color:var(--text-muted);cursor:pointer;font-size:14px;line-height:1;" title="Close">✕</button>
@@ -582,7 +504,7 @@ def register_banking_routes(app, db, login_required, Auth, render_page,
             const actionCell = row ? row.querySelectorAll('td')[row.querySelectorAll('td').length - 1] : null;
             if (!actionCell) return;
             
-            const safeDesc = _safeJS(description);
+            const safeDesc = description.replace(/'/g, "\\'");
             const catOptions = (window._allCategories || []).map(c => `<option value="${{c}}">${{c}}</option>`).join('');
             actionCell.innerHTML = `
                 <div style="display:flex;gap:5px;flex-wrap:wrap;align-items:center;">
@@ -600,7 +522,7 @@ def register_banking_routes(app, db, login_required, Auth, render_page,
             if (!actionCell) return;
             
             if (!cats || !cats.length) cats = window._allCategories || [];
-            const safeDesc = _safeJS(description);
+            const safeDesc = description.replace(/'/g, "\\\\'");
             const uid = 'sc_' + txnId;
             
             // Get debit/credit from the row for resetAskZane
@@ -634,7 +556,7 @@ def register_banking_routes(app, db, login_required, Auth, render_page,
             const listEl = document.getElementById(uid + '_list');
             if (!listEl) return;
             listEl.innerHTML = cats.map(c => 
-                `<div onclick="categorizeTransaction('${{txnId}}', '${{_safeJS(c)}}', '${{safeDesc}}')" 
+                `<div onclick="categorizeTransaction('${{txnId}}', '${{c.replace(/'/g, "\\\\'")}}', '${{safeDesc}}')" 
                       style="padding:8px 12px;cursor:pointer;font-size:13px;border-bottom:1px solid var(--border);color:var(--text);transition:background 0.15s;"
                       onmouseover="this.style.background='rgba(139,92,246,0.15)'" 
                       onmouseout="this.style.background='transparent'">${{c}}</div>`
@@ -649,7 +571,7 @@ def register_banking_routes(app, db, login_required, Auth, render_page,
             const txnId = uid.replace('sc_', '');
             const row = document.querySelector(`tr[data-id="${{txnId}}"]`);
             const desc = row?.querySelector('td:nth-child(2)')?.textContent?.trim() || '';
-            renderCatList(uid, filtered, txnId, _safeJS(desc));
+            renderCatList(uid, filtered, txnId, desc.replace(/'/g, "\\\\'"));
         }}
         
         function showAllCategories(txnId, description, categoriesFromApi, message) {{
@@ -730,7 +652,7 @@ def register_banking_routes(app, db, login_required, Auth, render_page,
             const btn = event.target.closest('label');
             const originalText = btn.innerHTML;
             const isPDF = file.name.toLowerCase().endsWith('.pdf');
-            btn.innerHTML = isPDF ? '🤖 AI Reading PDF... (1-3 min)' : '⏳ Importing...';
+            btn.innerHTML = isPDF ? '🤖 AI Reading PDF... (30-60s)' : '⏳ Importing...';
             
             try {{
                 const response = await fetch('/api/banking/import', {{
@@ -754,316 +676,6 @@ def register_banking_routes(app, db, login_required, Auth, render_page,
                 alert('❌ Upload failed');
             }} finally {{
                 btn.innerHTML = originalText;
-            }}
-        }}
-        </script>
-        
-        <!-- ═══ SPLIT TRANSACTION MODAL ═══ -->
-        <div id="splitOverlay" class="split-overlay" onclick="if(event.target===this)closeSplitModal()">
-            <div class="split-modal">
-                <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:15px;">
-                    <h3>✂️ Split Transaction</h3>
-                    <button onclick="closeSplitModal()" style="background:none;border:none;color:var(--text-muted);cursor:pointer;font-size:22px;padding:2px 8px;">✕</button>
-                </div>
-                <div id="splitTxnInfo" style="background:rgba(99,102,241,0.08);border-radius:8px;padding:12px;margin-bottom:15px;">
-                    <div id="splitDesc" style="font-size:14px;font-weight:600;color:var(--text);"></div>
-                    <div style="display:flex;gap:15px;margin-top:6px;">
-                        <span id="splitDate" style="font-size:12px;color:var(--text-muted);"></span>
-                        <span id="splitAmount" style="font-size:14px;font-weight:700;"></span>
-                    </div>
-                </div>
-                
-                <!-- Matched expense from scan -->
-                <div id="splitMatchedExpense" style="display:none;"></div>
-                
-                <div style="font-size:12px;color:var(--text-muted);margin-bottom:8px;font-weight:600;">VERDEEL NA KATEGORIEË:</div>
-                <div id="splitLines"></div>
-                
-                <button onclick="addSplitLine()" style="padding:6px 14px;font-size:12px;background:rgba(99,102,241,0.15);border:1px solid rgba(99,102,241,0.3);color:var(--primary);border-radius:6px;cursor:pointer;margin:8px 0;">+ Voeg lyn by</button>
-                
-                <div id="splitBalanceInfo" class="split-balance"></div>
-                
-                <div style="display:flex;gap:10px;margin-top:15px;">
-                    <button id="splitSaveBtn" onclick="saveSplitAllocation()" class="btn btn-primary" style="flex:1;padding:12px;font-size:14px;font-weight:700;" disabled>💾 Save Split</button>
-                    <button onclick="closeSplitModal()" class="btn btn-secondary" style="padding:12px 20px;">Kanselleer</button>
-                </div>
-            </div>
-        </div>
-        
-        <script>
-        // ═══════════════════════════════════════════════════════════
-        // SPLIT TRANSACTION LOGIC
-        // ═══════════════════════════════════════════════════════════
-        let _splitTxnId = '';
-        let _splitTotalAmount = 0;
-        let _splitIsDebit = true;
-        let _splitLineCount = 0;
-        let _splitMatchedExpenseId = '';
-        let _splitAllCategories = {json_cat_list};
-        
-        function openSplitModal(txnId, desc, debit, credit, date) {{
-            _splitTxnId = txnId;
-            _splitIsDebit = debit > 0;
-            _splitTotalAmount = _splitIsDebit ? debit : credit;
-            _splitLineCount = 0;
-            _splitMatchedExpenseId = '';
-            
-            document.getElementById('splitDesc').textContent = desc;
-            document.getElementById('splitDate').textContent = date;
-            document.getElementById('splitAmount').textContent = 'R ' + _splitTotalAmount.toFixed(2);
-            document.getElementById('splitAmount').style.color = _splitIsDebit ? 'var(--red)' : 'var(--green)';
-            document.getElementById('splitLines').innerHTML = '';
-            document.getElementById('splitMatchedExpense').style.display = 'none';
-            document.getElementById('splitMatchedExpense').innerHTML = '';
-            
-            // Start with 2 empty lines
-            addSplitLine();
-            addSplitLine();
-            updateSplitBalance();
-            
-            document.getElementById('splitOverlay').classList.add('active');
-            
-            // Check for matching scanned expenses
-            checkSplitExpenseMatch(txnId, _splitTotalAmount, date);
-        }}
-        
-        function closeSplitModal() {{
-            document.getElementById('splitOverlay').classList.remove('active');
-        }}
-        
-        function buildCategoryOptions() {{
-            return _splitAllCategories.map(c => `<option value="${{c}}">${{c}}</option>`).join('');
-        }}
-        
-        function addSplitLine(category, amount) {{
-            _splitLineCount++;
-            const idx = _splitLineCount;
-            const catVal = category || '';
-            const amtVal = amount || '';
-            const catOptions = buildCategoryOptions();
-            const selectedAttr = catVal ? '' : '';
-            
-            const html = `
-                <div class="split-line" id="splitLine_${{idx}}">
-                    <select id="splitCat_${{idx}}" onchange="updateSplitBalance()">
-                        <option value="">-- Kies kategorie --</option>
-                        ${{catOptions}}
-                    </select>
-                    <input type="number" id="splitAmt_${{idx}}" step="0.01" min="0" placeholder="0.00" value="${{amtVal}}" oninput="updateSplitBalance()">
-                    <button class="remove-split" onclick="removeSplitLine(${{idx}})" title="Verwyder">✕</button>
-                </div>
-            `;
-            document.getElementById('splitLines').insertAdjacentHTML('beforeend', html);
-            
-            // Set selected category if provided
-            if (catVal) {{
-                const sel = document.getElementById('splitCat_' + idx);
-                if (sel) {{
-                    for (let opt of sel.options) {{
-                        if (opt.value === catVal) {{ opt.selected = true; break; }}
-                    }}
-                    // Fuzzy match if exact didn't work
-                    if (!sel.value) {{
-                        const lower = catVal.toLowerCase();
-                        for (let opt of sel.options) {{
-                            if (opt.value.toLowerCase().includes(lower) || lower.includes(opt.value.toLowerCase())) {{
-                                opt.selected = true; break;
-                            }}
-                        }}
-                    }}
-                }}
-            }}
-            
-            updateSplitBalance();
-        }}
-        
-        function removeSplitLine(idx) {{
-            const el = document.getElementById('splitLine_' + idx);
-            if (el) el.remove();
-            updateSplitBalance();
-        }}
-        
-        function getSplitLines() {{
-            const lines = [];
-            document.querySelectorAll('.split-line').forEach(row => {{
-                const selects = row.querySelectorAll('select');
-                const inputs = row.querySelectorAll('input[type=number]');
-                if (selects.length && inputs.length) {{
-                    const cat = selects[0].value;
-                    const amt = parseFloat(inputs[0].value) || 0;
-                    if (cat && amt > 0) {{
-                        lines.push({{ category: cat, amount: amt }});
-                    }}
-                }}
-            }});
-            return lines;
-        }}
-        
-        function updateSplitBalance() {{
-            const lines = getSplitLines();
-            const total = lines.reduce((s, l) => s + l.amount, 0);
-            const diff = _splitTotalAmount - total;
-            const el = document.getElementById('splitBalanceInfo');
-            const btn = document.getElementById('splitSaveBtn');
-            
-            if (Math.abs(diff) < 0.01 && lines.length >= 2) {{
-                el.className = 'split-balance balanced';
-                el.innerHTML = `✅ Balanced — R${{total.toFixed(2)}} of R${{_splitTotalAmount.toFixed(2)}}`;
-                btn.disabled = false;
-                btn.style.opacity = '1';
-            }} else {{
-                el.className = 'split-balance unbalanced';
-                const diffAbs = Math.abs(diff).toFixed(2);
-                if (lines.length < 2) {{
-                    el.innerHTML = `⚠️ Minimum 2 lines required`;
-                }} else if (diff > 0) {{
-                    el.innerHTML = `⚠️ R${{diffAbs}} remaining to allocate (total: R${{_splitTotalAmount.toFixed(2)}})`;
-                }} else {{
-                    el.innerHTML = `❌ R${{diffAbs}} over — reduce amounts (total: R${{_splitTotalAmount.toFixed(2)}})`;
-                }}
-                btn.disabled = true;
-                btn.style.opacity = '0.5';
-            }}
-        }}
-        
-        async function checkSplitExpenseMatch(txnId, amount, date) {{
-            // Ask server if there's a matching scanned expense
-            try {{
-                const resp = await fetch('/api/banking/find-matching-expense', {{
-                    method: 'POST',
-                    headers: {{'Content-Type': 'application/json'}},
-                    body: JSON.stringify({{ amount, date, txn_id: txnId }})
-                }});
-                const data = await resp.json();
-                if (data.success && data.match) {{
-                    const m = data.match;
-                    _splitMatchedExpenseId = m.expense_id || '';
-                    
-                    const container = document.getElementById('splitMatchedExpense');
-                    let html = `<div class="split-matched-badge">🔗 Gescande slip gevind: ${{m.supplier || 'Onbekend'}} — R${{parseFloat(m.amount||0).toFixed(2)}} (${{m.date || ''}})</div>`;
-                    
-                    if (m.splits && m.splits.length > 1) {{
-                        html += `<div style="background:rgba(16,185,129,0.1);border:1px solid rgba(16,185,129,0.3);border-radius:8px;padding:10px;margin-bottom:12px;">`;
-                        html += `<div style="font-size:12px;color:var(--green);font-weight:600;margin-bottom:6px;">📋 Hierdie slip was al gesplit — wil jy dieselfde splits gebruik?</div>`;
-                        m.splits.forEach(sp => {{
-                            html += `<div style="display:flex;justify-content:space-between;padding:3px 0;font-size:13px;"><span>${{sp.category}}</span><span style="font-weight:600;">R${{parseFloat(sp.amount).toFixed(2)}}</span></div>`;
-                        }});
-                        html += `<button onclick="useScanSplits()" style="margin-top:8px;padding:8px 16px;background:var(--green);color:white;border:none;border-radius:6px;cursor:pointer;font-size:13px;font-weight:600;width:100%;">✅ Gebruik hierdie splits</button>`;
-                        html += `</div>`;
-                    }} else {{
-                        html += `<div style="font-size:12px;color:var(--text-muted);margin-bottom:8px;">Hierdie expense was nie gesplit nie — jy kan dit nou hier split.</div>`;
-                    }}
-                    
-                    container.innerHTML = html;
-                    container.style.display = 'block';
-                    
-                    // Store splits for reuse
-                    window._matchedSplits = m.splits || [];
-                }}
-            }} catch(e) {{
-                // No match found, that's fine
-            }}
-        }}
-        
-        function useScanSplits() {{
-            if (!window._matchedSplits || !window._matchedSplits.length) return;
-            
-            // Clear existing lines
-            document.getElementById('splitLines').innerHTML = '';
-            _splitLineCount = 0;
-            
-            // Add lines from matched scan
-            window._matchedSplits.forEach(sp => {{
-                addSplitLine(sp.category, sp.amount);
-            }});
-            
-            updateSplitBalance();
-        }}
-        
-        // Open split modal with pre-populated data from a scan match (called by Zane suggest)
-        function openSplitWithMatch(txnId, desc, debit, credit, date) {{
-            // Open the modal first
-            openSplitModal(txnId, desc, debit, credit, date);
-            
-            // Then pre-populate from matched splits if available
-            if (window._pendingSplitMatch && window._pendingSplitMatch.splits) {{
-                _splitMatchedExpenseId = window._pendingSplitMatch.expense_id || '';
-                
-                // Small delay to ensure modal is rendered
-                setTimeout(() => {{
-                    // Clear default empty lines
-                    document.getElementById('splitLines').innerHTML = '';
-                    _splitLineCount = 0;
-                    
-                    // Add matched splits
-                    window._pendingSplitMatch.splits.forEach(sp => {{
-                        addSplitLine(sp.category, sp.amount);
-                    }});
-                    
-                    // Show matched badge
-                    const container = document.getElementById('splitMatchedExpense');
-                    container.innerHTML = `<div class="split-matched-badge">🔗 Splits from scanned receipt applied</div>`;
-                    container.style.display = 'block';
-                    
-                    updateSplitBalance();
-                    window._pendingSplitMatch = null;
-                }}, 200);
-            }}
-        }}
-        
-        async function saveSplitAllocation() {{
-            const lines = getSplitLines();
-            if (lines.length < 2) {{ alert('Minimum 2 lines required'); return; }}
-            
-            const total = lines.reduce((s, l) => s + l.amount, 0);
-            if (Math.abs(total - _splitTotalAmount) > 0.01) {{
-                alert('Bedrae balanseer nie. Totaal moet R' + _splitTotalAmount.toFixed(2) + ' wees.');
-                return;
-            }}
-            
-            const btn = document.getElementById('splitSaveBtn');
-            btn.disabled = true;
-            btn.innerHTML = '⏳ Saving...';
-            
-            try {{
-                const resp = await fetch('/api/banking/split-categorize', {{
-                    method: 'POST',
-                    headers: {{'Content-Type': 'application/json'}},
-                    body: JSON.stringify({{
-                        id: _splitTxnId,
-                        splits: lines,
-                        is_debit: _splitIsDebit,
-                        matched_expense_id: _splitMatchedExpenseId || null
-                    }})
-                }});
-                const data = await resp.json();
-                
-                if (data.success) {{
-                    closeSplitModal();
-                    
-                    // Update the row in the table
-                    const row = document.querySelector(`tr[data-id="${{_splitTxnId}}"]`);
-                    if (row) {{
-                        const cells = row.querySelectorAll('td');
-                        const lastCell = cells[cells.length - 1];
-                        let badges = '<span style="background:#f59e0b;color:black;padding:3px 8px;border-radius:4px;font-size:11px;font-weight:700;">SPLIT</span> ';
-                        lines.forEach(l => {{
-                            badges += `<span style="background:rgba(99,102,241,0.2);color:var(--text);padding:3px 6px;border-radius:4px;font-size:10px;margin:2px;">${{l.category.substring(0,20)}} R${{l.amount.toFixed(0)}}</span> `;
-                        }});
-                        lastCell.innerHTML = badges;
-                        row.style.background = 'rgba(16,185,129,0.15)';
-                        row.style.transition = 'opacity 0.5s';
-                        setTimeout(() => {{ row.style.opacity = '0.4'; }}, 2000);
-                        setTimeout(() => row.remove(), 3000);
-                    }}
-                }} else {{
-                    alert('❌ ' + (data.error || 'Split save failed'));
-                }}
-            }} catch(e) {{
-                alert('❌ Split failed: ' + e.message);
-            }} finally {{
-                btn.disabled = false;
-                btn.innerHTML = '💾 Save Split';
             }}
         }}
         </script>
@@ -1114,7 +726,6 @@ def register_banking_routes(app, db, login_required, Auth, render_page,
                 return jsonify({"success": False, "error": "No file uploaded"})
             
             filename = file.filename.lower()
-            logger.info(f"[BANK IMPORT] === START === File: {filename}, Size: {request.content_length or 'unknown'} bytes")
             
             # ═══════════════════════════════════════════════════════════════
             # PDF PARSING - Standard Bank, ABSA, FNB, Nedbank, Capitec
@@ -1150,12 +761,14 @@ def register_banking_routes(app, db, login_required, Auth, render_page,
                         except Exception as plumber_err:
                             logger.warning(f"[BANK IMPORT] pdfplumber failed: {plumber_err}")
                     
-                    # If text extraction failed (scanned PDF), use Claude AI via direct PDF
+                    # If text extraction failed (scanned PDF), use Claude AI via images
                     if not pdf_text or len(pdf_text) < 50:
-                        logger.info(f"[BANK IMPORT] Scanned PDF detected (text={len(pdf_text) if pdf_text else 0} chars) - sending PDF directly to Claude")
+                        logger.info(f"[BANK IMPORT] Scanned PDF detected (text={len(pdf_text) if pdf_text else 0} chars) - using AI to read")
                         
                         try:
                             import base64
+                            from PIL import Image as PILImage
+                            import io as _io
                             all_transactions = []
                             
                             api_key = os.environ.get("ANTHROPIC_API_KEY", "")
@@ -1163,17 +776,89 @@ def register_banking_routes(app, db, login_required, Auth, render_page,
                                 os.unlink(tmp_path)
                                 return jsonify({"success": False, "error": "AI API key not configured"})
                             
-                            # Send PDF directly to Claude as a document (no image conversion needed)
-                            pdf_b64 = base64.standard_b64encode(pdf_bytes).decode("utf-8")
+                            # Convert PDF pages to images — 150 DPI is enough for bank statements
+                            page_images = []
+                            try:
+                                from pdf2image import convert_from_path
+                                pil_images = convert_from_path(tmp_path, dpi=150)
+                                for img in pil_images:
+                                    buf = _io.BytesIO()
+                                    img.convert('RGB').save(buf, format='JPEG', quality=75)
+                                    page_images.append(buf.getvalue())
+                                logger.info(f"[BANK IMPORT] pdf2image converted {len(page_images)} pages at 150dpi")
+                            except Exception as img_err:
+                                logger.warning(f"[BANK IMPORT] pdf2image failed ({img_err}), trying pdfplumber")
+                                page_images = []
+                                try:
+                                    import pdfplumber as _plumber
+                                    with _plumber.open(tmp_path) as pdf_doc:
+                                        for page in pdf_doc.pages:
+                                            try:
+                                                page_img = page.to_image(resolution=150)
+                                                pil_img = page_img.annotated if hasattr(page_img, 'annotated') else page_img.original
+                                                # Force RGB - handles mode P, RGBA, LA, L etc
+                                                if pil_img.mode != 'RGB':
+                                                    pil_img = pil_img.convert('RGBA').convert('RGB')
+                                                buf = _io.BytesIO()
+                                                pil_img.save(buf, format='JPEG', quality=75)
+                                                page_images.append(buf.getvalue())
+                                            except Exception as page_err:
+                                                logger.warning(f"[BANK IMPORT] pdfplumber page {page.page_number} error: {page_err}")
+                                                # Try alternative: render without annotations
+                                                try:
+                                                    pil_img = page_img.original
+                                                    if pil_img.mode != 'RGB':
+                                                        pil_img = pil_img.convert('RGBA').convert('RGB')
+                                                    buf = _io.BytesIO()
+                                                    pil_img.save(buf, format='JPEG', quality=75)
+                                                    page_images.append(buf.getvalue())
+                                                except Exception as page_err2:
+                                                    logger.error(f"[BANK IMPORT] pdfplumber page {page.page_number} total failure: {page_err2}")
+                                    logger.info(f"[BANK IMPORT] pdfplumber converted {len(page_images)} pages at 150dpi")
+                                except Exception as plumber_img_err:
+                                    logger.error(f"[BANK IMPORT] pdfplumber image conversion failed: {plumber_img_err}")
                             
-                            # Check PDF size — Claude accepts up to ~32MB base64
-                            if len(pdf_b64) > 30_000_000:
-                                os.unlink(tmp_path)
-                                return jsonify({"success": False, "error": "PDF too large for AI processing (max ~22MB)"})
+                            # Prepare all page images — compress large ones
+                            prepared_images = []
+                            for page_num, img_bytes in enumerate(page_images):
+                                try:
+                                    _test_img = PILImage.open(_io.BytesIO(img_bytes))
+                                    if _test_img.mode != 'RGB':
+                                        _test_img = _test_img.convert('RGB')
+                                        buf = _io.BytesIO()
+                                        _test_img.save(buf, format='JPEG', quality=75)
+                                        img_bytes = buf.getvalue()
+                                except Exception:
+                                    pass
+                                
+                                # Compress if over 2MB
+                                if len(img_bytes) > 2000000:
+                                    img = PILImage.open(_io.BytesIO(img_bytes))
+                                    img = img.convert('RGB')
+                                    w, h = img.size
+                                    if max(w, h) > 1400:
+                                        ratio = 1400 / max(w, h)
+                                        img = img.resize((int(w*ratio), int(h*ratio)), PILImage.LANCZOS)
+                                    buf = _io.BytesIO()
+                                    img.save(buf, format='JPEG', quality=65)
+                                    img_bytes = buf.getvalue()
+                                
+                                prepared_images.append(img_bytes)
                             
-                            logger.info(f"[BANK IMPORT] Sending PDF ({len(pdf_bytes)} bytes) directly to Claude")
+                            # ═══════════════════════════════════════════════════════════
+                            # BATCH PAGES INTO GROUPS — send multiple pages per API call
+                            # Each image ~200-600KB at 150dpi, API limit ~20MB
+                            # Batch 4 pages per call to stay safe and fast
+                            # Uses Haiku for OCR — 10x cheaper, just as accurate for data extraction
+                            # ═══════════════════════════════════════════════════════════
+                            PAGES_PER_BATCH = 4
+                            batches = []
+                            for i in range(0, len(prepared_images), PAGES_PER_BATCH):
+                                batches.append(prepared_images[i:i + PAGES_PER_BATCH])
                             
-                            prompt = """Extract ALL bank transactions from this bank statement PDF.
+                            logger.info(f"[BANK IMPORT] Processing {len(prepared_images)} pages in {len(batches)} batch(es)")
+                            
+                            prompt = """Extract ALL bank transactions from these bank statement page(s).
     
     Return ONLY a valid JSON array, no other text. Each transaction must have:
     - "date": "YYYY-MM-DD" format
@@ -1186,89 +871,95 @@ def register_banking_routes(app, db, login_required, Auth, render_page,
     - Each transaction may span MULTIPLE LINES. The first line has the transaction type (e.g. "ELECTRONIC BANKING PAYMENT TO") and the next line(s) have the beneficiary/reference details (e.g. "MAR20 M FULLARD ERY5310:21")
     - You MUST combine ALL lines of a transaction into ONE description string
     - Example: if you see "CREDIT TRANSFER" on one line and "KHUPHUKANI" on the next, the description must be "CREDIT TRANSFER KHUPHUKANI"
+    - Example: "ELECTRONIC BANKING PAYMENT TO" + "PRE10 PRESIDENT BOL ERY5310:21" = "ELECTRONIC BANKING PAYMENT TO PRE10 PRESIDENT BOL ERY5310:21"
     - NEVER use generic text like "Transaction" — always use the actual text from the statement
     
     RULES:
     - Payments OUT (debits, purchases, fees) go in "debit" field as POSITIVE numbers
-    - Payments IN (credits, deposits) go in "credit" field as POSITIVE numbers
-    - Never use negative numbers
-    - Include ALL transactions, not just a sample
-    - Skip header rows, opening balances, closing balances, and summary lines
-    - For year: if month is Jan-Mar, year is likely the current year. For Oct-Dec with Jan-Mar statements, Oct-Dec is previous year
-    
-    Return ONLY the JSON array. No markdown, no explanation."""
+    - Money IN (credits, deposits, settlements) go in "credit" field as POSITIVE numbers
+    - Skip "BALANCE BROUGHT FORWARD" and "CLOSING BALANCE" rows
+    - Read EVERY transaction row on EVERY page, do not skip any
+    - Extract amounts exactly as shown on the statement
+    - Include service fees, bank charges etc as debits
+    - The "Page" column number is NOT the date — dates are in the "Date" column in YYYYMMDD format"""
                             
-                            import requests as _req
-                            resp = _req.post(
-                                "https://api.anthropic.com/v1/messages",
-                                headers={
-                                    "x-api-key": api_key,
-                                    "anthropic-version": "2023-06-01",
-                                    "content-type": "application/json"
-                                },
-                                json={
-                                    "model": "claude-haiku-4-5-20251001",
-                                    "max_tokens": 32000,
-                                    "messages": [{
-                                        "role": "user",
-                                        "content": [
-                                            {
-                                                "type": "document",
-                                                "source": {
-                                                    "type": "base64",
-                                                    "media_type": "application/pdf",
-                                                    "data": pdf_b64
-                                                }
-                                            },
-                                            {"type": "text", "text": prompt}
-                                        ]
-                                    }]
-                                },
-                                timeout=180
-                            )
+                            import requests as req
                             
-                            if resp.status_code != 200:
-                                logger.error(f"[BANK IMPORT] Claude API error: {resp.status_code} {resp.text[:300]}")
-                                os.unlink(tmp_path)
-                                return jsonify({"success": False, "error": f"AI reading failed (HTTP {resp.status_code})"})
-                            
-                            ai_result = resp.json()
-                            ai_text = ""
-                            for block in ai_result.get("content", []):
-                                if block.get("type") == "text":
-                                    ai_text += block["text"]
-                            
-                            # Parse JSON from AI response
-                            ai_text = ai_text.strip()
-                            if ai_text.startswith("```"):
-                                ai_text = ai_text.split("\n", 1)[-1].rsplit("```", 1)[0].strip()
-                            
-                            try:
-                                all_transactions = json.loads(ai_text)
-                                logger.info(f"[BANK IMPORT] Claude extracted {len(all_transactions)} transactions from PDF")
-                            except json.JSONDecodeError as je:
-                                # Try to recover truncated JSON — find last complete object
-                                logger.warning(f"[BANK IMPORT] JSON truncated at pos {je.pos}, attempting recovery...")
-                                recovered = ai_text[:je.pos].rstrip().rstrip(",")
-                                # Close the array if it was cut off
-                                if not recovered.endswith("]"):
-                                    # Find last complete } and close the array there
-                                    last_brace = recovered.rfind("}")
-                                    if last_brace > 0:
-                                        recovered = recovered[:last_brace + 1] + "]"
+                            def process_batch(batch_info):
+                                """Process a batch of page images in a single API call"""
+                                batch_idx, batch_imgs = batch_info
+                                batch_txns = []
+                                
+                                # Build content array with all page images + prompt
+                                content_parts = []
+                                for img_bytes in batch_imgs:
+                                    b64_img = base64.b64encode(img_bytes).decode('utf-8')
+                                    content_parts.append({
+                                        "type": "image",
+                                        "source": {"type": "base64", "media_type": "image/jpeg", "data": b64_img}
+                                    })
+                                content_parts.append({"type": "text", "text": prompt})
+                                
                                 try:
-                                    all_transactions = json.loads(recovered)
-                                    logger.info(f"[BANK IMPORT] Recovered {len(all_transactions)} transactions from truncated JSON")
-                                except json.JSONDecodeError:
-                                    logger.error(f"[BANK IMPORT] JSON recovery also failed")
-                                    logger.error(f"[BANK IMPORT] Raw AI response (first 500): {ai_text[:500]}")
-                                    os.unlink(tmp_path)
-                                    return jsonify({"success": False, "error": "AI could not parse the bank statement. Try a clearer scan or CSV export."})
+                                    resp = req.post(
+                                        "https://api.anthropic.com/v1/messages",
+                                        headers={
+                                            "x-api-key": api_key,
+                                            "anthropic-version": "2023-06-01",
+                                            "content-type": "application/json"
+                                        },
+                                        json={
+                                            "model": "claude-haiku-4-5-20251001",
+                                            "max_tokens": 16000,
+                                            "messages": [{"role": "user", "content": content_parts}]
+                                        },
+                                        timeout=90
+                                    )
+                                    
+                                    if resp.status_code != 200:
+                                        logger.error(f"[BANK IMPORT] Batch {batch_idx+1} API error: {resp.status_code} - {resp.text[:500]}")
+                                        return batch_txns
+                                    
+                                    ai_result = resp.json()
+                                    ai_text = ""
+                                    for block in ai_result.get("content", []):
+                                        if block.get("type") == "text":
+                                            ai_text += block["text"]
+                                    
+                                    logger.info(f"[BANK IMPORT] Batch {batch_idx+1} AI response: {len(ai_text)} chars, first 200: {ai_text[:200]}")
+                                    
+                                    import re as _re
+                                    json_match = _re.search(r'\[.*\]', ai_text, _re.DOTALL)
+                                    if json_match:
+                                        try:
+                                            batch_txns = json.loads(json_match.group(0))
+                                            logger.info(f"[BANK IMPORT] Batch {batch_idx+1}: {len(batch_txns)} transactions from {len(batch_imgs)} pages")
+                                        except json.JSONDecodeError as jde:
+                                            logger.error(f"[BANK IMPORT] Batch {batch_idx+1} JSON decode error: {jde} - text around error: {ai_text[max(0,jde.pos-50):jde.pos+50]}")
+                                    else:
+                                        logger.error(f"[BANK IMPORT] Batch {batch_idx+1}: No JSON array found in AI response. Full text: {ai_text[:1000]}")
+                                except Exception as batch_err:
+                                    logger.error(f"[BANK IMPORT] Batch {batch_idx+1} error: {batch_err}")
+                                
+                                return batch_txns
+                            
+                            # Process batches concurrently if multiple
+                            if len(batches) > 1:
+                                from concurrent.futures import ThreadPoolExecutor as _TPE
+                                with _TPE(max_workers=min(len(batches), 3)) as executor:
+                                    results = list(executor.map(process_batch, enumerate(batches)))
+                                for batch_txns in results:
+                                    all_transactions.extend(batch_txns)
+                            else:
+                                # Single batch — just call directly
+                                all_transactions.extend(process_batch((0, batches[0])))
+                            
                             
                             os.unlink(tmp_path)
                             
                             if not all_transactions:
-                                return jsonify({"success": False, "error": "AI could not read any transactions from the PDF. Try a clearer scan or CSV export."})
+                                logger.error(f"[BANK IMPORT] AI returned 0 transactions from {len(prepared_images)} pages in {len(batches)} batches")
+                                return jsonify({"success": False, "error": "AI could not read any transactions from the PDF — check logs for details"})
                             
                             # Convert to standard format
                             data_rows = []
@@ -1454,8 +1145,8 @@ def register_banking_routes(app, db, login_required, Auth, render_page,
                 "MAKRO": "Stock Purchase",
                 "BUILDERS": "Stock Purchase",
                 "CASHBUILD": "Stock Purchase",
-                "TAKEALOT": "Online Purchases",
-                "AMAZON": "Online Purchases",
+                "TAKEALOT": "General Expenses",
+                "AMAZON": "General Expenses",
                 "PAYROLL": "Salaries",
                 "SALARY": "Salaries",
                 "WAGES": "Salaries",
@@ -1473,26 +1164,6 @@ def register_banking_routes(app, db, login_required, Auth, render_page,
             imported = 0
             auto_matched = 0
             suggested = 0
-            skipped_dupes = 0
-            
-            # ═══════════════════════════════════════════════════════════════
-            # DEDUP: Build fingerprint set of existing transactions
-            # Prevents re-importing the same statement twice
-            # ═══════════════════════════════════════════════════════════════
-            existing_txns = db.get("bank_transactions", {"business_id": biz_id}) or []
-            existing_fingerprints = set()
-            for et in existing_txns:
-                _e_date = str(et.get("date", ""))[:10]
-                _e_desc = (et.get("description") or "").strip().upper()[:80]
-                _e_amt = round(float(et.get("amount", 0)), 2)
-                _e_deb = round(float(et.get("debit", 0)), 2)
-                _e_cre = round(float(et.get("credit", 0)), 2)
-                existing_fingerprints.add((_e_date, _e_desc, _e_amt))
-                # Also add debit/credit variant in case amount was stored differently
-                if _e_deb > 0 or _e_cre > 0:
-                    existing_fingerprints.add((_e_date, _e_desc, round(_e_cre - _e_deb, 2)))
-            
-            logger.info(f"[BANK IMPORT] Dedup: {len(existing_fingerprints)} existing fingerprints loaded")
             
             for row in data_rows:
                 try:
@@ -1529,19 +1200,6 @@ def register_banking_routes(app, db, login_required, Auth, render_page,
                     # Also skip rows with zero amount (just balance lines)
                     if debit == 0 and credit == 0 and amount == 0:
                         continue
-                    
-                    # ═══════════════════════════════════════════════════════════════
-                    # DEDUP CHECK: Skip if this transaction already exists
-                    # ═══════════════════════════════════════════════════════════════
-                    _fp_date = str(txn_date)[:10]
-                    _fp_desc = desc_upper.strip()[:80]
-                    _fp_amt = round(amount, 2)
-                    fingerprint = (_fp_date, _fp_desc, _fp_amt)
-                    if fingerprint in existing_fingerprints:
-                        skipped_dupes += 1
-                        continue
-                    # Also add this new one to prevent dupes within the same import file
-                    existing_fingerprints.add(fingerprint)
                     
                     # ═══════════════════════════════════════════════════════════════
                     # SMART MATCHING LOGIC
@@ -1649,18 +1307,14 @@ def register_banking_routes(app, db, login_required, Auth, render_page,
             
             needs_attention = imported - auto_matched - suggested
             
-            dupe_msg = f" ({skipped_dupes} duplicates skipped)" if skipped_dupes > 0 else ""
-            logger.info(f"[BANK IMPORT] Done: {imported} imported, {skipped_dupes} dupes skipped, {auto_matched} auto-matched, {suggested} suggested")
-            
             return jsonify({
                 "success": True, 
-                "message": f"Imported {imported} transactions{dupe_msg}",
+                "message": f"Imported {imported} transactions",
                 "stats": {
                     "total": imported,
                     "auto_matched": auto_matched,
                     "suggested": suggested,
-                    "needs_attention": max(0, needs_attention),
-                    "duplicates_skipped": skipped_dupes
+                    "needs_attention": max(0, needs_attention)
                 }
             })
             
@@ -2018,7 +1672,7 @@ def register_banking_routes(app, db, login_required, Auth, render_page,
                         supplier_name=txn.get("supplier_name", "") or description.split()[0][:30] if description else "",
                         payment_method="eft", reference=f"BNK-{txn_id[:8]}",
                         transaction_date=txn_date,
-                        created_by=session.get("user_id", ""), created_by_name=(Auth.get_current_user() or {}).get("name", "")
+                        created_by=session.get("user_id", ""), created_by_name=""
                     )
             except Exception:
                 pass
@@ -2077,45 +1731,6 @@ def register_banking_routes(app, db, login_required, Auth, render_page,
                         "match_reference": inv_match.get("reference", ""),
                         "all_categories": all_category_names
                     })
-            
-            # ═══ PRIORITY 1b: SCANNED EXPENSE MATCH — check if a matching expense exists with splits ═══
-            if not user_answer and debit > 0:
-                try:
-                    _match_amount = debit if debit > 0 else credit
-                    _all_expenses = db.get("expenses", {"business_id": biz_id}) or []
-                    for _exp in _all_expenses:
-                        if _exp.get("bank_transaction_id") or _exp.get("bank_matched"):
-                            continue
-                        _exp_amt = float(_exp.get("amount", 0) or _exp.get("total", 0) or 0)
-                        if abs(_exp_amt - _match_amount) <= 2.0:
-                            # Check date within 5 days
-                            try:
-                                from datetime import datetime as _dt
-                                _txn_d = _dt.strptime(str(date)[:10], "%Y-%m-%d")
-                                _exp_d = _dt.strptime(str(_exp.get("date", ""))[:10], "%Y-%m-%d")
-                                if abs((_txn_d - _exp_d).days) <= 5:
-                                    _splits = _exp.get("splits")
-                                    if _splits and len(_splits) > 1:
-                                        # Found a split expense match — tell user about the split
-                                        _split_desc = ", ".join([s.get("category", "") + " R" + str(s.get("amount", 0)) for s in _splits])
-                                        logger.info(f"[BANK ZANE] Split expense match: '{description[:30]}' → {_split_desc}")
-                                        return jsonify({
-                                            "success": True,
-                                            "category": "Split: " + " + ".join([s.get("category", "")[:20] for s in _splits[:3]]),
-                                            "reason": f"Hierdie lyk soos die slip wat jy gescanned het ({_exp.get('supplier_name', '')}) — dit was gesplit: {_split_desc}. Klik Split om dieselfde verdeling te gebruik.",
-                                            "confidence": 0.85,
-                                            "source": "expense_split_match",
-                                            "needs_clarification": False,
-                                            "vat_warning": "",
-                                            "has_split_match": True,
-                                            "matched_expense_id": _exp.get("id", ""),
-                                            "matched_splits": _splits,
-                                            "all_categories": all_category_names
-                                        })
-                            except (ValueError, TypeError):
-                                pass
-                except Exception as _e:
-                    logger.error(f"[BANK ZANE] Expense match check error: {_e}")
             
             # ═══ PRIORITY 2: BANKLEARNING — user already categorized this type before ═══
             existing = BankLearning.suggest_category(biz_id, description)
@@ -2388,313 +2003,8 @@ def register_banking_routes(app, db, login_required, Auth, render_page,
             try:
                 cats = IndustryKnowledge.get_all_category_names()
             except:
-                cats = ["Sundry Expenses"]
+                cats = ["General Expenses"]
             return jsonify({"success": False, "error": str(e), "all_categories": cats})
-    
-    
-    # ═══════════════════════════════════════════════════════════════════════
-    # SPLIT CATEGORIZE — Split one bank transaction into multiple GL codes
-    # ═══════════════════════════════════════════════════════════════════════
-    @app.route("/api/banking/split-categorize", methods=["POST"])
-    @login_required
-    def api_banking_split_categorize():
-        """
-        Split a single bank transaction into multiple expense categories.
-        Each split line gets its own GL debit/credit entry.
-        Optionally links to a previously scanned expense.
-        """
-        business = Auth.get_current_business()
-        biz_id = business.get("id") if business else None
-        if not biz_id:
-            return jsonify({"success": False, "error": "No business"})
-        
-        try:
-            data = request.get_json()
-            txn_id = data.get("id")
-            splits = data.get("splits", [])  # [{category, amount}, ...]
-            is_debit = data.get("is_debit", True)
-            matched_expense_id = data.get("matched_expense_id")
-            
-            if not txn_id:
-                return jsonify({"success": False, "error": "No transaction ID"})
-            if not splits or len(splits) < 2:
-                return jsonify({"success": False, "error": "Need at least 2 split lines"})
-            
-            # Get transaction
-            txn = db.get_one("bank_transactions", txn_id)
-            if not txn:
-                return jsonify({"success": False, "error": "Transaction not found"})
-            
-            # Validate amounts balance
-            txn_amount = float(txn.get("debit", 0)) if is_debit else float(txn.get("credit", 0))
-            if txn_amount == 0:
-                txn_amount = abs(float(txn.get("amount", 0)))
-            
-            split_total = sum(float(sp.get("amount", 0)) for sp in splits)
-            if abs(split_total - txn_amount) > 0.02:
-                return jsonify({"success": False, "error": f"Split total R{split_total:.2f} does not match transaction R{txn_amount:.2f}"})
-            
-            description = txn.get("description", "")
-            txn_date = txn.get("date", today())
-            ref = f"BNK-SPLIT-{txn_id[:8]}"
-            user = Auth.get_current_user()
-            
-            # Build category summary for the transaction record
-            split_categories = []
-            for sp in splits:
-                split_categories.append({
-                    "category": sp.get("category", ""),
-                    "amount": round(float(sp.get("amount", 0)), 2)
-                })
-            
-            # Mark transaction as matched with split info
-            txn["matched"] = True
-            txn["manually_reviewed"] = True
-            txn["category"] = "Split: " + " + ".join([sp.get("category", "")[:20] for sp in splits[:3]])
-            txn["is_split"] = True
-            txn["split_categories"] = split_categories
-            txn["matched_at"] = now()
-            if matched_expense_id:
-                txn["linked_expense_id"] = matched_expense_id
-            db.save("bank_transactions", txn)
-            
-            # SARS: No VAT claim categories
-            no_vat_cats = ["fuel", "entertainment", "meals", "membership"]
-            
-            if is_debit:
-                # ═══ MONEY OUT — Split expense across multiple GL codes ═══
-                journal_entries = []
-                
-                for sp in splits:
-                    sp_amount = round(float(sp.get("amount", 0)), 2)
-                    sp_category = sp.get("category", "Sundry Expenses")
-                    sp_gl = IndustryKnowledge.get_gl_code(sp_category, business_id=biz_id)
-                    
-                    is_no_vat = any(nv in sp_category.lower() for nv in no_vat_cats)
-                    
-                    if is_no_vat:
-                        # No VAT claim — full amount to expense
-                        journal_entries.append({"account_code": sp_gl, "debit": sp_amount, "credit": 0})
-                    else:
-                        # VAT inclusive — split out VAT
-                        vat = round(sp_amount * 15 / 115, 2)
-                        net = round(sp_amount - vat, 2)
-                        journal_entries.append({"account_code": sp_gl, "debit": net, "credit": 0})
-                        if vat > 0:
-                            journal_entries.append({"account_code": gl(biz_id, "vat_input"), "debit": vat, "credit": 0})
-                    
-                    # Create individual expense record for each split line
-                    exp = RecordFactory.expense(
-                        business_id=biz_id,
-                        description=f"{description[:40]} [{sp_category[:25]}]",
-                        amount=sp_amount,
-                        date=txn_date,
-                        category=sp_category,
-                        category_code=sp_gl,
-                        reference=ref,
-                        payment_method="eft",
-                        status="paid",
-                        created_by=user.get("id") if user else None
-                    )
-                    # Add split metadata
-                    exp["bank_transaction_id"] = txn_id
-                    exp["is_split_line"] = True
-                    exp["split_parent_amount"] = txn_amount
-                    db.save("expenses", exp)
-                    
-                    # Learn from each split category
-                    BankLearning.learn_from_categorization(biz_id, description, sp_category)
-                
-                # Credit Bank for the full amount
-                journal_entries.append({"account_code": gl(biz_id, "bank"), "debit": 0, "credit": round(txn_amount, 2)})
-                
-                create_journal_entry(biz_id, txn_date, f"SPLIT: {description[:40]}", ref, journal_entries)
-                logger.info(f"[BANK SPLIT] Debit split: {len(splits)} categories, R{txn_amount:.2f} for {biz_id}")
-            
-            else:
-                # ═══ MONEY IN — Split income across multiple GL codes ═══
-                journal_entries = []
-                
-                # Debit Bank for the full amount
-                journal_entries.append({"account_code": gl(biz_id, "bank"), "debit": round(txn_amount, 2), "credit": 0})
-                
-                for sp in splits:
-                    sp_amount = round(float(sp.get("amount", 0)), 2)
-                    sp_category = sp.get("category", "Sales")
-                    sp_gl = IndustryKnowledge.get_gl_code(sp_category, business_id=biz_id)
-                    
-                    # VAT on income
-                    vat = round(sp_amount * 15 / 115, 2)
-                    net = round(sp_amount - vat, 2)
-                    
-                    journal_entries.append({"account_code": sp_gl, "debit": 0, "credit": net})
-                    if vat > 0:
-                        journal_entries.append({"account_code": gl(biz_id, "vat_output"), "debit": 0, "credit": vat})
-                
-                create_journal_entry(biz_id, txn_date, f"SPLIT: {description[:40]}", ref, journal_entries)
-                logger.info(f"[BANK SPLIT] Credit split: {len(splits)} categories, R{txn_amount:.2f} for {biz_id}")
-            
-            # Link back to matched scanned expense if provided
-            if matched_expense_id:
-                try:
-                    db.update("expenses", matched_expense_id, {
-                        "bank_transaction_id": txn_id,
-                        "bank_matched": True,
-                        "bank_matched_at": now()
-                    })
-                    logger.info(f"[BANK SPLIT] Linked to scanned expense {matched_expense_id}")
-                except Exception:
-                    pass
-            
-            # === ALLOCATION LOG ===
-            try:
-                if log_allocation:
-                    log_allocation(
-                        business_id=biz_id, allocation_type="bank_split", source_table="bank_transactions", source_id=txn_id,
-                        description=f"SPLIT: {description[:80]} → {len(splits)} categories",
-                        amount=txn_amount,
-                        gl_entries=journal_entries,
-                        category="Split",
-                        category_code="SPLIT",
-                        ai_reasoning="Manual split allocation: " + ", ".join([sp.get("category", "") + " R" + str(round(sp.get("amount", 0), 2)) for sp in splits]) + ". " + ("Linked to scanned expense " + str(matched_expense_id) if matched_expense_id else "No scan match."),
-                        ai_confidence="HIGH",
-                        payment_method="eft",
-                        reference=ref,
-                        transaction_date=txn_date,
-                        created_by=session.get("user_id", ""),
-                        created_by_name=(user or {}).get("name", "")
-                    )
-            except Exception:
-                pass
-            
-            return jsonify({
-                "success": True, 
-                "message": f"Split into {len(splits)} categories",
-                "splits": split_categories
-            })
-        
-        except Exception as e:
-            logger.error(f"[BANK SPLIT] Error: {e}")
-            import traceback
-            logger.error(traceback.format_exc())
-            return jsonify({"success": False, "error": str(e)})
-    
-    
-    # ═══════════════════════════════════════════════════════════════════════
-    # FIND MATCHING EXPENSE — Check if a scanned expense matches this bank txn
-    # ═══════════════════════════════════════════════════════════════════════
-    @app.route("/api/banking/find-matching-expense", methods=["POST"])
-    @login_required
-    def api_banking_find_matching_expense():
-        """
-        Find a previously scanned/saved expense that matches this bank transaction.
-        Matches on amount (±R2) and date (±5 days).
-        Returns the expense with its split data if available.
-        """
-        business = Auth.get_current_business()
-        biz_id = business.get("id") if business else None
-        if not biz_id:
-            return jsonify({"success": False})
-        
-        try:
-            data = request.get_json()
-            amount = float(data.get("amount", 0))
-            date_str = data.get("date", "")
-            txn_id = data.get("txn_id", "")
-            
-            if amount <= 0 or not date_str:
-                return jsonify({"success": False})
-            
-            # Get all expenses for this business (not already bank-matched)
-            all_expenses = db.get("expenses", {"business_id": biz_id}) or []
-            
-            # Parse transaction date
-            try:
-                txn_date = datetime.strptime(date_str[:10], "%Y-%m-%d")
-            except (ValueError, TypeError):
-                return jsonify({"success": False})
-            
-            best_match = None
-            best_score = 0
-            
-            for exp in all_expenses:
-                # Skip if already linked to a bank transaction
-                if exp.get("bank_transaction_id") or exp.get("bank_matched"):
-                    continue
-                
-                exp_amount = float(exp.get("amount", 0) or exp.get("total", 0) or 0)
-                if exp_amount <= 0:
-                    continue
-                
-                # Amount match: within R2
-                amount_diff = abs(exp_amount - amount)
-                if amount_diff > 2.0:
-                    continue
-                
-                # Date match: within 5 days
-                try:
-                    exp_date_str = str(exp.get("date", ""))[:10]
-                    exp_date = datetime.strptime(exp_date_str, "%Y-%m-%d")
-                    date_diff = abs((txn_date - exp_date).days)
-                    if date_diff > 5:
-                        continue
-                except (ValueError, TypeError):
-                    continue
-                
-                # Score: closer amount + closer date = better match
-                score = 100 - (amount_diff * 10) - (date_diff * 5)
-                
-                # Bonus for split transactions (more useful to show)
-                if exp.get("splits"):
-                    score += 20
-                
-                if score > best_score:
-                    best_score = score
-                    best_match = exp
-            
-            if best_match:
-                # Try to get splits from journal entries if not stored on expense
-                splits_data = best_match.get("splits")
-                if not splits_data:
-                    # Check allocation log for split info
-                    try:
-                        exp_id = best_match.get("id", "")
-                        alloc_logs = db.get("allocation_log", {"business_id": biz_id, "source_id": exp_id}) or []
-                        for al in alloc_logs:
-                            reasoning = al.get("ai_reasoning", "")
-                            if "Multi-GL split applied" in reasoning:
-                                # Has split but data not stored — indicate it
-                                gl_entries = al.get("gl_entries", [])
-                                if gl_entries and len(gl_entries) > 2:
-                                    splits_data = []
-                                    for ge in gl_entries:
-                                        if ge.get("debit", 0) > 0 and ge.get("account_code") != gl(biz_id, "vat_input"):
-                                            splits_data.append({
-                                                "category": ge.get("account_code", ""),
-                                                "amount": ge.get("debit", 0)
-                                            })
-                    except Exception:
-                        pass
-                
-                return jsonify({
-                    "success": True,
-                    "match": {
-                        "expense_id": best_match.get("id", ""),
-                        "supplier": best_match.get("supplier_name", "") or best_match.get("supplier", ""),
-                        "description": best_match.get("description", ""),
-                        "amount": float(best_match.get("amount", 0)),
-                        "date": str(best_match.get("date", ""))[:10],
-                        "category": best_match.get("category", ""),
-                        "splits": splits_data or [],
-                        "score": best_score
-                    }
-                })
-            
-            return jsonify({"success": False, "match": None})
-        
-        except Exception as e:
-            logger.error(f"[BANK MATCH] Error finding matching expense: {e}")
-            return jsonify({"success": False})
     
     
     @app.route("/api/banking/delete-all", methods=["POST"])
