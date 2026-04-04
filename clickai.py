@@ -4677,7 +4677,7 @@ ZANE_TOOLS = [
         "input_schema": {
             "type": "object",
             "properties": {
-                "date_from": {"type": "string", "description": "Start date YYYY-MM-DD (default: 60 days ago)"},
+                "date_from": {"type": "string", "description": "Start date YYYY-MM-DD (default: 365 days ago)"},
                 "date_to": {"type": "string", "description": "End date YYYY-MM-DD (default: today)"},
                 "status": {"type": "string", "description": "Filter: all, matched, unmatched, auto_matched, suggested", "enum": ["all", "matched", "unmatched", "auto_matched", "suggested"], "default": "all"},
                 "search": {"type": "string", "description": "Search in description text"},
@@ -8080,7 +8080,7 @@ class ZaneToolHandler:
             date_from = params.get("date_from", "")
             date_to = params.get("date_to", "")
             if not date_from:
-                date_from = (datetime.now() - timedelta(days=60)).strftime("%Y-%m-%d")
+                date_from = (datetime.now() - timedelta(days=365)).strftime("%Y-%m-%d")
             if not date_to:
                 date_to = datetime.now().strftime("%Y-%m-%d")
             
