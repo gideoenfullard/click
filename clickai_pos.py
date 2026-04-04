@@ -1364,12 +1364,12 @@ def register_pos_routes(app, db, login_required, Auth, render_page,
         
         pos_html = f'''
         <div class="cashier-bar">
-            <label>👤 Kassier:</label>
+            <label>👤 Cashier:</label>
             {cashier_buttons}
         </div>
         <div class="pos-container">
             <!-- Stock List Panel -->
-            <div style="display:flex;flex-direction:column;height:100%;overflow:hidden;">
+            <div style="display:flex;flex-direction:column;min-height:0;">
                 <div class="pos-search-wrapper">
                     <div class="pos-search">
                         <span class="pos-search-icon">🔍</span>
@@ -1454,7 +1454,7 @@ def register_pos_routes(app, db, login_required, Auth, render_page,
         <script>
         // === F-KEY INTERCEPTOR (capture phase — fires BEFORE browser defaults like F1=Help) ===
         document.addEventListener('keydown', function(e) {
-            if (['F1','F2','F3','F4','F5','F6','F7','F8','F9','F10','F11'].includes(e.key)) {
+            if (['F1','F2','F3','F4','F5','F6','F7','F8','F9','F10'].includes(e.key)) {
                 e.preventDefault();
                 // Do NOT stopPropagation — let the POS keydown handler still receive it
             }
@@ -2734,19 +2734,9 @@ def register_pos_routes(app, db, login_required, Auth, render_page,
                 return;
             }
             
-            // F11 = Toggle Fullscreen Order Mode
-            if (e.key === 'F11') {
-                e.preventDefault();
-                toggleF11();
-                return;
-            }
+            // F11 = Native browser fullscreen (not intercepted)
             
-            // ESC in F11 mode = exit fullscreen (if no dropdown/modal open)
-            if (e.key === 'Escape' && f11Mode && !dropdownOpen) {
-                e.preventDefault();
-                toggleF11();
-                return;
-            }
+            // ESC = Clear search (if no dropdown/modal open)
             
             // === PRINT MODAL KEYBOARD HANDLING ===
             const printModal = document.getElementById('printSlipModal');
@@ -4778,7 +4768,6 @@ def register_pos_routes(app, db, login_required, Auth, render_page,
             f11Mode = !f11Mode;
             document.body.classList.toggle('f11-mode', f11Mode);
             if (f11Mode) {{
-                try {{ document.documentElement.requestFullscreen(); }} catch(e) {{}}
                 if (typeof renderF11Table === 'function') renderF11Table();
                 if (typeof syncF11Buttons === 'function') syncF11Buttons();
                 if (typeof updateF11CustName === 'function') updateF11CustName();
@@ -4790,7 +4779,6 @@ def register_pos_routes(app, db, login_required, Auth, render_page,
                 var el = document.getElementById('f11Search');
                 if (el) {{ el.value = ''; el.focus(); }}
             }} else {{
-                try {{ if(document.fullscreenElement) document.exitFullscreen(); }} catch(e) {{}}
                 var el = document.getElementById('stockSearch');
                 if (el) el.focus();
             }}
@@ -4802,16 +4790,8 @@ def register_pos_routes(app, db, login_required, Auth, render_page,
             // but our F11 CSS mode must stay active. Only toggleF11() can exit F11.
         }});
         
-        // === POS FORCE FULLSCREEN ON LOAD ===
-        // POS must always run in fullscreen mode for cashiers
-        document.addEventListener('DOMContentLoaded', function() {{
-            // Small delay to let the page render first, then auto-enter F11
-            setTimeout(function() {{
-                if (!f11Mode) {{
-                    toggleF11();
-                }}
-            }}, 300);
-        }});
+        // === POS NORMAL MODE — no auto-fullscreen ===
+        // F11 is now native browser fullscreen only
         </script>
         <header class="pos-header" style="padding:6px 20px 4px;">
             <div class="pos-header-nav">
@@ -4910,7 +4890,7 @@ def register_pos_routes(app, db, login_required, Auth, render_page,
             </div>
         </div>
     
-        <main class="container" style="padding-top:8px;height:calc(100vh - 250px);overflow:hidden;display:flex;flex-direction:column;">
+        <main class="container" style="padding-top:8px;min-height:calc(100vh - 250px);display:flex;flex-direction:column;">
             {pos_html}
         </main>
         
