@@ -1204,7 +1204,7 @@ def register_pos_routes(app, db, login_required, Auth, render_page,
         .f11-cust{font-family:'Rajdhani',sans-serif;font-size:11px;color:#a0d8f8;font-weight:700;max-width:90px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
         .f11-total{font-family:'Orbitron',monospace;font-size:16px;font-weight:800;color:#00ff88;text-shadow:0 0 12px rgba(0,255,136,0.5);letter-spacing:0.5px;}
         .f11-exit{display:none;}
-        .f11-order-wrap{display:flex;flex:1;overflow:hidden;flex-direction:column;min-height:calc(100vh - 120px);}
+        .f11-order-wrap{display:flex;flex:1;overflow:hidden;flex-direction:column;min-height:calc(100vh - 25px);}
         .f11-search{padding:6px 12px;border-bottom:1px solid rgba(80,180,255,0.08);position:sticky;top:0;z-index:200;background:rgba(4,12,35,0.98);}
         .f11-search input{width:100%;height:44px;background:rgba(8,20,50,0.9);border:2px solid rgba(0,200,255,0.5);color:#e8f4ff;font-family:'Rajdhani',sans-serif;font-size:17px;font-weight:600;padding:0 14px 0 40px;outline:none;letter-spacing:0.5px;border-radius:4px;box-shadow:0 0 12px rgba(0,200,255,0.15);animation:f11searchPulse 2.5s ease-in-out infinite;}
         @keyframes f11searchPulse{0%,100%{border-color:rgba(0,200,255,0.5);box-shadow:0 0 12px rgba(0,200,255,0.15);}50%{border-color:rgba(0,220,255,0.8);box-shadow:0 0 24px rgba(0,200,255,0.3);}}
