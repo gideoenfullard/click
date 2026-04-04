@@ -4670,6 +4670,21 @@ ZANE_TOOLS = [
             "type": "object",
             "properties": {}
         }
+    },
+    {
+        "name": "get_bank_transactions",
+        "description": "Get imported bank transactions from the bank reconciliation module. Use when user asks about bank statements, bank transactions, bank imports, duplicates in bank, unmatched transactions, reconciliation status, or anything about imported banking data. Can filter by date range, match status, and search description. Set check_duplicates=true to scan for potential duplicate entries.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "date_from": {"type": "string", "description": "Start date YYYY-MM-DD (default: 60 days ago)"},
+                "date_to": {"type": "string", "description": "End date YYYY-MM-DD (default: today)"},
+                "status": {"type": "string", "description": "Filter: all, matched, unmatched, auto_matched, suggested", "enum": ["all", "matched", "unmatched", "auto_matched", "suggested"], "default": "all"},
+                "search": {"type": "string", "description": "Search in description text"},
+                "check_duplicates": {"type": "boolean", "description": "If true, scan for potential duplicate transactions (same date + similar amount + similar description)", "default": false},
+                "limit": {"type": "integer", "description": "Max results (default 50, max 200)", "default": 50}
+            }
+        }
     }
 ]
 
@@ -8050,6 +8065,125 @@ class ZaneToolHandler:
             return analysis
         except Exception as e:
             logger.error(f"[ZANE-GROUP] Analysis tool error: {e}")
+            return {"error": str(e)}
+
+    def _tool_get_bank_transactions(self, params: dict) -> dict:
+        """Get bank transactions with optional duplicate detection."""
+        try:
+            from datetime import datetime, timedelta
+            
+            all_txns = db.get("bank_transactions", {"business_id": self.biz_id}) or []
+            if not all_txns:
+                return {"total": 0, "transactions": [], "message": "No bank transactions imported yet."}
+            
+            # Date filtering
+            date_from = params.get("date_from", "")
+            date_to = params.get("date_to", "")
+            if not date_from:
+                date_from = (datetime.now() - timedelta(days=60)).strftime("%Y-%m-%d")
+            if not date_to:
+                date_to = datetime.now().strftime("%Y-%m-%d")
+            
+            filtered = []
+            for t in all_txns:
+                t_date = str(t.get("date", ""))[:10]
+                if t_date < date_from or t_date > date_to:
+                    continue
+                filtered.append(t)
+            
+            # Status filter
+            status = params.get("status", "all")
+            if status == "matched":
+                filtered = [t for t in filtered if t.get("matched")]
+            elif status == "unmatched":
+                filtered = [t for t in filtered if not t.get("matched")]
+            elif status == "auto_matched":
+                filtered = [t for t in filtered if t.get("auto_matched")]
+            elif status == "suggested":
+                filtered = [t for t in filtered if t.get("suggested_category") and not t.get("matched")]
+            
+            # Search filter
+            search = params.get("search", "").upper()
+            if search:
+                filtered = [t for t in filtered if search in (t.get("description") or "").upper()]
+            
+            # Sort by date desc
+            filtered.sort(key=lambda x: x.get("date", ""), reverse=True)
+            
+            # Summary stats
+            total_debit = sum(float(t.get("debit", 0) or 0) for t in filtered)
+            total_credit = sum(float(t.get("credit", 0) or 0) for t in filtered)
+            matched_count = sum(1 for t in filtered if t.get("matched"))
+            unmatched_count = sum(1 for t in filtered if not t.get("matched"))
+            
+            result = {
+                "total": len(filtered),
+                "date_range": f"{date_from} to {date_to}",
+                "summary": {
+                    "total_debits": round(total_debit, 2),
+                    "total_credits": round(total_credit, 2),
+                    "matched": matched_count,
+                    "unmatched": unmatched_count,
+                },
+            }
+            
+            # Duplicate detection
+            if params.get("check_duplicates"):
+                import re as _re_dup
+                from collections import defaultdict
+                da_groups = defaultdict(list)
+                for t in filtered:
+                    _d = str(t.get("date", ""))[:10]
+                    _amt = round(abs(float(t.get("amount", 0) or 0)), 2)
+                    da_groups[(_d, _amt)].append(t)
+                
+                potential_dupes = []
+                for key, group in da_groups.items():
+                    if len(group) < 2:
+                        continue
+                    # Check if descriptions are similar
+                    descs = [(t.get("description") or "").upper() for t in group]
+                    cores = [_re_dup.sub(r'[0-9#:@%\-\.\s]+', '', d)[:20] for d in descs]
+                    # If any two have the same core, flag as potential dupe
+                    seen = {}
+                    for i, core in enumerate(cores):
+                        if core in seen:
+                            potential_dupes.append({
+                                "date": key[0],
+                                "amount": key[1],
+                                "entry_a": descs[seen[core]][:60],
+                                "entry_b": descs[i][:60],
+                                "id_a": group[seen[core]].get("id", ""),
+                                "id_b": group[i].get("id", ""),
+                            })
+                        else:
+                            seen[core] = i
+                
+                result["potential_duplicates"] = potential_dupes
+                result["duplicate_count"] = len(potential_dupes)
+            
+            # Limit transactions in response
+            limit = min(params.get("limit", 50), 200)
+            txn_list = []
+            for t in filtered[:limit]:
+                txn_list.append({
+                    "id": t.get("id", ""),
+                    "date": str(t.get("date", ""))[:10],
+                    "description": (t.get("description") or "")[:80],
+                    "debit": round(float(t.get("debit", 0) or 0), 2),
+                    "credit": round(float(t.get("credit", 0) or 0), 2),
+                    "balance": round(float(t.get("balance", 0) or 0), 2),
+                    "matched": bool(t.get("matched")),
+                    "category": t.get("category") or t.get("suggested_category") or "",
+                })
+            
+            result["transactions"] = txn_list
+            if len(filtered) > limit:
+                result["note"] = f"Showing {limit} of {len(filtered)} transactions. Use date filters or search to narrow down."
+            
+            return result
+        except Exception as e:
+            logger.error(f"[ZANE-TOOL] Bank transactions error: {e}")
             return {"error": str(e)}
 
 

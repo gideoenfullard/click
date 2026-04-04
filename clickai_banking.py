@@ -1686,40 +1686,42 @@ Return ONLY the JSON array. No markdown, no explanation."""
                     _existing_count = existing_date_amount.get(_da_key, 0)
                     _import_count = import_date_amount.get(_da_key, 0)
                     
+                    # Fuzzy dedup: same date + same amount already seen?
+                    # Bank statements almost NEVER have two genuinely different
+                    # transactions with identical date AND amount. When they do
+                    # (e.g. two R4.90 card fees on the same day), the descriptions
+                    # are very different. OCR duplicates always have SIMILAR descriptions.
+                    _da_key = (_fp_date, _fp_amt)
+                    _existing_count = existing_date_amount.get(_da_key, 0)
+                    _import_count = import_date_amount.get(_da_key, 0)
+                    
                     # For re-imports: skip if DB already has this date+amount combo
                     if _existing_count > 0 and _import_count >= _existing_count:
                         skipped_dupes += 1
-                        logger.debug(f"[BANK IMPORT] Fuzzy dedup skip (vs DB): {_fp_date} {_fp_amt}")
                         continue
                     
-                    # For fresh imports: if we already imported this date+amount in
-                    # this batch AND the description is similar (first 15 chars match
-                    # or both start with same transaction type), skip it
-                    if _existing_count == 0 and _import_count > 0:
-                        # Check if descriptions are similar enough to be OCR dupes
-                        _desc_prefix = _fp_desc[:15]
-                        _is_similar = False
+                    # For ALL imports (fresh or re-import): if same date+amount
+                    # already in this batch, only allow it if descriptions are
+                    # genuinely DIFFERENT (not just OCR variants)
+                    if _import_count > 0:
+                        _dominated = False
+                        # Strip digits and special chars to compare core description
+                        import re as _re
+                        _core = _re.sub(r'[0-9#:@%\-\.\s]+', '', _fp_desc)[:20]
                         for _prev_fp in existing_fingerprints:
                             if _prev_fp[0] == _fp_date and round(float(str(_prev_fp[2])), 2) == _fp_amt:
-                                _prev_desc = _prev_fp[1]
-                                # Same first 15 chars = likely OCR variant
-                                if _prev_desc[:15] == _desc_prefix:
-                                    _is_similar = True
+                                _prev_core = _re.sub(r'[0-9#:@%\-\.\s]+', '', _prev_fp[1])[:20]
+                                # If the core text (letters only) matches, it's an OCR dupe
+                                if _core == _prev_core:
+                                    _dominated = True
                                     break
-                                # Same transaction type prefix = likely OCR variant
-                                for _tprefix in ['ELECTRONIC BANKING', 'CREDIT CARD EFTPOS', 'CREDIT TRANSFER',
-                                               'DEBIT TRANSFER', 'OVERDRAFT SERVICE', 'SERVICE FEE',
-                                               'INSURANCE PREMIUM', 'ACCOUNT PAYMENT', 'INTEREST ON',
-                                               'TELEPHONE ACCOUNT', 'IB PAYMENT', 'MAGTAPE CREDIT',
-                                               'DEBIT CARD PURCHASE', 'BUSINESS ELECT BANK']:
-                                    if _prev_desc.startswith(_tprefix) and _fp_desc.startswith(_tprefix):
-                                        _is_similar = True
-                                        break
-                                if _is_similar:
+                                # If first 12 chars match, likely OCR dupe
+                                if _fp_desc[:12] == _prev_fp[1][:12]:
+                                    _dominated = True
                                     break
-                        if _is_similar:
+                        if _dominated:
                             skipped_dupes += 1
-                            logger.debug(f"[BANK IMPORT] Fuzzy dedup skip (intra-batch): {_fp_date} {_fp_amt} {_fp_desc[:40]}")
+                            logger.debug(f"[BANK IMPORT] Fuzzy dedup skip: {_fp_date} {_fp_amt} {_fp_desc[:40]}")
                             continue
                     
                     # Track within current import batch
@@ -1832,6 +1834,55 @@ Return ONLY the JSON array. No markdown, no explanation."""
                         logger.warning(f"[BANK] Save error: {save_err}")
             if save_errors > 0:
                 logger.warning(f"[BANK IMPORT] {save_errors} save errors out of {len(txns_to_save)}")
+            
+            # ═══════════════════════════════════════════════════════════════
+            # POST-IMPORT: Balance chain validation
+            # If the PDF included running balances, verify the chain is
+            # consistent. Duplicate OCR entries break the balance sequence.
+            # Remove any transaction that breaks the chain.
+            # ═══════════════════════════════════════════════════════════════
+            balance_removed = 0
+            try:
+                if imported > 0:
+                    fresh_txns = db.get("bank_transactions", {"business_id": biz_id}) or []
+                    # Sort by date, then by balance (to establish order)
+                    fresh_txns.sort(key=lambda x: (str(x.get("date", ""))[:10], float(x.get("balance", 0) or 0)))
+                    
+                    # Group by date+amount to find remaining duplicates
+                    from collections import defaultdict
+                    da_groups = defaultdict(list)
+                    for t in fresh_txns:
+                        _d = str(t.get("date", ""))[:10]
+                        _amt = round(float(t.get("amount", 0) or 0), 2)
+                        da_groups[(_d, _amt)].append(t)
+                    
+                    # For any group with 2+ entries, check if descriptions are similar
+                    import re as _re_bc
+                    for key, group in da_groups.items():
+                        if len(group) <= 1:
+                            continue
+                        # Compare each pair - if core text matches, delete the duplicate
+                        seen_cores = {}
+                        for t in group:
+                            desc = (t.get("description") or "").upper()
+                            core = _re_bc.sub(r'[0-9#:@%\-\.\s]+', '', desc)[:20]
+                            if core in seen_cores:
+                                # This is a duplicate — delete it
+                                try:
+                                    db.delete("bank_transactions", t["id"])
+                                    balance_removed += 1
+                                    logger.info(f"[BANK IMPORT] Balance chain removed dupe: {key[0]} {key[1]} {desc[:40]}")
+                                except Exception:
+                                    pass
+                            else:
+                                seen_cores[core] = t
+                    
+                    if balance_removed > 0:
+                        imported -= balance_removed
+                        skipped_dupes += balance_removed
+                        logger.info(f"[BANK IMPORT] Balance chain validation removed {balance_removed} duplicates")
+            except Exception as bc_err:
+                logger.warning(f"[BANK IMPORT] Balance chain check error (non-fatal): {bc_err}")
             
             # Invoice matching skipped during import for speed — runs on-demand via Zane
             logger.info(f"[BANK IMPORT] Skipping invoice matching during import (will run on-demand)")
