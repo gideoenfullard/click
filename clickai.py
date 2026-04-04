@@ -8238,8 +8238,8 @@ You do NOT handle stock queries (prices, quantities, availability, stock search,
 When a user asks about stock, prices, products, items, inventory, or what's in stock:
 → Tell them to click on Stock in the menu, or click any item to see its full history
 → Use NAVIGATE action with url "/stock" 
-→ Example: "Kyk gerus op die Stock bladsy - klik op enige item om sy volle geskiedenis, pryse en bewegings te sien!"
-→ For a specific item: "Gaan na Stock en soek 'the item' - klik op die ry om alles te sien."
+→ Example: "Check out the Stock page — click on any item to see its full history, prices and movements!"
+→ For a specific item: "Go to Stock and search for 'the item' — click the row to see everything."
 This is FASTER and more accurate than me searching through thousands of items.
 
 For REMINDERS, NOTES & TO-DOS:
@@ -8601,7 +8601,7 @@ def call_zane_with_tools(system_prompt, user_message, tool_handler, chat_history
             
             if response.status_code != 200:
                 logger.error(f"[ZANE-TOOLS] API error {response.status_code}: {response.text[:500]}")
-                return f"Ek het 'n tegniese probleem ondervind (kode {response.status_code}). Probeer asseblief weer."
+                return f"I encountered a technical problem (code {response.status_code}). Please try again."
             
             data = response.json()
             stop_reason = data.get("stop_reason")
@@ -8725,7 +8725,7 @@ class Brain:
             is_afrikaans = any(w in user_message.lower() for w in ["hoeveel", "wat", "wie", "hoe", "waar", "wanneer", "hierdie", "daardie"])
             
             if is_afrikaans:
-                response = "Hierdie inligting is net vir bestuurders beskikbaar. Vra jou bestuurder as jy dit nodig het."
+                response = "This information is only available to managers. Please ask your supervisor if you need this."
             else:
                 response = "This information is only available to managers. Please ask your supervisor if you need this."
             
@@ -8779,16 +8779,16 @@ class Brain:
             is_afrikaans = any(w in msg_lower for w in ["hoekom", "wat", "kan", "nie", "faktuur", "kwotasie"])
             
             if is_afrikaans:
-                response = """ALERT: **Probleem gevind:** Daar's geen stock in jou sisteem nie!
+                response = """ALERT: **Problem found:** There's no stock in your system!
 
-Jy kan nie invoices of quotes maak sonder stock items nie. 
+You can't create invoices or quotes without stock items.
 
-**Wat om te doen:**
-1. Gaan na Stock → Import Stock (of click hierdie link: /import)
-2. Of voeg stock handmatig by: /stock/new
-3. Of sê vir my: "Add stock item M10x50 bolt at R5.00"
+**What to do:**
+1. Go to Stock → Import Stock (or click: /import)
+2. Or add stock manually: /stock/new
+3. Or tell me: "Add stock item M10x50 bolt at R5.00"
 
-Sodra jy stock het, sal alles werk!"""
+Once you have stock, everything will work!"""
             else:
                 response = """ALERT: **Problem found:** There's no stock in your system!
 
@@ -8814,16 +8814,16 @@ Once you have stock, everything will work!"""
             is_afrikaans = any(w in msg_lower for w in ["hoekom", "wat", "kan", "nie", "faktuur", "kwotasie"])
             
             if is_afrikaans:
-                response = f"""ALERT: **Probleem gevind:** Daar's geen customers in jou sisteem nie!
+                response = f"""ALERT: **Problem found:** There are no customers in your system!
 
-Jy het {stock_count} stock items, maar jy kan nie invoices maak sonder customers nie.
+You have {stock_count} stock items, but you can't create invoices without customers.
 
-**Wat om te doen:**
-1. Gaan na Customers → Add Customer
-2. Of import customers: /import
-3. Of in POS: druk F8 en kies "+ Add New"
+**What to do:**
+1. Go to Customers → Add Customer
+2. Or import customers: /import
+3. Or in POS: press F8 and select "+ Add New"
 
-Sodra jy 'n customer het, kan jy invoice!"""
+Once you have a customer, you can invoice!"""
             else:
                 response = f"""ALERT: **Problem found:** There's no customers in your system!
 
@@ -10376,10 +10376,10 @@ Fokus op verkope en invorderings vir die res van die maand."
                 if not action_data.get("confirmed"):
                     customer_name = action_data.get("name", action_data.get("customer", "this customer"))
                     return {
-                        "response": f"WARNING: DELETE {customer_name}?\n\nThis removes all their invoices, payments, and history.\n\nType 'ja delete' to confirm.",
+                        "response": f"WARNING: DELETE {customer_name}?\n\nThis removes all their invoices, payments, and history.\n\nType 'yes delete' to confirm.",
                         "actions_taken": [],
                         "data": {"pending_delete": "customer", "name": customer_name},
-                        "suggestions": ["ja delete", "nee kanselleer"]
+                        "suggestions": ["yes delete", "no cancel"]
                     }
                 result = Actions.delete_customer(action_data, context)
                 if result["success"]:
@@ -10391,10 +10391,10 @@ Fokus op verkope en invorderings vir die res van die maand."
                 if not action_data.get("confirmed"):
                     supplier_name = action_data.get("name", action_data.get("supplier", "this supplier"))
                     return {
-                        "response": f"WARNING: DELETE {supplier_name}?\n\nThis removes their invoices and history.\n\nType 'ja delete' to confirm.",
+                        "response": f"WARNING: DELETE {supplier_name}?\n\nThis removes their invoices and history.\n\nType 'yes delete' to confirm.",
                         "actions_taken": [],
                         "data": {"pending_delete": "supplier", "name": supplier_name},
-                        "suggestions": ["ja delete", "nee kanselleer"]
+                        "suggestions": ["yes delete", "no cancel"]
                     }
                 result = Actions.delete_supplier(action_data, context)
                 if result["success"]:
@@ -10406,10 +10406,10 @@ Fokus op verkope en invorderings vir die res van die maand."
                 if not action_data.get("confirmed"):
                     item_name = action_data.get("code", action_data.get("item", action_data.get("description", "this item")))
                     return {
-                        "response": f"WARNING: DELETE stock item {item_name}?\n\nType 'ja delete' to confirm.",
+                        "response": f"WARNING: DELETE stock item {item_name}?\n\nType 'yes delete' to confirm.",
                         "actions_taken": [],
                         "data": {"pending_delete": "stock", "code": item_name},
-                        "suggestions": ["ja delete", "nee kanselleer"]
+                        "suggestions": ["yes delete", "no cancel"]
                     }
                 result = Actions.delete_stock(action_data, context)
                 if result["success"]:
@@ -10433,10 +10433,10 @@ Fokus op verkope en invorderings vir die res van die maand."
                     criteria = action_data.get("criteria", "all")
                     criteria_desc = f"duplicates - keeping oldest" if "duplicate" in str(criteria) else criteria
                     return {
-                        "response": f"WARNING: DELETE WARNING\n\nI will delete {criteria_desc} from {delete_type}.\n\nThis CANNOT be undone.\n\nType 'ja delete' to confirm.",
+                        "response": f"WARNING: DELETE WARNING\n\nI will delete {criteria_desc} from {delete_type}.\n\nThis CANNOT be undone.\n\nType 'yes delete' to confirm.",
                         "actions_taken": [],
                         "data": {"pending_delete": "bulk", "type": delete_type, "criteria": criteria},
-                        "suggestions": ["ja delete", "nee kanselleer"]
+                        "suggestions": ["yes delete", "no cancel"]
                     }
                 
                 result = Actions.bulk_delete(action_data, context)
@@ -10907,7 +10907,7 @@ Would you like me to save your WhatsApp settings? Just provide the phone number 
             }
         
         return {
-            "response": "Ek het 'n probleem gehad om jou vraag te verwerk. Probeer weer — vra iets spesifiek soos 'wie skuld my geld' of 'hoe lyk my sales vandag'.",
+            "response": "I had a problem processing your request. Please try again — ask something specific like 'who owes me money' or 'how do my sales look today'.",
             "actions_taken": [],
             "data": {},
             "suggestions": []
@@ -15018,7 +15018,7 @@ class IndustryKnowledge:
             ]
         },
         "tax_compliance": {
-            "label": "Tax & Compliance / Belasting",
+            "label": "Tax & Compliance",
             "items": [
                 ("VAT Payment to SARS", "2100"),
                 ("Provisional Tax Payment", "9200"),
@@ -17526,57 +17526,26 @@ CSS = """
     --green: #059669; --red: #dc2626; --orange: #d97706;
 }
 [data-theme="light"] body { color: #1a1a2e; }
-/* Light: header gets midnight dark background so reactor looks proper */
-[data-theme="light"] .header { background: #0a0a1a !important; border-bottom: 1px solid rgba(99,102,241,0.2) !important; box-shadow: 0 2px 12px rgba(0,0,0,0.15); }
-[data-theme="light"] .header .logo { color: #ffffff !important; }
-[data-theme="light"] .header .nav-link, [data-theme="light"] .header a { color: rgba(255,255,255,0.7) !important; }
-[data-theme="light"] .header .nav-link:hover, [data-theme="light"] .header a:hover { color: #ffffff !important; }
-[data-theme="light"] .header .nav-link.active { color: #ffffff !important; background: rgba(99,102,241,0.25) !important; }
-[data-theme="light"] .header .user-name, [data-theme="light"] .header .biz-name { color: rgba(255,255,255,0.85) !important; }
-[data-theme="light"] .header .theme-btn, [data-theme="light"] .header button { color: rgba(255,255,255,0.7) !important; border-color: rgba(255,255,255,0.15) !important; }
-[data-theme="light"] .header .theme-btn:hover, [data-theme="light"] .header button:hover { color: #ffffff !important; background: rgba(255,255,255,0.1) !important; }
-/* Light: reactor HUD wrap gets midnight background */
-[data-theme="light"] .j-hud-wrap { background: linear-gradient(160deg, rgba(10,10,26,0.95), rgba(18,18,42,0.95)) !important; border-color: rgba(99,102,241,0.2) !important; }
-[data-theme="light"] .j-hud-wrap::before, [data-theme="light"] .j-hud-wrap::after { border-color: rgba(99,102,241,0.3) !important; }
-[data-theme="light"] .j-hud-wrap .j-fl { color: #7ab8d8 !important; }
-[data-theme="light"] .j-hud-wrap .j-fv { color: #b0e0ff !important; }
-[data-theme="light"] .j-hud-wrap .j-fi { border-color: rgba(99,102,241,0.15) !important; background: rgba(10,30,60,0.25) !important; }
-[data-theme="light"] .j-hud-wrap .j-fi.L { border-left-color: rgba(99,102,241,0.35) !important; }
-[data-theme="light"] .j-hud-wrap .j-fi.R { border-right-color: rgba(99,102,241,0.35) !important; }
-[data-theme="light"] .j-hud-wrap .j-pn { color: #8ad0f0 !important; }
-[data-theme="light"] .j-hud-wrap .j-ticker { border-color: rgba(255,160,0,0.2) !important; border-left-color: rgba(255,160,0,0.5) !important; background: rgba(255,120,0,0.05) !important; }
-[data-theme="light"] .j-hud-wrap .j-ticker b { color: #ffaa00 !important; }
-[data-theme="light"] .j-hud-wrap .j-ticker .jt-msg { color: #bba060 !important; }
-[data-theme="light"] .j-hud-wrap .j-tbl { background: rgba(6,16,40,0.2) !important; border-color: rgba(80,180,255,0.08) !important; }
-/* Light: content area — clear readable text */
+[data-theme="light"] .header { background: #ffffff !important; border-bottom: 1px solid #e2e5ea !important; box-shadow: 0 1px 3px rgba(0,0,0,0.06); }
 [data-theme="light"] .card { background: #ffffff !important; border: 1px solid #e2e5ea !important; box-shadow: 0 1px 3px rgba(0,0,0,0.04); }
-[data-theme="light"] .card h1, [data-theme="light"] .card h2, [data-theme="light"] .card h3,
-[data-theme="light"] .card h4, [data-theme="light"] .card h5, [data-theme="light"] .card h6 { color: #1a1a2e !important; }
-[data-theme="light"] .card p, [data-theme="light"] .card span, [data-theme="light"] .card div,
-[data-theme="light"] .card td, [data-theme="light"] .card li { color: #1a1a2e; }
 [data-theme="light"] .btn-primary { background: linear-gradient(135deg,#4f46e5,#6366f1) !important; box-shadow: 0 2px 8px rgba(79,70,229,0.25) !important; }
 [data-theme="light"] .btn-secondary { background: #f4f6f9 !important; color: #1a1a2e !important; border: 1px solid #e2e5ea !important; }
-[data-theme="light"] .table thead th { background: #f0f1f5 !important; color: #374151 !important; border-bottom: 2px solid #d1d5db !important; font-weight: 700 !important; }
-[data-theme="light"] .table tbody td { color: #1a1a2e !important; }
+[data-theme="light"] .table thead th { background: #f8f9fb !important; color: #6b7280 !important; border-bottom: 2px solid #e2e5ea !important; }
 [data-theme="light"] .table tbody tr:hover { background: #f8f9fb !important; }
 [data-theme="light"] .stat-card { background: #ffffff !important; }
 [data-theme="light"] .stat-value { color: #1a1a2e !important; }
-[data-theme="light"] .stat-label { color: #4b5563 !important; }
-[data-theme="light"] label { color: #374151 !important; }
 [data-theme="light"] input, [data-theme="light"] select, [data-theme="light"] textarea,
 [data-theme="light"] .form-input { background: #ffffff !important; border: 1px solid #d1d5db !important; color: #1a1a2e !important; }
 [data-theme="light"] input:focus, [data-theme="light"] select:focus,
 [data-theme="light"] .form-input:focus { border-color: #4f46e5 !important; box-shadow: 0 0 0 3px rgba(79,70,229,0.1) !important; }
-[data-theme="light"] input::placeholder, [data-theme="light"] textarea::placeholder { color: #9ca3af !important; }
 [data-theme="light"] .sidebar { background: #ffffff !important; border-right: 1px solid #e2e5ea !important; }
 [data-theme="light"] .sidebar a { color: #4b5563 !important; }
 [data-theme="light"] .sidebar a.active, [data-theme="light"] .sidebar a:hover { background: rgba(79,70,229,0.08) !important; color: #4f46e5 !important; }
 [data-theme="light"] a { color: #4f46e5; }
 [data-theme="light"] .text-error, [data-theme="light"] .text-red { color: #dc2626 !important; }
-[data-theme="light"] .text-muted { color: #6b7280 !important; }
-/* Light: white text on ALL blue buttons */
+/* Light: white text on ALL blue buttons — fixes unreadable dark-on-dark */
 [data-theme="light"] .btn-primary { color: #ffffff !important; }
-/* Light: reactor rings — vivid blue/purple on midnight background */
+/* Light: blue/purple reactor — the hero piece on dashboard */
 [data-theme="light"] .j-rg.r1 { border-color: rgba(79,70,229,0.3) !important; border-top-color: rgba(99,102,241,0.8) !important; box-shadow: 0 0 30px rgba(79,70,229,0.1) !important; }
 [data-theme="light"] .j-rg.r2 { border-color: rgba(124,58,237,0.2) !important; border-bottom-color: rgba(139,92,246,0.7) !important; }
 [data-theme="light"] .j-rg.r3 { border-color: rgba(59,130,246,0.15) !important; border-top-color: rgba(96,165,250,0.6) !important; }
@@ -19379,7 +19348,7 @@ def get_page_help(active: str) -> str:
             </div>
             {tips_html}
             <div style="margin-top:15px;padding-top:12px;border-top:1px solid var(--border);text-align:center;">
-                <p style="color:var(--text-muted);font-size:12px;margin:0;">Vir boekhou en belasting vrae, vra vir Zane</p>
+                <p style="color:var(--text-muted);font-size:12px;margin:0;">For accounting and tax questions, ask Zane</p>
             </div>
         </div>
     </div>
@@ -20949,7 +20918,7 @@ def get_zane_chat() -> str:
             } catch(e) {
                 console.error('MediaRecorder error:', e);
                 if (e.name === 'NotAllowedError') {
-                    alert('Gee asb toestemming vir mikrofoon toegang in jou browser settings.');
+                    alert('Please allow microphone access in your browser settings.');
                     stopVoiceUI();
                     return;
                 }
@@ -21015,7 +20984,7 @@ def get_zane_chat() -> str:
         };
         
         recognition.onerror = function(event) {
-            if (event.error === 'not-allowed') alert('Gee asb toestemming vir mikrofoon toegang.');
+            if (event.error === 'not-allowed') alert('Please allow microphone access in your browser settings.');
             stopVoiceUI();
             if (voiceModeActive && event.error === 'no-speech') setTimeout(() => { if (voiceModeActive) startVoice(); }, 1500);
         };
@@ -21841,7 +21810,7 @@ def get_ai_scripts() -> str:
             setTimeout(() => { if (aiBarRecorder && aiBarRecorder.state === 'recording') aiBarRecorder.stop(); }, 15000);
         } catch(e) {
             if (e.name === 'NotAllowedError') {
-                alert('Gee asb toestemming vir mikrofoon toegang.');
+                alert('Please allow microphone access in your browser settings.');
             } else {
                 aiBarUseBrowser();
             }
@@ -23669,7 +23638,7 @@ def has_reactor_hud():
     """Check if current theme supports the reactor HUD (all dark themes)"""
     try:
         theme = request.cookies.get("clickai_theme", "midnight")
-        return theme in ("jarvis", "midnight", "cyber", "emerald", "sunset", "slate", "light")
+        return theme in ("jarvis", "midnight", "cyber", "emerald", "sunset", "slate")
     except Exception:
         return False
 
@@ -29862,8 +29831,8 @@ def smart_import_page():
     <div id="dropState" class="card">
         <div class="drop-zone" id="dropZone">
             <span class="drop-icon">📄</span>
-            <div class="drop-title">Drop jou file hier</div>
-            <div class="drop-subtitle">Of klik om te kies. Ons AI figure uit wat om daarmee te doen.</div>
+            <div class="drop-title">Drop your file here</div>
+            <div class="drop-subtitle">Or click to browse. Our AI will figure out what to do with it.</div>
             <input type="file" id="fileInput" accept=".csv,.xlsx,.xls,.txt" style="display:none;">
             <div class="file-types">
                 <span class="file-type">CSV</span>
