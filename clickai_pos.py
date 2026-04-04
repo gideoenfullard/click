@@ -188,7 +188,7 @@ def register_pos_routes(app, db, login_required, Auth, render_page,
         
         body {
             background: var(--pos-bg);
-            overflow: hidden;
+            overflow-y: auto;
         }
         
         /* ═══ CASHIER BAR ═══ */
@@ -1193,9 +1193,9 @@ def register_pos_routes(app, db, login_required, Auth, render_page,
         @media(max-width:1200px){.pos-btn-flank{max-width:160px;}.pos-hud-btn{font-size:11px;padding:6px 8px;}}
         @media(max-width:900px){.pos-reactor-hero{flex-wrap:wrap;gap:8px;}.pos-btn-flank{flex-direction:row;flex-wrap:wrap;width:100%;max-width:100%;}.pos-rx{width:120px;height:120px;}.pos-rx .pos-rx-core{inset:32px;}.pos-reactor-cn{display:none;}}
     
-        /* ═══ F11 FULLSCREEN MODE ═══ */
-        .f11-header{display:none;padding:2px 6px;background:rgba(4,12,35,0.98);border-bottom:1px solid rgba(80,180,255,0.15);align-items:center;gap:0;justify-content:space-between;height:36px;min-height:36px;max-height:36px;overflow:hidden;}
-        .f11-left{display:flex;align-items:center;gap:1px;flex-wrap:nowrap;overflow:hidden;}
+        /* ═══ INLINE ORDER MODE (was F11 fullscreen, now always visible) ═══ */
+        .f11-header{display:flex;padding:2px 6px;background:rgba(4,12,35,0.98);border-bottom:1px solid rgba(80,180,255,0.15);align-items:center;gap:0;justify-content:space-between;height:36px;min-height:36px;max-height:36px;overflow:hidden;}
+        .f11-left{display:flex;align-items:center;gap:1px;flex-wrap:nowrap;overflow:hidden;overflow-x:auto;}
         .f11-btn{padding:4px 6px;border:1px solid rgba(80,180,255,0.15);background:rgba(10,30,60,0.4);cursor:pointer;transition:all 0.15s;display:inline-flex;align-items:center;gap:3px;font-family:'Rajdhani',sans-serif;font-weight:700;color:#a0d8f8;font-size:10px;letter-spacing:0.2px;text-transform:uppercase;white-space:nowrap;line-height:1;}
         .f11-btn:hover{border-color:rgba(0,200,255,0.4);background:rgba(0,200,255,0.1);color:#00eeff;}
         .f11-btn:disabled{opacity:0.3;cursor:not-allowed;}
@@ -1203,11 +1203,9 @@ def register_pos_routes(app, db, login_required, Auth, render_page,
         .f11-right{display:flex;align-items:center;gap:6px;flex-shrink:0;margin-left:auto;padding-left:4px;}
         .f11-cust{font-family:'Rajdhani',sans-serif;font-size:11px;color:#a0d8f8;font-weight:700;max-width:90px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
         .f11-total{font-family:'Orbitron',monospace;font-size:16px;font-weight:800;color:#00ff88;text-shadow:0 0 12px rgba(0,255,136,0.5);letter-spacing:0.5px;}
-        .f11-exit{padding:4px 8px;border:1px solid rgba(255,80,80,0.25);background:rgba(255,40,40,0.08);cursor:pointer;display:inline-flex;align-items:center;gap:3px;font-family:'Rajdhani',sans-serif;font-weight:700;color:#ff8888;font-size:10px;text-transform:uppercase;}
-        .f11-exit:hover{border-color:rgba(255,80,80,0.5);background:rgba(255,40,40,0.15);color:#ffaaaa;}
-        .f11-exit .pk{color:#ff6666;border-color:rgba(255,80,80,0.25);background:rgba(255,40,40,0.06);font-size:8px;padding:1px 3px;}
-        .f11-order-wrap{display:none;flex:1;overflow:hidden;flex-direction:column;}
-        .f11-search{padding:6px 12px;border-bottom:1px solid rgba(80,180,255,0.08);position:relative;}
+        .f11-exit{display:none;}
+        .f11-order-wrap{display:flex;flex:1;overflow:hidden;flex-direction:column;min-height:calc(100vh - 120px);}
+        .f11-search{padding:6px 12px;border-bottom:1px solid rgba(80,180,255,0.08);position:sticky;top:0;z-index:200;background:rgba(4,12,35,0.98);}
         .f11-search input{width:100%;height:44px;background:rgba(8,20,50,0.9);border:2px solid rgba(0,200,255,0.5);color:#e8f4ff;font-family:'Rajdhani',sans-serif;font-size:17px;font-weight:600;padding:0 14px 0 40px;outline:none;letter-spacing:0.5px;border-radius:4px;box-shadow:0 0 12px rgba(0,200,255,0.15);animation:f11searchPulse 2.5s ease-in-out infinite;}
         @keyframes f11searchPulse{0%,100%{border-color:rgba(0,200,255,0.5);box-shadow:0 0 12px rgba(0,200,255,0.15);}50%{border-color:rgba(0,220,255,0.8);box-shadow:0 0 24px rgba(0,200,255,0.3);}}
         .f11-search::before{content:'🔍';position:absolute;left:22px;top:50%;transform:translateY(-50%);font-size:16px;z-index:1;opacity:0.7;}
@@ -1240,18 +1238,18 @@ def register_pos_routes(app, db, login_required, Auth, render_page,
         .f11-del-btn{background:none;border:1px solid rgba(239,68,68,0.2);color:#5a6a7a;font-size:14px;cursor:pointer;padding:3px 7px;border-radius:4px;transition:all 0.15s;line-height:1;font-weight:700;}
         .f11-del-btn:hover{color:#ef4444;background:rgba(239,68,68,0.15);border-color:rgba(239,68,68,0.4);text-shadow:0 0 8px rgba(239,68,68,0.5);}
     
-        /* F11 state toggle — hide ALL page elements, show fixed overlay */
+        /* F11 state toggle — hide page elements, show fixed overlay */
         body.f11-mode .pos-header{display:none !important;}
-        body.f11-mode .pos-reactor-wrap{position:fixed !important;top:38px;left:0;right:0;z-index:9100;border:none !important;background:none !important;margin:0 !important;padding:0 !important;pointer-events:none;overflow:visible !important;}
-        body.f11-mode .pos-reactor-wrap::before,body.f11-mode .pos-reactor-wrap::after{display:none !important;}
-        body.f11-mode .pos-reactor-hero{display:none !important;}
-        body.f11-mode .pos-reactor-wrap .pos-lbl{display:none !important;}
-        body.f11-mode .pos-entity-bar{pointer-events:auto;display:none;background:rgba(4,12,35,0.98);border:1px solid rgba(80,180,255,0.2);border-radius:0 0 8px 8px;padding:6px 12px;position:absolute;left:50%;transform:translateX(-50%);z-index:9600;}
+        body.f11-mode .pos-reactor-wrap{display:none !important;}
         body.f11-mode .container{display:none !important;}
         body.f11-mode .cashier-bar{display:none !important;}
         body.f11-mode .zane-chat{display:none !important;}
-        body.f11-mode .f11-header{display:flex !important;position:fixed !important;top:0;left:0;right:0;z-index:9000;background:rgba(4,12,35,0.98) !important;}
-        body.f11-mode .f11-order-wrap{display:flex !important;position:fixed !important;top:38px;left:0;right:0;bottom:0;z-index:8999;background:rgba(4,12,35,0.98) !important;}
+        body.f11-mode .f11-header{position:fixed !important;top:0;left:0;right:0;z-index:9000;background:rgba(4,12,35,0.98) !important;}
+        body.f11-mode .f11-exit{display:inline-flex !important;padding:4px 8px;border:1px solid rgba(255,80,80,0.25);background:rgba(255,40,40,0.08);cursor:pointer;align-items:center;gap:3px;font-family:'Rajdhani',sans-serif;font-weight:700;color:#ff8888;font-size:10px;text-transform:uppercase;}
+        body.f11-mode .f11-exit:hover{border-color:rgba(255,80,80,0.5);background:rgba(255,40,40,0.15);color:#ffaaaa;}
+        body.f11-mode .f11-exit .pk{color:#ff6666;border-color:rgba(255,80,80,0.25);background:rgba(255,40,40,0.06);font-size:8px;padding:1px 3px;}
+        body.f11-mode .f11-order-wrap{position:fixed !important;top:38px;left:0;right:0;bottom:0;z-index:8999;background:rgba(4,12,35,0.98) !important;min-height:auto !important;}
+        body.f11-mode .f11-search{position:relative !important;}
         body.f11-mode{overflow:hidden !important;}
     
         /* ═══ LIGHT THEME POS ═══ */
@@ -1347,7 +1345,7 @@ def register_pos_routes(app, db, login_required, Auth, render_page,
         [data-theme="light"] .f11-exit{border-color:#fca5a5;background:#fef2f2;color:#dc2626;}
         [data-theme="light"] .f11-exit .pk{color:#dc2626;border-color:#fca5a5;background:#fef2f2;}
         [data-theme="light"] .f11-order-wrap{background:#f0f2f5 !important;}
-        [data-theme="light"] .f11-search{border-bottom-color:#e2e5ea;}
+        [data-theme="light"] .f11-search{border-bottom-color:#e2e5ea;background:#f0f2f5 !important;}
         [data-theme="light"] .f11-search input{background:#fff !important;border-color:#d1d5db !important;color:#1f2937 !important;}
         [data-theme="light"] .f11-search input::placeholder{color:#9ca3af !important;}
         [data-theme="light"] .f11-table th{background:#f8f9fb !important;color:#6b7280 !important;border-bottom-color:#e2e5ea !important;}
@@ -1627,7 +1625,7 @@ def register_pos_routes(app, db, login_required, Auth, render_page,
                 document.getElementById('vatAmount').textContent = 'R0.00';
                 document.getElementById('grandTotal').textContent = 'R0.00';
                 document.getElementById('headerTotal').textContent = 'R0.00';
-                if (typeof renderF11Table === 'function' && f11Mode) { renderF11Table(); syncF11Buttons(); }
+                if (typeof renderF11Table === 'function') { renderF11Table(); syncF11Buttons(); }
                 document.getElementById('btnCash').disabled = true;
                 document.getElementById('btnCard').disabled = true;
                 // Account/Invoice - enabled if customer selected (will show "cart empty" message)
@@ -1681,7 +1679,7 @@ def register_pos_routes(app, db, login_required, Auth, render_page,
             document.getElementById('grandTotal').textContent = 'R' + grandTotal.toFixed(2);
             document.getElementById('headerTotal').textContent = 'R' + grandTotal.toFixed(2);
             // Sync F11 view
-            if (typeof renderF11Table === 'function' && f11Mode) { renderF11Table(); syncF11Buttons(); updateF11CustName(); }
+            if (typeof renderF11Table === 'function') { renderF11Table(); syncF11Buttons(); updateF11CustName(); }
             
             document.getElementById('btnCash').disabled = false;
             document.getElementById('btnCard').disabled = false;
@@ -1841,12 +1839,10 @@ def register_pos_routes(app, db, login_required, Auth, render_page,
                 // Hide entity bar overlay in F11 mode
                 var ebar = document.querySelector('.pos-entity-bar');
                 if (ebar) ebar.style.display = 'none';
-                if (typeof updateF11CustName === 'function') updateF11CustName();
-                var f11El = document.getElementById('f11Search');
-                if (f11El) f11El.focus();
-            } else {
-                document.getElementById('stockSearch').focus();
             }
+            if (typeof updateF11CustName === 'function') updateF11CustName();
+            var f11El = document.getElementById('f11Search');
+            if (f11El) f11El.focus();
         }
         
         function renderEntityList(filter) {
@@ -2879,12 +2875,8 @@ def register_pos_routes(app, db, login_required, Auth, render_page,
             
             // Focus search on typing
             if (!isInput && /^[a-zA-Z0-9]$/.test(e.key)) {
-                if (f11Mode) {
-                    var f11El = document.getElementById('f11Search');
-                    if (f11El) f11El.focus();
-                } else {
-                    searchInput.focus();
-                }
+                var f11El = document.getElementById('f11Search');
+                if (f11El) f11El.focus();
             }
         }, true);
         
@@ -4052,9 +4044,6 @@ def register_pos_routes(app, db, login_required, Auth, render_page,
             _hideReprintState();
             var modal = document.getElementById('printSlipModal');
             if (modal) modal.style.display = 'none';
-            if (f11Mode && !document.fullscreenElement) {
-                try { document.documentElement.requestFullscreen(); } catch(e) {}
-            }
             if (typeof afterSaleReset === 'function') afterSaleReset();
         }
         
@@ -4113,22 +4102,12 @@ def register_pos_routes(app, db, login_required, Auth, render_page,
             posLocked = false;
             lastSaleData = null;
             
-            // === AUTO-RETURN TO FULLSCREEN after print ===
-            if (f11Mode && !document.fullscreenElement) {
-                try { document.documentElement.requestFullscreen(); } catch(e) {}
-            }
-            
-            // Focus search bar AFTER fullscreen settles (browser steals focus during fullscreen transition)
+            // Focus search bar after sale
             setTimeout(function() {
-                if (f11Mode) {
-                    var f11s = document.getElementById('f11Search');
-                    if (f11s) { f11s.value = ''; f11s.focus(); }
-                    if (typeof renderF11Table === 'function') renderF11Table();
-                    if (typeof syncF11Buttons === 'function') syncF11Buttons();
-                } else {
-                    var search = document.getElementById('stockSearch');
-                    if (search) { search.value = ''; search.focus(); }
-                }
+                var f11s = document.getElementById('f11Search');
+                if (f11s) { f11s.value = ''; f11s.focus(); }
+                if (typeof renderF11Table === 'function') renderF11Table();
+                if (typeof syncF11Buttons === 'function') syncF11Buttons();
             }, 400);
             
             // Flash success on reactor
@@ -4890,7 +4869,7 @@ def register_pos_routes(app, db, login_required, Auth, render_page,
             </div>
         </div>
     
-        <main class="container" style="padding-top:8px;min-height:calc(100vh - 250px);display:flex;flex-direction:column;">
+        <main class="container" style="display:none !important;">
             {pos_html}
         </main>
         
@@ -5166,6 +5145,16 @@ def register_pos_routes(app, db, login_required, Auth, render_page,
     
         // Sync F11 when entity changes
         const _origToggleEntity = typeof toggleEntity === 'function' ? toggleEntity : null;
+        
+        // Initial render of order table on page load
+        document.addEventListener('DOMContentLoaded', function() {{
+            if (typeof renderF11Table === 'function') renderF11Table();
+            if (typeof syncF11Buttons === 'function') syncF11Buttons();
+            if (typeof updateF11CustName === 'function') updateF11CustName();
+            // Focus the main search bar
+            var f11s = document.getElementById('f11Search');
+            if (f11s) setTimeout(function() {{ f11s.focus(); }}, 100);
+        }});
         </script>
         <script>
         if ('serviceWorker' in navigator) {{
