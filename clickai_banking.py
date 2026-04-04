@@ -1532,9 +1532,13 @@ Return ONLY the JSON array. No markdown, no explanation."""
             # ═══════════════════════════════════════════════════════════════
             # DEDUP: Build fingerprint set of existing transactions
             # Prevents re-importing the same statement twice
+            # Uses TWO layers: exact match + fuzzy match (date+amount only)
             # ═══════════════════════════════════════════════════════════════
             existing_txns = db.get("bank_transactions", {"business_id": biz_id}) or []
             existing_fingerprints = set()
+            # Fuzzy dedup: date+amount → count how many times this combo exists
+            # This catches OCR variants where description differs slightly
+            existing_date_amount = {}
             for et in existing_txns:
                 _e_date = str(et.get("date", ""))[:10]
                 _e_desc = (et.get("description") or "").strip().upper()[:80]
@@ -1545,8 +1549,14 @@ Return ONLY the JSON array. No markdown, no explanation."""
                 # Also add debit/credit variant in case amount was stored differently
                 if _e_deb > 0 or _e_cre > 0:
                     existing_fingerprints.add((_e_date, _e_desc, round(_e_cre - _e_deb, 2)))
+                # Track date+amount combos for fuzzy dedup
+                _da_key = (_e_date, _e_amt)
+                existing_date_amount[_da_key] = existing_date_amount.get(_da_key, 0) + 1
             
-            logger.info(f"[BANK IMPORT] Dedup: {len(existing_fingerprints)} existing fingerprints loaded")
+            # Also track date+amount within current import batch for intra-file dedup
+            import_date_amount = {}
+            
+            logger.info(f"[BANK IMPORT] Dedup: {len(existing_fingerprints)} exact + {len(existing_date_amount)} date+amount fingerprints loaded")
             
             # ═══════════════════════════════════════════════════════════════
             # PRE-CACHE: Load all bank patterns ONCE instead of per-transaction
@@ -1657,6 +1667,10 @@ Return ONLY the JSON array. No markdown, no explanation."""
                     
                     # ═══════════════════════════════════════════════════════════════
                     # DEDUP CHECK: Skip if this transaction already exists
+                    # Layer 1: Exact fingerprint (date + description + amount)
+                    # Layer 2: Fuzzy dedup (date + amount) — catches OCR variants
+                    #          where same transaction has slightly different description
+                    #          e.g. "STNDR0BANK" vs "STNDRBANK" from different PDF pages
                     # ═══════════════════════════════════════════════════════════════
                     _fp_date = str(txn_date)[:10]
                     _fp_desc = desc_upper.strip()[:80]
@@ -1665,7 +1679,53 @@ Return ONLY the JSON array. No markdown, no explanation."""
                     if fingerprint in existing_fingerprints:
                         skipped_dupes += 1
                         continue
-                    # Also add this new one to prevent dupes within the same import file
+                    
+                    # Fuzzy dedup: same date + same amount already in DB or this batch?
+                    # This catches OCR variants from overlapping statement pages
+                    _da_key = (_fp_date, _fp_amt)
+                    _existing_count = existing_date_amount.get(_da_key, 0)
+                    _import_count = import_date_amount.get(_da_key, 0)
+                    
+                    # For re-imports: skip if DB already has this date+amount combo
+                    if _existing_count > 0 and _import_count >= _existing_count:
+                        skipped_dupes += 1
+                        logger.debug(f"[BANK IMPORT] Fuzzy dedup skip (vs DB): {_fp_date} {_fp_amt}")
+                        continue
+                    
+                    # For fresh imports: if we already imported this date+amount in
+                    # this batch AND the description is similar (first 15 chars match
+                    # or both start with same transaction type), skip it
+                    if _existing_count == 0 and _import_count > 0:
+                        # Check if descriptions are similar enough to be OCR dupes
+                        _desc_prefix = _fp_desc[:15]
+                        _is_similar = False
+                        for _prev_fp in existing_fingerprints:
+                            if _prev_fp[0] == _fp_date and round(float(str(_prev_fp[2])), 2) == _fp_amt:
+                                _prev_desc = _prev_fp[1]
+                                # Same first 15 chars = likely OCR variant
+                                if _prev_desc[:15] == _desc_prefix:
+                                    _is_similar = True
+                                    break
+                                # Same transaction type prefix = likely OCR variant
+                                for _tprefix in ['ELECTRONIC BANKING', 'CREDIT CARD EFTPOS', 'CREDIT TRANSFER',
+                                               'DEBIT TRANSFER', 'OVERDRAFT SERVICE', 'SERVICE FEE',
+                                               'INSURANCE PREMIUM', 'ACCOUNT PAYMENT', 'INTEREST ON',
+                                               'TELEPHONE ACCOUNT', 'IB PAYMENT', 'MAGTAPE CREDIT',
+                                               'DEBIT CARD PURCHASE', 'BUSINESS ELECT BANK']:
+                                    if _prev_desc.startswith(_tprefix) and _fp_desc.startswith(_tprefix):
+                                        _is_similar = True
+                                        break
+                                if _is_similar:
+                                    break
+                        if _is_similar:
+                            skipped_dupes += 1
+                            logger.debug(f"[BANK IMPORT] Fuzzy dedup skip (intra-batch): {_fp_date} {_fp_amt} {_fp_desc[:40]}")
+                            continue
+                    
+                    # Track within current import batch
+                    import_date_amount[_da_key] = _import_count + 1
+                    
+                    # Also add this new one to prevent exact dupes within the same import file
                     existing_fingerprints.add(fingerprint)
                     
                     # ═══════════════════════════════════════════════════════════════
