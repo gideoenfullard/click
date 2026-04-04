@@ -1144,12 +1144,13 @@ def register_banking_routes(app, db, login_required, Auth, render_page,
                         except Exception as plumber_err:
                             logger.warning(f"[BANK IMPORT] pdfplumber failed: {plumber_err}")
                     
-                    # If text extraction failed (scanned PDF), use Claude AI via direct PDF
+                    # If text extraction failed (scanned PDF), use Claude AI via page-by-page processing
                     if not pdf_text or len(pdf_text) < 50:
-                        logger.info(f"[BANK IMPORT] Scanned PDF detected (text={len(pdf_text) if pdf_text else 0} chars) - sending PDF directly to Claude")
+                        logger.info(f"[BANK IMPORT] Scanned PDF detected (text={len(pdf_text) if pdf_text else 0} chars) - processing page by page")
                         
                         try:
                             import base64
+                            from concurrent.futures import ThreadPoolExecutor, as_completed
                             all_transactions = []
                             
                             api_key = os.environ.get("ANTHROPIC_API_KEY", "")
@@ -1157,108 +1158,147 @@ def register_banking_routes(app, db, login_required, Auth, render_page,
                                 os.unlink(tmp_path)
                                 return jsonify({"success": False, "error": "AI API key not configured"})
                             
-                            # Send PDF directly to Claude as a document (no image conversion needed)
-                            pdf_b64 = base64.standard_b64encode(pdf_bytes).decode("utf-8")
-                            
-                            # Check PDF size — Claude accepts up to ~32MB base64
-                            if len(pdf_b64) > 30_000_000:
-                                os.unlink(tmp_path)
-                                return jsonify({"success": False, "error": "PDF too large for AI processing (max ~22MB)"})
-                            
-                            logger.info(f"[BANK IMPORT] Sending PDF ({len(pdf_bytes)} bytes) directly to Claude")
-                            
-                            prompt = """Extract ALL bank transactions from this bank statement PDF.
-    
-    Return ONLY a valid JSON array, no other text. Each transaction must have:
-    - "date": "YYYY-MM-DD" format
-    - "description": the FULL transaction description including ALL detail lines (see below)
-    - "debit": amount as number (money going OUT, positive number) or 0
-    - "credit": amount as number (money coming IN, positive number) or 0
-    - "balance": the running balance after this transaction
-    
-    CRITICAL - DESCRIPTIONS:
-    - Each transaction may span MULTIPLE LINES. The first line has the transaction type (e.g. "ELECTRONIC BANKING PAYMENT TO") and the next line(s) have the beneficiary/reference details (e.g. "MAR20 M FULLARD ERY5310:21")
-    - You MUST combine ALL lines of a transaction into ONE description string
-    - Example: if you see "CREDIT TRANSFER" on one line and "KHUPHUKANI" on the next, the description must be "CREDIT TRANSFER KHUPHUKANI"
-    - NEVER use generic text like "Transaction" — always use the actual text from the statement
-    
-    RULES:
-    - Payments OUT (debits, purchases, fees) go in "debit" field as POSITIVE numbers
-    - Payments IN (credits, deposits) go in "credit" field as POSITIVE numbers
-    - Never use negative numbers
-    - Include ALL transactions, not just a sample
-    - Skip header rows, opening balances, closing balances, and summary lines
-    - For year: if month is Jan-Mar, year is likely the current year. For Oct-Dec with Jan-Mar statements, Oct-Dec is previous year
-    
-    Return ONLY the JSON array. No markdown, no explanation."""
-                            
-                            import requests as _req
-                            resp = _req.post(
-                                "https://api.anthropic.com/v1/messages",
-                                headers={
-                                    "x-api-key": api_key,
-                                    "anthropic-version": "2023-06-01",
-                                    "content-type": "application/json"
-                                },
-                                json={
-                                    "model": "claude-haiku-4-5-20251001",
-                                    "max_tokens": 32000,
-                                    "messages": [{
-                                        "role": "user",
-                                        "content": [
-                                            {
-                                                "type": "document",
-                                                "source": {
-                                                    "type": "base64",
-                                                    "media_type": "application/pdf",
-                                                    "data": pdf_b64
-                                                }
-                                            },
-                                            {"type": "text", "text": prompt}
-                                        ]
-                                    }]
-                                },
-                                timeout=180
-                            )
-                            
-                            if resp.status_code != 200:
-                                logger.error(f"[BANK IMPORT] Claude API error: {resp.status_code} {resp.text[:300]}")
-                                os.unlink(tmp_path)
-                                return jsonify({"success": False, "error": f"AI reading failed (HTTP {resp.status_code})"})
-                            
-                            ai_result = resp.json()
-                            ai_text = ""
-                            for block in ai_result.get("content", []):
-                                if block.get("type") == "text":
-                                    ai_text += block["text"]
-                            
-                            # Parse JSON from AI response
-                            ai_text = ai_text.strip()
-                            if ai_text.startswith("```"):
-                                ai_text = ai_text.split("\n", 1)[-1].rsplit("```", 1)[0].strip()
+                            # Split PDF into individual pages using pdfseparate
+                            import glob
+                            page_dir = tmp_path + "_pages"
+                            os.makedirs(page_dir, exist_ok=True)
                             
                             try:
-                                all_transactions = json.loads(ai_text)
-                                logger.info(f"[BANK IMPORT] Claude extracted {len(all_transactions)} transactions from PDF")
-                            except json.JSONDecodeError as je:
-                                # Try to recover truncated JSON — find last complete object
-                                logger.warning(f"[BANK IMPORT] JSON truncated at pos {je.pos}, attempting recovery...")
-                                recovered = ai_text[:je.pos].rstrip().rstrip(",")
-                                # Close the array if it was cut off
-                                if not recovered.endswith("]"):
-                                    # Find last complete } and close the array there
-                                    last_brace = recovered.rfind("}")
-                                    if last_brace > 0:
-                                        recovered = recovered[:last_brace + 1] + "]"
-                                try:
-                                    all_transactions = json.loads(recovered)
-                                    logger.info(f"[BANK IMPORT] Recovered {len(all_transactions)} transactions from truncated JSON")
-                                except json.JSONDecodeError:
-                                    logger.error(f"[BANK IMPORT] JSON recovery also failed")
-                                    logger.error(f"[BANK IMPORT] Raw AI response (first 500): {ai_text[:500]}")
-                                    os.unlink(tmp_path)
-                                    return jsonify({"success": False, "error": "AI could not parse the bank statement. Try a clearer scan or CSV export."})
+                                split_result = subprocess.run(
+                                    ['pdfseparate', tmp_path, os.path.join(page_dir, 'page_%d.pdf')],
+                                    capture_output=True, text=True, timeout=30
+                                )
+                                page_files = sorted(glob.glob(os.path.join(page_dir, 'page_*.pdf')))
+                                logger.info(f"[BANK IMPORT] Split PDF into {len(page_files)} pages")
+                            except Exception as split_err:
+                                # Fallback: send whole PDF if splitting fails
+                                logger.warning(f"[BANK IMPORT] pdfseparate failed ({split_err}), sending whole PDF")
+                                page_files = [tmp_path]
                             
+                            if not page_files:
+                                page_files = [tmp_path]
+                            
+                            prompt = """Extract ALL bank transactions from this bank statement page.
+
+Return ONLY a valid JSON array, no other text. Each transaction must have:
+- "date": "YYYY-MM-DD" format
+- "description": the FULL transaction description including ALL detail lines
+- "debit": amount as number (money going OUT, positive number) or 0
+- "credit": amount as number (money coming IN, positive number) or 0
+- "balance": the running balance after this transaction
+
+CRITICAL - DESCRIPTIONS:
+- Each transaction may span MULTIPLE LINES. The first line has the transaction type (e.g. "ELECTRONIC BANKING PAYMENT TO") and the next line(s) have the beneficiary/reference details (e.g. "MAR20 M FULLARD ERY5310:21")
+- You MUST combine ALL lines of a transaction into ONE description string
+- Example: if you see "CREDIT TRANSFER" on one line and "KHUPHUKANI" on the next, the description must be "CREDIT TRANSFER KHUPHUKANI"
+- NEVER use generic text like "Transaction" — always use the actual text from the statement
+
+RULES:
+- Payments OUT (debits, purchases, fees) go in "debit" field as POSITIVE numbers
+- Payments IN (credits, deposits) go in "credit" field as POSITIVE numbers
+- Never use negative numbers
+- Include ALL transactions on this page, not just a sample
+- Skip "BALANCE BROUGHT FORWARD" lines, page headers, and column headers
+- If this page has NO transactions (only headers/summary), return an empty array: []
+
+Return ONLY the JSON array. No markdown, no explanation."""
+                            
+                            import requests as _req
+                            
+                            def process_page(page_path, page_num):
+                                """Process a single PDF page through Claude"""
+                                try:
+                                    with open(page_path, 'rb') as f:
+                                        page_bytes = f.read()
+                                    page_b64 = base64.standard_b64encode(page_bytes).decode("utf-8")
+                                    
+                                    resp = _req.post(
+                                        "https://api.anthropic.com/v1/messages",
+                                        headers={
+                                            "x-api-key": api_key,
+                                            "anthropic-version": "2023-06-01",
+                                            "content-type": "application/json"
+                                        },
+                                        json={
+                                            "model": "claude-haiku-4-5-20251001",
+                                            "max_tokens": 8000,
+                                            "messages": [{
+                                                "role": "user",
+                                                "content": [
+                                                    {
+                                                        "type": "document",
+                                                        "source": {
+                                                            "type": "base64",
+                                                            "media_type": "application/pdf",
+                                                            "data": page_b64
+                                                        }
+                                                    },
+                                                    {"type": "text", "text": prompt}
+                                                ]
+                                            }]
+                                        },
+                                        timeout=90
+                                    )
+                                    
+                                    if resp.status_code != 200:
+                                        logger.error(f"[BANK IMPORT] Page {page_num} Claude error: {resp.status_code}")
+                                        return []
+                                    
+                                    ai_result = resp.json()
+                                    ai_text = ""
+                                    for block in ai_result.get("content", []):
+                                        if block.get("type") == "text":
+                                            ai_text += block["text"]
+                                    
+                                    ai_text = ai_text.strip()
+                                    if ai_text.startswith("```"):
+                                        ai_text = ai_text.split("\n", 1)[-1].rsplit("```", 1)[0].strip()
+                                    
+                                    try:
+                                        page_txns = json.loads(ai_text)
+                                        logger.info(f"[BANK IMPORT] Page {page_num}: {len(page_txns)} transactions")
+                                        return page_txns if isinstance(page_txns, list) else []
+                                    except json.JSONDecodeError as je:
+                                        # Try truncation recovery
+                                        recovered = ai_text[:je.pos].rstrip().rstrip(",")
+                                        if not recovered.endswith("]"):
+                                            last_brace = recovered.rfind("}")
+                                            if last_brace > 0:
+                                                recovered = recovered[:last_brace + 1] + "]"
+                                        try:
+                                            page_txns = json.loads(recovered)
+                                            logger.info(f"[BANK IMPORT] Page {page_num}: recovered {len(page_txns)} transactions")
+                                            return page_txns if isinstance(page_txns, list) else []
+                                        except json.JSONDecodeError:
+                                            logger.error(f"[BANK IMPORT] Page {page_num}: JSON parse failed")
+                                            return []
+                                except Exception as page_err:
+                                    logger.error(f"[BANK IMPORT] Page {page_num} error: {page_err}")
+                                    return []
+                            
+                            # Process pages in parallel (max 3 concurrent to avoid rate limits)
+                            max_workers = min(3, len(page_files))
+                            with ThreadPoolExecutor(max_workers=max_workers) as executor:
+                                futures = {
+                                    executor.submit(process_page, pf, idx + 1): idx
+                                    for idx, pf in enumerate(page_files)
+                                }
+                                page_results = [None] * len(page_files)
+                                for future in as_completed(futures):
+                                    idx = futures[future]
+                                    page_results[idx] = future.result()
+                            
+                            # Merge results in page order
+                            for page_txns in page_results:
+                                if page_txns:
+                                    all_transactions.extend(page_txns)
+                            
+                            logger.info(f"[BANK IMPORT] Total from all pages: {len(all_transactions)} transactions")
+                            
+                            # Cleanup page files
+                            import shutil
+                            if os.path.exists(page_dir):
+                                shutil.rmtree(page_dir, ignore_errors=True)
                             os.unlink(tmp_path)
                             
                             if not all_transactions:
@@ -1284,7 +1324,13 @@ def register_banking_routes(app, db, login_required, Auth, render_page,
                             logger.info(f"[BANK IMPORT] AI extracted {len(data_rows)} total transactions from PDF")
                             
                         except Exception as ai_err:
-                            os.unlink(tmp_path)
+                            # Cleanup on error
+                            import shutil
+                            page_dir = tmp_path + "_pages"
+                            if os.path.exists(page_dir):
+                                shutil.rmtree(page_dir, ignore_errors=True)
+                            if os.path.exists(tmp_path):
+                                os.unlink(tmp_path)
                             logger.error(f"[BANK IMPORT] AI PDF error: {ai_err}")
                             return jsonify({"success": False, "error": f"Failed to read scanned PDF: {str(ai_err)}"})
                     
