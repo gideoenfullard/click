@@ -17526,26 +17526,57 @@ CSS = """
     --green: #059669; --red: #dc2626; --orange: #d97706;
 }
 [data-theme="light"] body { color: #1a1a2e; }
-[data-theme="light"] .header { background: #ffffff !important; border-bottom: 1px solid #e2e5ea !important; box-shadow: 0 1px 3px rgba(0,0,0,0.06); }
+/* Light: header gets midnight dark background so reactor looks proper */
+[data-theme="light"] .header { background: #0a0a1a !important; border-bottom: 1px solid rgba(99,102,241,0.2) !important; box-shadow: 0 2px 12px rgba(0,0,0,0.15); }
+[data-theme="light"] .header .logo { color: #ffffff !important; }
+[data-theme="light"] .header .nav-link, [data-theme="light"] .header a { color: rgba(255,255,255,0.7) !important; }
+[data-theme="light"] .header .nav-link:hover, [data-theme="light"] .header a:hover { color: #ffffff !important; }
+[data-theme="light"] .header .nav-link.active { color: #ffffff !important; background: rgba(99,102,241,0.25) !important; }
+[data-theme="light"] .header .user-name, [data-theme="light"] .header .biz-name { color: rgba(255,255,255,0.85) !important; }
+[data-theme="light"] .header .theme-btn, [data-theme="light"] .header button { color: rgba(255,255,255,0.7) !important; border-color: rgba(255,255,255,0.15) !important; }
+[data-theme="light"] .header .theme-btn:hover, [data-theme="light"] .header button:hover { color: #ffffff !important; background: rgba(255,255,255,0.1) !important; }
+/* Light: reactor HUD wrap gets midnight background */
+[data-theme="light"] .j-hud-wrap { background: linear-gradient(160deg, rgba(10,10,26,0.95), rgba(18,18,42,0.95)) !important; border-color: rgba(99,102,241,0.2) !important; }
+[data-theme="light"] .j-hud-wrap::before, [data-theme="light"] .j-hud-wrap::after { border-color: rgba(99,102,241,0.3) !important; }
+[data-theme="light"] .j-hud-wrap .j-fl { color: #7ab8d8 !important; }
+[data-theme="light"] .j-hud-wrap .j-fv { color: #b0e0ff !important; }
+[data-theme="light"] .j-hud-wrap .j-fi { border-color: rgba(99,102,241,0.15) !important; background: rgba(10,30,60,0.25) !important; }
+[data-theme="light"] .j-hud-wrap .j-fi.L { border-left-color: rgba(99,102,241,0.35) !important; }
+[data-theme="light"] .j-hud-wrap .j-fi.R { border-right-color: rgba(99,102,241,0.35) !important; }
+[data-theme="light"] .j-hud-wrap .j-pn { color: #8ad0f0 !important; }
+[data-theme="light"] .j-hud-wrap .j-ticker { border-color: rgba(255,160,0,0.2) !important; border-left-color: rgba(255,160,0,0.5) !important; background: rgba(255,120,0,0.05) !important; }
+[data-theme="light"] .j-hud-wrap .j-ticker b { color: #ffaa00 !important; }
+[data-theme="light"] .j-hud-wrap .j-ticker .jt-msg { color: #bba060 !important; }
+[data-theme="light"] .j-hud-wrap .j-tbl { background: rgba(6,16,40,0.2) !important; border-color: rgba(80,180,255,0.08) !important; }
+/* Light: content area — clear readable text */
 [data-theme="light"] .card { background: #ffffff !important; border: 1px solid #e2e5ea !important; box-shadow: 0 1px 3px rgba(0,0,0,0.04); }
+[data-theme="light"] .card h1, [data-theme="light"] .card h2, [data-theme="light"] .card h3,
+[data-theme="light"] .card h4, [data-theme="light"] .card h5, [data-theme="light"] .card h6 { color: #1a1a2e !important; }
+[data-theme="light"] .card p, [data-theme="light"] .card span, [data-theme="light"] .card div,
+[data-theme="light"] .card td, [data-theme="light"] .card li { color: #1a1a2e; }
 [data-theme="light"] .btn-primary { background: linear-gradient(135deg,#4f46e5,#6366f1) !important; box-shadow: 0 2px 8px rgba(79,70,229,0.25) !important; }
 [data-theme="light"] .btn-secondary { background: #f4f6f9 !important; color: #1a1a2e !important; border: 1px solid #e2e5ea !important; }
-[data-theme="light"] .table thead th { background: #f8f9fb !important; color: #6b7280 !important; border-bottom: 2px solid #e2e5ea !important; }
+[data-theme="light"] .table thead th { background: #f0f1f5 !important; color: #374151 !important; border-bottom: 2px solid #d1d5db !important; font-weight: 700 !important; }
+[data-theme="light"] .table tbody td { color: #1a1a2e !important; }
 [data-theme="light"] .table tbody tr:hover { background: #f8f9fb !important; }
 [data-theme="light"] .stat-card { background: #ffffff !important; }
 [data-theme="light"] .stat-value { color: #1a1a2e !important; }
+[data-theme="light"] .stat-label { color: #4b5563 !important; }
+[data-theme="light"] label { color: #374151 !important; }
 [data-theme="light"] input, [data-theme="light"] select, [data-theme="light"] textarea,
 [data-theme="light"] .form-input { background: #ffffff !important; border: 1px solid #d1d5db !important; color: #1a1a2e !important; }
 [data-theme="light"] input:focus, [data-theme="light"] select:focus,
 [data-theme="light"] .form-input:focus { border-color: #4f46e5 !important; box-shadow: 0 0 0 3px rgba(79,70,229,0.1) !important; }
+[data-theme="light"] input::placeholder, [data-theme="light"] textarea::placeholder { color: #9ca3af !important; }
 [data-theme="light"] .sidebar { background: #ffffff !important; border-right: 1px solid #e2e5ea !important; }
 [data-theme="light"] .sidebar a { color: #4b5563 !important; }
 [data-theme="light"] .sidebar a.active, [data-theme="light"] .sidebar a:hover { background: rgba(79,70,229,0.08) !important; color: #4f46e5 !important; }
 [data-theme="light"] a { color: #4f46e5; }
 [data-theme="light"] .text-error, [data-theme="light"] .text-red { color: #dc2626 !important; }
-/* Light: white text on ALL blue buttons — fixes unreadable dark-on-dark */
+[data-theme="light"] .text-muted { color: #6b7280 !important; }
+/* Light: white text on ALL blue buttons */
 [data-theme="light"] .btn-primary { color: #ffffff !important; }
-/* Light: blue/purple reactor — the hero piece on dashboard */
+/* Light: reactor rings — vivid blue/purple on midnight background */
 [data-theme="light"] .j-rg.r1 { border-color: rgba(79,70,229,0.3) !important; border-top-color: rgba(99,102,241,0.8) !important; box-shadow: 0 0 30px rgba(79,70,229,0.1) !important; }
 [data-theme="light"] .j-rg.r2 { border-color: rgba(124,58,237,0.2) !important; border-bottom-color: rgba(139,92,246,0.7) !important; }
 [data-theme="light"] .j-rg.r3 { border-color: rgba(59,130,246,0.15) !important; border-top-color: rgba(96,165,250,0.6) !important; }
@@ -23638,7 +23669,7 @@ def has_reactor_hud():
     """Check if current theme supports the reactor HUD (all dark themes)"""
     try:
         theme = request.cookies.get("clickai_theme", "midnight")
-        return theme in ("jarvis", "midnight", "cyber", "emerald", "sunset", "slate")
+        return theme in ("jarvis", "midnight", "cyber", "emerald", "sunset", "slate", "light")
     except Exception:
         return False
 
