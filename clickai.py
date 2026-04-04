@@ -4681,7 +4681,7 @@ ZANE_TOOLS = [
                 "date_to": {"type": "string", "description": "End date YYYY-MM-DD (default: today)"},
                 "status": {"type": "string", "description": "Filter: all, matched, unmatched, auto_matched, suggested", "enum": ["all", "matched", "unmatched", "auto_matched", "suggested"], "default": "all"},
                 "search": {"type": "string", "description": "Search in description text"},
-                "check_duplicates": {"type": "boolean", "description": "If true, scan for potential duplicate transactions (same date + similar amount + similar description)", "default": false},
+                "check_duplicates": {"type": "boolean", "description": "If true, scan for potential duplicate transactions (same date + similar amount + similar description)", "default": False},
                 "limit": {"type": "integer", "description": "Max results (default 50, max 200)", "default": 50}
             }
         }
