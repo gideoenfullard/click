@@ -1524,6 +1524,26 @@ Return ONLY the JSON array. No markdown, no explanation."""
                 "INTEREST": "Interest",
             }
             
+            # Payslips for matching salary EFT payments
+            payslips = db.get("payslips", {"business_id": biz_id}) or []
+            payslip_lookup = []
+            for ps in payslips:
+                ps_net = float(ps.get("net", 0) or 0)
+                ps_name = (ps.get("employee_name") or "").upper().strip()
+                ps_date = str(ps.get("date", ""))[:10]
+                if ps_net > 0 and ps_name and ps_date:
+                    # Build name parts for flexible matching (first name, surname, initials)
+                    name_parts = [p for p in ps_name.split() if len(p) > 1]
+                    payslip_lookup.append({
+                        "net": ps_net,
+                        "name": ps_name,
+                        "name_parts": name_parts,
+                        "date": ps_date,
+                        "employee_name": ps.get("employee_name", ""),
+                        "id": ps.get("id", ""),
+                        "matched": ps.get("bank_matched", False)
+                    })
+            
             imported = 0
             auto_matched = 0
             suggested = 0
@@ -1784,7 +1804,44 @@ Return ONLY the JSON array. No markdown, no explanation."""
                                 suggested += 1
                                 break
                     
-                    # 4. TRY: Check learned patterns (CACHED — no DB calls)
+                    # 4. TRY: Match debit to payroll EFT (employee name + net amount + date)
+                    if debit > 0 and not match_type:
+                        txn_date_str = str(txn_date)[:10]
+                        for ps in payslip_lookup:
+                            if ps["matched"]:
+                                continue
+                            # Amount match: within R2
+                            if abs(debit - ps["net"]) > 2.0:
+                                continue
+                            # Date match: within 5 days
+                            try:
+                                from datetime import datetime as _dt
+                                _txn_d = _dt.strptime(txn_date_str, "%Y-%m-%d")
+                                _ps_d = _dt.strptime(ps["date"], "%Y-%m-%d")
+                                if abs((_txn_d - _ps_d).days) > 5:
+                                    continue
+                            except (ValueError, TypeError):
+                                continue
+                            # Name match: any name part (first name or surname) in bank description
+                            name_found = any(part in desc_upper for part in ps["name_parts"])
+                            if name_found:
+                                match_type = "payroll"
+                                match_category = "Salaries & Wages"
+                                match_confidence = 0.92
+                                match_reference = f"Salary — {ps['employee_name']} ({ps['date']})"
+                                ps["matched"] = True
+                                auto_matched += 1
+                                break
+                            # Fallback: amount + date match without name (lower confidence)
+                            elif abs(debit - ps["net"]) < 0.50:
+                                match_type = "payroll"
+                                match_category = "Salaries & Wages?"
+                                match_confidence = 0.6
+                                match_reference = f"Maybe {ps['employee_name']}? ({ps['date']})"
+                                suggested += 1
+                                break
+                    
+                    # 5. TRY: Check learned patterns (CACHED — no DB calls)
                     if not match_type:
                         pattern_match = _fast_pattern_match(description)
                         if pattern_match.get("confidence", 0) > 0.5:
