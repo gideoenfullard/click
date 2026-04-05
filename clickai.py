@@ -19169,75 +19169,6 @@ select.form-input optgroup {
     }
 }
 
-/* ═══ Reactor Loading Modal ═══ */
-#clickProgress {
-    display: none;
-    position: fixed;
-    top: 0; left: 0; right: 0; bottom: 0;
-    background: rgba(0,0,0,0.25);
-    z-index: 99999;
-    justify-content: center;
-    align-items: center;
-}
-#clickProgress.active {
-    display: flex;
-}
-#clickProgress .progress-modal {
-    background: var(--card, #12122a);
-    border: 1px solid var(--border, #2a2a4a);
-    border-radius: 10px;
-    padding: 24px 32px 20px;
-    min-width: 200px;
-    box-shadow: 0 8px 32px rgba(0,0,0,0.4);
-    text-align: center;
-}
-#clickProgress .progress-label {
-    color: var(--text-muted, #aaa);
-    font-family: 'Share Tech Mono', monospace;
-    font-size: 10px;
-    letter-spacing: 2px;
-    margin-top: 14px;
-}
-#clickProgress .cp-rx {
-    width: 80px; height: 80px;
-    position: relative;
-    margin: 0 auto;
-}
-#clickProgress .cp-rg {
-    position: absolute; border-radius: 50%;
-}
-#clickProgress .cp-rg.r1 {
-    inset: 0; border: 2.5px solid rgba(80,180,255,0.18);
-    border-top-color: rgba(120,210,255,0.8);
-    animation: jspin 0.8s linear infinite;
-    box-shadow: 0 0 25px rgba(80,180,255,0.2), 0 0 50px rgba(80,180,255,0.08);
-}
-#clickProgress .cp-rg.r2 {
-    inset: 8px; border: 2px solid rgba(80,180,255,0.12);
-    border-bottom-color: rgba(100,200,255,0.7);
-    animation: jspin 0.6s linear infinite reverse;
-    box-shadow: 0 0 18px rgba(80,180,255,0.15);
-}
-#clickProgress .cp-rg.r3 {
-    inset: 16px; border: 2px solid rgba(80,180,255,0.08);
-    border-top-color: rgba(140,220,255,0.6);
-    animation: jspin 0.4s linear infinite;
-    box-shadow: 0 0 12px rgba(80,180,255,0.1);
-}
-#clickProgress .cp-core {
-    position: absolute; inset: 22px; border-radius: 50%;
-    background: radial-gradient(circle, rgba(0,200,255,0.2) 0%, transparent 100%);
-    border: 1.5px solid rgba(100,200,255,0.35);
-    display: flex; align-items: center; justify-content: center;
-    box-shadow: 0 0 30px rgba(0,200,255,0.25), inset 0 0 15px rgba(0,200,255,0.1);
-    animation: jcore-breathe 1.5s ease-in-out infinite;
-}
-#clickProgress .cp-core span {
-    font-family: 'Orbitron', monospace;
-    font-size: 8px; font-weight: 800;
-    color: #66ccff; letter-spacing: 1px;
-    text-shadow: 0 0 12px rgba(100,200,255,0.8);
-}
 /* Reactor spin-up on page load */
 .reactor-spinup .j-rg.r1 { animation: jspin 1.5s linear infinite, jring-pulse-1 3s ease-in-out infinite !important; }
 .reactor-spinup .j-rg.r2 { animation: jspin 1.2s linear infinite reverse, jring-pulse-2 3s ease-in-out infinite 0.5s !important; }
@@ -19729,17 +19660,6 @@ def render_page(title: str, content: str, user: dict = None, active: str = "") -
     {CSS}
 </head>
 <body data-business-id="{biz_id}" class="page-entering">
-    <div id="clickProgress">
-        <div class="progress-modal">
-            <div class="cp-rx">
-                <div class="cp-rg r1"></div>
-                <div class="cp-rg r2"></div>
-                <div class="cp-rg r3"></div>
-                <div class="cp-core"><span>AI</span></div>
-            </div>
-            <div class="progress-label">LOADING</div>
-        </div>
-    </div>
     <header class="header">
         <div class="header-top">
             <div class="logo" onclick="(typeof jzToggle==='function')?jzToggle():toggleZaneChat()">Click AI</div>
@@ -20039,14 +19959,9 @@ def render_page(title: str, content: str, user: dict = None, active: str = "") -
     {CLICKDB_JS}
     </script>
     
-    <!-- Sage-style instant navigation -->
+    <!-- Reactor spin-up on page load -->
     <script>
     (function() {{
-        const modal = document.getElementById('clickProgress');
-        if (!modal) return;
-        
-        // === PAGE ARRIVAL: hide progress + reactor spin-up ===
-        modal.classList.remove('active');
         document.body.classList.remove('page-entering');
         
         // Reactor spin-up: rings spin fast then settle to normal speed
@@ -20055,59 +19970,6 @@ def render_page(title: str, content: str, user: dict = None, active: str = "") -
             rxEl.classList.add('reactor-spinup');
             setTimeout(function() {{ rxEl.classList.remove('reactor-spinup'); }}, 2000);
         }}
-        
-        // === NAVIGATION: show modal on click ===
-        let isNavigating = false;
-        let _progressTimeout = null;
-        
-        function showProgress() {{
-            if (isNavigating) return;
-            isNavigating = true;
-            document.body.classList.add('navigating');
-            modal.classList.add('active');
-            // Safety net: auto-hide after 15s in case navigation fails
-            _progressTimeout = setTimeout(hideProgress, 15000);
-        }}
-        
-        function hideProgress() {{
-            isNavigating = false;
-            document.body.classList.remove('navigating');
-            modal.classList.remove('active');
-            if (_progressTimeout) {{ clearTimeout(_progressTimeout); _progressTimeout = null; }}
-        }}
-        
-        // Intercept all internal link clicks
-        document.addEventListener('click', function(e) {{
-            const link = e.target.closest('a[href]');
-            if (!link) return;
-            
-            const href = link.getAttribute('href');
-            if (!href) return;
-            
-            // Skip: external, anchors, javascript, downloads, new tabs
-            if (href.startsWith('http') || href.startsWith('#') || href.startsWith('javascript:') ||
-                href.startsWith('mailto:') || href.startsWith('tel:') ||
-                link.hasAttribute('download') || link.target === '_blank' ||
-                e.ctrlKey || e.metaKey || e.shiftKey) return;
-            
-            showProgress();
-        }});
-        
-        // Intercept form submissions — but NOT if another listener called preventDefault()
-        document.addEventListener('submit', function(e) {{
-            // Use setTimeout(0) so other listeners (like the zero-amount check) 
-            // have a chance to call preventDefault() first
-            setTimeout(function() {{
-                if (!e.defaultPrevented) {{
-                    showProgress();
-                }}
-            }}, 0);
-        }});
-        
-        // Catch onclick="window.location=..." navigation
-        window.addEventListener('beforeunload', function() {{
-            showProgress();
-        }});
     }})();
     </script>
     
