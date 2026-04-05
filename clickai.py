@@ -18251,17 +18251,9 @@ CSS = """
     border: 1px solid rgba(80,180,255,0.2) !important;
 }
 [data-theme="jarvis"] .progress-label {
-    font-family: 'Orbitron', monospace !important;
+    font-family: 'Share Tech Mono', monospace !important;
     letter-spacing: 2px !important;
     color: #5aaadd !important;
-}
-[data-theme="jarvis"] .progress-track {
-    background: rgba(80,180,255,0.06) !important;
-    border: 1px solid rgba(80,180,255,0.1) !important;
-}
-[data-theme="jarvis"] .progress-fill {
-    background: linear-gradient(90deg, #00aaff, #00ddff) !important;
-    box-shadow: 0 0 10px rgba(0,200,255,0.4) !important;
 }
 
 /* Tabs */
@@ -19177,7 +19169,7 @@ select.form-input optgroup {
     }
 }
 
-/* ═══ Sage-style "Please Wait" Progress Modal ═══ */
+/* ═══ Reactor Loading Modal ═══ */
 #clickProgress {
     display: none;
     position: fixed;
@@ -19194,34 +19186,63 @@ select.form-input optgroup {
     background: var(--card, #12122a);
     border: 1px solid var(--border, #2a2a4a);
     border-radius: 10px;
-    padding: 20px 32px;
-    min-width: 240px;
+    padding: 24px 32px 20px;
+    min-width: 200px;
     box-shadow: 0 8px 32px rgba(0,0,0,0.4);
     text-align: center;
 }
 #clickProgress .progress-label {
     color: var(--text-muted, #aaa);
-    font-size: 13px;
-    margin-bottom: 12px;
+    font-family: 'Share Tech Mono', monospace;
+    font-size: 10px;
+    letter-spacing: 2px;
+    margin-top: 14px;
 }
-#clickProgress .progress-track {
-    width: 100%;
-    height: 6px;
-    background: var(--bg, #0a0a1a);
-    border-radius: 3px;
-    overflow: hidden;
+#clickProgress .cp-rx {
+    width: 80px; height: 80px;
+    position: relative;
+    margin: 0 auto;
 }
-#clickProgress .progress-fill {
-    height: 100%;
-    width: 0%;
-    background: linear-gradient(90deg, var(--accent, #6c5ce7), #00cec9);
-    border-radius: 3px;
-    animation: sageProgress 0.6s ease-in-out infinite;
+#clickProgress .cp-rg {
+    position: absolute; border-radius: 50%;
 }
-@keyframes sageProgress {
-    0%   { width: 0%;   margin-left: 0; }
-    50%  { width: 70%; margin-left: 0; }
-    100% { width: 0%;  margin-left: 100%; }
+#clickProgress .cp-rg.r1 {
+    inset: 0; border: 2.5px solid rgba(80,180,255,0.18);
+    border-top-color: rgba(120,210,255,0.8);
+    animation: jspin 0.8s linear infinite;
+    box-shadow: 0 0 25px rgba(80,180,255,0.2), 0 0 50px rgba(80,180,255,0.08);
+}
+#clickProgress .cp-rg.r2 {
+    inset: 8px; border: 2px solid rgba(80,180,255,0.12);
+    border-bottom-color: rgba(100,200,255,0.7);
+    animation: jspin 0.6s linear infinite reverse;
+    box-shadow: 0 0 18px rgba(80,180,255,0.15);
+}
+#clickProgress .cp-rg.r3 {
+    inset: 16px; border: 2px solid rgba(80,180,255,0.08);
+    border-top-color: rgba(140,220,255,0.6);
+    animation: jspin 0.4s linear infinite;
+    box-shadow: 0 0 12px rgba(80,180,255,0.1);
+}
+#clickProgress .cp-core {
+    position: absolute; inset: 22px; border-radius: 50%;
+    background: radial-gradient(circle, rgba(0,200,255,0.2) 0%, transparent 100%);
+    border: 1.5px solid rgba(100,200,255,0.35);
+    display: flex; align-items: center; justify-content: center;
+    box-shadow: 0 0 30px rgba(0,200,255,0.25), inset 0 0 15px rgba(0,200,255,0.1);
+    animation: jcore-breathe 1.5s ease-in-out infinite;
+}
+#clickProgress .cp-core span {
+    font-family: 'Orbitron', monospace;
+    font-size: 8px; font-weight: 800;
+    color: #66ccff; letter-spacing: 1px;
+    text-shadow: 0 0 12px rgba(100,200,255,0.8);
+}
+/* Reactor spin-up on page load */
+.reactor-spinup .j-rg.r1 { animation: jspin 1.5s linear infinite, jring-pulse-1 3s ease-in-out infinite !important; }
+.reactor-spinup .j-rg.r2 { animation: jspin 1.2s linear infinite reverse, jring-pulse-2 3s ease-in-out infinite 0.5s !important; }
+.reactor-spinup .j-rg.r3 { animation: jspin 0.8s linear infinite, jring-pulse-3 3s ease-in-out infinite 1s !important; }
+.reactor-spinup .j-rg.r4 { animation: jspin 2s linear infinite reverse !important; }
 }
 
 /* Page entering - content fades in fast */
@@ -19710,8 +19731,13 @@ def render_page(title: str, content: str, user: dict = None, active: str = "") -
 <body data-business-id="{biz_id}" class="page-entering">
     <div id="clickProgress">
         <div class="progress-modal">
-            <div class="progress-label">Please Wait...</div>
-            <div class="progress-track"><div class="progress-fill"></div></div>
+            <div class="cp-rx">
+                <div class="cp-rg r1"></div>
+                <div class="cp-rg r2"></div>
+                <div class="cp-rg r3"></div>
+                <div class="cp-core"><span>AI</span></div>
+            </div>
+            <div class="progress-label">LOADING</div>
         </div>
     </div>
     <header class="header">
@@ -20019,9 +20045,16 @@ def render_page(title: str, content: str, user: dict = None, active: str = "") -
         const modal = document.getElementById('clickProgress');
         if (!modal) return;
         
-        // === PAGE ARRIVAL: hide progress if it was showing ===
+        // === PAGE ARRIVAL: hide progress + reactor spin-up ===
         modal.classList.remove('active');
         document.body.classList.remove('page-entering');
+        
+        // Reactor spin-up: rings spin fast then settle to normal speed
+        var rxEl = document.querySelector('.j-rx') || document.querySelector('.pos-rx');
+        if (rxEl) {{
+            rxEl.classList.add('reactor-spinup');
+            setTimeout(function() {{ rxEl.classList.remove('reactor-spinup'); }}, 2000);
+        }}
         
         // === NAVIGATION: show modal on click ===
         let isNavigating = false;
@@ -23243,19 +23276,23 @@ JARVIS_HUD_CSS = '''
 .j-cn::after{content:'';position:absolute;right:-2px;top:-2.5px;width:7px;height:7px;border-radius:50%;background:rgba(80,180,255,0.35);box-shadow:0 0 8px rgba(80,180,255,0.4);}
 .j-cn.R::after{left:-2px;right:auto;}
 .j-rx{position:relative;flex-shrink:0;cursor:pointer;z-index:10;}
-.j-rx:hover .j-core{box-shadow:0 0 40px rgba(80,180,255,0.2),0 0 80px rgba(60,160,240,0.1);border-color:rgba(120,220,255,0.35);}
+.j-rx:hover .j-core{box-shadow:0 0 60px rgba(0,200,255,0.4),0 0 120px rgba(0,180,255,0.2),0 0 180px rgba(0,200,255,0.08),inset 0 0 35px rgba(0,200,255,0.2),0 0 8px rgba(0,200,255,0.8);border-color:rgba(140,220,255,0.5);}
 .j-rx:hover .j-hint{opacity:1;transform:translateX(-50%) translateY(0);}
 .j-rg{position:absolute;border-radius:50%;border:1px solid rgba(80,180,255,0.2);transition:all 0.4s;}
-.j-rg.r1{inset:0;border-color:rgba(80,180,255,0.25);border-top-color:rgba(120,210,255,0.65);border-right-color:transparent;animation:jspin 8s linear infinite;box-shadow:0 0 25px rgba(80,180,255,0.08),inset 0 0 25px rgba(80,180,255,0.04);}
-.j-rg.r2{inset:14px;border-color:rgba(60,160,240,0.15);border-bottom-color:rgba(100,200,255,0.55);border-left-color:transparent;animation:jspin 6s linear infinite reverse;}
-.j-rg.r3{inset:28px;border-color:rgba(80,180,255,0.1);border-top-color:rgba(140,220,255,0.45);animation:jspin 4s linear infinite;}
-.j-rg.r4{inset:42px;border:2px solid rgba(100,200,255,0.08);border-top-color:rgba(160,230,255,0.5);border-left-color:rgba(120,210,255,0.3);animation:jspin 12s linear infinite reverse;}
-.j-core{position:absolute;inset:60px;border-radius:50%;background:radial-gradient(circle,rgba(120,210,255,0.12) 0%,rgba(60,160,240,0.04) 60%,transparent 100%);border:1px solid rgba(100,200,255,0.2);display:flex;align-items:center;justify-content:center;flex-direction:column;box-shadow:0 0 30px rgba(80,180,255,0.1),0 0 60px rgba(60,160,240,0.05);transition:all 0.4s;}
-.j-core .j-brand{font-family:'Orbitron',monospace;font-size:17px;font-weight:800;color:#77ccff;text-shadow:0 0 20px rgba(100,200,255,0.7),0 0 50px rgba(85,187,255,0.3);letter-spacing:3px;line-height:1;}
+.j-rg.r1{inset:0;border-width:2.5px;border-color:rgba(80,180,255,0.18);border-top-color:rgba(120,210,255,0.7);border-right-color:transparent;animation:jspin 8s linear infinite,jring-pulse-1 3s ease-in-out infinite;box-shadow:0 0 40px rgba(80,180,255,0.15),0 0 80px rgba(80,180,255,0.06),0 6px 25px rgba(0,0,0,0.45);filter:blur(0.3px);z-index:1;}
+.j-rg.r2{inset:14px;border-width:2.5px;border-color:rgba(80,180,255,0.15);border-bottom-color:rgba(100,200,255,0.65);border-left-color:transparent;animation:jspin 6s linear infinite reverse,jring-pulse-2 3s ease-in-out infinite 0.5s;box-shadow:0 0 30px rgba(80,180,255,0.12),0 0 55px rgba(80,180,255,0.05),0 4px 16px rgba(0,0,0,0.35);z-index:2;}
+.j-rg.r3{inset:28px;border-width:2px;border-color:rgba(80,180,255,0.12);border-top-color:rgba(140,220,255,0.6);animation:jspin 4s linear infinite,jring-pulse-3 3s ease-in-out infinite 1s;box-shadow:0 0 22px rgba(80,180,255,0.1),0 0 40px rgba(80,180,255,0.04),0 3px 10px rgba(0,0,0,0.25);z-index:3;}
+.j-rg.r4{inset:42px;border:2px solid rgba(100,200,255,0.1);border-top-color:rgba(160,230,255,0.6);border-left-color:rgba(120,210,255,0.3);animation:jspin 12s linear infinite reverse;box-shadow:0 0 16px rgba(100,200,255,0.12),0 0 30px rgba(100,200,255,0.05),0 2px 6px rgba(0,0,0,0.2);z-index:4;}
+.j-core{position:absolute;inset:60px;border-radius:50%;background:radial-gradient(circle,rgba(0,200,255,0.18) 0%,rgba(0,140,220,0.06) 40%,transparent 100%);border:2px solid rgba(100,200,255,0.35);display:flex;align-items:center;justify-content:center;flex-direction:column;box-shadow:0 0 50px rgba(0,200,255,0.3),0 0 100px rgba(0,180,255,0.15),0 0 150px rgba(0,200,255,0.06),inset 0 0 30px rgba(0,200,255,0.15),0 0 6px rgba(0,200,255,0.6);transition:all 0.4s;z-index:5;animation:jcore-breathe 3s ease-in-out infinite;}
+.j-core .j-brand{font-family:'Orbitron',monospace;font-size:17px;font-weight:800;color:#77ccff;text-shadow:0 0 25px rgba(100,200,255,0.9),0 0 50px rgba(85,187,255,0.4),0 0 80px rgba(0,180,255,0.15);letter-spacing:3px;line-height:1;}
 .j-core .j-sub{font-family:'Share Tech Mono',monospace;font-size:7.5px;color:#4499cc;letter-spacing:4px;margin-top:4px;opacity:0.9;}
 .j-core .j-ai{margin-top:5px;font-family:'Orbitron',monospace;font-size:7px;font-weight:700;color:#00ccff;letter-spacing:2px;padding:2px 8px;border:1px solid rgba(0,200,255,0.25);text-shadow:0 0 8px rgba(0,200,255,0.5);animation:jpulse 2.5s ease-in-out infinite;}
 @keyframes jpulse{0%,100%{border-color:rgba(0,200,255,0.2);box-shadow:none;}50%{border-color:rgba(0,200,255,0.45);box-shadow:0 0 10px rgba(0,200,255,0.15);}}
 @keyframes jspin{0%{transform:rotate(0deg)}100%{transform:rotate(360deg)}}
+@keyframes jring-pulse-1{0%,100%{box-shadow:0 0 40px rgba(80,180,255,0.15),0 0 80px rgba(80,180,255,0.06),0 6px 25px rgba(0,0,0,0.45);border-top-color:rgba(120,210,255,0.7);}50%{box-shadow:0 0 55px rgba(80,180,255,0.22),0 0 100px rgba(80,180,255,0.09),0 6px 25px rgba(0,0,0,0.45);border-top-color:rgba(150,225,255,0.85);}}
+@keyframes jring-pulse-2{0%,100%{box-shadow:0 0 30px rgba(80,180,255,0.12),0 0 55px rgba(80,180,255,0.05),0 4px 16px rgba(0,0,0,0.35);border-bottom-color:rgba(100,200,255,0.65);}50%{box-shadow:0 0 42px rgba(80,180,255,0.18),0 0 70px rgba(80,180,255,0.07),0 4px 16px rgba(0,0,0,0.35);border-bottom-color:rgba(130,215,255,0.8);}}
+@keyframes jring-pulse-3{0%,100%{box-shadow:0 0 22px rgba(80,180,255,0.1),0 0 40px rgba(80,180,255,0.04),0 3px 10px rgba(0,0,0,0.35);border-top-color:rgba(140,220,255,0.6);}50%{box-shadow:0 0 32px rgba(80,180,255,0.16),0 0 55px rgba(80,180,255,0.06),0 3px 10px rgba(0,0,0,0.35);border-top-color:rgba(170,235,255,0.75);}}
+@keyframes jcore-breathe{0%,100%{box-shadow:0 0 50px rgba(0,200,255,0.3),0 0 100px rgba(0,180,255,0.15),0 0 150px rgba(0,200,255,0.06),inset 0 0 30px rgba(0,200,255,0.15),0 0 6px rgba(0,200,255,0.6);border-color:rgba(100,200,255,0.35);}50%{box-shadow:0 0 70px rgba(0,200,255,0.45),0 0 130px rgba(0,180,255,0.2),0 0 180px rgba(0,200,255,0.08),inset 0 0 40px rgba(0,200,255,0.22),0 0 8px rgba(0,200,255,0.8);border-color:rgba(140,220,255,0.5);}}
 .j-hint{position:absolute;bottom:-22px;left:50%;transform:translateX(-50%) translateY(5px);font-family:'Share Tech Mono',monospace;font-size:9px;color:#00ccff;letter-spacing:2px;opacity:0;transition:all 0.3s;white-space:nowrap;text-shadow:0 0 10px rgba(0,200,255,0.5);}
 .j-plbl{position:absolute;bottom:-6px;left:50%;transform:translateX(-50%);text-align:center;z-index:2;}
 .j-plbl .j-pn{font-family:'Orbitron',monospace;font-size:11px;font-weight:600;color:#8ad0f0;letter-spacing:4px;text-shadow:0 0 12px rgba(120,200,240,0.5);}
