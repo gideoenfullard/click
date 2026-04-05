@@ -1544,6 +1544,10 @@ Return ONLY the JSON array. No markdown, no explanation."""
                         "matched": ps.get("bank_matched", False)
                     })
             
+            # Scanned expenses for matching (amount + date + carry splits)
+            all_expenses = db.get("expenses", {"business_id": biz_id}) or []
+            _matched_expense_splits = {}  # temp store for split data during import
+            
             imported = 0
             auto_matched = 0
             suggested = 0
@@ -1841,7 +1845,43 @@ Return ONLY the JSON array. No markdown, no explanation."""
                                 suggested += 1
                                 break
                     
-                    # 5. TRY: Check learned patterns (CACHED — no DB calls)
+                    # 5. TRY: Match debit to scanned expense (with split data carry-over)
+                    if debit > 0 and not match_type:
+                        txn_date_str = str(txn_date)[:10]
+                        for _exp in all_expenses:
+                            if _exp.get("bank_transaction_id") or _exp.get("bank_matched"):
+                                continue
+                            _exp_amt = float(_exp.get("amount", 0) or _exp.get("total", 0) or 0)
+                            if _exp_amt <= 0 or abs(_exp_amt - debit) > 2.0:
+                                continue
+                            try:
+                                from datetime import datetime as _dt
+                                _txn_d = _dt.strptime(txn_date_str, "%Y-%m-%d")
+                                _exp_d = _dt.strptime(str(_exp.get("date", ""))[:10], "%Y-%m-%d")
+                                if abs((_txn_d - _exp_d).days) > 5:
+                                    continue
+                            except (ValueError, TypeError):
+                                continue
+                            # Match found — check for splits
+                            _splits = _exp.get("splits")
+                            _supplier = _exp.get("supplier_name", "") or _exp.get("supplier", "")
+                            if _splits and len(_splits) > 1:
+                                match_type = "expense_split"
+                                _split_summary = " + ".join([s.get("category", "")[:20] for s in _splits[:3]])
+                                match_category = f"Split: {_split_summary}"
+                                match_confidence = 0.88
+                                match_reference = f"Scanned: {_supplier}" if _supplier else "Scanned expense (split)"
+                                _matched_expense_splits[generate_id()] = {"expense_id": _exp.get("id", ""), "splits": _splits}
+                                suggested += 1
+                            else:
+                                match_type = "expense_match"
+                                match_category = _exp.get("category", "Expense")
+                                match_confidence = 0.88
+                                match_reference = f"Scanned: {_supplier}" if _supplier else "Scanned expense"
+                                suggested += 1
+                            break
+                    
+                    # 6. TRY: Check learned patterns (CACHED — no DB calls)
                     if not match_type:
                         pattern_match = _fast_pattern_match(description)
                         if pattern_match.get("confidence", 0) > 0.5:
