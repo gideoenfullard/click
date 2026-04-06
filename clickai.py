@@ -24023,7 +24023,7 @@ def dashboard():
         # Build debtor rows for HUD panel
         _jd_rows = ""
         for d in debtors:
-            _jd_rows += f'<div style="display:grid;grid-template-columns:2fr 1.2fr 1fr;padding:9px 6px;border-bottom:1px solid rgba(80,180,255,0.04);cursor:pointer;transition:all 0.15s;" onmouseover="this.style.background=\'rgba(60,160,240,0.04)\';this.style.boxShadow=\'inset 2px 0 0 rgba(80,180,255,0.3)\'" onmouseout="this.style.background=\'none\';this.style.boxShadow=\'none\'"><span style="font-size:14px;font-weight:600;color:#80bbdd;">{safe(d.get("name","-"))}</span><span style="font-size:12px;color:#3a6a90;font-family:\'Share Tech Mono\',monospace;">{safe(d.get("phone","-"))}</span><span style="font-size:14px;font-weight:700;text-align:right;font-family:\'Share Tech Mono\',monospace;color:#ff4466;text-shadow:0 0 10px rgba(255,68,102,0.4);">{money(d.get("balance",0))}</span></div>'
+            _jd_rows += f'<div class="jd-row" style="display:grid;grid-template-columns:2fr 1.2fr 1fr;padding:9px 6px;border-bottom:1px solid rgba(80,180,255,0.04);cursor:pointer;transition:all 0.15s;" onmouseover="this.style.background=\'rgba(60,160,240,0.04)\';this.style.boxShadow=\'inset 2px 0 0 rgba(80,180,255,0.3)\'" onmouseout="this.style.background=\'none\';this.style.boxShadow=\'none\'"><span class="jd-name" style="font-size:14px;font-weight:600;color:#80bbdd;">{safe(d.get("name","-"))}</span><span class="jd-phone" style="font-size:12px;color:#3a6a90;font-family:\'Share Tech Mono\',monospace;">{safe(d.get("phone","-"))}</span><span class="jd-bal" style="font-size:14px;font-weight:700;text-align:right;font-family:\'Share Tech Mono\',monospace;color:#ff4466;text-shadow:0 0 10px rgba(255,68,102,0.4);">{money(d.get("balance",0))}</span></div>'
         
         # Build invoice rows for HUD panel
         _ji_rows = ""
@@ -24031,7 +24031,7 @@ def dashboard():
             _st = inv.get("status","-")
             _stc = "color:#00ff88;text-shadow:0 0 10px rgba(0,255,136,0.5)" if _st=="paid" else "color:#ffaa00;text-shadow:0 0 10px rgba(255,170,0,0.5)"
             _stl = "CLEARED" if _st=="paid" else "PENDING"
-            _ji_rows += f'<div style="display:grid;grid-template-columns:0.8fr 1.6fr 0.8fr 0.7fr;padding:9px 6px;border-bottom:1px solid rgba(80,180,255,0.04);cursor:pointer;transition:all 0.15s;" onmouseover="this.style.background=\'rgba(60,160,240,0.04)\'" onmouseout="this.style.background=\'none\'"><span style="font-size:12px;color:#3a6a90;font-family:\'Share Tech Mono\',monospace;">{safe(inv.get("number","-"))}</span><span style="font-size:13px;color:#70aacc;font-weight:500;">{safe(inv.get("customer","-"))}</span><span style="font-size:13px;text-align:right;font-family:\'Share Tech Mono\',monospace;color:#5a99bb;">{money(inv.get("total",0))}</span><span style="font-size:10px;font-weight:700;text-align:right;letter-spacing:1px;{_stc}">{_stl}</span></div>'
+            _ji_rows += f'<div class="ji-row" style="display:grid;grid-template-columns:0.8fr 1.6fr 0.8fr 0.7fr;padding:9px 6px;border-bottom:1px solid rgba(80,180,255,0.04);cursor:pointer;transition:all 0.15s;" onmouseover="this.style.background=\'rgba(60,160,240,0.04)\'" onmouseout="this.style.background=\'none\'"><span class="ji-num" style="font-size:12px;color:#3a6a90;font-family:\'Share Tech Mono\',monospace;">{safe(inv.get("number","-"))}</span><span class="ji-cust" style="font-size:13px;color:#70aacc;font-weight:500;">{safe(inv.get("customer","-"))}</span><span class="ji-amt" style="font-size:13px;text-align:right;font-family:\'Share Tech Mono\',monospace;color:#5a99bb;">{money(inv.get("total",0))}</span><span class="ji-st" style="font-size:10px;font-weight:700;text-align:right;letter-spacing:1px;{_stc}">{_stl}</span></div>'
         
         # Low stock ticker
         _j_ticker = ""
@@ -24096,6 +24096,29 @@ def dashboard():
         .j-marc .jbar{{fill:none;stroke-width:3;stroke-linecap:round;}}
         .j-marc .jval{{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;font-family:'Orbitron',monospace;font-size:16px;font-weight:600;color:#a0ddff;text-shadow:0 0 10px rgba(120,200,255,0.3);}}
         .j-arc .jasl{{font-size:11px;color:#3a7aaa;letter-spacing:1.5px;font-weight:600;margin-top:8px;text-transform:uppercase;text-align:center;}}
+        /* Light theme — HUD panels readable on white */
+        [data-theme="light"] .j-panel{{background:#ffffff;border:1px solid #e2e5ea;}}
+        [data-theme="light"] .j-panel::before{{border-color:#d1d5db;}}
+        [data-theme="light"] .j-panel::after{{border-color:#d1d5db;}}
+        [data-theme="light"] .j-ph{{border-bottom:1px solid #e2e5ea;}}
+        [data-theme="light"] .j-ph h3{{color:#1a1a2e;text-shadow:none;font-family:inherit;}}
+        [data-theme="light"] .j-ph .j-badge{{color:#6b7280;border-color:#e2e5ea;}}
+        [data-theme="light"] .j-pb span{{text-shadow:none !important;}}
+        [data-theme="light"] .j-arc{{background:#ffffff;border:1px solid #e2e5ea;}}
+        [data-theme="light"] .j-arc:hover{{border-color:#d1d5db;background:#f8f9fb;box-shadow:0 1px 4px rgba(0,0,0,0.06);}}
+        [data-theme="light"] .j-marc .jtrack{{stroke:#e2e5ea;}}
+        [data-theme="light"] .j-marc .jval{{color:#1a1a2e;text-shadow:none;}}
+        [data-theme="light"] .j-arc .jasl{{color:#374151;}}
+        /* Light theme — debtor & invoice row text colors (override inline styles) */
+        [data-theme="light"] .jd-row{{border-bottom-color:#e2e5ea !important;}}
+        [data-theme="light"] .jd-name{{color:#1a1a2e !important;}}
+        [data-theme="light"] .jd-phone{{color:#374151 !important;}}
+        [data-theme="light"] .jd-bal{{color:#dc2626 !important;text-shadow:none !important;}}
+        [data-theme="light"] .ji-row{{border-bottom-color:#e2e5ea !important;}}
+        [data-theme="light"] .ji-num{{color:#374151 !important;}}
+        [data-theme="light"] .ji-cust{{color:#1a1a2e !important;}}
+        [data-theme="light"] .ji-amt{{color:#1a1a2e !important;}}
+        [data-theme="light"] .ji-st{{text-shadow:none !important;}}
         </style>
         
         {_hud}
