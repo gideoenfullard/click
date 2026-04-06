@@ -17655,7 +17655,7 @@ CSS = """
 /* THEME: Clean Light — Professional white */
 [data-theme="light"] {
     --bg: #f4f6f9; --card: #ffffff; --border: #e2e5ea;
-    --text: #1a1a2e; --text-muted: #5b5675;
+    --text: #1a1a2e; --text-muted: #374151;
     --primary: #4f46e5; --primary-glow: rgba(79,70,229,0.15);
     --green: #059669; --red: #dc2626; --orange: #d97706;
 }
@@ -17681,7 +17681,7 @@ CSS = """
 [data-theme="light"] .card { background: #ffffff !important; border: 1px solid #e2e5ea !important; box-shadow: 0 1px 3px rgba(0,0,0,0.04); }
 [data-theme="light"] .btn-primary { background: linear-gradient(135deg,#4f46e5,#6366f1) !important; box-shadow: 0 2px 8px rgba(79,70,229,0.25) !important; }
 [data-theme="light"] .btn-secondary { background: #f4f6f9 !important; color: #1a1a2e !important; border: 1px solid #e2e5ea !important; }
-[data-theme="light"] .table thead th { background: #f8f9fb !important; color: #5b5675 !important; border-bottom: 2px solid #e2e5ea !important; }
+[data-theme="light"] .table thead th { background: #f8f9fb !important; color: #374151 !important; border-bottom: 2px solid #e2e5ea !important; }
 [data-theme="light"] .table tbody tr:hover { background: #f8f9fb !important; }
 [data-theme="light"] .stat-card { background: #ffffff !important; }
 [data-theme="light"] .stat-value { color: #1a1a2e !important; }
