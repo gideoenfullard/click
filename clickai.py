@@ -48208,6 +48208,17 @@ def api_scan_save_expense():
         # Get splits data from Zane (if multi-category)
         splits = data.get("splits")  # Multi-GL split from Zane
         
+        # If split transaction, derive a meaningful category from the splits
+        # instead of using the literal "Split" which resolves to fallback 7999
+        if splits and len(splits) > 1 and (not category or category == "Split"):
+            # Use the largest split's category as the main category
+            _sorted_splits = sorted(splits, key=lambda s: float(s.get("amount", 0)), reverse=True)
+            _primary_cat = _sorted_splits[0].get("category", "")
+            if _primary_cat:
+                category = _primary_cat
+                # Recalculate GL code with the real category
+                expense_account = IndustryKnowledge.get_gl_code(category, business_id=biz_id)
+        
         expense = RecordFactory.expense(
             business_id=biz_id,
             description=desc,
