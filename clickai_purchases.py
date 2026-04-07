@@ -431,25 +431,41 @@ def register_purchases_routes(app, db, login_required, Auth, render_page,
             for si in supplier_invoices[:200]:
                 si_status = si.get("status", "outstanding")
                 si_color = "var(--green)" if si_status == "paid" else "var(--orange)"
+                _si_paid_via = ""
+                if si_status == "paid" and si.get("paid_date"):
+                    _si_method = "Banking" if si.get("paid_via") == "banking_recon" else (si.get("paid_via") or "")
+                    _si_paid_via = f' <span style="font-size:10px;color:var(--text-muted);">({si.get("paid_date", "")[:10]}{" - " + _si_method if _si_method else ""})</span>'
                 supplier_inv_html += f'''
                 <tr style="cursor:pointer;" onclick="window.location='/supplier-invoice/{si.get("id")}'">
                     <td>{safe_string(si.get("invoice_number", "-"))}</td>
                     <td>{si.get("date", "-")}</td>
                     <td>{si.get("due_date", "-")}</td>
                     <td>{money(si.get("total", 0))}</td>
-                    <td style="color:{si_color};">{si_status.upper()}</td>
+                    <td style="color:{si_color};">{si_status.upper()}{_si_paid_via}</td>
                 </tr>
                 '''
         
         payments_html = ""
         if can_see_balances:
             for p in payments[:200]:
+                _p_ref = p.get("reference", "-")
+                _p_source = p.get("source", "")
+                _p_source_html = ""
+                if _p_source == "banking_recon":
+                    _p_ledger_link = f'/ledger?q={_p_ref}' if _p_ref and _p_ref != "-" else '/ledger'
+                    _p_source_html = f'<a href="{_p_ledger_link}" style="color:var(--primary);text-decoration:none;font-size:12px;">Banking</a>'
+                elif _p_source:
+                    _p_source_html = f'<span style="font-size:12px;color:var(--text-muted);">{safe_string(_p_source[:20])}</span>'
+                else:
+                    _p_source_html = '<span style="font-size:12px;color:var(--text-muted);">Manual</span>'
+                
                 payments_html += f'''
                 <tr>
-                    <td>{p.get("reference", "-")}</td>
+                    <td>{_p_ref}</td>
                     <td>{p.get("date", "-")}</td>
                     <td style="color:var(--green);">{money(p.get("amount", 0))}</td>
                     <td>{p.get("method", "-")}</td>
+                    <td>{_p_source_html}</td>
                 </tr>
                 '''
         
@@ -528,6 +544,7 @@ def register_purchases_routes(app, db, login_required, Auth, render_page,
             <div style="display:flex;gap:10px;">
                 <a href="/supplier/{supplier_id}/edit" class="btn btn-secondary">✏️ Edit</a>
                 <a href="/purchase/new?supplier_id={supplier_id}" class="btn btn-secondary">New PO</a>
+                <a href="/ledger?q={safe_string(supplier.get('name', ''))}" class="btn btn-secondary" style="font-size:12px;">GL Trail</a>
                 <button class="btn btn-primary" onclick="openCaptureInvoice()">📄 Capture Invoice</button>
                 {payment_button}
             </div>
@@ -645,10 +662,10 @@ def register_purchases_routes(app, db, login_required, Auth, render_page,
                 </div>
                 <table class="table" id="paymentsTable">
                     <thead>
-                        <tr><th>Reference</th><th>Date</th><th>Amount</th><th>Method</th></tr>
+                        <tr><th>Reference</th><th>Date</th><th>Amount</th><th>Method</th><th>Source</th></tr>
                     </thead>
                     <tbody>
-                        {payments_html or "<tr><td colspan='4' style='text-align:center;color:var(--text-muted);'>No payments yet</td></tr>"}
+                        {payments_html or "<tr><td colspan='5' style='text-align:center;color:var(--text-muted);'>No payments yet</td></tr>"}
                     </tbody>
                 </table>
             </div>

@@ -764,6 +764,94 @@ def register_invoicing_routes(app, db, login_required, Auth, render_page,
         _inv_error = request.args.get("error", "")
         _inv_error_html = f'<div style="background:rgba(239,68,68,0.15);border:1px solid rgba(239,68,68,0.3);color:var(--text);padding:12px 16px;border-radius:8px;margin-bottom:15px;"><strong>⚠</strong> {safe_string(_inv_error)}</div>' if _inv_error else ""
         
+        # ── PAYMENT INFO BLOCK: Show how this invoice was paid ──
+        payment_info_html = ""
+        if status == "paid":
+            _paid_date = invoice.get("paid_date", "")
+            _paid_via = invoice.get("paid_via", "")
+            _paid_method = invoice.get("payment_method", "")
+            _paid_amount = invoice.get("paid_amount", invoice.get("total", 0))
+            
+            # Method display
+            _method_label = _paid_method.upper() if _paid_method else "EFT"
+            if _paid_via == "banking_recon":
+                _method_label = "Banking Reconciliation (EFT)"
+            elif _paid_method == "cash":
+                _method_label = "Cash"
+            elif _paid_method == "card":
+                _method_label = "Card"
+            elif _paid_method == "account":
+                _method_label = "On Account"
+            
+            # Find matching bank transaction for this invoice
+            _bank_ref_html = ""
+            _bank_txn_link = ""
+            try:
+                _bank_txns = db.get("bank_transactions", {"business_id": biz_id}) or []
+                for _bt in _bank_txns:
+                    if _bt.get("matched_invoice_id") == invoice_id:
+                        _bt_ref = "BNK-" + _bt.get("id", "")[:8]
+                        _bt_date = _bt.get("date", "")
+                        _bt_desc = safe_string(_bt.get("description", ""))[:60]
+                        _bank_ref_html = f'<a href="/ledger?q={_bt_ref}" style="color:var(--primary);text-decoration:none;font-weight:600;">{_bt_ref}</a>'
+                        _bank_txn_link = f'<div style="font-size:12px;color:var(--text-muted);margin-top:2px;">Bank: {_bt_desc} ({_bt_date})</div>'
+                        break
+                
+                # Fallback: search receipts for banking_recon source
+                if not _bank_ref_html and _paid_via == "banking_recon":
+                    _receipts = db.get("receipts", {"business_id": biz_id}) or []
+                    for _rc in _receipts:
+                        if _rc.get("source") == "banking_recon":
+                            _rc_ref = _rc.get("reference", "")
+                            if _rc_ref and invoice.get("customer_id") and _rc.get("customer_id") == invoice.get("customer_id"):
+                                _rc_amt = float(_rc.get("amount", 0))
+                                _inv_amt = float(invoice.get("total", 0))
+                                if abs(_rc_amt - _inv_amt) < 1.0:
+                                    _bank_ref_html = f'<a href="/ledger?q={_rc_ref}" style="color:var(--primary);text-decoration:none;font-weight:600;">{_rc_ref}</a>'
+                                    break
+            except Exception:
+                pass
+            
+            # Build ledger trail link
+            _inv_num = invoice.get("invoice_number", "")
+            _ledger_link = f'<a href="/ledger?q={_inv_num}" style="color:var(--primary);text-decoration:none;font-size:12px;">View in Ledger</a>' if _inv_num else ""
+            
+            # Assemble payment info block
+            _pi_grid_items = f'''
+                <div>
+                    <span style="color:var(--text-muted);font-size:11px;display:block;text-transform:uppercase;letter-spacing:0.5px;">PAID DATE</span>
+                    <span style="font-size:14px;font-weight:600;">{_paid_date or "-"}</span>
+                </div>
+                <div>
+                    <span style="color:var(--text-muted);font-size:11px;display:block;text-transform:uppercase;letter-spacing:0.5px;">METHOD</span>
+                    <span style="font-size:14px;font-weight:600;">{_method_label}</span>
+                </div>
+                <div>
+                    <span style="color:var(--text-muted);font-size:11px;display:block;text-transform:uppercase;letter-spacing:0.5px;">AMOUNT RECEIVED</span>
+                    <span style="font-size:14px;font-weight:600;color:var(--green);">{money(_paid_amount)}</span>
+                </div>'''
+            
+            if _bank_ref_html:
+                _pi_grid_items += f'''
+                <div>
+                    <span style="color:var(--text-muted);font-size:11px;display:block;text-transform:uppercase;letter-spacing:0.5px;">BANKING REF</span>
+                    <span style="font-size:14px;">{_bank_ref_html}</span>
+                    {_bank_txn_link}
+                </div>'''
+            
+            payment_info_html = f'''
+        <div class="no-print card" style="margin-bottom:15px;border-left:4px solid var(--green);">
+            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;">
+                <h3 style="margin:0;color:var(--green);">Payment Received</h3>
+                <div style="display:flex;gap:10px;align-items:center;">
+                    {_ledger_link}
+                </div>
+            </div>
+            <div style="display:grid;grid-template-columns:repeat(auto-fit, minmax(160px, 1fr));gap:15px;">
+                {_pi_grid_items}
+            </div>
+        </div>'''
+        
         content = f'''{_inv_error_html}{zero_warning}
         <div class="no-print" style="display:flex;justify-content:space-between;align-items:center;margin-bottom:20px;">
             <div>
@@ -828,6 +916,8 @@ def register_invoicing_routes(app, db, login_required, Auth, render_page,
                 <button class="btn btn-primary" onclick="saveInvoiceEdits()" style="margin-top:12px;">💾 Save Changes</button>
             </div>
         </div>
+        
+        {payment_info_html}
         
         <div class="card" id="invoicePrint" style="background:white;color:#333;padding:0;overflow:hidden;">
             <!-- TOP BAR -->

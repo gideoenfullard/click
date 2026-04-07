@@ -100,6 +100,27 @@ def register_banking_routes(app, db, login_required, Auth, render_page,
                     suggestion_html = f'<div style="font-size:11px;color:#22d3ee;margin-top:3px;">Invoice match: {suggested_cat}</div>'
                     if match_ref:
                         suggestion_html += f'<div style="font-size:10px;color:var(--text-muted);">{match_ref}</div>'
+                elif match_type in ("customer_payment", "possible_payment"):
+                    # Show customer name prominently
+                    _cust_display = match_ref.split(" - ", 1)[1].strip() if " - " in match_ref else match_ref.replace("Maybe ", "").replace("?", "").strip()
+                    _inv_display = match_ref.split(" - ", 1)[0].strip() if " - " in match_ref else ""
+                    suggestion_html = f'<div style="font-size:12px;color:#22d3ee;margin-top:3px;font-weight:600;">👤 {_cust_display}</div>'
+                    if _inv_display:
+                        suggestion_html += f'<div style="font-size:11px;color:var(--green);">{suggested_cat} — {_inv_display} ({conf_pct}%)</div>'
+                    else:
+                        suggestion_html += f'<div style="font-size:11px;color:var(--yellow);">{suggested_cat}? ({conf_pct}%)</div>'
+                elif match_type == "payroll":
+                    # Show employee name prominently
+                    _emp_name = match_ref.replace("Salary — ", "").replace("Maybe ", "").replace("?", "").strip()
+                    if "(" in _emp_name:
+                        _emp_name = _emp_name.split("(")[0].strip()
+                    suggestion_html = f'<div style="font-size:12px;color:#22d3ee;margin-top:3px;font-weight:600;">👷 {_emp_name}</div>'
+                    suggestion_html += f'<div style="font-size:11px;color:var(--green);">{suggested_cat} ({conf_pct}%)</div>'
+                elif match_type == "expense_match" and match_ref:
+                    # Show supplier from scanned expense
+                    _sup_name = match_ref.replace("Scanned: ", "").strip()
+                    suggestion_html = f'<div style="font-size:12px;color:#22d3ee;margin-top:3px;font-weight:600;">🏢 {_sup_name}</div>'
+                    suggestion_html += f'<div style="font-size:11px;color:var(--green);">{suggested_cat} ({conf_pct}%)</div>'
                 elif confidence >= 0.85:
                     suggestion_html = f'<div style="font-size:11px;color:var(--green);margin-top:3px;">{suggested_cat} ({conf_pct}%)</div>'
                 elif confidence >= 0.6:
@@ -161,7 +182,13 @@ def register_banking_routes(app, db, login_required, Auth, render_page,
             matched_at = str(t.get("matched_at", ""))[:10]
             is_split = t.get("is_split", False)
             split_cats = t.get("split_categories", [])
+            matched_name = t.get("matched_name", "")
+            matched_entity_type = t.get("matched_entity_type", "")
+            matched_invoice_num = t.get("matched_invoice_number", "")
+            matched_invoice_id = t.get("matched_invoice_id", "")
+            match_ref = t.get("match_reference", "")
             
+            # Build category display with entity name
             if is_split and split_cats:
                 cat_html = '<div style="display:flex;flex-wrap:wrap;gap:3px;">'
                 cat_html += '<span style="background:#f59e0b;color:black;padding:3px 8px;border-radius:4px;font-size:11px;font-weight:700;">SPLIT</span>'
@@ -173,6 +200,25 @@ def register_banking_routes(app, db, login_required, Auth, render_page,
             else:
                 cat_html = f'<span style="background:var(--green);color:white;padding:4px 10px;border-radius:4px;font-size:12px;">{cat}</span>'
             
+            # Entity name line (customer or supplier)
+            entity_html = ""
+            if matched_name:
+                _entity_icon = "👤" if matched_entity_type == "customer" else "🏢"
+                entity_html = f'<div style="font-size:12px;color:#22d3ee;margin-top:4px;font-weight:600;">{_entity_icon} {safe_string(matched_name)}</div>'
+            elif match_ref and cat in ("Customer Payment", "Customer Payment?", "Supplier Payment"):
+                # Fallback: extract name from match_reference
+                _ref_name = match_ref.replace("Maybe ", "").replace("?", "").strip()
+                if " - " in _ref_name:
+                    _ref_name = _ref_name.split(" - ", 1)[1].strip()
+                if _ref_name and not _ref_name.startswith("INV"):
+                    _entity_icon = "👤" if "Customer" in cat else "🏢"
+                    entity_html = f'<div style="font-size:12px;color:#22d3ee;margin-top:4px;font-weight:600;">{_entity_icon} {safe_string(_ref_name)}</div>'
+            
+            # Invoice link (clickable)
+            inv_link_html = ""
+            if matched_invoice_num:
+                inv_link_html = f'<a href="/invoices/{matched_invoice_id}" style="font-size:11px;color:var(--primary);text-decoration:none;margin-top:2px;display:inline-block;" title="View invoice">{matched_invoice_num} →</a>'
+            
             done_rows_html += f'''
             <tr data-id="{txn_id}">
                 <td style="white-space:nowrap;">{t.get("date", "-")}</td>
@@ -180,6 +226,8 @@ def register_banking_routes(app, db, login_required, Auth, render_page,
                 <td style="text-align:right;color:var(--red);white-space:nowrap;">{money(debit) if debit > 0 else "-"}</td>
                 <td style="text-align:right;color:var(--green);white-space:nowrap;">{money(credit) if credit > 0 else "-"}</td>
                 <td>{cat_html}
+                    {entity_html}
+                    {inv_link_html}
                     <div style="font-size:10px;color:var(--text-muted);margin-top:3px;">{matched_at}</div></td>
             </tr>
             '''
@@ -2144,6 +2192,14 @@ Return ONLY the JSON array. No markdown, no explanation."""
                         except Exception as e:
                             logger.error(f"[BANK] Supplier matching error (payment still created): {e}")
                         
+                        # === UPDATE TXN WITH SUPPLIER NAME ===
+                        _sup_name = _matched_supplier.get("name", "") if _matched_supplier else ""
+                        if _sup_name:
+                            txn["matched_name"] = _sup_name
+                            txn["matched_entity_type"] = "supplier"
+                            txn["matched_entity_id"] = _matched_supplier.get("id", "") if _matched_supplier else ""
+                            db.save("bank_transactions", txn)
+                        
                         # === SUPPLIER PAYMENT — ALWAYS RUNS ===
                         try:
                             logger.info(f"[BANK] Creating supplier payment...")
@@ -2274,6 +2330,28 @@ Return ONLY the JSON array. No markdown, no explanation."""
                                 except: pass
                     except Exception as e:
                         logger.error(f"[BANK] Invoice matching error (receipt still created): {e}")
+                    
+                    # === UPDATE TXN WITH CUSTOMER NAME + INVOICE REF ===
+                    try:
+                        _cust_name = ""
+                        _inv_num = ""
+                        _inv_id = ""
+                        if matched_invoice:
+                            _cust_name = matched_invoice.get("customer_name", "")
+                            _inv_num = matched_invoice.get("invoice_number", "")
+                            _inv_id = matched_invoice.get("id", "")
+                            txn["matched_entity_id"] = matched_invoice.get("customer_id", "")
+                        elif matched_customer:
+                            _cust_name = matched_customer.get("name", "")
+                            txn["matched_entity_id"] = matched_customer.get("id", "")
+                        if _cust_name:
+                            txn["matched_name"] = _cust_name
+                            txn["matched_entity_type"] = "customer"
+                            txn["matched_invoice_number"] = _inv_num
+                            txn["matched_invoice_id"] = _inv_id
+                            db.save("bank_transactions", txn)
+                    except Exception:
+                        pass
                     
                     # === RECEIPT — ALWAYS RUNS ===
                     try:

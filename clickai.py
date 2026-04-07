@@ -24516,12 +24516,20 @@ def customer_view(customer_id):
         status = inv.get("status", "outstanding")
         status_colors = {"paid": "var(--green)", "credited": "var(--red)", "delivered": "#3b82f6", "account": "#f59e0b", "partial_credit": "#f59e0b"}
         status_color = status_colors.get(status, "var(--orange)")
+        _inv_paid_info = ""
+        if status == "paid" and inv.get("paid_date"):
+            _inv_method = ""
+            if inv.get("paid_via") == "banking_recon":
+                _inv_method = "Banking"
+            elif inv.get("payment_method"):
+                _inv_method = inv.get("payment_method", "").upper()
+            _inv_paid_info = f' <span style="font-size:10px;color:var(--text-muted);">({inv.get("paid_date", "")[:10]}{" - " + _inv_method if _inv_method else ""})</span>'
         invoices_html += f'''
         <tr style="cursor:pointer;" onclick="window.location='/invoice/{inv.get("id")}'">
             <td>{inv.get("invoice_number", "-")}</td>
             <td>{inv.get("date", "-")}</td>
             <td>{money(inv.get("total", 0)) if can_see_balances else "---"}</td>
-            <td style="color:{status_color};">{status.upper()}</td>
+            <td style="color:{status_color};">{status.upper()}{_inv_paid_info}</td>
         </tr>
         '''
     
@@ -24584,14 +24592,29 @@ def customer_view(customer_id):
     
     receipts_html = ""
     for r in receipts[:200]:
+        _r_ref = r.get("reference", "")
+        _r_source = r.get("source", "")
+        _r_source_html = ""
+        if _r_source == "banking_recon":
+            _r_ledger_link = f'/ledger?q={_r_ref}' if _r_ref else '/ledger'
+            _r_source_html = f'<a href="{_r_ledger_link}" style="color:var(--primary);text-decoration:none;font-size:12px;">Banking</a>'
+        elif _r_source:
+            _r_source_html = f'<span style="font-size:12px;color:var(--text-muted);">{safe_string(_r_source[:20])}</span>'
+        else:
+            _r_source_html = '<span style="font-size:12px;color:var(--text-muted);">Manual</span>'
+        
         receipts_html += f'''
         <tr>
             <td>{r.get("receipt_number", "-")}</td>
             <td>{r.get("date", "-")}</td>
             <td style="color:var(--green);">{money(r.get("amount", 0)) if can_see_balances else "---"}</td>
             <td>{r.get("method", "-")}</td>
+            <td>{_r_source_html}</td>
         </tr>
         '''
+    
+    # Pre-build customer name for GL Trail link (avoid backslash in f-string)
+    _cust_name_for_link = safe_string(customer.get("name", ""))
     
     content = f'''
     <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:20px;">
@@ -24600,6 +24623,7 @@ def customer_view(customer_id):
             <a href="/customer/{customer_id}/edit" class="btn btn-secondary">✏️ Edit</a>
             <a href="/statement/{customer_id}" class="btn btn-secondary">📄 Statement</a>
             <a href="/statement/{customer_id}?email=1" class="btn btn-secondary">Email Statement</a>
+            <a href="/ledger?q={_cust_name_for_link}" class="btn btn-secondary" style="font-size:12px;">GL Trail</a>
             <button onclick="showEmailModal()" class="btn btn-secondary">📨 Email Group</button>
             <a href="/invoice/new?customer_id={customer_id}" class="btn btn-primary">➕ New Invoice</a>
         </div>
@@ -24777,10 +24801,10 @@ def customer_view(customer_id):
         </div>
         <table class="table" id="receiptsTable">
             <thead>
-                <tr><th>Receipt</th><th>Date</th><th>Amount</th><th>Method</th></tr>
+                <tr><th>Receipt</th><th>Date</th><th>Amount</th><th>Method</th><th>Source</th></tr>
             </thead>
             <tbody>
-                {receipts_html or "<tr><td colspan='4' style='text-align:center;color:var(--text-muted)'>No payments recorded</td></tr>"}
+                {receipts_html or "<tr><td colspan='5' style='text-align:center;color:var(--text-muted)'>No payments recorded</td></tr>"}
             </tbody>
         </table>
     </div>
