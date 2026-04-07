@@ -48248,6 +48248,19 @@ def api_scan_save_expense():
         # Create journal entries for GL
         total_amount = float(data.get("total", 0))
         
+        # Determine credit account based on payment method
+        _pay_method = payment_method.lower().strip() if payment_method else "cash"
+        if _pay_method in ("petty cash", "petty_cash", "pettycash", "petty"):
+            _credit_account = gl(biz_id, "petty_cash")
+        elif _pay_method in ("card", "credit card", "debit card"):
+            _credit_account = gl(biz_id, "bank")
+        elif _pay_method == "eft":
+            _credit_account = gl(biz_id, "bank")
+        elif _pay_method == "cash":
+            _credit_account = gl(biz_id, "cash")
+        else:
+            _credit_account = gl(biz_id, "bank")
+        
         if splits and len(splits) > 1:
             # ═══ MULTI-GL SPLIT: each split gets own debit, fuel has NO VAT ═══
             fuel_keywords = ["fuel", "diesel", "petrol", "paraffin", "unleaded"]
@@ -48278,9 +48291,9 @@ def api_scan_save_expense():
             if total_split_vat > 0:
                 journal_entries.append({"account_code": gl(biz_id, "vat_input"), "debit": round(total_split_vat, 2), "credit": 0})
             
-            # Credit Bank for actual total paid
-            journal_entries.append({"account_code": gl(biz_id, "bank"), "debit": 0, "credit": round(total_amount, 2)})
-            logger.info(f"[SCAN SAVE] Multi-GL split: {len(splits)} categories, fuel-aware VAT: R{total_split_vat:.2f} claimable, for {desc[:30]}")
+            # Credit payment source for actual total paid
+            journal_entries.append({"account_code": _credit_account, "debit": 0, "credit": round(total_amount, 2)})
+            logger.info(f"[SCAN SAVE] Multi-GL split: {len(splits)} categories, fuel-aware VAT: R{total_split_vat:.2f} claimable, paid via {_pay_method}, for {desc[:30]}")
         else:
             # ═══ SINGLE GL: original flow ═══
             journal_entries = [
@@ -48288,7 +48301,7 @@ def api_scan_save_expense():
             ]
             if vat_claimable > 0:
                 journal_entries.append({"account_code": gl(biz_id, "vat_input"), "debit": round(vat_claimable, 2), "credit": 0})
-            journal_entries.append({"account_code": gl(biz_id, "bank"), "debit": 0, "credit": round(total_amount, 2)})
+            journal_entries.append({"account_code": _credit_account, "debit": 0, "credit": round(total_amount, 2)})
         
         create_journal_entry(biz_id, data.get("date", today()), desc[:50], f"EXP-{exp_id[:8]}", journal_entries)
         
