@@ -46400,10 +46400,11 @@ def scan_inbox_page():
             saveHtml = `
                 <div style="margin-bottom:15px;">
                     <label style="display:block;margin-bottom:8px;font-weight:600;font-size:14px;">How was this paid?</label>
-                    <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px;" id="payMethodBtns">
-                        <button type="button" class="btn" onclick="selectPayMethod('cash')" id="pmCash" style="padding:12px;background:#10b981;color:white;border:3px solid #10b981;">💵 Cash<br><small>Petty Cash</small></button>
-                        <button type="button" class="btn" onclick="selectPayMethod('card')" id="pmCard" style="padding:12px;background:var(--card);color:var(--text);border:3px solid var(--border);">💳 Card<br><small>Company Card</small></button>
-                        <button type="button" class="btn" onclick="selectPayMethod('eft')" id="pmEft" style="padding:12px;background:var(--card);color:var(--text);border:3px solid var(--border);">🏦 EFT<br><small>Bank Transfer</small></button>
+                    <div style="display:grid;grid-template-columns:1fr 1fr 1fr 1fr;gap:10px;" id="payMethodBtns">
+                        <button type="button" class="btn" onclick="selectPayMethod('cash')" id="pmCash" style="padding:12px;background:#10b981;color:white;border:3px solid #10b981;">💵 Cash</button>
+                        <button type="button" class="btn" onclick="selectPayMethod('petty')" id="pmPetty" style="padding:12px;background:var(--card);color:var(--text);border:3px solid var(--border);">🪙 Petty Cash</button>
+                        <button type="button" class="btn" onclick="selectPayMethod('card')" id="pmCard" style="padding:12px;background:var(--card);color:var(--text);border:3px solid var(--border);">💳 Card</button>
+                        <button type="button" class="btn" onclick="selectPayMethod('eft')" id="pmEft" style="padding:12px;background:var(--card);color:var(--text);border:3px solid var(--border);">🏦 EFT</button>
                     </div>
                     <input type="hidden" id="selectedPayMethod" value="cash">
                 </div>
@@ -46804,7 +46805,7 @@ def scan_inbox_page():
     function selectPayMethod(method) {{
         document.getElementById('selectedPayMethod').value = method;
         // Update button styles
-        ['pmCash','pmCard','pmEft'].forEach(id => {{
+        ['pmCash','pmPetty','pmCard','pmEft'].forEach(id => {{
             const btn = document.getElementById(id);
             if (btn) {{
                 btn.style.background = 'var(--card)';
@@ -46812,13 +46813,13 @@ def scan_inbox_page():
                 btn.style.borderColor = 'var(--border)';
             }}
         }});
-        const colors = {{cash: '#10b981', card: '#8b5cf6', eft: '#3b82f6'}};
-        const activeId = method === 'cash' ? 'pmCash' : method === 'card' ? 'pmCard' : 'pmEft';
-        const activeBtn = document.getElementById(activeId);
+        const colors = {{cash: '#10b981', petty: '#f59e0b', card: '#8b5cf6', eft: '#3b82f6'}};
+        const idMap = {{cash: 'pmCash', petty: 'pmPetty', card: 'pmCard', eft: 'pmEft'}};
+        const activeBtn = document.getElementById(idMap[method] || 'pmCash');
         if (activeBtn) {{
-            activeBtn.style.background = colors[method];
+            activeBtn.style.background = colors[method] || '#10b981';
             activeBtn.style.color = 'white';
-            activeBtn.style.borderColor = colors[method];
+            activeBtn.style.borderColor = colors[method] || '#10b981';
         }}
     }}
     
