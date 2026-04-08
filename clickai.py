@@ -2502,6 +2502,8 @@ class DB:
                     endpoint += f"&{k}=eq.{v}"
             
             response = requests.get(endpoint, headers=self.headers, timeout=15)
+            if table == "users" and filters:
+                logger.info(f"[DB DEBUG] GET {table} filters={filters} → status={response.status_code}, rows={len(response.json()) if response.status_code == 200 else 'N/A'}, body={response.text[:200]}")
             return response.json() if response.status_code == 200 else []
         except Exception as e:
             logger.error(f"[DB] Get error on {table}: {e}")
@@ -17028,6 +17030,7 @@ class Auth:
         """Authenticate user - handles both hashed and legacy plain-text passwords"""
         email = email.lower().strip()  # Normalize email
         password = password.strip()  # Strip whitespace from password
+        logger.info(f"[LOGIN] Attempting login for: '{email}' (password len={len(password)})")
         users = db.get("users", {"email": email})
         
         if not users:
@@ -39375,8 +39378,10 @@ def login_page():
     if request.method == "POST":
         email = request.form.get("email", "")
         password = request.form.get("password", "")
+        logger.info(f"[LOGIN PAGE] POST received: email='{email}', has_password={bool(password)}")
         
         success, message = Auth.login(email, password)
+        logger.info(f"[LOGIN PAGE] Auth.login result: success={success}, message='{message}'")
         
         if success:
             return redirect("/")
