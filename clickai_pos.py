@@ -161,6 +161,20 @@ def register_pos_routes(app, db, login_required, Auth, render_page,
             is_active = "active" if cu_id == current_user_id else ""
             cashier_buttons += f'<button class="cashier-btn {is_active}" data-uid="{cu_id}" onclick="switchCashier(this, &apos;{cu_id}&apos;, &apos;{cu_name}&apos;)">{cu_name}</button>'
         
+        # Build cashier dropdown options for entity bar
+        cashier_dropdown_options = ""
+        _cdd_seen = set()
+        for cu in cashier_list:
+            cu_id = cu.get("id") or ""
+            if not cu_id or cu_id in _cdd_seen:
+                continue
+            _cdd_seen.add(cu_id)
+            cu_name = str(cu.get("name") or cu.get("email") or "Staff").replace("'", "").replace('"', "").replace("&", "")
+            if " " in cu_name:
+                cu_name = cu_name.split()[0]
+            cu_name = cu_name[:12]
+            cashier_dropdown_options += f'<option value="{cu_id}">{cu_name}</option>'
+        
         # Salesman options for POS quote modal
         pos_salesman_options = f'<option value="{current_user_id}" data-name="{current_user_name}">{current_user_name} (me)</option>'
         _pos_seen_ids = {current_user_id}
@@ -1179,6 +1193,8 @@ def register_pos_routes(app, db, login_required, Auth, render_page,
         .pos-lbl{position:absolute;bottom:-4px;left:50%;transform:translateX(-50%);text-align:center;z-index:2;}
         .pos-lbl span{font-family:'Orbitron',monospace;font-size:10px;font-weight:600;color:#5aaadd;letter-spacing:3px;text-shadow:0 0 10px rgba(90,170,221,0.3);}
         .pos-entity-bar{display:flex;align-items:center;justify-content:center;gap:0;padding:8px 20px;border-top:1px solid rgba(80,180,255,0.06);}
+        .pos-cashier-select{height:36px;border:1px solid rgba(80,180,255,0.15);background:rgba(6,16,40,0.5);color:#00ddff;font-family:'Rajdhani',sans-serif;font-size:13px;font-weight:700;padding:0 8px;outline:none;cursor:pointer;border-right:none;min-width:90px;margin-right:0;}
+        .pos-cashier-select option{background:#0a1428;color:#e0f0ff;}
         .pos-entity-btn{display:flex;align-items:center;justify-content:center;gap:5px;min-width:44px;padding:0 10px;height:36px;border:1px solid rgba(80,180,255,0.15);background:rgba(10,30,60,0.4);color:#a0d8f8;font-family:'Rajdhani',sans-serif;font-weight:700;font-size:14px;cursor:pointer;transition:all 0.2s;letter-spacing:1px;flex-shrink:0;}
         .pos-entity-btn:hover{border-color:rgba(0,200,255,0.35);color:#00ddff;background:rgba(0,200,255,0.06);}
         .pos-entity-btn.active{background:rgba(80,180,255,0.12);color:#00ddff;border-color:rgba(0,200,255,0.3);}
@@ -1477,6 +1493,7 @@ def register_pos_routes(app, db, login_required, Auth, render_page,
         document.addEventListener('DOMContentLoaded', function() {
             const myUid = '{_safe_uid}';
             const myName = '{_safe_uname}';
+            const dd = document.getElementById('cashierSelect');
             
             const savedCashier = document.cookie.split(';').find(c => c.trim().startsWith('pos_cashier='));
             if (savedCashier) {
@@ -1488,7 +1505,18 @@ def register_pos_routes(app, db, login_required, Auth, render_page,
                     btn.classList.add('active');
                     currentCashierId = uid;
                     currentCashierName = btn.textContent.trim();
+                    if (dd) dd.value = uid;
                     return;
+                }
+                // Also check dropdown only (cashier-bar hidden)
+                if (dd) {
+                    const opt = Array.from(dd.options).find(o => o.value === uid);
+                    if (opt) {
+                        dd.value = uid;
+                        currentCashierId = uid;
+                        currentCashierName = opt.text;
+                        return;
+                    }
                 }
                 // Cookie cashier not found in team — clear stale cookie, fall through to default
                 document.cookie = 'pos_cashier=;expires=Thu, 01 Jan 1970 00:00:00 GMT;path=/';
@@ -1505,6 +1533,13 @@ def register_pos_routes(app, db, login_required, Auth, render_page,
                 currentCashierId = myUid;
                 currentCashierName = myName;
             }
+            // Sync dropdown to default
+            if (dd) {
+                const myOpt = Array.from(dd.options).find(o => o.value === myUid);
+                if (myOpt) dd.value = myUid;
+            }
+            // Save persistent cookie
+            document.cookie = 'pos_cashier=' + currentCashierId + ';expires=Fri, 31 Dec 2027 23:59:59 GMT;path=/';
         });
         
         function switchCashier(btn, uid, name) {
@@ -1512,9 +1547,24 @@ def register_pos_routes(app, db, login_required, Auth, render_page,
             btn.classList.add('active');
             currentCashierId = uid;
             currentCashierName = name;
-            // Save to cookie - expires end of day
-            const midnight = new Date(); midnight.setHours(23,59,59);
-            document.cookie = `pos_cashier=${uid};expires=${midnight.toUTCString()};path=/`;
+            // Save to cookie - persistent until manually changed
+            document.cookie = 'pos_cashier=' + uid + ';expires=Fri, 31 Dec 2027 23:59:59 GMT;path=/';
+            // Sync dropdown
+            var dd = document.getElementById('cashierSelect');
+            if (dd) dd.value = uid;
+        }
+        
+        function switchCashierDD(sel) {
+            var uid = sel.value;
+            var name = sel.options[sel.selectedIndex].text;
+            currentCashierId = uid;
+            currentCashierName = name;
+            // Save to cookie - persistent until manually changed
+            document.cookie = 'pos_cashier=' + uid + ';expires=Fri, 31 Dec 2027 23:59:59 GMT;path=/';
+            // Sync cashier buttons if visible
+            document.querySelectorAll('.cashier-btn').forEach(b => b.classList.remove('active'));
+            var btn = document.querySelector('.cashier-btn[data-uid="' + uid + '"]');
+            if (btn) btn.classList.add('active');
         }
         
         function addToCart(id, code, desc, price, stock) {
@@ -4824,6 +4874,7 @@ def register_pos_routes(app, db, login_required, Auth, render_page,
                 <div class="pos-lbl"><span>POINT OF SALE</span></div>
             </div>
             <div class="pos-entity-bar">
+                <select id="cashierSelect" class="pos-cashier-select" onchange="switchCashierDD(this)">{cashier_dropdown_options}</select>
                 <button class="pos-entity-btn L active" id="btnCust" onclick="toggleEntity('customer')" title="F8"><span class="pk">F8</span>C</button>
                 <div class="entity-dropdown" style="position:relative;">
                     <input type="text" class="pos-entity-input entity-search" id="entitySearch" placeholder="F7 · CASH SALE" onclick="openEntityDropdown()" autocomplete="off">
