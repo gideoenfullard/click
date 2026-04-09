@@ -69,6 +69,16 @@ def register_banking_routes(app, db, login_required, Auth, render_page,
                 all_cats_for_split.append(cat)
         json_cat_list = json.dumps(all_cats_for_split)
         
+        # Customer + Supplier lists for entity picker (when allocating payments)
+        _all_customers = db.get("customers", {"business_id": biz_id}) if biz_id else []
+        _all_suppliers = db.get("suppliers", {"business_id": biz_id}) if biz_id else []
+        _cust_list = [{"id": c.get("id",""), "name": c.get("name","")} for c in (_all_customers or []) if c.get("name")]
+        _supp_list = [{"id": s.get("id",""), "name": s.get("name","")} for s in (_all_suppliers or []) if s.get("name")]
+        _cust_list.sort(key=lambda x: x["name"].upper())
+        _supp_list.sort(key=lambda x: x["name"].upper())
+        _entity_json_customers = json.dumps(_cust_list).replace("'", "&#39;")
+        _entity_json_suppliers = json.dumps(_supp_list).replace("'", "&#39;")
+        
         # Stats
         total_count = len(all_transactions)
         auto_count = len(auto_matched)
@@ -425,37 +435,38 @@ def register_banking_routes(app, db, login_required, Auth, render_page,
             event.target.closest('.recon-tab')?.classList.add('active');
         }}
         
-        async function categorizeTransaction(id, category, description) {{
+        async function categorizeTransaction(id, category, description, entityId, entityName) {{
             if (!category) return;
             
+            // If Customer Payment or Supplier Payment and no entity chosen, prompt to pick one
+            if ((category === 'Customer Payment' || category === 'Supplier Payment') && !entityId) {{
+                showEntityPicker(id, category, description);
+                return;
+            }}
+            
             try {{
+                const payload = {{id, category, description}};
+                if (entityId && entityId !== '__skip__') {{ payload.entity_id = entityId; payload.entity_name = entityName || ''; }}
+                
                 const response = await fetch('/api/banking/categorize', {{
                     method: 'POST',
                     headers: {{'Content-Type': 'application/json'}},
-                    body: JSON.stringify({{id, category, description}})
+                    body: JSON.stringify(payload)
                 }});
                 
                 const data = await response.json();
                 
                 if (data.success) {{
-                    // Show what it was allocated to before removing
                     const row = document.querySelector(`tr[data-id="${{id}}"]`);
                     if (row) {{
-                        // Replace the action column with the allocation result
                         const cells = row.querySelectorAll('td');
                         const lastCell = cells[cells.length - 1];
                         lastCell.innerHTML = `<span style="background:var(--green);color:white;padding:4px 10px;border-radius:4px;font-size:12px;font-weight:bold;">GOOD: ${{category}}</span>`;
                         row.style.background = 'rgba(16,185,129,0.15)';
                         row.style.transition = 'opacity 0.5s';
-                        
-                        // Fade out after 2 seconds so user can see where it went
-                        setTimeout(() => {{
-                            row.style.opacity = '0.4';
-                        }}, 2000);
+                        setTimeout(() => {{ row.style.opacity = '0.4'; }}, 2000);
                         setTimeout(() => row.remove(), 3000);
                     }}
-                    
-                    // Update counts (simple decrement)
                     updateCounts();
                 }} else {{
                     alert('Error: ' + data.error);
@@ -467,6 +478,54 @@ def register_banking_routes(app, db, login_required, Auth, render_page,
         
         async function approveMatch(id, category) {{
             await categorizeTransaction(id, category, '');
+        }}
+        
+        // Entity picker for Customer Payment / Supplier Payment
+        function showEntityPicker(txnId, category, description) {{
+            const isCustomer = category === 'Customer Payment';
+            const entities = isCustomer ? _entityCustomers : _entitySuppliers;
+            const label = isCustomer ? 'Customer' : 'Supplier';
+            
+            const row = document.querySelector(`tr[data-id="${{txnId}}"]`);
+            const actionCell = row ? row.querySelectorAll('td')[row.querySelectorAll('td').length - 1] : null;
+            if (!actionCell) return;
+            
+            let optionsHtml = entities.map(e => 
+                `<option value="${{e.id}}" data-name="${{(e.name||'').replace(/"/g,'&quot;')}}">${{e.name}}</option>`
+            ).join('');
+            
+            const safeDesc = (description || '').replace(/'/g, "\\\\'");
+            
+            actionCell.innerHTML = `
+                <div style="background:rgba(139,92,246,0.08);border:1px solid rgba(139,92,246,0.25);border-radius:10px;padding:12px;min-width:280px;">
+                    <div style="font-size:13px;font-weight:700;color:#8b5cf6;margin-bottom:8px;">${{category}} — Select ${{label}}</div>
+                    <select id="entityPick_${{txnId}}" style="width:100%;padding:8px;border:1px solid var(--border);border-radius:6px;background:var(--card);color:var(--text);font-size:13px;margin-bottom:8px;">
+                        <option value="">-- Select ${{label}} --</option>
+                        ${{optionsHtml}}
+                    </select>
+                    <div style="display:flex;gap:6px;">
+                        <button onclick="confirmEntityPick('${{txnId}}','${{category}}','${{safeDesc}}')" 
+                                style="flex:1;padding:8px;background:var(--green);color:white;border:none;border-radius:6px;cursor:pointer;font-weight:700;font-size:13px;">
+                            Allocate
+                        </button>
+                        <button onclick="categorizeTransaction('${{txnId}}','${{category}}','${{safeDesc}}','__skip__','')" 
+                                style="padding:8px 12px;background:var(--card);border:1px solid var(--border);color:var(--text-muted);border-radius:6px;cursor:pointer;font-size:12px;">
+                            Skip
+                        </button>
+                    </div>
+                </div>`;
+        }}
+        
+        function confirmEntityPick(txnId, category, description) {{
+            const sel = document.getElementById('entityPick_' + txnId);
+            if (!sel) return;
+            const entityId = sel.value;
+            const entityName = sel.options[sel.selectedIndex] ? sel.options[sel.selectedIndex].getAttribute('data-name') || sel.options[sel.selectedIndex].text : '';
+            if (!entityId) {{
+                alert('Please select a ' + (category === 'Customer Payment' ? 'customer' : 'supplier'));
+                return;
+            }}
+            categorizeTransaction(txnId, category, description, entityId, entityName);
         }}
         
         // ═══════════════════════════════════════════════════════════
@@ -842,6 +901,8 @@ def register_banking_routes(app, db, login_required, Auth, render_page,
         let _splitLineCount = 0;
         let _splitMatchedExpenseId = '';
         let _splitAllCategories = {json_cat_list};
+        let _entityCustomers = {_entity_json_customers};
+        let _entitySuppliers = {_entity_json_suppliers};
         
         function openSplitModal(txnId, desc, debit, credit, date) {{
             _splitTxnId = txnId;
@@ -2070,6 +2131,8 @@ Return ONLY the JSON array. No markdown, no explanation."""
             txn_id = data.get("id")
             category = data.get("category")
             description = data.get("description", "")
+            _picked_entity_id = data.get("entity_id", "") or ""
+            _picked_entity_name = data.get("entity_name", "") or ""
             
             if not txn_id or not category:
                 return jsonify({"success": False, "error": "Missing data"})
@@ -2165,18 +2228,26 @@ Return ONLY the JSON array. No markdown, no explanation."""
                         
                         _matched_supplier = None
                         try:
-                            match_ref = txn.get("match_reference", "")
-                            if match_ref:
-                                inv_num = match_ref.split(" - ")[0] if " - " in match_ref else match_ref
-                                if inv_num:
-                                    s_invoices = db.get("supplier_invoices", {"business_id": biz_id, "invoice_number": inv_num})
-                                    if s_invoices:
-                                        s_inv = s_invoices[0]
-                                        s_inv["status"] = "paid"
-                                        s_inv["paid_date"] = txn_date
-                                        db.save("supplier_invoices", s_inv)
-                                        if s_inv.get("supplier_id"):
-                                            _matched_supplier = db.get_one("suppliers", s_inv["supplier_id"])
+                            # Priority 1: User explicitly picked a supplier
+                            if _picked_entity_id:
+                                _matched_supplier = db.get_one("suppliers", _picked_entity_id)
+                                if _matched_supplier:
+                                    logger.info(f"[BANK] Supplier matched via entity picker: {_matched_supplier.get('name')}")
+                            # Priority 2: match_reference from auto-matching
+                            if not _matched_supplier:
+                                match_ref = txn.get("match_reference", "")
+                                if match_ref:
+                                    inv_num = match_ref.split(" - ")[0] if " - " in match_ref else match_ref
+                                    if inv_num:
+                                        s_invoices = db.get("supplier_invoices", {"business_id": biz_id, "invoice_number": inv_num})
+                                        if s_invoices:
+                                            s_inv = s_invoices[0]
+                                            s_inv["status"] = "paid"
+                                            s_inv["paid_date"] = txn_date
+                                            db.save("supplier_invoices", s_inv)
+                                            if s_inv.get("supplier_id"):
+                                                _matched_supplier = db.get_one("suppliers", s_inv["supplier_id"])
+                            # Priority 3: name match in description
                             if not _matched_supplier:
                                 _desc_upper = (txn.get("description") or "").upper()
                                 _all_suppliers = db.get("suppliers", {"business_id": biz_id}) or []
@@ -2207,7 +2278,7 @@ Return ONLY the JSON array. No markdown, no explanation."""
                                 "id": generate_id(),
                                 "business_id": biz_id,
                                 "supplier_id": _matched_supplier.get("id", "") if _matched_supplier else "",
-                                "supplier_name": _matched_supplier.get("name", description[:60]) if _matched_supplier else description[:60],
+                                "supplier_name": _matched_supplier.get("name", description[:60]) if _matched_supplier else (_picked_entity_name or description[:60]),
                                 "amount": float(expense_amount),
                                 "date": txn_date,
                                 "method": "eft",
@@ -2273,8 +2344,20 @@ Return ONLY the JSON array. No markdown, no explanation."""
                     matched_invoice = None
                     matched_customer = None
                     try:
+                        # Priority 1: User explicitly picked a customer
+                        if _picked_entity_id:
+                            matched_customer = db.get_one("customers", _picked_entity_id)
+                            if matched_customer:
+                                logger.info(f"[BANK] Customer matched via entity picker: {matched_customer.get('name')}")
+                                try:
+                                    old_bal = float(matched_customer.get("balance", 0))
+                                    new_bal = max(0, old_bal - income_amount)
+                                    db.update("customers", matched_customer["id"], {"balance": new_bal})
+                                except: pass
+                        
+                        # Priority 2: match_reference
                         match_ref = txn.get("match_reference", "")
-                        if match_ref:
+                        if match_ref and not matched_invoice:
                             inv_num = match_ref.split(" - ")[0] if " - " in match_ref else match_ref
                             inv_num = inv_num.replace("Maybe ", "").replace("?", "").strip()
                             if inv_num.startswith("INV"):
@@ -2307,14 +2390,17 @@ Return ONLY the JSON array. No markdown, no explanation."""
                             db.save("invoices", matched_invoice)
                             logger.info(f"[BANK] Marked {matched_invoice.get('invoice_number','?')} as PAID")
                             cust_id = matched_invoice.get("customer_id")
-                            if cust_id:
+                            if cust_id and not _picked_entity_id:
                                 try:
                                     customer = db.get_one("customers", cust_id)
                                     if customer:
                                         new_bal = max(0, float(customer.get("balance", 0)) - income_amount)
                                         db.update("customers", cust_id, {"balance": new_bal})
                                 except: pass
-                        else:
+                            if not matched_customer and cust_id:
+                                matched_customer = db.get_one("customers", cust_id)
+                        elif not matched_customer:
+                            # Priority 3: name match in description
                             desc_upper = (txn.get("description") or "").upper()
                             all_customers = db.get("customers", {"business_id": biz_id}) or []
                             for c in all_customers:
