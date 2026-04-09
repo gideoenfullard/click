@@ -2253,9 +2253,11 @@ Return ONLY the JSON array. No markdown, no explanation."""
                                 _all_suppliers = db.get("suppliers", {"business_id": biz_id}) or []
                                 for _s in _all_suppliers:
                                     _sname = (_s.get("name") or "").upper().strip()
-                                    if _sname and len(_sname) >= 3 and _sname[:6] in _desc_upper:
-                                        _matched_supplier = _s
-                                        break
+                                    if _sname and len(_sname) >= 3:
+                                        _swords = [w for w in _sname.split() if len(w) >= 3]
+                                        if _swords and any(w in _desc_upper for w in _swords):
+                                            _matched_supplier = _s
+                                            break
                             if _matched_supplier:
                                 _old_bal = float(_matched_supplier.get("balance", 0))
                                 _new_bal = max(0, _old_bal - expense_amount)
@@ -2315,10 +2317,12 @@ Return ONLY the JSON array. No markdown, no explanation."""
                             _all_sups = db.get("suppliers", {"business_id": biz_id}) or []
                             for _s in _all_sups:
                                 _sn = (_s.get("name") or "").upper().strip()
-                                if _sn and len(_sn) >= 3 and _sn in _desc_upper:
-                                    _exp_supplier_id = _s.get("id", "")
-                                    _exp_supplier_name = _s.get("name", "")
-                                    break
+                                if _sn and len(_sn) >= 3:
+                                    _sw = [w for w in _sn.split() if len(w) >= 3]
+                                    if _sw and any(w in _desc_upper for w in _sw):
+                                        _exp_supplier_id = _s.get("id", "")
+                                        _exp_supplier_name = _s.get("name", "")
+                                        break
                         except Exception:
                             pass
                     expense = RecordFactory.expense(
@@ -2428,9 +2432,12 @@ Return ONLY the JSON array. No markdown, no explanation."""
                             all_customers = db.get("customers", {"business_id": biz_id}) or []
                             for c in all_customers:
                                 cname = (c.get("name") or "").upper().strip()
-                                if cname and len(cname) >= 3 and cname[:6] in desc_upper:
-                                    matched_customer = c
-                                    break
+                                if cname and len(cname) >= 3:
+                                    # Match any significant word (3+ chars) of customer name in description
+                                    _cwords = [w for w in cname.split() if len(w) >= 3]
+                                    if _cwords and any(w in desc_upper for w in _cwords):
+                                        matched_customer = c
+                                        break
                             if matched_customer:
                                 try:
                                     old_bal = float(matched_customer.get("balance", 0))
