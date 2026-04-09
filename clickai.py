@@ -2083,6 +2083,163 @@ def money(amount) -> str:
         return "R0.00"
 
 
+def calc_customer_balance(biz_id: str, customer_id: str) -> float:
+    """Calculate customer balance from source documents (invoices, credit notes, receipts, account sales).
+    Positive = customer owes us.  Negative = customer in credit (overpaid).
+    Balance = invoices + account_sales - receipts - credit_notes
+    """
+    try:
+        # Debits: what customer owes
+        invoices = db.get("invoices", {"business_id": biz_id, "customer_id": customer_id}) or []
+        inv_total = sum(float(i.get("total", 0)) for i in invoices if i.get("status") != "credited")
+
+        # Account sales (POS on-account)
+        sales = db.get("sales", {"business_id": biz_id, "customer_id": customer_id}) or []
+        acc_sales_total = sum(float(s.get("total", 0)) for s in sales if s.get("payment_method") == "account")
+
+        # Credits: what customer has paid / been credited
+        receipts_by_id = db.get("receipts", {"business_id": biz_id, "customer_id": customer_id}) or []
+        # Also pick up unlinked receipts matched by name (from banking recon)
+        all_receipts = db.get("receipts", {"business_id": biz_id}) or []
+        _cust = db.get_one("customers", customer_id)
+        _cust_name_upper = (_cust.get("name") or "").upper().strip() if _cust else ""
+        _by_id_set = {r.get("id") for r in receipts_by_id}
+        receipts_by_name = [r for r in all_receipts
+                            if not r.get("customer_id") and _cust_name_upper
+                            and (r.get("customer_name") or "").upper().strip() == _cust_name_upper
+                            and r.get("id") not in _by_id_set]
+        all_cust_receipts = receipts_by_id + receipts_by_name
+        rec_total = sum(float(r.get("amount", 0)) for r in all_cust_receipts)
+
+        credit_notes = db.get("credit_notes", {"business_id": biz_id, "customer_id": customer_id}) or []
+        cn_total = sum(float(cn.get("total", 0)) for cn in credit_notes)
+
+        return round(inv_total + acc_sales_total - rec_total - cn_total, 2)
+    except Exception as e:
+        logger.error(f"[CALC BALANCE] Customer {customer_id} error: {e}")
+        return 0.0
+
+
+def calc_supplier_balance(biz_id: str, supplier_id: str) -> float:
+    """Calculate supplier balance from source documents (supplier invoices, expenses, payments).
+    Positive = we owe the supplier.  Negative = we overpaid / supplier in credit.
+    Balance = supplier_invoices - supplier_payments
+    """
+    try:
+        # What we owe: supplier invoices
+        s_invoices = db.get("supplier_invoices", {"business_id": biz_id, "supplier_id": supplier_id}) or []
+        si_total = sum(float(si.get("total", 0)) for si in s_invoices if si.get("status") != "cancelled")
+
+        # What we paid
+        all_payments = db.get("supplier_payments", {"business_id": biz_id}) or []
+        _sup = db.get_one("suppliers", supplier_id)
+        _sup_name_upper = (_sup.get("name") or "").upper().strip() if _sup else ""
+        payments = [p for p in all_payments if
+                    p.get("supplier_id") == supplier_id or
+                    (not p.get("supplier_id") and _sup_name_upper and
+                     (p.get("supplier_name") or "").upper().strip() == _sup_name_upper)]
+        pay_total = sum(float(p.get("amount", 0)) for p in payments)
+
+        return round(si_total - pay_total, 2)
+    except Exception as e:
+        logger.error(f"[CALC BALANCE] Supplier {supplier_id} error: {e}")
+        return 0.0
+
+
+def calc_all_customer_balances(biz_id: str) -> dict:
+    """Calculate balances for ALL customers in one batch. Returns {customer_id: balance}.
+    Much more efficient than calling calc_customer_balance() per customer.
+    """
+    try:
+        all_invoices = db.get("invoices", {"business_id": biz_id}) or []
+        all_sales = db.get("sales", {"business_id": biz_id}) or []
+        all_receipts = db.get("receipts", {"business_id": biz_id}) or []
+        all_credit_notes = db.get("credit_notes", {"business_id": biz_id}) or []
+        all_customers = db.get("customers", {"business_id": biz_id}) or []
+
+        # Build name→id map for unlinked receipt matching
+        _name_to_id = {}
+        for c in all_customers:
+            _n = (c.get("name") or "").upper().strip()
+            if _n:
+                _name_to_id[_n] = c.get("id", "")
+
+        balances = {}
+
+        # Debits: invoices (excluding credited)
+        for inv in all_invoices:
+            cid = inv.get("customer_id", "")
+            if cid and inv.get("status") != "credited":
+                balances[cid] = balances.get(cid, 0) + float(inv.get("total", 0))
+
+        # Debits: account sales
+        for s in all_sales:
+            if s.get("payment_method") == "account":
+                cid = s.get("customer_id", "")
+                if cid:
+                    balances[cid] = balances.get(cid, 0) + float(s.get("total", 0))
+
+        # Credits: receipts
+        for r in all_receipts:
+            cid = r.get("customer_id", "")
+            if not cid:
+                # Try name match
+                _rname = (r.get("customer_name") or "").upper().strip()
+                cid = _name_to_id.get(_rname, "")
+            if cid:
+                balances[cid] = balances.get(cid, 0) - float(r.get("amount", 0))
+
+        # Credits: credit notes
+        for cn in all_credit_notes:
+            cid = cn.get("customer_id", "")
+            if cid:
+                balances[cid] = balances.get(cid, 0) - float(cn.get("total", 0))
+
+        return {k: round(v, 2) for k, v in balances.items()}
+    except Exception as e:
+        logger.error(f"[CALC BATCH] Customer balances error: {e}")
+        return {}
+
+
+def calc_all_supplier_balances(biz_id: str) -> dict:
+    """Calculate balances for ALL suppliers in one batch. Returns {supplier_id: balance}.
+    Much more efficient than calling calc_supplier_balance() per supplier.
+    """
+    try:
+        all_s_invoices = db.get("supplier_invoices", {"business_id": biz_id}) or []
+        all_s_payments = db.get("supplier_payments", {"business_id": biz_id}) or []
+        all_suppliers = db.get("suppliers", {"business_id": biz_id}) or []
+
+        # Build name→id map for unlinked payment matching
+        _name_to_id = {}
+        for s in all_suppliers:
+            _n = (s.get("name") or "").upper().strip()
+            if _n:
+                _name_to_id[_n] = s.get("id", "")
+
+        balances = {}
+
+        # Debits: supplier invoices (what we owe)
+        for si in all_s_invoices:
+            sid = si.get("supplier_id", "")
+            if sid and si.get("status") != "cancelled":
+                balances[sid] = balances.get(sid, 0) + float(si.get("total", 0))
+
+        # Credits: supplier payments
+        for p in all_s_payments:
+            sid = p.get("supplier_id", "")
+            if not sid:
+                _pname = (p.get("supplier_name") or "").upper().strip()
+                sid = _name_to_id.get(_pname, "")
+            if sid:
+                balances[sid] = balances.get(sid, 0) - float(p.get("amount", 0))
+
+        return {k: round(v, 2) for k, v in balances.items()}
+    except Exception as e:
+        logger.error(f"[CALC BATCH] Supplier balances error: {e}")
+        return {}
+
+
 def get_acting_user() -> tuple:
     """Get the logged-in user's ID and display name — auto-fills created_by everywhere.
     Returns (user_id, user_name) — always strings, never None.
@@ -2298,7 +2455,7 @@ class Email:
             return False
         
         name = customer.get("name", "Customer")
-        balance = float(customer.get("balance", 0))
+        balance = calc_customer_balance(business.get("id", ""), customer.get("id", ""))
         biz_name = business.get("name", "Business") if business else "Business"
         
         subject = f"Payment Reminder - {biz_name}"
@@ -2360,7 +2517,7 @@ Thank you for your business!
             return False
         
         name = safe(customer.get("name", "Customer"))
-        balance = float(customer.get("balance", 0))
+        balance = calc_customer_balance(business.get("id", ""), customer.get("id", ""))
         biz_name = safe(business.get("name", "Business")) if business else "Business"
         biz_address = safe(business.get("address", "")).replace("\n", "<br>") if business else ""
         biz_phone = business.get("phone", "") if business else ""
@@ -6134,15 +6291,17 @@ class ZaneToolHandler:
     def _tool_search_customers(self, params: dict) -> dict:
         query = params.get("query", "").lower().strip()
         customers = self.db.get("customers", {"business_id": self.biz_id}) or []
+        _all_bals = calc_all_customer_balances(self.biz_id)
         results = []
         for c in customers:
             if query:
                 searchable = f"{c.get('name','')} {c.get('phone','')} {c.get('email','')}".lower()
                 if query not in searchable:
                     continue
+            _bal = _all_bals.get(c.get("id"), 0)
             results.append({
                 "id": c.get("id"), "name": c.get("name", ""), "phone": c.get("phone", ""),
-                "email": c.get("email", ""), "balance": float(c.get("balance", 0) or 0),
+                "email": c.get("email", ""), "balance": _bal,
                 "address": c.get("address", ""), "vat_number": c.get("vat_number", "")
             })
         results.sort(key=lambda x: abs(x["balance"]), reverse=True)
@@ -6151,6 +6310,7 @@ class ZaneToolHandler:
     def _tool_search_suppliers(self, params: dict) -> dict:
         query = params.get("query", "").lower().strip()
         suppliers = self.db.get("suppliers", {"business_id": self.biz_id}) or []
+        _sup_bals = calc_all_supplier_balances(self.biz_id)
         results = []
         for s in suppliers:
             if query:
@@ -6159,7 +6319,7 @@ class ZaneToolHandler:
                     continue
             results.append({
                 "id": s.get("id"), "name": s.get("name", ""), "phone": s.get("phone", ""),
-                "email": s.get("email", ""), "balance": float(s.get("balance", 0) or 0),
+                "email": s.get("email", ""), "balance": _sup_bals.get(s.get("id"), 0),
                 "address": s.get("address", "")
             })
         results.sort(key=lambda x: abs(x["balance"]), reverse=True)
@@ -6172,6 +6332,7 @@ class ZaneToolHandler:
         
         customers = self.db.get("customers", {"business_id": self.biz_id}) or []
         invoices = self.db.get("invoices", {"business_id": self.biz_id}) or []
+        _all_bals = calc_all_customer_balances(self.biz_id)
         
         # Build outstanding invoices per customer with aging
         today = datetime.now().date()
@@ -6231,7 +6392,7 @@ class ZaneToolHandler:
         # Also add customers with balance but no outstanding invoices
         for c in customers:
             name = c.get("name", "")
-            balance = float(c.get("balance", 0) or 0)
+            balance = _all_bals.get(c.get("id"), 0)
             if balance > 0 and name not in customer_aging:
                 customer_aging[name] = {
                     "name": name, "phone": c.get("phone", ""), "email": c.get("email", ""),
@@ -6291,6 +6452,7 @@ class ZaneToolHandler:
         suppliers = self.db.get("suppliers", {"business_id": self.biz_id}) or []
         supplier_invoices = self.db.get("supplier_invoices", {"business_id": self.biz_id}) or []
         purchase_orders = self.db.get("purchase_orders", {"business_id": self.biz_id}) or []
+        _sup_bals = calc_all_supplier_balances(self.biz_id)
         
         today = datetime.now().date()
         supplier_aging = {}
@@ -6379,7 +6541,7 @@ class ZaneToolHandler:
         # === SOURCE 3: Suppliers with balance but no invoices/POs ===
         for s in suppliers:
             name = s.get("name", "")
-            balance = float(s.get("balance", 0) or 0)
+            balance = _sup_bals.get(s.get("id"), 0)
             if balance > 0:
                 if name in supplier_aging:
                     supplier_aging[name]["phone"] = s.get("phone", "")
@@ -10982,7 +11144,8 @@ Which email provider are you using? (Gmail/Outlook/Other)""",
             # Get debtors count
             biz_id = context.get("business_id")
             customers = db.get("customers", {"business_id": biz_id}) or []
-            debtors = [c for c in customers if float(c.get("balance", 0)) > 0]
+            _all_bals = calc_all_customer_balances(biz_id)
+            debtors = [c for c in customers if _all_bals.get(c.get("id"), 0) > 0]
             debtors_with_email = [c for c in debtors if c.get("email")]
             
             if not debtors:
@@ -11273,10 +11436,7 @@ class Actions:
                     db.update_stock(stock_id, {"qty": new_qty, "quantity": new_qty}, biz_id)
                     logger.info(f"[INVOICE AI] Stock {code}: {current_qty} - {sold_qty} = {new_qty}")
             
-            # Update customer balance
-            if customer:
-                new_balance = float(customer.get("balance", 0)) + float(amount)
-                db.save("customers", {"id": customer["id"], "balance": new_balance})
+            # Customer balance is now calculated dynamically — no manual update needed
             
             # Create journal entries for GL
             # Debit Debtors (1200), Credit Sales (4000) + VAT Output (2100)
@@ -11626,11 +11786,7 @@ class Actions:
         if not customer:
             return {"success": False, "message": f"Customer not found: {customer_name}"}
         
-        # Update balance
-        old_balance = Decimal(str(customer.get("balance", 0)))
-        new_balance = old_balance - amount
-        
-        db.save("customers", {"id": customer["id"], "balance": float(new_balance)})
+        # Customer balance is now calculated dynamically — no manual update needed
         
         # Record receipt
         db.save("receipts", {
@@ -11671,8 +11827,8 @@ class Actions:
         
         return {
             "success": True,
-            "message": f"Received {money(amount)} from {customer['name']} - Balance now {money(new_balance)}",
-            "data": {"customer": customer["name"], "new_balance": float(new_balance)}
+            "message": f"Received {money(amount)} from {customer['name']} - Balance now {money(calc_customer_balance(biz_id, customer['id']))}",
+            "data": {"customer": customer["name"], "new_balance": calc_customer_balance(biz_id, customer['id'])}
         }
     
     @staticmethod
@@ -11826,10 +11982,7 @@ class Actions:
             except Exception as sm_err:
                 logger.error(f"[ZANE SALE] Stock movement save failed: {sm_err}")
             
-            # Update customer balance if account sale
-            if customer and payment_method == "account":
-                new_balance = float(customer.get("balance", 0)) + float(line_total)
-                db.save("customers", {"id": customer["id"], "balance": new_balance})
+            # Customer balance is now calculated dynamically — no manual update needed
             
             # Create journal entries for GL
             excl_amount = float(line_total - vat_amount)
@@ -11881,9 +12034,10 @@ class Actions:
         # Get business
         business = db.get_one("businesses", biz_id) if biz_id else None
         
-        # Get customers with balances
+        # Get customers with balances (calculated dynamically)
         customers = db.get("customers", {"business_id": biz_id}) if biz_id else []
-        debtors = [c for c in customers if float(c.get("balance", 0)) > 0]
+        _all_bals = calc_all_customer_balances(biz_id)
+        debtors = [c for c in customers if _all_bals.get(c.get("id"), 0) > 0]
         
         # Filter to specific customer if requested
         if customer_name:
@@ -11906,7 +12060,7 @@ class Actions:
             else:
                 failed += 1
         
-        total_owing = sum(float(c.get("balance", 0)) for c in debtors)
+        total_owing = sum(_all_bals.get(c.get("id"), 0) for c in debtors)
         
         message_parts = []
         if sent > 0:
@@ -12060,12 +12214,7 @@ class Actions:
             # Update quote status
             db.save("quotes", {"id": quote.get("id"), "status": "accepted"})
             
-            # Update customer balance
-            if quote.get("customer_id"):
-                customer = db.get_one("customers", quote.get("customer_id"))
-                if customer:
-                    new_balance = float(customer.get("balance", 0)) + float(quote.get("total", 0))
-                    db.save("customers", {"id": customer["id"], "balance": new_balance})
+            # Customer balance is now calculated dynamically — no manual update needed
             
             return {
                 "success": True,
@@ -12324,10 +12473,7 @@ class Actions:
         success, _ = db.save("supplier_invoices", invoice)
         
         if success:
-            # Update supplier balance
-            if supplier:
-                new_balance = float(supplier.get("balance", 0)) + amount
-                db.save("suppliers", {"id": supplier["id"], "balance": new_balance})
+            # Supplier balance is now calculated dynamically — no manual update needed
             
             # Create GL journal entries
             try:
@@ -13154,9 +13300,7 @@ class Actions:
                     }
                     success, _ = db.save("supplier_invoices", inv)
                     if success:
-                        # Update supplier balance
-                        new_balance = float(supplier.get("balance", 0)) + float(inv["total"])
-                        db.update("suppliers", supplier["id"], {"balance": new_balance}, biz_id)
+                        # Supplier balance is now calculated dynamically — no manual update needed
                         
                         # BOOK ITEMS INTO STOCK (with smart code matching + creation)
                         # BUT skip expense/service items - those are NOT stock!
@@ -13580,11 +13724,13 @@ class Context:
         supplier_count = len(suppliers)
         stock_count = len(stock_data)
         
-        # Debtors (from same customer load)
-        total_debtors = sum(float(c.get("balance", 0) or 0) for c in customers if float(c.get("balance", 0) or 0) > 0)
+        # Debtors (calculated from source documents)
+        _all_cust_bals = calc_all_customer_balances(biz_id)
+        total_debtors = sum(v for v in _all_cust_bals.values() if v > 0)
         
-        # Creditors
-        total_creditors = sum(float(s.get("balance", 0) or 0) for s in suppliers if float(s.get("balance", 0) or 0) > 0)
+        # Creditors (calculated from source documents)
+        _all_sup_bals = calc_all_supplier_balances(biz_id)
+        total_creditors = sum(v for v in _all_sup_bals.values() if v > 0)
         
         # Sales
         today_str = today()
@@ -13595,9 +13741,9 @@ class Context:
         stock_value = sum(float(s.get("qty") or s.get("quantity") or 0) * float(s.get("cost") or s.get("cost_price") or 0) for s in stock_data)
         stock_retail_value = sum(float(s.get("qty") or s.get("quantity") or 0) * float(s.get("price") or s.get("selling_price") or 0) for s in stock_data)
         
-        # Top debtors (from same customer load — NO extra DB call)
-        debtors = [d for d in customers if float(d.get("balance", 0) or 0) > 0]
-        debtors.sort(key=lambda x: float(x.get("balance", 0) or 0), reverse=True)
+        # Top debtors (calculated from source documents)
+        debtors = [d for d in customers if _all_cust_bals.get(d.get("id"), 0) > 0]
+        debtors.sort(key=lambda x: _all_cust_bals.get(x.get("id"), 0), reverse=True)
         
         # Recent invoices (from same invoice load — NO extra DB call)
         invoices.sort(key=lambda x: x.get("date", "") or "", reverse=True)
@@ -13779,12 +13925,15 @@ class Context:
         invoices = db.get("invoices", {"business_id": biz_id}) if biz_id else []
         expenses = db.get("expenses", {"business_id": biz_id}) if biz_id else []
         
-        # Calculate summary numbers
-        debtors = [c for c in customers if float(c.get("balance", 0) or 0) > 0]
-        total_debtors = sum(float(c.get("balance", 0) or 0) for c in debtors)
+        # Calculate summary numbers (balances from source documents)
+        _all_cust_bals = calc_all_customer_balances(biz_id)
+        _all_sup_bals = calc_all_supplier_balances(biz_id)
         
-        creditors = [s for s in suppliers if float(s.get("balance", 0) or 0) > 0]
-        total_creditors = sum(float(s.get("balance", 0) or 0) for s in creditors)
+        debtors = [c for c in customers if _all_cust_bals.get(c.get("id"), 0) > 0]
+        total_debtors = sum(v for v in _all_cust_bals.values() if v > 0)
+        
+        creditors = [s for s in suppliers if _all_sup_bals.get(s.get("id"), 0) > 0]
+        total_creditors = sum(v for v in _all_sup_bals.values() if v > 0)
         
         today_sales = sum(float(s.get("total", 0) or 0) for s in sales if s.get("date") == today())
         total_sales = sum(float(s.get("total", 0) or 0) for s in sales)
@@ -13802,10 +13951,10 @@ class Context:
         total_paid = sum(float(i.get("total", 0) or 0) for i in invoices if i.get("status") == "paid")
         
         # Summaries for reports (compact, not full records)
-        customers_summary = [{"name": c.get("name"), "balance": c.get("balance", 0), "phone": c.get("phone", "")} 
-                            for c in sorted(debtors, key=lambda x: float(x.get("balance", 0)), reverse=True)]
-        suppliers_summary = [{"name": s.get("name"), "balance": s.get("balance", 0), "phone": s.get("phone", "")} 
-                            for s in sorted(creditors, key=lambda x: float(x.get("balance", 0)), reverse=True)]
+        customers_summary = [{"name": c.get("name"), "balance": _all_cust_bals.get(c.get("id"), 0), "phone": c.get("phone", "")} 
+                            for c in sorted(debtors, key=lambda x: _all_cust_bals.get(x.get("id"), 0), reverse=True)]
+        suppliers_summary = [{"name": s.get("name"), "balance": _all_sup_bals.get(s.get("id"), 0), "phone": s.get("phone", "")} 
+                            for s in sorted(creditors, key=lambda x: _all_sup_bals.get(x.get("id"), 0), reverse=True)]
         
         return {
             "business_id": biz_id,
@@ -13857,7 +14006,8 @@ class Context:
         
         if page == "customers":
             customers = db.get("customers", {"business_id": biz_id}) if biz_id else []
-            debtors = [c for c in customers if float(c.get("balance", 0)) > 0]
+            _all_bals = calc_all_customer_balances(biz_id)
+            debtors = [c for c in customers if _all_bals.get(c.get("id"), 0) > 0]
             return {"customers": customers, "debtors": debtors}
         
         elif page == "stock":
@@ -15499,6 +15649,7 @@ class CustomerIntelligence:
         try:
             customers = db.get("customers", {"business_id": business_id}) or []
             invoices = db.get("invoices", {"business_id": business_id}) or []
+            _all_bals = calc_all_customer_balances(business_id)
             
             # Group invoices by customer
             customer_invoices = {}
@@ -15554,7 +15705,7 @@ class CustomerIntelligence:
                     risk_score += 15
                 
                 # Outstanding amount factor
-                balance = float(customer.get("balance", 0))
+                balance = _all_bals.get(customer.get("id"), 0)
                 if balance > 50000:
                     risk_score += 20
                 elif balance > 20000:
@@ -15630,10 +15781,11 @@ class CustomerIntelligence:
     def get_risky_debtors(business_id: str, limit: int = 10) -> list:
         """Get customers with high risk and outstanding balances"""
         customers = db.get("customers", {"business_id": business_id}) or []
+        _all_bals = calc_all_customer_balances(business_id)
         
         risky = []
         for c in customers:
-            balance = float(c.get("balance", 0))
+            balance = _all_bals.get(c.get("id"), 0)
             if balance <= 0:
                 continue
             
@@ -16623,6 +16775,7 @@ class TaxSaver:
             expenses = db.get("expenses", {"business_id": business_id}) or []
             employees = db.get("employees", {"business_id": business_id}) or []
             customers = db.get("customers", {"business_id": business_id}) or []
+            _all_bals = calc_all_customer_balances(business_id)
             assets = db.get("assets", {"business_id": business_id}) or []
             
             # ─────────────────────────────────────────────────────────────────
@@ -16682,11 +16835,11 @@ class TaxSaver:
             # CHECK 4: Bad debts not written off
             # ─────────────────────────────────────────────────────────────────
             old_debtors = [c for c in customers 
-                          if float(c.get("balance", 0)) > 0 
+                          if _all_bals.get(c.get("id"), 0) > 0 
                           and c.get("last_payment_date", "2020-01-01") < (datetime.now() - timedelta(days=365)).strftime("%Y-%m-%d")]
             
             if old_debtors:
-                bad_debt_total = sum(float(c.get("balance", 0)) for c in old_debtors)
+                bad_debt_total = sum(_all_bals.get(c.get("id"), 0) for c in old_debtors)
                 tax_saving = bad_debt_total * 0.27  # 27% company tax saved
                 
                 report["potential_savings"].append({
@@ -16695,7 +16848,7 @@ class TaxSaver:
                     "potential_annual": tax_saving,
                     "action": "Write off uncollectable debts as bad debt expense",
                     "priority": "HIGH",
-                    "customers": [{"name": c.get("name"), "balance": c.get("balance")} for c in old_debtors[:5]]
+                    "customers": [{"name": c.get("name"), "balance": _all_bals.get(c.get("id"), 0)} for c in old_debtors[:5]]
                 })
                 report["total_potential_annual"] += tax_saving
             
@@ -21962,7 +22115,7 @@ def api_zane_analyze_file():
                 monthly_revenue = quarterly_revenue / 3 if quarterly_revenue > 0 else 0
                 monthly_expenses = quarterly_expenses / 3 if quarterly_expenses > 0 else 0
                 
-                total_debtors = sum(float(c.get("balance") or 0) for c in custs if float(c.get("balance") or 0) > 0)
+                total_debtors = sum(v for v in calc_all_customer_balances(biz_id).values() if v > 0)
                 
                 biz_context = f"""
 BUSINESS PROFILE FOR {biz_name}:
@@ -24177,14 +24330,17 @@ def customers_page():
     role = get_user_role()
     can_see_balances = role in ("owner", "admin", "manager", "bookkeeper", "accountant")
     
+    # Calculate all customer balances from source documents (batch)
+    _all_balances = calc_all_customer_balances(biz_id) if can_see_balances else {}
+    
     total_customers = len(customers)
-    debtors = [c for c in customers if float(c.get("balance", 0)) > 0]
-    total_owed = sum(float(c.get("balance", 0)) for c in debtors) if can_see_balances else 0
+    debtors = [c for c in customers if _all_balances.get(c.get("id"), 0) > 0]
+    total_owed = sum(_all_balances.get(c.get("id"), 0) for c in debtors) if can_see_balances else 0
     
     # Build rows - SIMPLIFIED: Only essential columns, click View for details
     customers_html = ""
     for c in customers:
-        balance = float(c.get("balance", 0) or 0)
+        balance = _all_balances.get(c.get("id"), 0) if can_see_balances else 0
         credit_limit = float(c.get("credit_limit", 0) or 0)
         balance_color = "var(--red)" if balance > 0 else "var(--green)" if balance < 0 else "var(--text-muted)"
         balance_display = money(balance) if can_see_balances else "---"
@@ -24383,10 +24539,10 @@ def customers_page():
     # -- JARVIS: Customers HUD header --
     if has_reactor_hud():
         _with_bal = len(debtors)
-        _in_credit = len([c for c in customers if float(c.get("balance", 0) or 0) < 0])
+        _in_credit = len([c for c in customers if _all_balances.get(c.get("id"), 0) < 0])
         _j_alert = ""
         if _with_bal > 3 and can_see_balances:
-            _top3 = ", ".join([f"{safe(c.get('name','-')[:20])} ({money(float(c.get('balance',0)))})" for c in sorted(debtors, key=lambda x: -float(x.get('balance',0)))[:3]])
+            _top3 = ", ".join([f"{safe(c.get('name','-')[:20])} ({money(_all_balances.get(c.get('id'), 0))})" for c in sorted(debtors, key=lambda x: -_all_balances.get(x.get('id'), 0))[:3]])
             _j_alert = f'<div class="j-ticker"><b>&#9888; DEBTORS</b><span class="jt-msg">{_with_bal} customers owe money &mdash; {_top3}</span><a href="/pulse" class="jt-act">VIEW PULSE &rarr;</a></div>'
         
         _hud = jarvis_hud_header(
@@ -24466,7 +24622,12 @@ def customer_view(customer_id):
     receipts = sorted(_receipts_by_id + _receipts_by_name, key=lambda x: x.get("date", ""), reverse=True)
     sales = sorted(fut_sales.result(), key=lambda x: x.get("date", ""), reverse=True)
     
-    balance = float(customer.get("balance", 0))
+    # Calculate balance from source documents (invoices + account sales - receipts - credit notes)
+    _inv_total = sum(float(i.get("total", 0)) for i in invoices if i.get("status") != "credited")
+    _acc_sales = sum(float(s.get("total", 0)) for s in sales if s.get("payment_method") == "account")
+    _rec_total = sum(float(r.get("amount", 0)) for r in receipts)
+    _cn_total = sum(float(cn.get("total", 0)) for cn in credit_notes)
+    balance = round(_inv_total + _acc_sales - _rec_total - _cn_total, 2)
     
     # Stats
     total_invoiced = sum(float(inv.get("total", 0)) for inv in invoices)
@@ -24509,6 +24670,64 @@ def customer_view(customer_id):
             ytd_growth = f'<span style="color:var(--green);font-size:12px;">▲ {pct:.0f}% vs prev FY</span>'
         elif pct < 0:
             ytd_growth = f'<span style="color:var(--red);font-size:12px;">▼ {abs(pct):.0f}% vs prev FY</span>'
+    
+    # Build Account Statement / Ledger (all transactions sorted by date)
+    _ledger_items = []
+    for inv in invoices:
+        if inv.get("status") != "credited":
+            _ledger_items.append({
+                "date": inv.get("date", ""),
+                "type": "Invoice",
+                "reference": inv.get("invoice_number", "-"),
+                "debit": float(inv.get("total", 0)),
+                "credit": 0,
+                "link": f"/invoice/{inv.get('id', '')}"
+            })
+    for s in sales:
+        if s.get("payment_method") == "account":
+            _ledger_items.append({
+                "date": s.get("date", ""),
+                "type": "POS Sale",
+                "reference": s.get("sale_number", "-"),
+                "debit": float(s.get("total", 0)),
+                "credit": 0,
+                "link": f"/sale/{s.get('id', '')}"
+            })
+    for r in receipts:
+        _ledger_items.append({
+            "date": r.get("date", ""),
+            "type": "Payment",
+            "reference": r.get("reference", r.get("receipt_number", "-")),
+            "debit": 0,
+            "credit": float(r.get("amount", 0)),
+            "link": "",
+            "source": r.get("source", "")
+        })
+    for cn in credit_notes:
+        _ledger_items.append({
+            "date": cn.get("date", ""),
+            "type": "Credit Note",
+            "reference": cn.get("credit_note_number", "-"),
+            "debit": 0,
+            "credit": float(cn.get("total", 0)),
+            "link": f"/credit-note/{cn.get('id', '')}"
+        })
+    _ledger_items.sort(key=lambda x: x.get("date", ""))
+    _running_bal = 0
+    _ledger_html = ""
+    for _li in _ledger_items:
+        _running_bal += _li["debit"] - _li["credit"]
+        _ref_html = f'<a href="{_li["link"]}" style="color:var(--primary);text-decoration:none;">{safe_string(_li["reference"])}</a>' if _li.get("link") else safe_string(_li["reference"])
+        _src = f' <span style="font-size:10px;color:var(--text-muted);">({_li.get("source","")})</span>' if _li.get("source") else ""
+        _bal_color = "color:var(--red);" if _running_bal > 0.01 else "color:var(--green);" if _running_bal < -0.01 else ""
+        _ledger_html += f'''<tr>
+            <td style="font-size:12px;">{_li["date"]}</td>
+            <td style="font-size:12px;">{_li["type"]}{_src}</td>
+            <td style="font-size:12px;">{_ref_html}</td>
+            <td style="text-align:right;font-size:12px;">{money(_li["debit"]) if _li["debit"] else "-"}</td>
+            <td style="text-align:right;font-size:12px;color:var(--green);">{money(_li["credit"]) if _li["credit"] else "-"}</td>
+            <td style="text-align:right;font-size:12px;font-weight:bold;{_bal_color}">{money(_running_bal)}</td>
+        </tr>'''
     
     # Build sales HTML
     sales_html = ""
@@ -24803,6 +25022,23 @@ def customer_view(customer_id):
             <div class="stat-label">Credit Notes</div>
         </div>
     </div>
+    
+    {'<div class="card">' + """
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:15px;">
+            <h3 style="margin:0;">Account Statement</h3>
+            <span style="font-size:12px;color:var(--text-muted);">""" + f'{len(_ledger_items)} transactions' + """</span>
+        </div>
+        <div style="overflow-x:auto;">
+        <table class="table" id="ledgerTable">
+            <thead>
+                <tr><th>Date</th><th>Type</th><th>Reference</th><th style="text-align:right;">Debit</th><th style="text-align:right;">Credit</th><th style="text-align:right;">Balance</th></tr>
+            </thead>
+            <tbody>
+                """ + (_ledger_html or "<tr><td colspan='6' style='text-align:center;color:var(--text-muted);'>No transactions yet</td></tr>") + """
+            </tbody>
+        </table>
+        </div>
+    </div>""" if can_see_balances else ''}
     
     <div class="card">
         <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:15px;">
@@ -25320,10 +25556,7 @@ def customer_edit(customer_id):
             fields["sales_rep"] = request.form.get("sales_rep", "").strip()
             fields["delivery_address"] = request.form.get("delivery_address", "").strip()
             fields["vat_type"] = request.form.get("vat_type", "").strip()
-            try:
-                fields["balance"] = float(request.form.get("balance", 0) or 0)
-            except:
-                fields["balance"] = float(customer.get("balance", 0))
+            # Balance is now calculated dynamically — do not save from form
             try:
                 fields["credit_limit"] = float(request.form.get("credit_limit", 0) or 0)
             except:
@@ -25960,12 +26193,7 @@ def api_rental_generate_invoice(rental_id):
         success, result = db.save("invoices", invoice)
         
         if success:
-            # Update customer balance
-            if rental.get("tenant_customer_id"):
-                customer = db.get_one("customers", rental.get("tenant_customer_id"))
-                if customer:
-                    new_balance = float(customer.get("balance", 0)) + total
-                    db.update("customers", rental.get("tenant_customer_id"), {"balance": new_balance})
+            # Customer balance is now calculated dynamically — no manual update needed
             
             logger.info(f"[RENTAL] Generated invoice {invoice_number} for {rental.get('property_name')}")
             return jsonify({
@@ -27942,15 +28170,16 @@ def bulk_statements_page():
     
     # Get customer stats
     customers = db.get("customers", {"business_id": biz_id}) or []
+    _all_bals = calc_all_customer_balances(biz_id)
     
     total_customers = len(customers)
     customers_with_email = len([c for c in customers if c.get("email") and "@" in c.get("email", "")])
-    debtors = [c for c in customers if float(c.get("balance", 0)) > 0 and c.get("email") and "@" in c.get("email", "")]
+    debtors = [c for c in customers if _all_bals.get(c.get("id"), 0) > 0 and c.get("email") and "@" in c.get("email", "")]
     debtors_count = len(debtors)
-    zero_balance = len([c for c in customers if float(c.get("balance", 0)) == 0 and c.get("email") and "@" in c.get("email", "")])
-    credit_balance = len([c for c in customers if float(c.get("balance", 0)) < 0 and c.get("email") and "@" in c.get("email", "")])
+    zero_balance = len([c for c in customers if _all_bals.get(c.get("id"), 0) == 0 and c.get("email") and "@" in c.get("email", "")])
+    credit_balance = len([c for c in customers if _all_bals.get(c.get("id"), 0) < 0 and c.get("email") and "@" in c.get("email", "")])
     
-    total_debtors_balance = sum(float(c.get("balance", 0)) for c in customers if float(c.get("balance", 0)) > 0)
+    total_debtors_balance = sum(v for v in _all_bals.values() if v > 0)
     
     # Get scheduled statement settings
     settings = business.get("statement_settings", {}) if business else {}
@@ -27967,12 +28196,12 @@ def bulk_statements_page():
     
     # Build debtors preview HTML separately to avoid f-string nesting issues
     debtors_preview = ""
-    sorted_debtors = sorted(debtors, key=lambda x: float(x.get("balance", 0)), reverse=True)[:20]
+    sorted_debtors = sorted(debtors, key=lambda x: _all_bals.get(x.get("id"), 0), reverse=True)[:20]
     for c in sorted_debtors:
         debtors_preview += f'''<tr>
             <td>{safe_string(c.get("name", "-"))}</td>
             <td style="color:var(--text-muted);">{safe_string(c.get("email", "-"))}</td>
-            <td style="text-align:right;color:var(--orange);font-weight:bold;">{money(c.get("balance", 0))}</td>
+            <td style="text-align:right;color:var(--orange);font-weight:bold;">{money(_all_bals.get(c.get("id"), 0))}</td>
         </tr>'''
     
     if not debtors_preview:
@@ -28257,7 +28486,7 @@ def customer_statement(customer_id):
         '''
     
     biz_name = business.get("name", "Business") if business else "Business"
-    final_balance = float(customer.get("balance", 0))
+    final_balance = running_balance  # Calculated from source documents above
     cust_email = customer.get("email", "")
     
     content = f'''
@@ -29416,9 +29645,10 @@ def api_bulk_statements():
     biz_id = business.get("id") if business else None
     
     try:
-        # Get all customers with balance > 0
+        # Get all customers with balance > 0 (calculated dynamically)
         customers = db.get("customers", {"business_id": biz_id}) if biz_id else []
-        debtors = [c for c in customers if float(c.get("balance", 0)) > 0]
+        _all_bals = calc_all_customer_balances(biz_id)
+        debtors = [c for c in customers if _all_bals.get(c.get("id"), 0) > 0]
         
         if not debtors:
             return jsonify({"success": False, "error": "No customers with outstanding balances"})
@@ -40614,7 +40844,8 @@ def customer_demand_letter(customer_id):
     if not customer:
         return redirect("/customers")
     
-    balance = float(customer.get("balance", 0))
+    biz_id = business.get("id", "") if business else ""
+    balance = calc_customer_balance(biz_id, customer_id)
     biz_name = business.get("name", "Business") if business else "Business"
     biz_address = business.get("address", "") if business else ""
     biz_phone = business.get("phone", "") if business else ""
@@ -40757,6 +40988,8 @@ def opening_balances():
     # Get existing
     customers = db.get("customers", {"business_id": biz_id}) if biz_id else []
     suppliers = db.get("suppliers", {"business_id": biz_id}) if biz_id else []
+    _all_cust_bals = calc_all_customer_balances(biz_id)
+    _all_sup_bals = calc_all_supplier_balances(biz_id)
     
     saved_msg = '<div class="alert alert-success" style="margin-bottom:20px;"> Opening balances saved!</div>' if request.args.get("saved") else ""
     
@@ -40807,8 +41040,8 @@ def opening_balances():
     let customerIdx = 0;
     let supplierIdx = 0;
     
-    const existingCustomers = {json.dumps([{"name": c.get("name",""), "balance": c.get("balance",0)} for c in customers])};
-    const existingSuppliers = {json.dumps([{"name": s.get("name",""), "balance": s.get("balance",0)} for s in suppliers])};
+    const existingCustomers = {json.dumps([{"name": c.get("name",""), "balance": _all_cust_bals.get(c.get("id"), 0)} for c in customers])};
+    const existingSuppliers = {json.dumps([{"name": s.get("name",""), "balance": _all_sup_bals.get(s.get("id"), 0)} for s in suppliers])};
     
     function showTab(tab) {{
         document.getElementById('customersForm').style.display = tab === 'customers' ? 'block' : 'none';
@@ -43193,13 +43426,7 @@ def create_credit_note(invoice_id):
             ]
         )
         
-        # Update customer balance
-        customer_id = invoice.get("customer_id")
-        if customer_id:
-            customer = db.get_one("customers", customer_id)
-            if customer:
-                new_balance = float(customer.get("balance", 0)) - float(cn_total)
-                db.update("customers", customer_id, {"balance": new_balance})
+        # Customer balance is now calculated dynamically — no manual update needed
         
         # Mark invoice as credited only if FULL credit
         if credit_type == "full":
@@ -43790,10 +44017,12 @@ def year_end_page():
     outstanding_total = sum(float(i.get("total", 0)) for i in outstanding_invoices)
     
     customers = db.get("customers", {"business_id": biz_id}) if biz_id else []
-    total_debtors = sum(float(c.get("balance", 0)) for c in customers if float(c.get("balance", 0)) > 0)
+    _ye_cust_bals = calc_all_customer_balances(biz_id)
+    total_debtors = sum(v for v in _ye_cust_bals.values() if v > 0)
     
     suppliers = db.get("suppliers", {"business_id": biz_id}) if biz_id else []
-    total_creditors = sum(float(s.get("balance", 0)) for s in suppliers if float(s.get("balance", 0)) > 0)
+    _ye_sup_bals = calc_all_supplier_balances(biz_id)
+    total_creditors = sum(v for v in _ye_sup_bals.values() if v > 0)
     
     # Year end checklist
     checklist_items = [
@@ -47965,10 +48194,7 @@ def api_scan_save_supplier_invoice():
                 {"account_code": gl(biz_id, "creditors"), "debit": 0, "credit": round(total_amount, 2)},  # Creditors
             ])
         
-        # Update supplier balance only if unpaid
-        if not is_paid:
-            new_balance = float(supplier.get("balance", 0)) + float(data.get("total", 0))
-            db.save("suppliers", {"id": supplier["id"], "balance": new_balance})
+        # Supplier balance is now calculated dynamically — no manual update needed
         
         logger.info(f"[SCAN SAVE] Supplier invoice saved: {inv_id}, {len(items)} items, {stock_items_matched} matched, {stock_items_created} new, {expenses_booked} expenses")
         
@@ -50595,7 +50821,8 @@ def api_whatsapp_reminder(customer_id):
         if not customer:
             return jsonify({"success": False, "error": "Customer not found"})
         
-        balance = float(customer.get("balance", 0))
+        biz_id = business.get("id", "") if business else ""
+        balance = calc_customer_balance(biz_id, customer_id)
         if balance <= 0:
             return jsonify({"success": False, "error": "Customer has no outstanding balance"})
         
@@ -50628,12 +50855,13 @@ class Collections:
         """Get all customers with overdue balances"""
         customers = db.get("customers", {"business_id": business_id})
         invoices = db.get("invoices", {"business_id": business_id})
+        _all_bals = calc_all_customer_balances(business_id)
         
         overdue = []
         today = datetime.now()
         
         for customer in customers:
-            balance = float(customer.get("balance", 0))
+            balance = _all_bals.get(customer.get("id"), 0)
             if balance <= 0:
                 continue
             
@@ -50674,6 +50902,7 @@ class Collections:
         """
         business = db.get_one("businesses", business_id)
         overdue = cls.get_overdue_customers(business_id)
+        _all_bals = calc_all_customer_balances(business_id)
         
         results = {
             "sent": 0,
@@ -50710,7 +50939,7 @@ class Collections:
                 if phone and WhatsApp.is_configured():
                     wa_success, _ = WhatsApp.send_payment_reminder(
                         customer, 
-                        float(customer.get("balance", 0)),
+                        _all_bals.get(customer.get("id"), 0),
                         business,
                         days
                     )
@@ -50720,7 +50949,7 @@ class Collections:
                 results["sent"] += 1
                 results["details"].append({
                     "customer": customer.get("name"),
-                    "balance": customer.get("balance"),
+                    "balance": _all_bals.get(customer.get("id"), 0),
                     "days_overdue": days,
                     "status": "sent"
                 })
@@ -50738,7 +50967,7 @@ class Collections:
     def _build_reminder_email(cls, customer: dict, business: dict) -> str:
         """Build HTML email for payment reminder"""
         name = customer.get("name", "Customer")
-        balance = float(customer.get("balance", 0))
+        balance = calc_customer_balance(business.get("id", "") if business else "", customer.get("id", ""))
         days = customer.get("days_overdue", 0)
         biz_name = business.get("name", "Business") if business else "Business"
         
@@ -50804,8 +51033,9 @@ def collections_page():
     biz_id = business.get("id") if business else None
     
     overdue = Collections.get_overdue_customers(biz_id)
+    _all_bals = calc_all_customer_balances(biz_id)
     
-    total_overdue = sum(float(c.get("balance", 0)) for c in overdue)
+    total_overdue = sum(_all_bals.get(c.get("id"), 0) for c in overdue)
     
     # Build table rows
     rows = ""
@@ -50825,7 +51055,7 @@ def collections_page():
         <tr>
             <td>{safe(c.get("name", "-"))}</td>
             <td>{safe(c.get("phone", "-"))}</td>
-            <td style="text-align:right; color: var(--red);">{money(c.get("balance", 0))}</td>
+            <td style="text-align:right; color: var(--red);">{money(_all_bals.get(c.get("id"), 0))}</td>
             <td style="text-align:center;">
                 <span style="background:{badge_color}; color:white; padding:2px 8px; border-radius:10px; font-size:12px;">
                     {days}d - {badge_text}
@@ -51047,8 +51277,10 @@ class CashFlow:
         customers = db.get("customers", {"business_id": business_id})
         suppliers = db.get("suppliers", {"business_id": business_id})
         
-        receivables = sum(float(c.get("balance", 0)) for c in customers if float(c.get("balance", 0)) > 0)
-        payables = sum(float(s.get("balance", 0)) for s in suppliers if float(s.get("balance", 0)) > 0)
+        _fc_cust = calc_all_customer_balances(business_id)
+        _fc_sup = calc_all_supplier_balances(business_id)
+        receivables = sum(v for v in _fc_cust.values() if v > 0)
+        payables = sum(v for v in _fc_sup.values() if v > 0)
         
         # Calculate averages
         if historical:
@@ -51599,12 +51831,7 @@ def api_payfast_notify():
             db.save("receipts", receipt)
             
             # Update customer balance
-            if customer_id:
-                customer = db.get_one("customers", customer_id)
-                if customer:
-                    old_balance = float(customer.get("balance", 0) or 0)
-                    new_balance = max(0, old_balance - amount_gross)
-                    db.save("customers", {"id": customer_id, "balance": new_balance})
+            # Customer balance is now calculated dynamically — no manual update needed
             
             # Post GL entries - Debit Bank, Credit Debtors
             try:
@@ -51703,7 +51930,8 @@ def portal_statement(customer_id):
     
     biz_name = safe(business.get("name", "Business")) if business else "Business"
     cust_name = safe(customer.get("name", "Customer"))
-    balance = float(customer.get("balance", 0))
+    biz_id = customer.get("business_id", "")
+    balance = calc_customer_balance(biz_id, customer_id)
     
     # Build invoice rows
     rows = ""
@@ -52833,12 +53061,7 @@ class RecurringInvoices:
                 {"account_code": gl(biz_id, "vat_output"), "debit": 0, "credit": float(vat)},  # VAT Output
             ])
             
-            # Update customer balance
-            if customer_id:
-                customer = db.get_one("customers", customer_id)
-                if customer:
-                    new_balance = float(customer.get("balance", 0)) + float(total)
-                    db.update("customers", customer_id, {"balance": new_balance})
+            # Customer balance is now calculated dynamically — no manual update needed
         except Exception as e:
             logger.error(f"[RECURRING] GL entry failed: {e}")
         
@@ -53005,7 +53228,9 @@ try:
             smart_stock_code, format_extra_data,
             has_reactor_hud, jarvis_hud_header, jarvis_techline,
             RecordFactory, Email,
-            JARVIS_HUD_CSS, THEME_REACTOR_SKINS
+            JARVIS_HUD_CSS, THEME_REACTOR_SKINS,
+            calc_all_supplier_balances=calc_all_supplier_balances,
+            calc_supplier_balance=calc_supplier_balance
         )
         logger.info("[PURCHASES] Routes registered ✓")
 except Exception as e:

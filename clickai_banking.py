@@ -2259,9 +2259,8 @@ Return ONLY the JSON array. No markdown, no explanation."""
                                             _matched_supplier = _s
                                             break
                             if _matched_supplier:
-                                _old_bal = float(_matched_supplier.get("balance", 0))
-                                _new_bal = max(0, _old_bal - expense_amount)
-                                db.update("suppliers", _matched_supplier["id"], {"balance": _new_bal})
+                                # Supplier balance is now calculated dynamically — no manual update needed
+                                pass
                         except Exception as e:
                             logger.error(f"[BANK] Supplier matching error (payment still created): {e}")
                         
@@ -2376,11 +2375,7 @@ Return ONLY the JSON array. No markdown, no explanation."""
                             matched_customer = db.get_one("customers", _picked_entity_id)
                             if matched_customer:
                                 logger.info(f"[BANK] Customer matched via entity picker: {matched_customer.get('name')}")
-                                try:
-                                    old_bal = float(matched_customer.get("balance", 0))
-                                    new_bal = max(0, old_bal - income_amount)
-                                    db.update("customers", matched_customer["id"], {"balance": new_bal})
-                                except: pass
+                                # Customer balance is now calculated dynamically — no manual update needed
                         
                         # Priority 2: match_reference
                         match_ref = txn.get("match_reference", "")
@@ -2418,12 +2413,8 @@ Return ONLY the JSON array. No markdown, no explanation."""
                             logger.info(f"[BANK] Marked {matched_invoice.get('invoice_number','?')} as PAID")
                             cust_id = matched_invoice.get("customer_id")
                             if cust_id and not _picked_entity_id:
-                                try:
-                                    customer = db.get_one("customers", cust_id)
-                                    if customer:
-                                        new_bal = max(0, float(customer.get("balance", 0)) - income_amount)
-                                        db.update("customers", cust_id, {"balance": new_bal})
-                                except: pass
+                                # Customer balance is now calculated dynamically — no manual update needed
+                                pass
                             if not matched_customer and cust_id:
                                 matched_customer = db.get_one("customers", cust_id)
                         elif not matched_customer:
@@ -2438,12 +2429,7 @@ Return ONLY the JSON array. No markdown, no explanation."""
                                     if _cwords and any(w in desc_upper for w in _cwords):
                                         matched_customer = c
                                         break
-                            if matched_customer:
-                                try:
-                                    old_bal = float(matched_customer.get("balance", 0))
-                                    new_bal = max(0, old_bal - income_amount)
-                                    db.update("customers", matched_customer["id"], {"balance": new_bal})
-                                except: pass
+                            # Customer balance is now calculated dynamically — no manual update needed
                     except Exception as e:
                         logger.error(f"[BANK] Invoice matching error (receipt still created): {e}")
                     

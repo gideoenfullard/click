@@ -28,7 +28,8 @@ def register_purchases_routes(app, db, login_required, Auth, render_page,
                               smart_stock_code, format_extra_data,
                               has_reactor_hud, jarvis_hud_header, jarvis_techline,
                               RecordFactory, Email,
-                              JARVIS_HUD_CSS, THEME_REACTOR_SKINS):
+                              JARVIS_HUD_CSS, THEME_REACTOR_SKINS,
+                              calc_all_supplier_balances=None, calc_supplier_balance=None):
     """Register all Supplier and Purchase routes with the Flask app."""
 
     # Import form helpers from clickai module level (defined in clickai.py)
@@ -66,13 +67,17 @@ def register_purchases_routes(app, db, login_required, Auth, render_page,
             suppliers = []
         
         total_suppliers = len(suppliers)
-        creditors = [s for s in suppliers if float(s.get("balance", 0)) > 0]
-        total_owed = sum(float(s.get("balance", 0)) for s in creditors) if can_see_balances else 0
+        
+        # Calculate all supplier balances from source documents (batch)
+        _all_sup_balances = calc_all_supplier_balances(biz_id) if can_see_balances else {}
+        
+        creditors = [s for s in suppliers if _all_sup_balances.get(s.get("id"), 0) > 0]
+        total_owed = sum(_all_sup_balances.get(s.get("id"), 0) for s in creditors) if can_see_balances else 0
         
         # Build rows - COMPACT VIEW (details on View page)
         suppliers_html = ""
         for s in suppliers:
-            balance = float(s.get("balance", 0) or 0)
+            balance = _all_sup_balances.get(s.get("id"), 0) if can_see_balances else 0
             balance_color = "var(--orange)" if balance > 0 else "var(--green)" if balance < 0 else "var(--text-muted)"
             balance_display = money(balance) if can_see_balances else "---"
             sup_id = s.get("id")
@@ -181,10 +186,10 @@ def register_purchases_routes(app, db, login_required, Auth, render_page,
         # -- JARVIS: Suppliers HUD header --
         if has_reactor_hud():
             _with_bal = len(creditors)
-            _in_credit = len([s for s in suppliers if float(s.get("balance", 0) or 0) < 0])
+            _in_credit = len([s for s in suppliers if _all_sup_balances.get(s.get("id"), 0) < 0])
             _j_alert = ""
             if _with_bal > 5 and can_see_balances:
-                _top3 = ", ".join([f"{safe(s.get('name','-')[:20])} ({money(float(s.get('balance',0)))})" for s in sorted(creditors, key=lambda x: -float(x.get('balance',0)))[:3]])
+                _top3 = ", ".join([f"{safe(s.get('name','-')[:20])} ({money(_all_sup_balances.get(s.get('id'), 0))})" for s in sorted(creditors, key=lambda x: -_all_sup_balances.get(x.get('id'), 0))[:3]])
                 _j_alert = f'<div class="j-ticker"><b>&#9888; CREDITORS</b><span class="jt-msg">{_with_bal} suppliers with balance &mdash; {_top3}</span><a href="/supplier-invoices" class="jt-act">VIEW INVOICES &rarr;</a></div>'
             
             _hud = jarvis_hud_header(
@@ -380,7 +385,11 @@ def register_purchases_routes(app, db, login_required, Auth, render_page,
             _gl_options += f'<option value="{_ga["code"]}"{_sel}>{_ga["code"]} — {_ga["name"]}</option>\n'
         
         _gl_json_str = json.dumps(_gl_json)
-        balance = float(supplier.get("balance", 0)) if can_see_balances else 0
+        
+        # Calculate balance from source documents (supplier_invoices - payments)
+        _si_total = sum(float(si.get("total", 0)) for si in supplier_invoices if si.get("status") != "cancelled")
+        _pay_total = sum(float(p.get("amount", 0)) for p in payments)
+        balance = round(_si_total - _pay_total, 2) if can_see_balances else 0
         
         # Stats - only if can see balances
         total_billed = sum(float(e.get("total", e.get("amount", 0))) for e in expenses) if can_see_balances else 0
@@ -481,6 +490,46 @@ def register_purchases_routes(app, db, login_required, Auth, render_page,
         
         # Build scanned documents HTML - hide amounts for staff
         scanned_docs_html = ""
+        
+        # Build Account Statement / Ledger for supplier
+        _sup_ledger_items = []
+        if can_see_balances:
+            for si in supplier_invoices:
+                if si.get("status") != "cancelled":
+                    _sup_ledger_items.append({
+                        "date": si.get("date", ""),
+                        "type": "Invoice",
+                        "reference": si.get("invoice_number", "-"),
+                        "debit": 0,
+                        "credit": float(si.get("total", 0)),
+                        "link": f"/supplier-invoice/{si.get('id', '')}"
+                    })
+            for p in payments:
+                _sup_ledger_items.append({
+                    "date": p.get("date", ""),
+                    "type": "Payment",
+                    "reference": p.get("reference", "-"),
+                    "debit": float(p.get("amount", 0)),
+                    "credit": 0,
+                    "link": "",
+                    "source": p.get("source", "")
+                })
+        _sup_ledger_items.sort(key=lambda x: x.get("date", ""))
+        _sup_running = 0
+        _sup_ledger_html = ""
+        for _sli in _sup_ledger_items:
+            _sup_running += _sli["credit"] - _sli["debit"]  # credit = we owe more, debit = we paid
+            _sref = f'<a href="{_sli["link"]}" style="color:var(--primary);text-decoration:none;">{safe_string(_sli["reference"])}</a>' if _sli.get("link") else safe_string(_sli["reference"])
+            _ssrc = f' <span style="font-size:10px;color:var(--text-muted);">({_sli.get("source","")})</span>' if _sli.get("source") else ""
+            _sbal_color = "color:var(--orange);" if _sup_running > 0.01 else "color:var(--green);" if _sup_running < -0.01 else ""
+            _sup_ledger_html += f'''<tr>
+                <td style="font-size:12px;">{_sli["date"]}</td>
+                <td style="font-size:12px;">{_sli["type"]}{_ssrc}</td>
+                <td style="font-size:12px;">{_sref}</td>
+                <td style="text-align:right;font-size:12px;">{money(_sli["debit"]) if _sli["debit"] else "-"}</td>
+                <td style="text-align:right;font-size:12px;color:var(--orange);">{money(_sli["credit"]) if _sli["credit"] else "-"}</td>
+                <td style="text-align:right;font-size:12px;font-weight:bold;{_sbal_color}">{money(_sup_running)}</td>
+            </tr>'''
         for doc in scanned_docs[:20]:
             doc_date = doc.get("date", doc.get("created_at", "")[:10] if doc.get("created_at") else "-")
             amount_display = money(doc.get("amount", 0)) if can_see_balances else "---"
@@ -648,6 +697,23 @@ def register_purchases_routes(app, db, login_required, Auth, render_page,
                 <div class="stat-label">Payments Made</div>
             </div>
         </div>
+        
+        {'<div class="card" style="margin-top:20px;">' + """
+            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:15px;">
+                <h3 style="margin:0;">Account Statement</h3>
+                <span style="font-size:12px;color:var(--text-muted);">""" + f'{len(_sup_ledger_items)} transactions' + """</span>
+            </div>
+            <div style="overflow-x:auto;">
+            <table class="table" id="supLedgerTable">
+                <thead>
+                    <tr><th>Date</th><th>Type</th><th>Reference</th><th style="text-align:right;">Paid (DR)</th><th style="text-align:right;">Owed (CR)</th><th style="text-align:right;">Balance</th></tr>
+                </thead>
+                <tbody>
+                    """ + (_sup_ledger_html or "<tr><td colspan='6' style='text-align:center;color:var(--text-muted);'>No transactions yet</td></tr>") + """
+                </tbody>
+            </table>
+            </div>
+        </div>""" if can_see_balances else ''}
         
         <div style="display:grid;grid-template-columns:1fr 1fr;gap:20px;margin-top:20px;">
             <div class="card">
@@ -1053,7 +1119,7 @@ def register_purchases_routes(app, db, login_required, Auth, render_page,
                     <h2 style="margin:0;">💰 Record Payment</h2>
                     <button onclick="document.getElementById('paymentModal').style.display='none'" style="background:none;border:none;color:var(--text-muted);font-size:24px;cursor:pointer;">&times;</button>
                 </div>
-                <p style="color:var(--text-muted);margin-bottom:16px;font-size:13px;">Pay <strong>{safe_string(supplier.get("name", ""))}</strong> — balance: <strong style="color:var(--orange);">R{float(supplier.get("balance", 0)):,.2f}</strong></p>
+                <p style="color:var(--text-muted);margin-bottom:16px;font-size:13px;">Pay <strong>{safe_string(supplier.get("name", ""))}</strong> — balance: <strong style="color:var(--orange);">R{balance:,.2f}</strong></p>
                 
                 <div style="display:flex;flex-direction:column;gap:14px;">
                     <div>
@@ -1188,10 +1254,7 @@ def register_purchases_routes(app, db, login_required, Auth, render_page,
                 fields["name"] = name
                 fields["code"] = request.form.get("code", "").strip()
                 fields["address"] = fields.get("physical_address", "")
-                try:
-                    fields["balance"] = float(request.form.get("balance", 0) or 0)
-                except:
-                    fields["balance"] = float(supplier.get("balance", 0))
+                # Balance is now calculated dynamically — do not save from form
                 try:
                     fields["credit_limit"] = float(request.form.get("credit_limit", 0) or 0)
                 except:
@@ -3008,11 +3071,7 @@ def register_purchases_routes(app, db, login_required, Auth, render_page,
                             {"account_code": gl(biz_id, "creditors"), "debit": 0, "credit": float(total)},
                         ])
                         
-                        if po.get("supplier_id"):
-                            supplier = db.get_one("suppliers", po.get("supplier_id"))
-                            if supplier:
-                                new_balance = float(supplier.get("balance") or 0) + float(total)
-                                db.update("suppliers", po.get("supplier_id"), {"balance": new_balance})
+                        # Supplier balance is now calculated dynamically — no manual update needed
                     except Exception as e:
                         logger.error(f"[PO] GL entry failed: {e}")
                     
@@ -3462,13 +3521,8 @@ Nothing else."""
             
             # Update supplier balance (if not paid, add to creditors)
             if supplier_id and not is_paid:
-                try:
-                    supplier = db.get_one("suppliers", supplier_id)
-                    if supplier:
-                        new_balance = float(supplier.get("balance", 0)) + total_amount
-                        db.save("suppliers", {"id": supplier_id, "balance": new_balance})
-                except Exception as e:
-                    logger.error(f"[CAPTURE INV] Supplier balance update error: {e}")
+                # Supplier balance is now calculated dynamically — no manual update needed
+                pass
             
             # Create GL journal entries
             try:
@@ -3561,17 +3615,7 @@ Nothing else."""
             if not success:
                 return jsonify({"success": False, "error": f"Failed to save payment: {err}"})
             
-            # Update supplier balance
-            if supplier_id:
-                try:
-                    supplier = db.get_one("suppliers", supplier_id)
-                    if supplier:
-                        old_balance = float(supplier.get("balance", 0))
-                        new_balance = round(old_balance - amount, 2)
-                        db.save("suppliers", {"id": supplier_id, "balance": new_balance})
-                        logger.info(f"[PAY] Supplier balance: R{old_balance:,.2f} → R{new_balance:,.2f}")
-                except Exception as e:
-                    logger.error(f"[PAY] Balance update error: {e}")
+            # Supplier balance is now calculated dynamically — no manual update needed
             
             # GL journal: Debit Creditors, Credit Bank
             try:

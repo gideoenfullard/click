@@ -231,12 +231,7 @@ def register_invoicing_routes(app, db, login_required, Auth, render_page,
                             {"account_code": gl(biz_id, "sales"), "debit": 0, "credit": float(subtotal)},
                             {"account_code": gl(biz_id, "vat_output"), "debit": 0, "credit": float(vat)},
                         ])
-                        # Update customer balance
-                        if customer_id:
-                            customer = db.get_one("customers", customer_id)
-                            if customer:
-                                new_balance = float(customer.get("balance", 0)) + float(total)
-                                db.update("customers", customer_id, {"balance": new_balance})
+                        # Customer balance is now calculated dynamically — no manual update needed
                     else:
                         # Cash/Card/EFT - Debit Bank/Cash, Credit Sales + VAT
                         bank_account = "1050" if payment_method == "cash" else "1000"
@@ -1276,12 +1271,7 @@ def register_invoicing_routes(app, db, login_required, Auth, render_page,
             })
             
             # Update customer balance (reduce what they owe)
-            customer_id = invoice.get("customer_id")
-            if customer_id:
-                customer = db.get_one("customers", customer_id)
-                if customer:
-                    new_balance = float(customer.get("balance", 0)) - total
-                    db.update("customers", customer_id, {"balance": new_balance})
+            # Customer balance is now calculated dynamically — no manual update needed
             
             # ═══════════════════════════════════════════════════════════════
             # SAVE TO PAYMENTS TABLE - This is the key for tracking!
@@ -3810,12 +3800,7 @@ def register_invoicing_routes(app, db, login_required, Auth, render_page,
             db.update("quotes", quote_id, {"status": "converted", "converted_invoice_id": invoice_id})
             
             # Update customer balance
-            customer_id = quote.get("customer_id")
-            if customer_id:
-                customer = db.get_one("customers", customer_id)
-                if customer:
-                    new_balance = float(customer.get("balance", 0)) + float(quote.get("total", 0))
-                    db.update("customers", customer_id, {"balance": new_balance})
+            # Customer balance is now calculated dynamically — no manual update needed
             
             return redirect(f"/invoice/{invoice_id}?success=Created+from+quote")
         
