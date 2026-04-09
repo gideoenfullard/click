@@ -2163,7 +2163,7 @@ Return ONLY the JSON array. No markdown, no explanation."""
             amount = float(txn.get("amount", 0))
             
             # Get GL code from comprehensive lookup
-            gl_code = IndustryKnowledge.get_gl_code(category)
+            gl_code = IndustryKnowledge.get_gl_code(category, business_id=biz_id)
             
             # SARS: No VAT claim on fuel or entertainment
             no_vat_cats = ["fuel", "entertainment", "meals", "membership"]
@@ -2310,7 +2310,6 @@ Return ONLY the JSON array. No markdown, no explanation."""
                         _exp_supplier_id = _picked_entity_id
                         _exp_supplier_name = _picked_entity_name or ""
                     if not _exp_supplier_id:
-                        # Try name match in description
                         try:
                             _desc_upper = (description or "").upper()
                             _all_sups = db.get("suppliers", {"business_id": biz_id}) or []
@@ -2329,7 +2328,8 @@ Return ONLY the JSON array. No markdown, no explanation."""
                         date=txn_date,
                         category=category,
                         category_code=gl_code,
-                        reference=f"Bank: {txn_id[:8]}"
+                        reference=f"Bank: {txn_id[:8]}",
+                        payment_method="eft"
                     )
                     if _exp_supplier_id:
                         expense["supplier_id"] = _exp_supplier_id
