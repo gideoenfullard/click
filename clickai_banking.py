@@ -2303,6 +2303,25 @@ Return ONLY the JSON array. No markdown, no explanation."""
                     
                 else:
                     # --- REGULAR EXPENSE ---
+                    # Try to link expense to a supplier
+                    _exp_supplier_id = ""
+                    _exp_supplier_name = ""
+                    if _picked_entity_id and _picked_entity_id != "__skip__":
+                        _exp_supplier_id = _picked_entity_id
+                        _exp_supplier_name = _picked_entity_name or ""
+                    if not _exp_supplier_id:
+                        # Try name match in description
+                        try:
+                            _desc_upper = (description or "").upper()
+                            _all_sups = db.get("suppliers", {"business_id": biz_id}) or []
+                            for _s in _all_sups:
+                                _sn = (_s.get("name") or "").upper().strip()
+                                if _sn and len(_sn) >= 3 and _sn in _desc_upper:
+                                    _exp_supplier_id = _s.get("id", "")
+                                    _exp_supplier_name = _s.get("name", "")
+                                    break
+                        except Exception:
+                            pass
                     expense = RecordFactory.expense(
                         business_id=biz_id,
                         description=description,
@@ -2312,6 +2331,10 @@ Return ONLY the JSON array. No markdown, no explanation."""
                         category_code=gl_code,
                         reference=f"Bank: {txn_id[:8]}"
                     )
+                    if _exp_supplier_id:
+                        expense["supplier_id"] = _exp_supplier_id
+                        expense["supplier_name"] = _exp_supplier_name
+                        expense["supplier"] = _exp_supplier_name
                     db.save("expenses", expense)
                     
                     # Create journal entry with proper GL code

@@ -292,8 +292,15 @@ def register_purchases_routes(app, db, login_required, Auth, render_page,
             return redirect("/suppliers")
         
         # Get expenses/bills for this supplier (only if can see balances)
+        # Match by supplier_id first, then also by supplier_name/supplier field for banking-created expenses
         all_expenses = db.get("expenses", {"business_id": biz_id}) if biz_id and can_see_balances else []
-        expenses = [e for e in all_expenses if e.get("supplier_id") == supplier_id]
+        _sup_name_upper = (supplier.get("name") or "").upper().strip()
+        expenses = [e for e in all_expenses if
+                    e.get("supplier_id") == supplier_id or
+                    (not e.get("supplier_id") and _sup_name_upper and (
+                        (e.get("supplier_name") or "").upper().strip() == _sup_name_upper or
+                        (e.get("supplier") or "").upper().strip() == _sup_name_upper
+                    ))]
         expenses = sorted(expenses, key=lambda x: x.get("date", ""), reverse=True)
         
         # Get supplier invoices (imported from Sage etc)
@@ -302,9 +309,8 @@ def register_purchases_routes(app, db, login_required, Auth, render_page,
         supplier_invoices = sorted(supplier_invoices, key=lambda x: x.get("date", ""), reverse=True)
         
         # Get payments to supplier (only if can see balances)
-        # Match by supplier_id first, then also include payments with empty supplier_id but matching supplier_name
+        # Match by supplier_id first, then also by supplier_name for unlinked banking payments
         all_payments = db.get("supplier_payments", {"business_id": biz_id}) if biz_id and can_see_balances else []
-        _sup_name_upper = (supplier.get("name") or "").upper().strip()
         payments = [p for p in all_payments if
                     p.get("supplier_id") == supplier_id or
                     (not p.get("supplier_id") and _sup_name_upper and (p.get("supplier_name") or "").upper().strip() == _sup_name_upper)]
