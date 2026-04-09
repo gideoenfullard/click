@@ -302,8 +302,12 @@ def register_purchases_routes(app, db, login_required, Auth, render_page,
         supplier_invoices = sorted(supplier_invoices, key=lambda x: x.get("date", ""), reverse=True)
         
         # Get payments to supplier (only if can see balances)
+        # Match by supplier_id first, then also include payments with empty supplier_id but matching supplier_name
         all_payments = db.get("supplier_payments", {"business_id": biz_id}) if biz_id and can_see_balances else []
-        payments = [p for p in all_payments if p.get("supplier_id") == supplier_id]
+        _sup_name_upper = (supplier.get("name") or "").upper().strip()
+        payments = [p for p in all_payments if
+                    p.get("supplier_id") == supplier_id or
+                    (not p.get("supplier_id") and _sup_name_upper and (p.get("supplier_name") or "").upper().strip() == _sup_name_upper)]
         payments = sorted(payments, key=lambda x: x.get("date", ""), reverse=True)
         
         # Get purchase orders for this supplier

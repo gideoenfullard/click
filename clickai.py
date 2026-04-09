@@ -24446,6 +24446,8 @@ def customer_view(customer_id):
         fut_recurring = executor.submit(_fetch, "recurring_invoices")
         fut_receipts = executor.submit(_fetch, "receipts")
         fut_sales = executor.submit(_fetch, "sales")
+        # Also fetch receipts with empty customer_id to match by name (banking allocations)
+        fut_receipts_unlinked = executor.submit(lambda: db.get("receipts", {"business_id": biz_id}) if biz_id else [])
     
     invoices = sorted(fut_invoices.result(), key=lambda x: x.get("date", ""), reverse=True)
     quotes = sorted(fut_quotes.result(), key=lambda x: x.get("date", ""), reverse=True)
@@ -24453,7 +24455,15 @@ def customer_view(customer_id):
     delivery_notes = sorted(fut_delivery_notes.result(), key=lambda x: x.get("date", ""), reverse=True)
     jobs = sorted(fut_jobs.result(), key=lambda x: x.get("created_at", ""), reverse=True)
     recurring = [r for r in fut_recurring.result() if r.get("status") == "active"]
-    receipts = sorted(fut_receipts.result(), key=lambda x: x.get("date", ""), reverse=True)
+    # Combine receipts: those matched by customer_id + unlinked ones matched by customer_name
+    _receipts_by_id = fut_receipts.result()
+    _receipts_by_id_set = {r.get("id") for r in _receipts_by_id}
+    _cust_name_upper = (customer.get("name") or "").upper().strip()
+    _receipts_by_name = [r for r in fut_receipts_unlinked.result()
+                         if not r.get("customer_id") and _cust_name_upper
+                         and (r.get("customer_name") or "").upper().strip() == _cust_name_upper
+                         and r.get("id") not in _receipts_by_id_set]
+    receipts = sorted(_receipts_by_id + _receipts_by_name, key=lambda x: x.get("date", ""), reverse=True)
     sales = sorted(fut_sales.result(), key=lambda x: x.get("date", ""), reverse=True)
     
     balance = float(customer.get("balance", 0))
