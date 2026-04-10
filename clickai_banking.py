@@ -273,6 +273,7 @@ def register_banking_routes(app, db, login_required, Auth, render_page,
             <h2 style="margin:0;">🏦 Bank Reconciliation</h2>
             <div style="display:flex;gap:10px;flex-wrap:wrap;">
                 <a href="/subscriptions" class="btn btn-secondary">📦 Recurring Expenses</a>
+                <button class="btn btn-secondary" style="background:rgba(245,158,11,0.15);border-color:#f59e0b;color:#f59e0b;" onclick="resetPatterns()">Reset Learned Patterns</button>
                 <button class="btn btn-secondary" style="background:rgba(239,68,68,0.15);border-color:#ef4444;color:#ef4444;" onclick="deleteAllTransactions()">🗑️ Delete All</button>
                 <label class="btn btn-primary" style="cursor:pointer;">
                     📥 Import Statement
@@ -818,6 +819,24 @@ def register_banking_routes(app, db, login_required, Auth, render_page,
                 }}
             }} catch (err) {{
                 alert('❌ Delete failed: ' + err.message);
+            }}
+        }}
+        
+        async function resetPatterns() {{
+            if (!confirm('Reset all learned bank patterns?\\n\\nZane will forget all previously learned categorizations and re-learn from your next actions.')) return;
+            try {{
+                const response = await fetch('/api/banking/reset-patterns', {{
+                    method: 'POST',
+                    headers: {{'Content-Type': 'application/json'}}
+                }});
+                const data = await response.json();
+                if (data.success) {{
+                    alert('✅ ' + data.message);
+                }} else {{
+                    alert('❌ ' + data.error);
+                }}
+            }} catch (err) {{
+                alert('❌ Reset failed: ' + err.message);
             }}
         }}
     
@@ -1815,10 +1834,6 @@ Return ONLY the JSON array. No markdown, no explanation."""
                     
                     # Fuzzy dedup: same date + same amount already in DB or this batch?
                     # This catches OCR variants from overlapping statement pages
-                    _da_key = (_fp_date, _fp_amt)
-                    _existing_count = existing_date_amount.get(_da_key, 0)
-                    _import_count = import_date_amount.get(_da_key, 0)
-                    
                     # Fuzzy dedup: same date + same amount already seen?
                     # Bank statements almost NEVER have two genuinely different
                     # transactions with identical date AND amount. When they do
@@ -1828,33 +1843,47 @@ Return ONLY the JSON array. No markdown, no explanation."""
                     _existing_count = existing_date_amount.get(_da_key, 0)
                     _import_count = import_date_amount.get(_da_key, 0)
                     
-                    # For re-imports: skip if DB already has this date+amount combo
-                    if _existing_count > 0 and _import_count >= _existing_count:
-                        skipped_dupes += 1
-                        continue
+                    import re as _re
+                    _core = _re.sub(r'[0-9#:@%\-\.\s]+', '', _fp_desc)[:20]
                     
-                    # For ALL imports (fresh or re-import): if same date+amount
-                    # already in this batch, only allow it if descriptions are
-                    # genuinely DIFFERENT (not just OCR variants)
-                    if _import_count > 0:
-                        _dominated = False
-                        # Strip digits and special chars to compare core description
-                        import re as _re
-                        _core = _re.sub(r'[0-9#:@%\-\.\s]+', '', _fp_desc)[:20]
+                    # For re-imports: if DB already has this date+amount combo,
+                    # only allow it if the description is genuinely DIFFERENT
+                    # from ALL existing DB entries with the same date+amount.
+                    # This prevents the first dupe from slipping through.
+                    if _existing_count > 0:
+                        _is_dupe_of_existing = False
                         for _prev_fp in existing_fingerprints:
                             if _prev_fp[0] == _fp_date and round(float(str(_prev_fp[2])), 2) == _fp_amt:
                                 _prev_core = _re.sub(r'[0-9#:@%\-\.\s]+', '', _prev_fp[1])[:20]
-                                # If the core text (letters only) matches, it's an OCR dupe
+                                # If the core text (letters only) matches, it's a dupe
+                                if _core == _prev_core:
+                                    _is_dupe_of_existing = True
+                                    break
+                                # If first 12 chars match, likely dupe
+                                if _fp_desc[:12] == _prev_fp[1][:12]:
+                                    _is_dupe_of_existing = True
+                                    break
+                        if _is_dupe_of_existing:
+                            skipped_dupes += 1
+                            logger.debug(f"[BANK IMPORT] Re-import dedup skip: {_fp_date} {_fp_amt} {_fp_desc[:40]}")
+                            continue
+                    
+                    # Within current import batch: if same date+amount already
+                    # in this batch, only allow if descriptions are genuinely DIFFERENT
+                    if _import_count > 0:
+                        _dominated = False
+                        for _prev_fp in existing_fingerprints:
+                            if _prev_fp[0] == _fp_date and round(float(str(_prev_fp[2])), 2) == _fp_amt:
+                                _prev_core = _re.sub(r'[0-9#:@%\-\.\s]+', '', _prev_fp[1])[:20]
                                 if _core == _prev_core:
                                     _dominated = True
                                     break
-                                # If first 12 chars match, likely OCR dupe
                                 if _fp_desc[:12] == _prev_fp[1][:12]:
                                     _dominated = True
                                     break
                         if _dominated:
                             skipped_dupes += 1
-                            logger.debug(f"[BANK IMPORT] Fuzzy dedup skip: {_fp_date} {_fp_amt} {_fp_desc[:40]}")
+                            logger.debug(f"[BANK IMPORT] Intra-batch dedup skip: {_fp_date} {_fp_amt} {_fp_desc[:40]}")
                             continue
                     
                     # Track within current import batch
@@ -2251,10 +2280,15 @@ Return ONLY the JSON array. No markdown, no explanation."""
                             if not _matched_supplier:
                                 _desc_upper = (txn.get("description") or "").upper()
                                 _all_suppliers = db.get("suppliers", {"business_id": biz_id}) or []
+                                # Generic words that appear in many bank descriptions — NEVER match on these
+                                _generic_words = {'PTY', 'LTD', 'THE', 'AND', 'FOR', 'BANK', 'ELECT',
+                                                  'ELECTRONIC', 'PAYMENT', 'TRANSFER', 'CREDIT', 'DEBIT',
+                                                  'BUSINESS', 'ACCOUNT', 'SERVICE', 'FEE', 'CHARGE',
+                                                  'CHARGES', 'CASH', 'DEPOSIT', 'FROM', 'BANKING'}
                                 for _s in _all_suppliers:
                                     _sname = (_s.get("name") or "").upper().strip()
                                     if _sname and len(_sname) >= 3:
-                                        _swords = [w for w in _sname.split() if len(w) >= 3]
+                                        _swords = [w for w in _sname.split() if len(w) >= 3 and w not in _generic_words]
                                         if _swords and any(w in _desc_upper for w in _swords):
                                             _matched_supplier = _s
                                             break
@@ -2314,10 +2348,15 @@ Return ONLY the JSON array. No markdown, no explanation."""
                         try:
                             _desc_upper = (description or "").upper()
                             _all_sups = db.get("suppliers", {"business_id": biz_id}) or []
+                            # Generic words that appear in many bank descriptions — NEVER match on these
+                            _generic_words = {'PTY', 'LTD', 'THE', 'AND', 'FOR', 'BANK', 'ELECT',
+                                              'ELECTRONIC', 'PAYMENT', 'TRANSFER', 'CREDIT', 'DEBIT',
+                                              'BUSINESS', 'ACCOUNT', 'SERVICE', 'FEE', 'CHARGE',
+                                              'CHARGES', 'CASH', 'DEPOSIT', 'FROM', 'BANKING'}
                             for _s in _all_sups:
                                 _sn = (_s.get("name") or "").upper().strip()
                                 if _sn and len(_sn) >= 3:
-                                    _sw = [w for w in _sn.split() if len(w) >= 3]
+                                    _sw = [w for w in _sn.split() if len(w) >= 3 and w not in _generic_words]
                                     if _sw and any(w in _desc_upper for w in _sw):
                                         _exp_supplier_id = _s.get("id", "")
                                         _exp_supplier_name = _s.get("name", "")
@@ -3247,6 +3286,37 @@ Return ONLY the JSON array. No markdown, no explanation."""
             logger.error(f"[BANK DELETE ALL] Error: {e}")
             return jsonify({"success": False, "error": str(e)})
     
+    
+    @app.route("/api/banking/reset-patterns", methods=["POST"])
+    @login_required
+    def api_banking_reset_patterns():
+        """Delete ALL learned bank patterns for current business — forces re-learning with correct normalization"""
+        try:
+            user = Auth.get_current_user()
+            if not user:
+                return jsonify({"success": False, "error": "Not logged in"})
+            business = Auth.get_current_business()
+            biz_id = business.get("id") if business else None
+            if not biz_id:
+                return jsonify({"success": False, "error": "No business selected"})
+            
+            all_patterns = db.get("bank_patterns", {"business_id": biz_id}) or []
+            if not all_patterns:
+                return jsonify({"success": True, "deleted": 0, "message": "No learned patterns to reset"})
+            
+            ids = [p["id"] for p in all_patterns if "id" in p]
+            success_count, failed_count = db.delete_many("bank_patterns", ids, business_id=biz_id)
+            
+            logger.info(f"[BANK RESET PATTERNS] Deleted {success_count} patterns for business {biz_id}")
+            
+            return jsonify({
+                "success": True, 
+                "deleted": success_count,
+                "message": f"Reset {success_count} learned patterns. Zane will re-learn from your next categorizations."
+            })
+        except Exception as e:
+            logger.error(f"[BANK RESET PATTERNS] Error: {e}")
+            return jsonify({"success": False, "error": str(e)})
     
 
     logger.info("[BANKING] All banking routes registered ✓")

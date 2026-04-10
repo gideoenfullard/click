@@ -16034,20 +16034,30 @@ class BankLearning:
         # Uppercase
         norm = description.upper().strip()
         
+        # Remove common banking prefixes — these are generic and not vendor-specific
+        for prefix in ['ELECTRONIC BANKING PAYMENT TO ', 'ELECTRONIC BANKING PAYMENT FR ',
+                       'CREDIT TRANSFER ', 'DEBIT TRANSFER ', 'CREDIT CARD EFTPOS SETTLEMENT ',
+                       'IB PAYMENT FROM ', 'MAGTAPE CREDIT ', 'INTERBANK CREDIT TRANSFER ',
+                       'ACCOUNT PAYMENT TO ', 'ACCOUNT PAYMENT FR ',
+                       'BUSINESS ELECT ']:
+            if norm.startswith(prefix):
+                norm = norm[len(prefix):]
+                break
+        
         # Remove common variable parts (dates, reference numbers)
         norm = re.sub(r'\d{2}[/-]\d{2}[/-]\d{2,4}', '', norm)  # Dates
         norm = re.sub(r'\b\d{6,}\b', '', norm)  # Long numbers (references) — only standalone
         norm = re.sub(r'REF[:\s]*\w+', '', norm)  # References
+        # Remove ERY/EFTPOS reference numbers
+        norm = re.sub(r'\b(ERY|CR EFTPOS|DR EFTPOS)\s*\d+[:\s]*\d*', '', norm)
         
         # Remove extra spaces
         norm = re.sub(r'\s+', ' ', norm).strip()
         
-        # Keep up to 5 words — vendor name is usually word 3-4
-        # "ACCOUNT PAYMENT EPR FULL003" → "ACCOUNT PAYMENT EPR FULL003" (keep all)
-        # "CREDIT CARD EFTPOS SETTLEMENT CR" → "CREDIT CARD EFTPOS SETTLEMENT CR" (keep all)
+        # Keep up to 8 words — vendor name needs more context
         parts = norm.split()
-        if len(parts) > 5:
-            norm = ' '.join(parts[:5])
+        if len(parts) > 8:
+            norm = ' '.join(parts[:8])
         
         return norm
     
