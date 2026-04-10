@@ -3462,6 +3462,8 @@ Nothing else."""
             logger.error(f"[GL SUGGEST] Error: {e}")
             return jsonify({"success": False, "suggestion": ""})
 
+    @app.route("/api/supplier/capture-invoice", methods=["POST"])
+    @login_required
     def api_supplier_capture_invoice():
         """Capture a supplier invoice (diesel, stationery, etc.) with GL entries — no stock codes"""
         try:
