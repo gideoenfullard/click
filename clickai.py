@@ -2112,7 +2112,10 @@ def calc_customer_balance(biz_id: str, customer_id: str) -> float:
         rec_total = sum(float(r.get("amount", 0)) for r in all_cust_receipts)
 
         credit_notes = db.get("credit_notes", {"business_id": biz_id, "customer_id": customer_id}) or []
-        cn_total = sum(float(cn.get("total", 0)) for cn in credit_notes)
+        # Exclude credit notes whose linked invoice is fully credited (both cancel out)
+        _credited_inv_nums = {i.get("invoice_number") for i in invoices if i.get("status") == "credited"}
+        cn_total = sum(float(cn.get("total", 0)) for cn in credit_notes
+                       if cn.get("invoice_number", "") not in _credited_inv_nums)
 
         return round(inv_total + acc_sales_total - rec_total - cn_total, 2)
     except Exception as e:
@@ -24636,11 +24639,15 @@ def customer_view(customer_id):
     _inv_total = sum(float(i.get("total", 0)) for i in invoices if i.get("status") != "credited")
     _acc_sales = sum(float(s.get("total", 0)) for s in sales if s.get("payment_method") == "account")
     _rec_total = sum(float(r.get("amount", 0)) for r in receipts)
-    _cn_total = sum(float(cn.get("total", 0)) for cn in credit_notes)
+    # Exclude credit notes whose linked invoice is fully credited (both cancel out)
+    _credited_inv_nums = {i.get("invoice_number") for i in invoices if i.get("status") == "credited"}
+    _cn_total = sum(float(cn.get("total", 0)) for cn in credit_notes
+                    if cn.get("invoice_number", "") not in _credited_inv_nums)
     balance = round(_inv_total + _acc_sales - _rec_total - _cn_total, 2)
     
     # Stats
-    total_invoiced = sum(float(inv.get("total", 0)) for inv in invoices)
+    # Stats — exclude credited invoices (they are cancelled by their credit notes)
+    total_invoiced = sum(float(inv.get("total", 0)) for inv in invoices if inv.get("status") != "credited")
     total_paid = sum(float(r.get("amount", 0)) for r in receipts)
     total_sales = sum(float(s.get("total", 0)) for s in sales)
     
@@ -24656,7 +24663,7 @@ def customer_view(customer_id):
         ytd_start = f"{now_dt.year - 1}-03-01"
     fy_label = f"Mar {fy_year} - Feb {fy_year + 1}"
     
-    ytd_invoices = [inv for inv in invoices if (inv.get("date") or "") >= ytd_start]
+    ytd_invoices = [inv for inv in invoices if (inv.get("date") or "") >= ytd_start and inv.get("status") != "credited"]
     ytd_invoiced = sum(float(inv.get("total", 0)) for inv in ytd_invoices)
     ytd_paid_receipts = [r for r in receipts if (r.get("date") or "") >= ytd_start]
     ytd_paid = sum(float(r.get("amount", 0)) for r in ytd_paid_receipts)
@@ -24714,6 +24721,17 @@ def customer_view(customer_id):
             "source": r.get("source", "")
         })
     for cn in credit_notes:
+        # If the CN's linked invoice is fully credited and excluded from the statement,
+        # then exclude the CN too — they cancel each other out (net zero)
+        _cn_inv_num = cn.get("invoice_number", "")
+        _cn_linked_excluded = False
+        if _cn_inv_num:
+            for inv in invoices:
+                if inv.get("invoice_number") == _cn_inv_num and inv.get("status") == "credited":
+                    _cn_linked_excluded = True
+                    break
+        if _cn_linked_excluded:
+            continue
         _ledger_items.append({
             "date": cn.get("date", ""),
             "type": "Credit Note",
