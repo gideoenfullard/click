@@ -28537,14 +28537,10 @@ def customer_statement(customer_id):
     credit_notes = db.get("credit_notes", {"business_id": biz_id, "customer_id": customer_id}) if biz_id else []
     sales = db.get("sales", {"business_id": biz_id, "customer_id": customer_id}) if biz_id else []
     
-    # Build set of credited invoice numbers (invoice + CN cancel each other)
-    _credited_inv_nums = {i.get("invoice_number") for i in cust_invoices if i.get("status") == "credited"}
-    
-    # Combine and sort by date
+    # Combine and sort by date — show EVERYTHING for full audit trail
+    # Credited invoices + their CNs both appear (they cancel each other in the running balance)
     transactions = []
     for inv in cust_invoices:
-        if inv.get("status") == "credited":
-            continue  # Excluded — cancelled by its credit note
         transactions.append({
             "date": inv.get("date"),
             "type": "Invoice",
@@ -28576,8 +28572,6 @@ def customer_statement(customer_id):
         })
     
     for cn in credit_notes:
-        if cn.get("invoice_number", "") in _credited_inv_nums:
-            continue  # Excluded — its linked invoice is also excluded
         transactions.append({
             "date": cn.get("date"),
             "type": "Credit Note",
