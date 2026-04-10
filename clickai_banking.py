@@ -306,6 +306,13 @@ def register_banking_routes(app, db, login_required, Auth, render_page,
             </div>
         </div>
         
+        <!-- SEARCH -->
+        <div style="margin-bottom:15px;">
+            <input type="text" id="bankSearch" placeholder="Search transactions... (description, amount, date)" 
+                   oninput="filterBankTransactions(this.value)"
+                   style="width:100%;padding:12px 16px;border:1px solid var(--border);border-radius:8px;background:var(--card);color:var(--text);font-size:14px;">
+        </div>
+        
         <!-- TABS -->
         <div class="recon-tabs">
             <div class="recon-tab active" onclick="showTab('auto')">✅ Auto-Matched <span class="count">{auto_count}</span></div>
@@ -885,6 +892,19 @@ def register_banking_routes(app, db, login_required, Auth, render_page,
             }} catch (err) {{
                 alert('❌ Reset failed: ' + err.message);
             }}
+        }}
+        
+        function filterBankTransactions(query) {{
+            const q = query.toLowerCase().trim();
+            const sections = ['section-auto', 'section-suggested', 'section-needs', 'section-done'];
+            sections.forEach(secId => {{
+                const rows = document.querySelectorAll('#' + secId + ' tbody tr[data-id]');
+                rows.forEach(row => {{
+                    if (!q) {{ row.style.display = ''; return; }}
+                    const text = row.textContent.toLowerCase();
+                    row.style.display = text.includes(q) ? '' : 'none';
+                }});
+            }});
         }}
     
         async function uploadStatement(file) {{
@@ -2306,17 +2326,33 @@ Return ONLY the JSON array. No markdown, no explanation."""
                         _matched_supplier = None
                         try:
                             # Priority 0: User explicitly picked supplier invoices from the picker
+                            # Allocate payment amount across invoices in order — only mark paid if fully covered
                             if _picked_invoice_ids:
+                                _remaining_pay = expense_amount
                                 for _inv_id in _picked_invoice_ids:
                                     _picked_sinv = db.get_one("supplier_invoices", _inv_id)
                                     if _picked_sinv and _picked_sinv.get("status") not in ("paid", "credited"):
-                                        _picked_sinv["status"] = "paid"
-                                        _picked_sinv["paid_date"] = txn_date
-                                        _picked_sinv["payment_reference"] = ref
-                                        db.save("supplier_invoices", _picked_sinv)
-                                        logger.info(f"[BANK] Marked supplier inv {_picked_sinv.get('invoice_number','?')} as PAID (user-picked)")
+                                        _inv_total = float(_picked_sinv.get("total", 0))
+                                        if _remaining_pay >= _inv_total - 0.01:
+                                            # Fully paid
+                                            _picked_sinv["status"] = "paid"
+                                            _picked_sinv["paid_date"] = txn_date
+                                            _picked_sinv["paid_amount"] = _inv_total
+                                            _picked_sinv["payment_reference"] = ref
+                                            db.save("supplier_invoices", _picked_sinv)
+                                            _remaining_pay -= _inv_total
+                                            logger.info(f"[BANK] Marked supplier inv {_picked_sinv.get('invoice_number','?')} as PAID (R{_inv_total})")
+                                        else:
+                                            # Partial — record partial payment but keep outstanding
+                                            _picked_sinv["paid_amount"] = round(float(_picked_sinv.get("paid_amount", 0)) + _remaining_pay, 2)
+                                            _picked_sinv["payment_reference"] = ref
+                                            db.save("supplier_invoices", _picked_sinv)
+                                            logger.info(f"[BANK] Partial payment R{_remaining_pay:.2f} on {_picked_sinv.get('invoice_number','?')} (total R{_inv_total})")
+                                            _remaining_pay = 0
                                         if not _matched_supplier and _picked_sinv.get("supplier_id"):
                                             _matched_supplier = db.get_one("suppliers", _picked_sinv["supplier_id"])
+                                        if _remaining_pay <= 0.01:
+                                            break
                             
                             # Priority 1: User explicitly picked a supplier
                             if _picked_entity_id and not _matched_supplier:
@@ -2471,21 +2507,37 @@ Return ONLY the JSON array. No markdown, no explanation."""
                     matched_customer = None
                     try:
                         # Priority 0: User explicitly picked invoices from the picker
+                        # Allocate payment amount across invoices in order — only mark paid if fully covered
                         if _picked_invoice_ids:
+                            _remaining_pay = income_amount
                             for _inv_id in _picked_invoice_ids:
                                 _picked_inv = db.get_one("invoices", _inv_id)
                                 if _picked_inv and _picked_inv.get("status") not in ("paid", "credited"):
-                                    _picked_inv["status"] = "paid"
-                                    _picked_inv["paid_date"] = txn_date
-                                    _picked_inv["paid_amount"] = float(_picked_inv.get("total", 0))
-                                    _picked_inv["paid_via"] = "banking_recon"
-                                    _picked_inv["payment_reference"] = ref
-                                    db.save("invoices", _picked_inv)
-                                    logger.info(f"[BANK] Marked {_picked_inv.get('invoice_number','?')} as PAID (user-picked)")
+                                    _inv_total = float(_picked_inv.get("total", 0))
+                                    if _remaining_pay >= _inv_total - 0.01:
+                                        # Fully paid
+                                        _picked_inv["status"] = "paid"
+                                        _picked_inv["paid_date"] = txn_date
+                                        _picked_inv["paid_amount"] = _inv_total
+                                        _picked_inv["paid_via"] = "banking_recon"
+                                        _picked_inv["payment_reference"] = ref
+                                        db.save("invoices", _picked_inv)
+                                        _remaining_pay -= _inv_total
+                                        logger.info(f"[BANK] Marked {_picked_inv.get('invoice_number','?')} as PAID (R{_inv_total})")
+                                    else:
+                                        # Partial — record partial payment but keep outstanding
+                                        _picked_inv["paid_amount"] = round(float(_picked_inv.get("paid_amount", 0)) + _remaining_pay, 2)
+                                        _picked_inv["paid_via"] = "banking_recon"
+                                        _picked_inv["payment_reference"] = ref
+                                        db.save("invoices", _picked_inv)
+                                        logger.info(f"[BANK] Partial payment R{_remaining_pay:.2f} on {_picked_inv.get('invoice_number','?')} (total R{_inv_total})")
+                                        _remaining_pay = 0
                                     if not matched_invoice:
                                         matched_invoice = _picked_inv
                                     if not matched_customer and _picked_inv.get("customer_id"):
                                         matched_customer = db.get_one("customers", _picked_inv["customer_id"])
+                                    if _remaining_pay <= 0.01:
+                                        break
                         
                         # Priority 1: User explicitly picked a customer
                         if _picked_entity_id and not matched_customer:
