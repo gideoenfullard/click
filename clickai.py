@@ -26879,7 +26879,7 @@ def expense_detail_page(expense_id):
                 <p style="color:var(--text-muted);margin-bottom:20px;">This expense record may have been deleted or does not exist.</p>
                 <a href="/expenses" class="btn btn-primary">Go to Expenses</a>
             </div>
-        ''', user=user, business=business)
+        ''', user=user)
     
     # Show basic expense info
     cat = expense.get("category", "")
@@ -26910,7 +26910,7 @@ def expense_detail_page(expense_id):
                 </table>
             </div>
         </div>
-    ''', user=user, business=business)
+    ''', user=user)
 
 
 @app.route("/expenses")
