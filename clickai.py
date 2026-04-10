@@ -26861,6 +26861,58 @@ Extract the recurring amount. Return valid JSON only."""
         return jsonify({"success": False, "error": str(e)})
 
 
+@app.route("/expense/<expense_id>")
+@login_required
+def expense_detail_page(expense_id):
+    """Show expense detail or friendly redirect if not found"""
+    user = Auth.get_current_user()
+    business = Auth.get_current_business()
+    biz_id = business.get("id") if business else None
+    
+    expense = db.get_one("expenses", expense_id) if expense_id else None
+    
+    if not expense or expense.get("business_id") != biz_id:
+        return render_page("Expense Not Found", f'''
+            <div style="text-align:center;padding:60px 20px;">
+                <div style="font-size:48px;margin-bottom:20px;">📋</div>
+                <h2 style="margin-bottom:10px;">Expense Not Found</h2>
+                <p style="color:var(--text-muted);margin-bottom:20px;">This expense record may have been deleted or does not exist.</p>
+                <a href="/expenses" class="btn btn-primary">Go to Expenses</a>
+            </div>
+        ''', user=user, business=business)
+    
+    # Show basic expense info
+    cat = expense.get("category", "")
+    desc = safe_string(expense.get("description", ""))
+    amount = float(expense.get("amount", 0) or expense.get("total", 0) or 0)
+    exp_date = expense.get("date", "")
+    supplier = safe_string(expense.get("supplier_name", "") or expense.get("supplier", ""))
+    ref = safe_string(expense.get("reference", ""))
+    method = expense.get("payment_method", "")
+    gl_code = expense.get("category_code", "") or expense.get("gl_code", "")
+    
+    return render_page(f"Expense: {desc[:40]}", f'''
+        <div style="max-width:700px;margin:0 auto;">
+            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:20px;">
+                <h2 style="margin:0;">Expense Detail</h2>
+                <a href="/expenses" class="btn btn-secondary">Back to Expenses</a>
+            </div>
+            <div class="card" style="padding:24px;">
+                <table style="width:100%;border-collapse:collapse;">
+                    <tr><td style="padding:10px 0;color:var(--text-muted);width:140px;">Date</td><td style="padding:10px 0;font-weight:600;">{exp_date}</td></tr>
+                    <tr><td style="padding:10px 0;color:var(--text-muted);">Description</td><td style="padding:10px 0;">{desc}</td></tr>
+                    <tr><td style="padding:10px 0;color:var(--text-muted);">Category</td><td style="padding:10px 0;"><span style="background:var(--primary);color:white;padding:4px 10px;border-radius:4px;font-size:12px;">{cat}</span></td></tr>
+                    <tr><td style="padding:10px 0;color:var(--text-muted);">Amount</td><td style="padding:10px 0;font-weight:700;font-size:18px;">R{amount:,.2f}</td></tr>
+                    {"<tr><td style='padding:10px 0;color:var(--text-muted);'>Supplier</td><td style='padding:10px 0;'>" + supplier + "</td></tr>" if supplier else ""}
+                    {"<tr><td style='padding:10px 0;color:var(--text-muted);'>Reference</td><td style='padding:10px 0;'>" + ref + "</td></tr>" if ref else ""}
+                    {"<tr><td style='padding:10px 0;color:var(--text-muted);'>Payment Method</td><td style='padding:10px 0;'>" + method.upper() + "</td></tr>" if method else ""}
+                    {"<tr><td style='padding:10px 0;color:var(--text-muted);'>GL Code</td><td style='padding:10px 0;'>" + gl_code + "</td></tr>" if gl_code else ""}
+                </table>
+            </div>
+        </div>
+    ''', user=user, business=business)
+
+
 @app.route("/expenses")
 @login_required
 def expenses_page():
