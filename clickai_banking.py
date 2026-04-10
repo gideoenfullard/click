@@ -47,7 +47,7 @@ def register_banking_routes(app, db, login_required, Auth, render_page,
         # NOTE: InvoiceMatch.match_all_transactions removed from page load — was causing 6+ second delays
         # Matching now happens at IMPORT time (see api_banking_import) and on-demand via Zane
         
-        auto_matched = [t for t in all_transactions if (t.get("auto_matched") or t.get("invoice_matched")) and not t.get("matched")]
+        auto_matched = [t for t in all_transactions if (t.get("auto_matched") or t.get("invoice_matched")) and not t.get("manually_reviewed")]
         suggested = [t for t in all_transactions if t.get("suggested_category") and not t.get("matched") and t.get("suggestion_confidence", 0) < 0.85]
         needs_attention = [t for t in all_transactions if not t.get("matched") and not t.get("suggested_category")]
         already_done = [t for t in all_transactions if t.get("matched")]
@@ -436,7 +436,7 @@ def register_banking_routes(app, db, login_required, Auth, render_page,
             event.target.closest('.recon-tab')?.classList.add('active');
         }}
         
-        async function categorizeTransaction(id, category, description, entityId, entityName) {{
+        async function categorizeTransaction(id, category, description, entityId, entityName, invoiceIds, invoiceNums) {{
             if (!category) return;
             
             // If Customer Payment or Supplier Payment and no entity chosen, prompt to pick one
@@ -448,6 +448,7 @@ def register_banking_routes(app, db, login_required, Auth, render_page,
             try {{
                 const payload = {{id, category, description}};
                 if (entityId && entityId !== '__skip__') {{ payload.entity_id = entityId; payload.entity_name = entityName || ''; }}
+                if (invoiceIds && invoiceIds.length > 0) {{ payload.invoice_ids = invoiceIds; payload.invoice_nums = invoiceNums || []; }}
                 
                 const response = await fetch('/api/banking/categorize', {{
                     method: 'POST',
@@ -498,12 +499,13 @@ def register_banking_routes(app, db, login_required, Auth, render_page,
             const safeDesc = (description || '').replace(/'/g, "\\\\'");
             
             actionCell.innerHTML = `
-                <div style="background:rgba(139,92,246,0.08);border:1px solid rgba(139,92,246,0.25);border-radius:10px;padding:12px;min-width:280px;">
+                <div style="background:rgba(139,92,246,0.08);border:1px solid rgba(139,92,246,0.25);border-radius:10px;padding:12px;min-width:320px;">
                     <div style="font-size:13px;font-weight:700;color:#8b5cf6;margin-bottom:8px;">${{category}} — Select ${{label}}</div>
-                    <select id="entityPick_${{txnId}}" style="width:100%;padding:8px;border:1px solid var(--border);border-radius:6px;background:var(--card);color:var(--text);font-size:13px;margin-bottom:8px;">
+                    <select id="entityPick_${{txnId}}" onchange="loadEntityInvoices('${{txnId}}','${{category}}')" style="width:100%;padding:8px;border:1px solid var(--border);border-radius:6px;background:var(--card);color:var(--text);font-size:13px;margin-bottom:8px;">
                         <option value="">-- Select ${{label}} --</option>
                         ${{optionsHtml}}
                     </select>
+                    <div id="invList_${{txnId}}" style="max-height:200px;overflow-y:auto;margin-bottom:8px;"></div>
                     <div style="display:flex;gap:6px;">
                         <button onclick="confirmEntityPick('${{txnId}}','${{category}}','${{safeDesc}}')" 
                                 style="flex:1;padding:8px;background:var(--green);color:white;border:none;border-radius:6px;cursor:pointer;font-weight:700;font-size:13px;">
@@ -517,6 +519,45 @@ def register_banking_routes(app, db, login_required, Auth, render_page,
                 </div>`;
         }}
         
+        async function loadEntityInvoices(txnId, category) {{
+            const sel = document.getElementById('entityPick_' + txnId);
+            const container = document.getElementById('invList_' + txnId);
+            if (!sel || !container) return;
+            const entityId = sel.value;
+            if (!entityId) {{ container.innerHTML = ''; return; }}
+            
+            container.innerHTML = '<div style="color:var(--text-muted);font-size:12px;padding:6px;">Loading invoices...</div>';
+            
+            try {{
+                const resp = await fetch('/api/banking/entity-invoices', {{
+                    method: 'POST',
+                    headers: {{'Content-Type': 'application/json'}},
+                    body: JSON.stringify({{
+                        entity_id: entityId,
+                        entity_type: category === 'Customer Payment' ? 'customer' : 'supplier'
+                    }})
+                }});
+                const data = await resp.json();
+                
+                if (!data.success || !data.invoices || data.invoices.length === 0) {{
+                    container.innerHTML = '<div style="color:var(--text-muted);font-size:12px;padding:6px;background:rgba(255,255,255,0.03);border-radius:6px;">No outstanding invoices</div>';
+                    return;
+                }}
+                
+                let html = '<div style="font-size:11px;color:var(--text-muted);margin-bottom:4px;font-weight:600;">Allocate against invoices:</div>';
+                for (const inv of data.invoices) {{
+                    html += `<label style="display:flex;align-items:center;gap:8px;padding:5px 8px;border-radius:6px;cursor:pointer;font-size:12px;background:rgba(255,255,255,0.03);margin-bottom:3px;">
+                        <input type="checkbox" class="invCheck_${{txnId}}" value="${{inv.id}}" data-num="${{inv.number}}" data-amount="${{inv.total}}" style="accent-color:var(--green);">
+                        <span style="flex:1;">${{inv.number}} <span style="color:var(--text-muted);">(${{inv.date}})</span></span>
+                        <span style="font-weight:700;">R${{inv.total.toLocaleString('en-ZA', {{minimumFractionDigits:2}})}}</span>
+                    </label>`;
+                }}
+                container.innerHTML = html;
+            }} catch (err) {{
+                container.innerHTML = '<div style="color:var(--red);font-size:12px;padding:6px;">Failed to load invoices</div>';
+            }}
+        }}
+        
         function confirmEntityPick(txnId, category, description) {{
             const sel = document.getElementById('entityPick_' + txnId);
             if (!sel) return;
@@ -526,7 +567,13 @@ def register_banking_routes(app, db, login_required, Auth, render_page,
                 alert('Please select a ' + (category === 'Customer Payment' ? 'customer' : 'supplier'));
                 return;
             }}
-            categorizeTransaction(txnId, category, description, entityId, entityName);
+            
+            // Collect selected invoice IDs
+            const checks = document.querySelectorAll('.invCheck_' + txnId + ':checked');
+            const invoiceIds = Array.from(checks).map(c => c.value);
+            const invoiceNums = Array.from(checks).map(c => c.getAttribute('data-num'));
+            
+            categorizeTransaction(txnId, category, description, entityId, entityName, invoiceIds, invoiceNums);
         }}
         
         // ═══════════════════════════════════════════════════════════
@@ -2162,6 +2209,8 @@ Return ONLY the JSON array. No markdown, no explanation."""
             description = data.get("description", "")
             _picked_entity_id = data.get("entity_id", "") or ""
             _picked_entity_name = data.get("entity_name", "") or ""
+            _picked_invoice_ids = data.get("invoice_ids", []) or []
+            _picked_invoice_nums = data.get("invoice_nums", []) or []
             
             if not txn_id or not category:
                 return jsonify({"success": False, "error": "Missing data"})
@@ -2177,6 +2226,7 @@ Return ONLY the JSON array. No markdown, no explanation."""
             
             # Mark as matched and save category
             txn["matched"] = True
+            txn["manually_reviewed"] = True
             txn["category"] = category
             txn["matched_at"] = now()
             db.save("bank_transactions", txn)
@@ -2256,8 +2306,21 @@ Return ONLY the JSON array. No markdown, no explanation."""
                         
                         _matched_supplier = None
                         try:
+                            # Priority 0: User explicitly picked supplier invoices from the picker
+                            if _picked_invoice_ids:
+                                for _inv_id in _picked_invoice_ids:
+                                    _picked_sinv = db.get_one("supplier_invoices", _inv_id)
+                                    if _picked_sinv and _picked_sinv.get("status") not in ("paid", "credited"):
+                                        _picked_sinv["status"] = "paid"
+                                        _picked_sinv["paid_date"] = txn_date
+                                        _picked_sinv["payment_reference"] = ref
+                                        db.save("supplier_invoices", _picked_sinv)
+                                        logger.info(f"[BANK] Marked supplier inv {_picked_sinv.get('invoice_number','?')} as PAID (user-picked)")
+                                        if not _matched_supplier and _picked_sinv.get("supplier_id"):
+                                            _matched_supplier = db.get_one("suppliers", _picked_sinv["supplier_id"])
+                            
                             # Priority 1: User explicitly picked a supplier
-                            if _picked_entity_id:
+                            if _picked_entity_id and not _matched_supplier:
                                 _matched_supplier = db.get_one("suppliers", _picked_entity_id)
                                 if _matched_supplier:
                                     logger.info(f"[BANK] Supplier matched via entity picker: {_matched_supplier.get('name')}")
@@ -2408,8 +2471,25 @@ Return ONLY the JSON array. No markdown, no explanation."""
                     matched_invoice = None
                     matched_customer = None
                     try:
+                        # Priority 0: User explicitly picked invoices from the picker
+                        if _picked_invoice_ids:
+                            for _inv_id in _picked_invoice_ids:
+                                _picked_inv = db.get_one("invoices", _inv_id)
+                                if _picked_inv and _picked_inv.get("status") not in ("paid", "credited"):
+                                    _picked_inv["status"] = "paid"
+                                    _picked_inv["paid_date"] = txn_date
+                                    _picked_inv["paid_amount"] = float(_picked_inv.get("total", 0))
+                                    _picked_inv["paid_via"] = "banking_recon"
+                                    _picked_inv["payment_reference"] = ref
+                                    db.save("invoices", _picked_inv)
+                                    logger.info(f"[BANK] Marked {_picked_inv.get('invoice_number','?')} as PAID (user-picked)")
+                                    if not matched_invoice:
+                                        matched_invoice = _picked_inv
+                                    if not matched_customer and _picked_inv.get("customer_id"):
+                                        matched_customer = db.get_one("customers", _picked_inv["customer_id"])
+                        
                         # Priority 1: User explicitly picked a customer
-                        if _picked_entity_id:
+                        if _picked_entity_id and not matched_customer:
                             matched_customer = db.get_one("customers", _picked_entity_id)
                             if matched_customer:
                                 logger.info(f"[BANK] Customer matched via entity picker: {matched_customer.get('name')}")
@@ -3004,6 +3084,7 @@ Return ONLY the JSON array. No markdown, no explanation."""
             
             # Mark transaction as matched with split info
             txn["matched"] = True
+            txn["manually_reviewed"] = True
             txn["category"] = "Split: " + " + ".join([sp.get("category", "")[:20] for sp in splits[:3]])
             txn["is_split"] = True
             txn["split_categories"] = split_categories
@@ -3316,5 +3397,55 @@ Return ONLY the JSON array. No markdown, no explanation."""
             logger.error(f"[BANK RESET PATTERNS] Error: {e}")
             return jsonify({"success": False, "error": str(e)})
     
+
+    @app.route("/api/banking/entity-invoices", methods=["POST"])
+    @login_required
+    def api_banking_entity_invoices():
+        """Fetch outstanding invoices for a customer or supplier — used by invoice picker in banking allocation"""
+        try:
+            business = Auth.get_current_business()
+            biz_id = business.get("id") if business else None
+            if not biz_id:
+                return jsonify({"success": False, "invoices": []})
+            
+            data = request.get_json()
+            entity_id = data.get("entity_id", "")
+            entity_type = data.get("entity_type", "customer")  # "customer" or "supplier"
+            
+            if not entity_id:
+                return jsonify({"success": False, "invoices": []})
+            
+            result = []
+            if entity_type == "customer":
+                invoices = db.get("invoices", {"business_id": biz_id, "customer_id": entity_id}) or []
+                for inv in invoices:
+                    if inv.get("status") in ("paid", "credited"):
+                        continue
+                    result.append({
+                        "id": inv.get("id", ""),
+                        "number": inv.get("invoice_number", "-"),
+                        "date": str(inv.get("date", ""))[:10],
+                        "total": round(float(inv.get("total", 0)), 2),
+                        "status": inv.get("status", "outstanding")
+                    })
+            else:
+                s_invoices = db.get("supplier_invoices", {"business_id": biz_id, "supplier_id": entity_id}) or []
+                for inv in s_invoices:
+                    if inv.get("status") in ("paid", "credited"):
+                        continue
+                    result.append({
+                        "id": inv.get("id", ""),
+                        "number": inv.get("invoice_number", "-"),
+                        "date": str(inv.get("date", ""))[:10],
+                        "total": round(float(inv.get("total", 0)), 2),
+                        "status": inv.get("status", "outstanding")
+                    })
+            
+            result.sort(key=lambda x: x["date"])
+            return jsonify({"success": True, "invoices": result})
+        except Exception as e:
+            logger.error(f"[BANK ENTITY-INV] Error: {e}")
+            return jsonify({"success": False, "invoices": []})
+
 
     logger.info("[BANKING] All banking routes registered ✓")
