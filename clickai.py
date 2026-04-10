@@ -28526,25 +28526,65 @@ def customer_statement(customer_id):
     
     receipts = db.get("receipts", {"business_id": biz_id}) if biz_id else []
     cust_receipts = [r for r in receipts if r.get("customer_id") == customer_id]
+    # Also pick up unlinked receipts matched by name (from banking recon)
+    _cust_name_upper = (customer.get("name") or "").upper().strip()
+    _by_id_set = {r.get("id") for r in cust_receipts}
+    cust_receipts += [r for r in receipts
+                      if not r.get("customer_id") and _cust_name_upper
+                      and (r.get("customer_name") or "").upper().strip() == _cust_name_upper
+                      and r.get("id") not in _by_id_set]
+    
+    credit_notes = db.get("credit_notes", {"business_id": biz_id, "customer_id": customer_id}) if biz_id else []
+    sales = db.get("sales", {"business_id": biz_id, "customer_id": customer_id}) if biz_id else []
+    
+    # Build set of credited invoice numbers (invoice + CN cancel each other)
+    _credited_inv_nums = {i.get("invoice_number") for i in cust_invoices if i.get("status") == "credited"}
     
     # Combine and sort by date
     transactions = []
     for inv in cust_invoices:
+        if inv.get("status") == "credited":
+            continue  # Excluded — cancelled by its credit note
         transactions.append({
             "date": inv.get("date"),
             "type": "Invoice",
             "reference": inv.get("invoice_number"),
             "debit": float(inv.get("total", 0)),
-            "credit": 0
+            "credit": 0,
+            "link": f"/invoice/{inv.get('id', '')}"
         })
+    
+    for s in sales:
+        if s.get("payment_method") == "account":
+            transactions.append({
+                "date": s.get("date"),
+                "type": "POS Sale",
+                "reference": s.get("sale_number", "-"),
+                "debit": float(s.get("total", 0)),
+                "credit": 0,
+                "link": f"/sale/{s.get('id', '')}"
+            })
     
     for r in cust_receipts:
         transactions.append({
             "date": r.get("date"),
             "type": "Payment",
-            "reference": r.get("receipt_number"),
+            "reference": r.get("receipt_number") or r.get("reference", "-"),
             "debit": 0,
-            "credit": float(r.get("amount", 0))
+            "credit": float(r.get("amount", 0)),
+            "link": ""
+        })
+    
+    for cn in credit_notes:
+        if cn.get("invoice_number", "") in _credited_inv_nums:
+            continue  # Excluded — its linked invoice is also excluded
+        transactions.append({
+            "date": cn.get("date"),
+            "type": "Credit Note",
+            "reference": cn.get("credit_note_number", "-"),
+            "debit": 0,
+            "credit": float(cn.get("total", 0)),
+            "link": f"/credit-note/{cn.get('id', '')}"
         })
     
     transactions = sorted(transactions, key=lambda x: x.get("date", ""))
@@ -28554,11 +28594,16 @@ def customer_statement(customer_id):
     rows = ""
     for t in transactions:
         running_balance += t["debit"] - t["credit"]
+        _ref_display = t["reference"] or "-"
+        if t.get("link"):
+            _ref_html = f'<a href="{t["link"]}" style="color:#4f46e5;text-decoration:none;font-weight:600;" class="stmt-link">{_ref_display}</a>'
+        else:
+            _ref_html = _ref_display
         rows += f'''
         <tr>
             <td>{t["date"]}</td>
             <td>{t["type"]}</td>
-            <td>{t["reference"]}</td>
+            <td>{_ref_html}</td>
             <td style="text-align:right;">{money(t["debit"]) if t["debit"] else "-"}</td>
             <td style="text-align:right;color:var(--green);">{money(t["credit"]) if t["credit"] else "-"}</td>
             <td style="text-align:right;{"color:var(--red);" if running_balance > 0 else ""}">{money(running_balance)}</td>
@@ -28594,6 +28639,10 @@ def customer_statement(customer_id):
         </div>
     </div>
     
+    <style>
+    @media print {{ .stmt-link {{ color: #333 !important; text-decoration: none !important; pointer-events: none; }} }}
+    @media screen {{ .stmt-link:hover {{ text-decoration: underline !important; }} }}
+    </style>
     <div class="card" id="statementPrint" style="background:white;color:#333;">
         <div style="display:flex;justify-content:space-between;margin-bottom:30px;">
             <div>
