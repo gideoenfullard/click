@@ -47,7 +47,7 @@ def register_banking_routes(app, db, login_required, Auth, render_page,
         # NOTE: InvoiceMatch.match_all_transactions removed from page load — was causing 6+ second delays
         # Matching now happens at IMPORT time (see api_banking_import) and on-demand via Zane
         
-        auto_matched = [t for t in all_transactions if (t.get("auto_matched") or t.get("invoice_matched")) and not t.get("manually_reviewed")]
+        auto_matched = [t for t in all_transactions if (t.get("auto_matched") or t.get("invoice_matched")) and not t.get("matched")]
         suggested = [t for t in all_transactions if t.get("suggested_category") and not t.get("matched") and t.get("suggestion_confidence", 0) < 0.85]
         needs_attention = [t for t in all_transactions if not t.get("matched") and not t.get("suggested_category")]
         already_done = [t for t in all_transactions if t.get("matched")]
@@ -2177,7 +2177,6 @@ Return ONLY the JSON array. No markdown, no explanation."""
             
             # Mark as matched and save category
             txn["matched"] = True
-            txn["manually_reviewed"] = True
             txn["category"] = category
             txn["matched_at"] = now()
             db.save("bank_transactions", txn)
@@ -3005,7 +3004,6 @@ Return ONLY the JSON array. No markdown, no explanation."""
             
             # Mark transaction as matched with split info
             txn["matched"] = True
-            txn["manually_reviewed"] = True
             txn["category"] = "Split: " + " + ".join([sp.get("category", "")[:20] for sp in splits[:3]])
             txn["is_split"] = True
             txn["split_categories"] = split_categories
