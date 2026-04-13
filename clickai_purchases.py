@@ -3219,9 +3219,11 @@ def register_purchases_routes(app, db, login_required, Auth, render_page,
                 except:
                     pass
             
+            inv_id = inv.get("id", "")
+            
             rows += f'''
             <tr>
-                <td><strong>{inv_num}</strong></td>
+                <td><a href="/supplier-invoice/{inv_id}" style="color:var(--primary);font-weight:700;text-decoration:none;">{inv_num}</a></td>
                 <td>{inv.get("date", "-")}</td>
                 <td>{safe_string(inv.get("supplier_name", "-"))}</td>
                 <td>{money(inv.get("total", 0))}</td>
@@ -3260,7 +3262,6 @@ def register_purchases_routes(app, db, login_required, Auth, render_page,
         </div>
         
         <script>
-        }}
         function paySupplier(invNum) {{
             document.getElementById('aiInput').value = 'Pay supplier invoice ' + invNum;
             document.getElementById('sendBtn').click();
@@ -3284,6 +3285,14 @@ def register_purchases_routes(app, db, login_required, Auth, render_page,
         if not invoice:
             flash("Supplier invoice not found", "error")
             return redirect("/supplier-invoices")
+        
+        # Check for linked scanned document
+        scanned_doc_id = None
+        all_scanned = db.get("scanned_documents", {"business_id": biz_id}) if biz_id else []
+        for sd in all_scanned:
+            if sd.get("linked_invoice_id") == invoice_id:
+                scanned_doc_id = sd.get("id")
+                break
         
         # Parse items
         raw_items = invoice.get("items", [])
@@ -3315,10 +3324,13 @@ def register_purchases_routes(app, db, login_required, Auth, render_page,
         
         back_link = f'/supplier/{supplier_id}' if supplier_id else '/supplier-invoices'
         
+        scan_btn = f'<button class="btn btn-secondary" style="padding:6px 14px;font-size:13px;" onclick="viewScannedInvoice(\'{scanned_doc_id}\')">View Scanned Document</button>' if scanned_doc_id else ''
+        
         content = f'''
         <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:20px;">
             <a href="{back_link}" style="color:var(--text-muted);">← Back</a>
-            <div style="display:flex;gap:10px;">
+            <div style="display:flex;gap:10px;align-items:center;">
+                {scan_btn}
                 <span style="padding:6px 16px;border-radius:20px;font-size:13px;font-weight:700;color:white;background:{status_color};">{status.upper()}</span>
             </div>
         </div>
@@ -3390,6 +3402,40 @@ def register_purchases_routes(app, db, login_required, Auth, render_page,
             </table>
         </div>
         ''' if items_html else '') + '''
+        
+        <!-- Scanned Document Modal -->
+        <div id="scanInvModal" style="display:none;position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.8);z-index:1000;align-items:center;justify-content:center;">
+            <div style="background:var(--card);border-radius:12px;max-width:90%;max-height:90%;overflow:auto;position:relative;">
+                <button onclick="document.getElementById('scanInvModal').style.display='none'" style="position:absolute;top:10px;right:10px;background:var(--red);color:white;border:none;border-radius:50%;width:30px;height:30px;cursor:pointer;font-size:18px;">×</button>
+                <div id="scanInvContent" style="padding:20px;text-align:center;">
+                    <p>Loading...</p>
+                </div>
+            </div>
+        </div>
+        
+        <script>
+        async function viewScannedInvoice(docId) {
+            document.getElementById('scanInvModal').style.display = 'flex';
+            document.getElementById('scanInvContent').innerHTML = '<p>Loading document...</p>';
+            try {
+                const response = await fetch('/api/scanned-document/' + docId);
+                const data = await response.json();
+                if (data.success && data.image_data) {
+                    document.getElementById('scanInvContent').innerHTML =
+                        '<img src="data:image/jpeg;base64,' + data.image_data + '" style="max-width:100%;max-height:80vh;" />' +
+                        '<div style="margin-top:15px;"><p><strong>' + (data.reference || 'Document') + '</strong></p>' +
+                        '<p style="color:var(--text-muted);">' + (data.date || '') + '</p></div>';
+                } else {
+                    document.getElementById('scanInvContent').innerHTML = '<p style="color:var(--red);">Document image not available</p>';
+                }
+            } catch(e) {
+                document.getElementById('scanInvContent').innerHTML = '<p style="color:var(--red);">Error loading document</p>';
+            }
+        }
+        document.getElementById('scanInvModal').addEventListener('click', function(e) {
+            if (e.target === this) this.style.display = 'none';
+        });
+        </script>
         '''
         
         return render_page(f"Supplier Invoice {invoice.get('invoice_number', '')}", content, user, "purchases")
