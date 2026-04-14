@@ -43765,6 +43765,20 @@ def view_credit_note(cn_id):
     if not cn:
         return redirect("/invoices")
     
+    # Build clickable link to original invoice
+    _cn_inv_num = cn.get("invoice_number", "-")
+    _cn_inv_id = cn.get("invoice_id", "")
+    if _cn_inv_id:
+        _cn_inv_display = f'<a href="/invoice/{_cn_inv_id}" style="color:var(--primary);text-decoration:none;">{safe_string(_cn_inv_num)}</a>'
+    elif _cn_inv_num and _cn_inv_num != "-":
+        # Fallback: lookup by invoice number
+        _cn_biz_id = business.get("id") if business else None
+        _cn_all_inv = db.get("invoices", {"business_id": _cn_biz_id}) if _cn_biz_id else []
+        _cn_inv_match = next((i for i in _cn_all_inv if i.get("invoice_number", "").upper() == _cn_inv_num.upper()), None)
+        _cn_inv_display = f'<a href="/invoice/{_cn_inv_match["id"]}" style="color:var(--primary);text-decoration:none;">{safe_string(_cn_inv_num)}</a>' if _cn_inv_match else safe_string(_cn_inv_num)
+    else:
+        _cn_inv_display = "-"
+    
     try:
         items = json.loads(cn.get("items", "[]"))
     except:
@@ -43866,7 +43880,7 @@ def view_credit_note(cn_id):
                 <table style="width:100%;font-size:14px;color:#333;">
                     <tr><td style="padding:4px 0;color:#888;width:130px;">CN Number:</td><td style="padding:4px 0;font-weight:600;">{cn.get("credit_note_number", "-")}</td></tr>
                     <tr><td style="padding:4px 0;color:#888;">Date:</td><td style="padding:4px 0;">{cn.get("date", "-")}</td></tr>
-                    <tr><td style="padding:4px 0;color:#888;">Orig. Invoice:</td><td style="padding:4px 0;">{cn.get("invoice_number", "-")}</td></tr>
+                    <tr><td style="padding:4px 0;color:#888;">Orig. Invoice:</td><td style="padding:4px 0;">{_cn_inv_display}</td></tr>
                 </table>
             </div>
             <div style="padding-left:25px;">

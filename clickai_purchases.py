@@ -1848,6 +1848,31 @@ def register_purchases_routes(app, db, login_required, Auth, render_page,
         # Pre-build sales person and reference rows (display only, no edit)
         sp_val = safe_string(po.get("sales_person", ""))
         ref_val = safe_string(po.get("reference", ""))
+        # Make reference clickable if it contains document numbers
+        if ref_val:
+            import re
+            _po_ref_patterns = re.findall(r'(PO-?\d+|DN-?\d+|INV-?\d+|CR-?\d+|SI-?\d+)', po.get("reference", ""), re.IGNORECASE)
+            for _doc_num in _po_ref_patterns:
+                _prefix = _doc_num.upper().rstrip('0123456789').rstrip('-')
+                _link = None
+                if _prefix == 'INV':
+                    _all_docs = db.get("invoices", {"business_id": biz_id}) if biz_id else []
+                    _match = next((d for d in _all_docs if d.get("invoice_number", "").upper() == _doc_num.upper()), None)
+                    if _match: _link = f'/invoice/{_match["id"]}'
+                elif _prefix == 'DN':
+                    _all_docs = db.get("delivery_notes", {"business_id": biz_id}) if biz_id else []
+                    _match = next((d for d in _all_docs if (d.get("dn_number", "") or d.get("delivery_note_number", "")).upper() == _doc_num.upper()), None)
+                    if _match: _link = f'/delivery-note/{_match["id"]}'
+                elif _prefix == 'SI':
+                    _all_docs = db.get("supplier_invoices", {"business_id": biz_id}) if biz_id else []
+                    _match = next((d for d in _all_docs if d.get("invoice_number", "").upper() == _doc_num.upper()), None)
+                    if _match: _link = f'/supplier-invoice/{_match["id"]}'
+                elif _prefix == 'CR':
+                    _all_docs = db.get("credit_notes", {"business_id": biz_id}) if biz_id else []
+                    _match = next((d for d in _all_docs if d.get("credit_note_number", "").upper() == _doc_num.upper()), None)
+                    if _match: _link = f'/credit-note/{_match["id"]}'
+                if _link:
+                    ref_val = ref_val.replace(safe_string(_doc_num), f'<a href="{_link}" style="color:var(--primary);text-decoration:none;">{safe_string(_doc_num)}</a>')
         sp_row = f'<tr><td style="padding:4px 0;color:#888;">Sales Person:</td><td style="padding:4px 0;">{sp_val}</td></tr>' if sp_val else ""
         ref_row = f'<tr><td style="padding:4px 0;color:#888;">Reference:</td><td style="padding:4px 0;">{ref_val}</td></tr>' if ref_val else ""
         
@@ -3326,6 +3351,37 @@ def register_purchases_routes(app, db, login_required, Auth, render_page,
         
         scan_btn = f'<button class="btn btn-secondary" style="padding:6px 14px;font-size:13px;" onclick="viewScannedInvoice(\'{scanned_doc_id}\')">View Scanned Document</button>' if scanned_doc_id else ''
         
+        # Build clickable reference - detect PO/DN/INV/CR numbers and link them
+        _ref_raw = invoice.get("reference", invoice.get("notes", "-")) or "-"
+        _ref_display = safe_string(_ref_raw)
+        import re
+        _doc_patterns = re.findall(r'(PO-?\d+|DN-?\d+|INV-?\d+|CR-?\d+|SI-?\d+)', _ref_raw, re.IGNORECASE)
+        for _doc_num in _doc_patterns:
+            _prefix = _doc_num.upper().rstrip('0123456789').rstrip('-')
+            _link = None
+            if _prefix == 'PO':
+                _all_docs = db.get("purchase_orders", {"business_id": biz_id}) if biz_id else []
+                _match = next((d for d in _all_docs if d.get("po_number", "").upper() == _doc_num.upper()), None)
+                if _match: _link = f'/purchase/{_match["id"]}'
+            elif _prefix == 'DN':
+                _all_docs = db.get("delivery_notes", {"business_id": biz_id}) if biz_id else []
+                _match = next((d for d in _all_docs if (d.get("dn_number", "") or d.get("delivery_note_number", "")).upper() == _doc_num.upper()), None)
+                if _match: _link = f'/delivery-note/{_match["id"]}'
+            elif _prefix == 'INV':
+                _all_docs = db.get("invoices", {"business_id": biz_id}) if biz_id else []
+                _match = next((d for d in _all_docs if d.get("invoice_number", "").upper() == _doc_num.upper()), None)
+                if _match: _link = f'/invoice/{_match["id"]}'
+            elif _prefix == 'CR':
+                _all_docs = db.get("credit_notes", {"business_id": biz_id}) if biz_id else []
+                _match = next((d for d in _all_docs if d.get("credit_note_number", "").upper() == _doc_num.upper()), None)
+                if _match: _link = f'/credit-note/{_match["id"]}'
+            elif _prefix == 'SI':
+                _all_docs = db.get("supplier_invoices", {"business_id": biz_id}) if biz_id else []
+                _match = next((d for d in _all_docs if d.get("invoice_number", "").upper() == _doc_num.upper()), None)
+                if _match: _link = f'/supplier-invoice/{_match["id"]}'
+            if _link:
+                _ref_display = _ref_display.replace(safe_string(_doc_num), f'<a href="{_link}" style="color:var(--primary);text-decoration:none;">{safe_string(_doc_num)}</a>')
+        
         content = f'''
         <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:20px;">
             <a href="{back_link}" style="color:var(--text-muted);">← Back</a>
@@ -3370,7 +3426,7 @@ def register_purchases_routes(app, db, login_required, Auth, render_page,
                 </div>
                 <div>
                     <span style="color:var(--text-muted);font-size:11px;display:block;">REFERENCE</span>
-                    <span style="font-size:14px;">{safe_string(invoice.get("reference", invoice.get("notes", "-")))}</span>
+                    <span style="font-size:14px;">{_ref_display}</span>
                 </div>
             </div>
         </div>
