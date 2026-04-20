@@ -2652,6 +2652,9 @@ class DB:
             "Content-Type": "application/json",
             "Prefer": "return=representation"
         }
+        # HTTP connection pooling — reuses TCP/TLS connections across calls
+        # Eliminates ~100-200ms handshake overhead per Supabase request
+        self.session = requests.Session()
     
     def get(self, table: str, filters: dict = None, limit: int = 10000) -> List[dict]:
         """Get records from table"""
@@ -2661,7 +2664,7 @@ class DB:
                 for k, v in filters.items():
                     endpoint += f"&{k}=eq.{v}"
             
-            response = requests.get(endpoint, headers=self.headers, timeout=15)
+            response = self.session.get(endpoint, headers=self.headers, timeout=15)
             if table == "users" and filters:
                 print(f"[DB DEBUG] GET {table} filters={filters} → status={response.status_code}, rows={len(response.json()) if response.status_code == 200 else 'N/A'}, body={response.text[:200]}", flush=True)
             return response.json() if response.status_code == 200 else []
