@@ -2652,9 +2652,6 @@ class DB:
             "Content-Type": "application/json",
             "Prefer": "return=representation"
         }
-        # HTTP connection pooling — reuses TCP/TLS connections across calls
-        # Eliminates ~100-200ms handshake overhead per Supabase request
-        self.session = requests.Session()
     
     def get(self, table: str, filters: dict = None, limit: int = 10000) -> List[dict]:
         """Get records from table"""
@@ -2664,7 +2661,7 @@ class DB:
                 for k, v in filters.items():
                     endpoint += f"&{k}=eq.{v}"
             
-            response = self.session.get(endpoint, headers=self.headers, timeout=15)
+            response = requests.get(endpoint, headers=self.headers, timeout=15)
             if table == "users" and filters:
                 print(f"[DB DEBUG] GET {table} filters={filters} → status={response.status_code}, rows={len(response.json()) if response.status_code == 200 else 'N/A'}, body={response.text[:200]}", flush=True)
             return response.json() if response.status_code == 200 else []
@@ -30902,6 +30899,178 @@ def api_smart_import_analyse():
         
         # Sage Accounts Export (Chart of Accounts): "Name","Category","Description","Opening Balance","Opening Balance Date","Active","Default VAT Type"
         is_sage_accounts = ('"Name"' in header_line and '"Category"' in header_line and '"Default VAT Type"' in header_line and '"Contact Name"' not in header_line)
+        
+        # Sage Pastel Customer/Supplier LISTING REPORT (printed multi-line format, NOT export)
+        # First line of the file is literally "Customer Listing Report" or "Supplier Listing Report"
+        # Each customer spans 7-8 rows: header row with "CODE : NAME" in col 0, followed by
+        # address lines and labelled sub-fields (Fax:, Mobile:, Email:, Credit Limit:, etc.) in col 2.
+        _first_raw_line = (lines[0] if lines else "").strip().strip('\r').strip('"').strip()
+        is_sage_customer_listing = _first_raw_line.lower().startswith('customer listing report')
+        is_sage_supplier_listing = _first_raw_line.lower().startswith('supplier listing report')
+        
+        if is_sage_customer_listing or is_sage_supplier_listing:
+            # ═══ SAGE PASTEL CUSTOMER/SUPPLIER LISTING REPORT (multi-line format) ═══
+            _kind = "suppliers" if is_sage_supplier_listing else "customers"
+            _kind_label = "Suppliers" if is_sage_supplier_listing else "Customers"
+            logger.info(f"[SMART-IMPORT] Detected Sage Pastel {_kind_label} Listing Report (multi-line format)")
+            
+            import csv as csv_mod
+            
+            # Locate the column header row: "Name,Category,,Active,Contact Name,Telephone,Balance"
+            # Skip title + preamble rows until we find a line starting with "Name,"
+            data_start_idx = 0
+            for idx, line in enumerate(lines[:15]):
+                _s = line.strip().strip('\r')
+                if _s.lower().startswith('name,') and 'category' in _s.lower():
+                    data_start_idx = idx + 1
+                    break
+            
+            if data_start_idx == 0:
+                # Fallback: assume first 4 rows are preamble (title + biz + page + header)
+                data_start_idx = 4
+            
+            def _clean_cell(v):
+                return (v or "").strip().strip('"').strip()
+            
+            def _parse_money(v):
+                v = _clean_cell(v)
+                if not v:
+                    return 0
+                v = re.sub(r'[R\s,$]', '', v)
+                try:
+                    return float(v)
+                except:
+                    return 0
+            
+            all_data = []
+            preview_data = []
+            current = None  # Currently-building customer dict
+            delivery_lines = []  # Collected physical/delivery address lines (col 0)
+            postal_lines = []    # Collected postal address lines (col 1)
+            
+            def _flush(rec, dlines, plines):
+                """Finalise a customer record: combine address lines, append to all_data."""
+                if not rec or not rec.get('name'):
+                    return
+                # Join address lines, skip empty & label rows
+                _bad = {'delivery address:', 'postal address:', '', 'cash sale', 'cash account'}
+                dclean = [x for x in dlines if x and x.strip().lower() not in _bad]
+                pclean = [x for x in plines if x and x.strip().lower() not in _bad]
+                if dclean:
+                    rec['delivery_address'] = ', '.join(dclean[:6])
+                if pclean:
+                    rec['postal_address'] = ', '.join(pclean[:6])
+                # Combined address field (used by the generic customer table)
+                combined = dclean or pclean
+                if combined and not rec.get('address'):
+                    rec['address'] = ', '.join(combined[:6])
+                all_data.append(rec)
+            
+            for i in range(data_start_idx, len(lines)):
+                line = lines[i]
+                if not line.strip():
+                    continue
+                try:
+                    cols = list(csv_mod.reader([line]))[0]
+                except:
+                    cols = line.split(',')
+                # Pad to at least 7 columns
+                while len(cols) < 7:
+                    cols.append('')
+                
+                c0 = _clean_cell(cols[0])
+                c1 = _clean_cell(cols[1]) if len(cols) > 1 else ''
+                c2 = _clean_cell(cols[2]) if len(cols) > 2 else ''
+                c3 = _clean_cell(cols[3]) if len(cols) > 3 else ''
+                c4 = _clean_cell(cols[4]) if len(cols) > 4 else ''
+                c5 = _clean_cell(cols[5]) if len(cols) > 5 else ''
+                c6 = _clean_cell(cols[6]) if len(cols) > 6 else ''
+                
+                # Detect customer header row: col 0 has "CODE : NAME" format,
+                # and col 3 is Yes/No (Active flag)
+                if ' : ' in c0 and c3.lower() in ('yes', 'no', ''):
+                    # Flush previous customer first
+                    _flush(current, delivery_lines, postal_lines)
+                    # Start new customer
+                    parts = c0.split(' : ', 1)
+                    code = parts[0].strip()
+                    name = parts[1].strip() if len(parts) > 1 else c0
+                    current = {
+                        'code': code,
+                        'name': name,
+                        'category': c1,
+                        'active': c3.lower() == 'yes' if c3 else True,
+                        'contact_name': c4,
+                        'phone': c5,
+                        'balance': _parse_money(c6),
+                    }
+                    delivery_lines = []
+                    postal_lines = []
+                    continue
+                
+                # Skip rows before the first customer
+                if current is None:
+                    continue
+                
+                # Sub-field rows: col 2 has a label ending with ":", col 4 has the value
+                label = c2.rstrip(':').strip().lower() if c2.endswith(':') else ''
+                
+                if label == 'fax':
+                    if c4:
+                        current['fax'] = c4
+                elif label == 'mobile':
+                    if c4:
+                        current['cell'] = c4
+                elif label == 'email':
+                    if c4:
+                        current['email'] = c4
+                elif label == 'credit limit':
+                    if c4:
+                        current['credit_limit'] = _parse_money(c4)
+                elif label == 'sales rep':
+                    if c4:
+                        current['sales_rep'] = c4
+                elif label == 'default price list':
+                    if c4:
+                        current['price_list'] = c4
+                elif label in ('delivery address', 'postal address'):
+                    # Header sub-row for addresses - col 0 & col 1 may still carry data
+                    if c0 and c0.lower() != 'delivery address:':
+                        delivery_lines.append(c0)
+                    if c1 and c1.lower() != 'postal address:':
+                        postal_lines.append(c1)
+                else:
+                    # Pure address continuation row (no label in col 2)
+                    if c0:
+                        delivery_lines.append(c0)
+                    if c1:
+                        postal_lines.append(c1)
+            
+            # Flush final customer
+            _flush(current, delivery_lines, postal_lines)
+            
+            # Build preview (first 5)
+            preview_data = all_data[:5]
+            
+            if not all_data:
+                return jsonify({"success": False, "error": "No customers found in Listing Report. Check file format."})
+            
+            logger.info(f"[SMART-IMPORT] Parsed {len(all_data)} {_kind} from Listing Report")
+            
+            # Return directly - skip the generic column_mapping loop below
+            return jsonify({
+                "success": True,
+                "source_hint": "Sage Pastel Listing Report",
+                "confidence": 1.0,
+                "data_type": _kind,
+                "data_type_label": _kind_label,
+                "columns": ["code", "name", "category", "contact_name", "phone", "cell", "fax", "email",
+                            "credit_limit", "sales_rep", "price_list", "active", "balance",
+                            "delivery_address", "postal_address", "address"],
+                "all_data": all_data,
+                "preview": preview_data,
+                "count": len(all_data)
+            })
         
         if is_sage_accounts:
             # ═══ SAGE CHART OF ACCOUNTS EXPORT ═══
