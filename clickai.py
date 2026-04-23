@@ -31980,17 +31980,29 @@ def api_smart_import_batch():
                         status = "skipped"
                         error_msg = "No name"
                     else:
-                        existing = None if replace_mode else db.get("customers", {"business_id": biz_id, "name": name})
+                        # Match existing by CODE first (reliable across multiple Sage exports),
+                        # then fall back to name. This lets us merge two Sage files — e.g.
+                        # CustomerExport (VAT, credit limit) + CustomerListingReport (addresses)
+                        # — into a single customer record.
+                        row_code = str(row.get("account_code", row.get("code", ""))).strip()
+                        existing = None
+                        if not replace_mode and row_code:
+                            existing = db.get("customers", {"business_id": biz_id, "code": row_code})
+                        if not existing and not replace_mode:
+                            existing = db.get("customers", {"business_id": biz_id, "name": name})
                         if existing:
                             # Update existing record
                             exist_id = existing[0].get("id") if isinstance(existing, list) else existing.get("id")
-                            code = str(row.get("account_code", row.get("code", ""))).strip()
+                            code = row_code
                             # Only include fields that exist in the customers table
                             allowed_fields = {'name', 'code', 'phone', 'cell', 'fax', 'email', 'website',
-                                              'address', 'vat_number', 'balance', 'credit_limit', 'active',
+                                              'address', 'postal_address', 'delivery_address',
+                                              'vat_number', 'balance', 'credit_limit', 'active',
                                               'category', 'contact_name', 'price_list', 'sales_rep',
                                               'discount_percentage', 'vat_type', 'payment_terms', 'notes'}
                             exclude_fields = {'account_code', 'business_id', 'id'}
+                            # Non-empty values only — so blank fields from one import
+                            # don't wipe data already loaded from a previous import.
                             updates = {k: v for k, v in row.items() if k in allowed_fields and v}
                             updates["name"] = name
                             if code: updates["code"] = code
@@ -31999,7 +32011,7 @@ def api_smart_import_batch():
                             if not success: error_msg = "Update failed"
                         else:
                             # Pass ALL row data to RecordFactory - exclude fields we pass explicitly
-                            code = str(row.get("account_code", row.get("code", ""))).strip()
+                            code = row_code
                             exclude_fields = {'name', 'account_code', 'code', 'business_id'}
                             extra_kwargs = {k: v for k, v in row.items() if k not in exclude_fields}
                             record = RecordFactory.customer(
@@ -32022,15 +32034,25 @@ def api_smart_import_batch():
                     if not name:
                         status = "skipped"
                     else:
-                        existing = None if replace_mode else db.get("suppliers", {"business_id": biz_id, "name": name})
+                        # Match existing by CODE first (reliable across multiple Sage exports),
+                        # then fall back to name. Lets us merge Export + ListingReport data
+                        # into a single supplier record.
+                        row_code = str(row.get("account_code", row.get("code", ""))).strip()
+                        existing = None
+                        if not replace_mode and row_code:
+                            existing = db.get("suppliers", {"business_id": biz_id, "code": row_code})
+                        if not existing and not replace_mode:
+                            existing = db.get("suppliers", {"business_id": biz_id, "name": name})
                         if existing:
                             exist_id = existing[0].get("id") if isinstance(existing, list) else existing.get("id")
-                            code = str(row.get("account_code", row.get("code", ""))).strip()
+                            code = row_code
                             # Only include fields that exist in the suppliers table
                             allowed_fields = {'name', 'code', 'phone', 'cell', 'fax', 'email', 'website',
-                                              'address', 'vat_number', 'balance', 'credit_limit', 'active',
+                                              'address', 'postal_address', 'delivery_address',
+                                              'vat_number', 'balance', 'credit_limit', 'active',
                                               'category', 'contact_name', 'discount_percentage', 'vat_type',
                                               'payment_terms', 'notes'}
+                            # Non-empty only — so blank fields don't wipe earlier import data.
                             updates = {k: v for k, v in row.items() if k in allowed_fields and v}
                             updates["name"] = name
                             if code: updates["code"] = code
@@ -32039,7 +32061,7 @@ def api_smart_import_batch():
                             if not success: error_msg = "Update failed"
                         else:
                             # Pass ALL row data to RecordFactory - exclude fields we pass explicitly
-                            code = str(row.get("account_code", row.get("code", ""))).strip()
+                            code = row_code
                             exclude_fields = {'name', 'account_code', 'code', 'business_id'}
                             extra_kwargs = {k: v for k, v in row.items() if k not in exclude_fields}
                             record = RecordFactory.supplier(
@@ -35599,12 +35621,10 @@ Be concise and helpful. Format as bullet points. Focus on practical issues."""
                 if not name:
                     continue
                 
+                # Keep phone and cell as SEPARATE fields — the customer/supplier
+                # tables have both columns. Don't merge.
                 phone = _get("phone")
                 cell = _get("cell")
-                if not phone and cell:
-                    phone = cell
-                elif phone and cell and phone != cell:
-                    phone = f"{phone} / {cell}"
                 
                 # Parse balance
                 balance = 0
@@ -35622,16 +35642,46 @@ Be concise and helpful. Format as bullet points. Focus on practical issues."""
                     except:
                         balance = 0
                 
+                # Parse credit_limit the same way
+                credit_limit = 0
+                cl_str = _get("credit_limit")
+                if cl_str:
+                    try:
+                        cl_str = cl_str.replace("R", "").replace("r", "").replace("$", "").replace(",", "").replace(" ", "").strip()
+                        credit_limit = float(cl_str) if cl_str else 0
+                    except:
+                        credit_limit = 0
+                
+                # Active flag — accept Yes/No/True/False
+                active_raw = _get("active").lower()
+                if active_raw in ("no", "false", "0"):
+                    active_val = False
+                elif active_raw in ("yes", "true", "1"):
+                    active_val = True
+                else:
+                    active_val = True  # default
+                
                 rec = {
                     "name": name,
                     "code": _get("code"),
                     "phone": phone,
+                    "cell": cell,
+                    "fax": _get("fax"),
                     "email": _get("email"),
+                    "website": _get("website"),
                     "address": _get("address"),
+                    "postal_address": _get("postal_address"),
+                    "delivery_address": _get("delivery_address"),
                     "contact_name": _get("contact_name"),
                     "category": _get("category"),
                     "vat_number": _get("vat_number"),
-                    "balance": balance
+                    "vat_type": _get("vat_type"),
+                    "sales_rep": _get("sales_rep"),
+                    "price_list": _get("price_list"),
+                    "payment_terms": _get("payment_terms"),
+                    "balance": balance,
+                    "credit_limit": credit_limit,
+                    "active": active_val,
                 }
                 pre_extracted.append(rec)
             
@@ -36410,40 +36460,71 @@ def api_import_execute():
                     print(f"[IMPORT-FAST] ★ Using pre-extracted records: {len(pre_records)} {import_type}", flush=True)
                     
                     batch = pre_records[offset:offset + limit]
-                    records = []
+                    records_to_insert = []
+                    updated_count = 0
                     skipped = 0
+                    table = "customers" if import_type == "customers" else "suppliers"
+                    
+                    # All fields the customers/suppliers table knows about. Any key in
+                    # `rec` that matches one of these will be pushed through (non-empty only).
+                    _allowed = {'name', 'code', 'phone', 'cell', 'fax', 'email', 'website',
+                                'address', 'postal_address', 'delivery_address',
+                                'vat_number', 'balance', 'credit_limit', 'active',
+                                'category', 'contact_name', 'price_list', 'sales_rep',
+                                'discount_percentage', 'vat_type', 'payment_terms', 'notes'}
                     
                     for rec in batch:
-                        name = rec.get("name", "").strip()
+                        name = (rec.get("name") or "").strip()
                         if not name:
                             skipped += 1
                             continue
+                        code = (rec.get("code") or "").strip()
                         
-                        factory = RecordFactory.customer if import_type == "customers" else RecordFactory.supplier
-                        record = factory(
-                            business_id=biz_id,
-                            name=name,
-                            code=rec.get("code", ""),
-                            phone=rec.get("phone", ""),
-                            email=rec.get("email", ""),
-                            address=rec.get("address", ""),
-                            contact_name=rec.get("contact_name", ""),
-                            category=rec.get("category", ""),
-                            balance=float(rec.get("balance", 0)),
-                            vat_number=rec.get("vat_number", ""),
-                            created_by=user.get("id", "") if user else ""
-                        )
-                        records.append(record)
+                        # UPSERT: match by code first, then name
+                        existing = None
+                        if code:
+                            existing = db.get(table, {"business_id": biz_id, "code": code})
+                        if not existing:
+                            existing = db.get(table, {"business_id": biz_id, "name": name})
+                        
+                        if existing:
+                            # Update — only non-empty incoming values, to preserve
+                            # data from any earlier import.
+                            exist_id = existing[0].get("id") if isinstance(existing, list) else existing.get("id")
+                            updates = {k: v for k, v in rec.items() if k in _allowed and v not in ("", None)}
+                            updates["name"] = name
+                            if code:
+                                updates["code"] = code
+                            if db.update(table, exist_id, updates):
+                                updated_count += 1
+                            else:
+                                skipped += 1
+                        else:
+                            # Insert — pass ALL fields (RecordFactory will fill defaults)
+                            factory = RecordFactory.customer if import_type == "customers" else RecordFactory.supplier
+                            extras = {k: v for k, v in rec.items()
+                                      if k in _allowed and k not in ("name", "code") and v not in ("", None)}
+                            record = factory(
+                                business_id=biz_id,
+                                name=name,
+                                code=code,
+                                created_by=user.get("id", "") if user else "",
+                                **extras
+                            )
+                            records_to_insert.append(record)
                     
-                    # Bulk insert
-                    if records:
-                        table = "customers" if import_type == "customers" else "suppliers"
-                        success_count, error_count = db.save_many(table, records)
-                        print(f"[IMPORT-FAST] ✅ Inserted {success_count} {import_type}, errors {error_count}, skipped {skipped}", flush=True)
+                    # Bulk insert new records
+                    success_count = 0
+                    error_count = 0
+                    if records_to_insert:
+                        success_count, error_count = db.save_many(table, records_to_insert)
+                    print(f"[IMPORT-FAST] ✅ Inserted {success_count}, updated {updated_count}, errors {error_count}, skipped {skipped}", flush=True)
                     
                     return jsonify({
                         "success": True,
-                        "imported": len(records),
+                        "imported": success_count + updated_count,
+                        "inserted": success_count,
+                        "updated": updated_count,
                         "skipped": skipped,
                         "total": len(pre_records),
                         "has_more": (offset + limit) < len(pre_records)
