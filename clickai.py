@@ -31018,6 +31018,18 @@ def api_smart_import_analyse():
         is_sage_customers = '"Name","Category","Opening Balance"' in header_line and '"Contact Name","Telephone Number"' in header_line
         is_sage_suppliers = '"Name","Category","Opening Balance"' in header_line and '"Contact Name","Telephone Number"' in header_line and 'supplier' in filename.lower()
         
+        # Sage Business Cloud Customer/Supplier EXPORT (short 16-column unquoted form):
+        # Name,Category,Balance,Credit Limit,VAT Reference,Contact Name,Tel Number,
+        # Mobile Number,Email,Statement Distribution,Active,Cash Sale Customer,Sales Rep,
+        # Price List,Discount Percentage,Default VAT Type
+        _hl_low = header_line.lower()
+        is_sagebc_export = ('name' in _hl_low and 'category' in _hl_low and 'balance' in _hl_low
+                            and 'credit limit' in _hl_low and 'vat reference' in _hl_low
+                            and 'tel number' in _hl_low and 'mobile number' in _hl_low
+                            and 'price list' in _hl_low and 'discount percentage' in _hl_low)
+        is_sagebc_customer_export = is_sagebc_export and 'supplier' not in filename.lower()
+        is_sagebc_supplier_export = is_sagebc_export and 'supplier' in filename.lower()
+        
         # Sage Business Cloud ItemExport: Code,Description,Category,Price Excl.,Price Incl.,Avg Cost,Last Cost,Qty On Hand,Active
         is_sage_stock = ('Code' in header_line and 'Description' in header_line and 'Price Excl' in header_line and 'Qty On Hand' in header_line)
         # Also detect quoted variant
@@ -31509,6 +31521,44 @@ def api_smart_import_analyse():
                 "count": len(all_data)
             })
         
+        elif is_sagebc_customer_export or is_sagebc_supplier_export:
+            # HARDCODED Sage Business Cloud short Customer/Supplier Export (16 cols).
+            # Header:
+            # Name,Category,Balance,Credit Limit,VAT Reference,Contact Name,Tel Number,
+            # Mobile Number,Email,Statement Distribution,Active,Cash Sale Customer,
+            # Sales Rep,Price List,Discount Percentage,Default VAT Type
+            _kind = "suppliers" if is_sagebc_supplier_export else "customers"
+            _kind_label = "Suppliers" if is_sagebc_supplier_export else "Customers"
+            logger.info(f"[SMART-IMPORT] Detected Sage Business Cloud {_kind_label} Export (short 16-col format)")
+            result = {
+                "success": True,
+                "source_hint": "Sage Business Cloud",
+                "confidence": 1.0,
+                "data_type": _kind,
+                "data_type_label": _kind_label,
+                "header_row": header_line_idx,
+                "data_start_row": header_line_idx + 1,
+                "name_column": 0,
+                "column_mapping": {
+                    "0": "name",                 # Name (contains "CODE : NAME")
+                    "1": "category",             # Category
+                    "2": "balance",              # Balance
+                    "3": "credit_limit",         # Credit Limit
+                    "4": "vat_number",           # VAT Reference
+                    "5": "contact_name",         # Contact Name
+                    "6": "phone",                # Tel Number
+                    "7": "cell",                 # Mobile Number
+                    "8": "email",                # Email
+                    "9": "statement_distribution",  # ignored by customer table
+                    "10": "active",              # Active
+                    "11": "cash_sale",           # ignored by customer table
+                    "12": "sales_rep",           # Sales Rep
+                    "13": "price_list",          # Price List
+                    "14": "discount_percentage", # Discount Percentage
+                    "15": "vat_type",            # Default VAT Type
+                }
+            }
+        
         elif is_sage_customers or is_sage_suppliers:
             # HARDCODED SAGE PASTEL MAPPING - 100% reliable
             logger.info(f"[SMART-IMPORT] Detected Sage Pastel {'Suppliers' if is_sage_suppliers else 'Customers'} format")
@@ -31659,6 +31709,9 @@ Return ONLY the JSON, nothing else."""
         
         # Money/numeric field patterns - be generous
         money_patterns = ['balance', 'credit', 'debit', 'price', 'cost', 'qty', 'quantity', 'amount', 'total', 'limit', 'outstanding', 'exclusive', 'vat']
+        # Fields that contain money-pattern substrings but are NOT numeric — these
+        # must be treated as strings (e.g. "Price list 1", "Standard Rate", "4930106820").
+        _non_numeric_exclusions = {'price_list', 'vat_number', 'vat_type', 'vat_reference'}
         
         all_data = []
         preview_data = []
@@ -31685,6 +31738,10 @@ Return ONLY the JSON, nothing else."""
                         
                         # Clean money/numeric values - check if field name contains any money pattern
                         is_money_field = any(pattern in field_name.lower() for pattern in money_patterns)
+                        # Override: some fields MATCH a money pattern substring but are
+                        # actually string fields (e.g. 'price_list' contains 'price').
+                        if field_name.lower() in _non_numeric_exclusions:
+                            is_money_field = False
                         if is_money_field and val:
                             val = re.sub(r'[R\s,$]', '', str(val))  # Remove R, spaces, commas, $
                             try:
@@ -31968,10 +32025,44 @@ def api_smart_import_batch():
         
         results = []
         
+        # Helper: coerce a value to float, returning 0.0 if unparseable.
+        # Handles "R 1,234.56", "(500)", "500 CR", "500 DR", bare numbers, and
+        # gracefully returns 0.0 for junk strings like "Price list 1".
+        def _safe_float(v):
+            if v is None or v == "":
+                return 0.0
+            if isinstance(v, (int, float)):
+                return float(v)
+            try:
+                s = str(v).strip()
+                if not s:
+                    return 0.0
+                s = s.replace("R", "").replace("r", "").replace("$", "").replace(",", "").replace(" ", "")
+                if s.startswith("(") and s.endswith(")"):
+                    s = "-" + s[1:-1]
+                if s.upper().endswith("CR"):
+                    s = s[:-2]
+                elif s.upper().endswith("DR"):
+                    s = s[:-2]
+                return float(s) if s and s != "-" else 0.0
+            except (ValueError, TypeError):
+                return 0.0
+        
+        # Fields the customer/supplier tables store as numbers — any bad
+        # AI-mapping that puts "Price list 1" into one of these must be coerced
+        # before RecordFactory sees it (RecordFactory does an unguarded float()).
+        _numeric_fields = {"balance", "credit_limit", "discount_percentage"}
+        
         for row in records:
             name = ""
             status = "error"
             error_msg = ""
+            
+            # Sanitize numeric fields in the incoming row dict
+            if isinstance(row, dict):
+                for _nf in _numeric_fields:
+                    if _nf in row:
+                        row[_nf] = _safe_float(row[_nf])
             
             try:
                 if data_type == "customers":
