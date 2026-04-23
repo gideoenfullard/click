@@ -24406,6 +24406,9 @@ def customers_page():
         '''
     
     email_btn = '<a href="/bulk-statements" class="btn btn-secondary">📧 Bulk Statements</a>' if can_see_balances else ''
+    delete_all_btn = ('<button onclick="confirmDeleteAllCustomers()" class="btn btn-secondary" '
+                      'style="background:rgba(239,68,68,0.12);color:var(--red);border:1px solid rgba(239,68,68,0.35);" '
+                      'title="Delete every customer (owner/admin only)">🗑️ Delete All</button>') if role in ("owner", "admin") else ''
     
     content = f'''
     <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:15px;flex-wrap:wrap;gap:10px;">
@@ -24421,6 +24424,7 @@ def customers_page():
                 <option value="zero">Zero Balance</option>
             </select>
             {email_btn}
+            {delete_all_btn}
             <a href="/customer/new" class="btn btn-primary">+ Add Customer</a>
         </div>
     </div>
@@ -24467,6 +24471,38 @@ def customers_page():
     
     function closeEmailOptions() {{
         document.getElementById('emailOptionsModal').style.display = 'none';
+    }}
+    
+    async function confirmDeleteAllCustomers() {{
+        const total = {total_customers};
+        if (total === 0) {{
+            alert('There are no customers to delete.');
+            return;
+        }}
+        if (!confirm('⚠️ DELETE ALL CUSTOMERS\\n\\nThis will permanently delete all ' + total + ' customers from this business.\\n\\nInvoices and financial records will NOT be deleted, but they will be orphaned (no linked customer).\\n\\nContinue?')) return;
+        
+        const phrase = prompt('To confirm, type: DELETE ALL');
+        if ((phrase || '').trim() !== 'DELETE ALL') {{
+            alert('Confirmation phrase did not match. Nothing was deleted.');
+            return;
+        }}
+        
+        try {{
+            const resp = await fetch('/api/customers/delete-all', {{
+                method: 'POST',
+                headers: {{'Content-Type': 'application/json'}},
+                body: JSON.stringify({{confirm: 'DELETE ALL'}})
+            }});
+            const data = await resp.json();
+            if (data.success) {{
+                alert('✅ Deleted ' + data.deleted + ' of ' + data.total + ' customers.' + (data.failed ? ('\\nFailed: ' + data.failed) : ''));
+                window.location.reload();
+            }} else {{
+                alert('❌ ' + (data.error || 'Delete failed'));
+            }}
+        }} catch (e) {{
+            alert('❌ Network error: ' + e.message);
+        }}
     }}
     
     async function bulkEmailStatements(mode) {{
@@ -27655,6 +27691,115 @@ def api_customers_sync_offline():
         
     except Exception as e:
         return jsonify({"success": False, "error": str(e)[:200]})
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# DESTRUCTIVE: DELETE ALL CUSTOMERS / DELETE ALL SUPPLIERS
+# Role-gated to owner/admin. Requires confirmation phrase "DELETE ALL" in body.
+# Intended for clearing junk records after a failed import before re-importing
+# with a working parser. Invoices and financial records are NOT touched.
+# ══════════════════════════════════════════════════════════════════════════════
+
+@app.route("/api/customers/delete-all", methods=["POST"])
+@login_required
+def api_customers_delete_all():
+    """Delete ALL customers for the current business. Owner/admin only.
+    Requires {"confirm": "DELETE ALL"} in request body."""
+    try:
+        user = Auth.get_current_user()
+        business = Auth.get_current_business()
+        biz_id = business.get("id") if business else None
+        
+        if not biz_id:
+            return jsonify({"success": False, "error": "No business selected"}), 400
+        
+        role = get_user_role()
+        if role not in ("owner", "admin"):
+            return jsonify({"success": False, "error": "Only owners and admins can delete all customers"}), 403
+        
+        data = request.get_json(silent=True) or {}
+        if (data.get("confirm") or "").strip() != "DELETE ALL":
+            return jsonify({"success": False, "error": "Confirmation phrase not provided"}), 400
+        
+        customers = db.get("customers", {"business_id": biz_id}, limit=5000) or []
+        if not customers:
+            return jsonify({"success": True, "deleted": 0, "message": "No customers to delete"})
+        
+        ids = [c.get("id") for c in customers if c.get("id")]
+        total_before = len(ids)
+        
+        success, failed = db.delete_many("customers", ids, biz_id)
+        
+        logger.warning(f"[DELETE-ALL] biz={biz_id} user={user.get('email') if user else '?'} "
+                       f"customers deleted: {success}/{total_before} (failed={failed})")
+        try:
+            AuditLog.log("DELETE_ALL", "customers", biz_id,
+                         details=f"Bulk delete: {success} customers removed "
+                                 f"(failed={failed}) by {user.get('email') if user else 'unknown'}")
+        except Exception:
+            pass
+        
+        return jsonify({
+            "success": True,
+            "deleted": success,
+            "failed": failed,
+            "total": total_before,
+            "message": f"Deleted {success} of {total_before} customers"
+        })
+    except Exception as e:
+        logger.error(f"[DELETE-ALL customers] Error: {e}")
+        return jsonify({"success": False, "error": str(e)[:200]}), 500
+
+
+@app.route("/api/suppliers/delete-all", methods=["POST"])
+@login_required
+def api_suppliers_delete_all():
+    """Delete ALL suppliers for the current business. Owner/admin only.
+    Requires {"confirm": "DELETE ALL"} in request body."""
+    try:
+        user = Auth.get_current_user()
+        business = Auth.get_current_business()
+        biz_id = business.get("id") if business else None
+        
+        if not biz_id:
+            return jsonify({"success": False, "error": "No business selected"}), 400
+        
+        role = get_user_role()
+        if role not in ("owner", "admin"):
+            return jsonify({"success": False, "error": "Only owners and admins can delete all suppliers"}), 403
+        
+        data = request.get_json(silent=True) or {}
+        if (data.get("confirm") or "").strip() != "DELETE ALL":
+            return jsonify({"success": False, "error": "Confirmation phrase not provided"}), 400
+        
+        suppliers = db.get("suppliers", {"business_id": biz_id}, limit=5000) or []
+        if not suppliers:
+            return jsonify({"success": True, "deleted": 0, "message": "No suppliers to delete"})
+        
+        ids = [s.get("id") for s in suppliers if s.get("id")]
+        total_before = len(ids)
+        
+        success, failed = db.delete_many("suppliers", ids, biz_id)
+        
+        logger.warning(f"[DELETE-ALL] biz={biz_id} user={user.get('email') if user else '?'} "
+                       f"suppliers deleted: {success}/{total_before} (failed={failed})")
+        try:
+            AuditLog.log("DELETE_ALL", "suppliers", biz_id,
+                         details=f"Bulk delete: {success} suppliers removed "
+                                 f"(failed={failed}) by {user.get('email') if user else 'unknown'}")
+        except Exception:
+            pass
+        
+        return jsonify({
+            "success": True,
+            "deleted": success,
+            "failed": failed,
+            "total": total_before,
+            "message": f"Deleted {success} of {total_before} suppliers"
+        })
+    except Exception as e:
+        logger.error(f"[DELETE-ALL suppliers] Error: {e}")
+        return jsonify({"success": False, "error": str(e)[:200]}), 500
 
 
 # ==================== GOODS RECEIVED VOUCHERS (GRV) ====================
@@ -34150,6 +34295,158 @@ def api_import_analyze():
             # Parse CSV with detected delimiter
             reader = csv.reader(io.StringIO(content), delimiter=detected_delimiter)
             rows = list(reader)
+        
+        # ═══════════════════════════════════════════════════════════════════════
+        # SAGE PASTEL CUSTOMER/SUPPLIER LISTING REPORT (multi-line format)
+        # The FIRST row of the raw file says "Customer Listing Report" or
+        # "Supplier Listing Report". Each customer spans 7-8 rows with labelled
+        # sub-fields (Fax:, Mobile:, Email:, Credit Limit:, Sales Rep:, Default
+        # Price List:) in col 2 and addresses in cols 0/1. We flatten to a clean
+        # table here so all downstream logic sees a normal 1-row-per-customer CSV.
+        # ═══════════════════════════════════════════════════════════════════════
+        try:
+            _first_cell = ""
+            if rows and rows[0]:
+                _first_cell = str(rows[0][0]).strip().strip('"').strip()
+            _is_listing_customers = _first_cell.lower().startswith('customer listing report')
+            _is_listing_suppliers = _first_cell.lower().startswith('supplier listing report')
+            
+            if _is_listing_customers or _is_listing_suppliers:
+                logger.info(f"[IMPORT] Detected Sage Pastel {'Supplier' if _is_listing_suppliers else 'Customer'} Listing Report (multi-line format) - flattening")
+                
+                # Find the column header row: "Name,Category,,Active,Contact Name,Telephone,Balance"
+                _start = 0
+                for _idx in range(min(15, len(rows))):
+                    _r = rows[_idx]
+                    if _r and str(_r[0]).strip().lower() == 'name' and any('category' in str(c).lower() for c in _r[:3]):
+                        _start = _idx + 1
+                        break
+                if _start == 0:
+                    _start = 4  # fallback: title + biz + page + header
+                
+                def _lcell(v):
+                    return str(v or "").strip().strip('"').strip()
+                
+                def _lmoney(v):
+                    v = _lcell(v)
+                    if not v:
+                        return 0.0
+                    v = re.sub(r'[R\s,$]', '', v)
+                    try:
+                        return float(v)
+                    except:
+                        return 0.0
+                
+                _flat_rows = []
+                _cur = None
+                _dlines = []
+                _plines = []
+                
+                def _lflush():
+                    nonlocal _cur, _dlines, _plines
+                    if not _cur or not _cur.get('name'):
+                        _cur = None
+                        _dlines = []
+                        _plines = []
+                        return
+                    _bad = {'delivery address:', 'postal address:', '', 'cash sale', 'cash account'}
+                    _dc = [x for x in _dlines if x and x.strip().lower() not in _bad]
+                    _pc = [x for x in _plines if x and x.strip().lower() not in _bad]
+                    _cur['address'] = ', '.join(_dc[:6]) if _dc else (', '.join(_pc[:6]) if _pc else '')
+                    _cur['postal_address'] = ', '.join(_pc[:6]) if _pc else ''
+                    _flat_rows.append([
+                        _cur.get('code', ''),
+                        _cur.get('name', ''),
+                        _cur.get('category', ''),
+                        _cur.get('contact_name', ''),
+                        _cur.get('phone', ''),
+                        _cur.get('cell', ''),
+                        _cur.get('fax', ''),
+                        _cur.get('email', ''),
+                        str(_cur.get('credit_limit', 0)),
+                        _cur.get('sales_rep', ''),
+                        _cur.get('price_list', ''),
+                        'Yes' if _cur.get('active', True) else 'No',
+                        str(_cur.get('balance', 0)),
+                        _cur.get('address', ''),
+                        _cur.get('postal_address', ''),
+                    ])
+                    _cur = None
+                    _dlines = []
+                    _plines = []
+                
+                for _i in range(_start, len(rows)):
+                    _row = rows[_i]
+                    if not _row or not any(str(c).strip() for c in _row):
+                        continue
+                    # Pad to 7 columns
+                    _cols = list(_row) + [''] * (7 - len(_row)) if len(_row) < 7 else list(_row)
+                    _c0 = _lcell(_cols[0])
+                    _c1 = _lcell(_cols[1]) if len(_cols) > 1 else ''
+                    _c2 = _lcell(_cols[2]) if len(_cols) > 2 else ''
+                    _c3 = _lcell(_cols[3]) if len(_cols) > 3 else ''
+                    _c4 = _lcell(_cols[4]) if len(_cols) > 4 else ''
+                    _c5 = _lcell(_cols[5]) if len(_cols) > 5 else ''
+                    _c6 = _lcell(_cols[6]) if len(_cols) > 6 else ''
+                    
+                    # Customer header row: col 0 has "CODE : NAME", col 3 is Yes/No
+                    if ' : ' in _c0 and _c3.lower() in ('yes', 'no', ''):
+                        _lflush()
+                        _parts = _c0.split(' : ', 1)
+                        _cur = {
+                            'code': _parts[0].strip(),
+                            'name': (_parts[1].strip() if len(_parts) > 1 else _c0),
+                            'category': _c1,
+                            'active': (_c3.lower() == 'yes') if _c3 else True,
+                            'contact_name': _c4,
+                            'phone': _c5,
+                            'balance': _lmoney(_c6),
+                        }
+                        _dlines = []
+                        _plines = []
+                        continue
+                    
+                    if _cur is None:
+                        continue
+                    
+                    _label = _c2.rstrip(':').strip().lower() if _c2.endswith(':') else ''
+                    
+                    if _label == 'fax':
+                        if _c4: _cur['fax'] = _c4
+                    elif _label == 'mobile':
+                        if _c4: _cur['cell'] = _c4
+                    elif _label == 'email':
+                        if _c4: _cur['email'] = _c4
+                    elif _label == 'credit limit':
+                        if _c4: _cur['credit_limit'] = _lmoney(_c4)
+                    elif _label == 'sales rep':
+                        if _c4: _cur['sales_rep'] = _c4
+                    elif _label == 'default price list':
+                        if _c4: _cur['price_list'] = _c4
+                    elif _label in ('delivery address', 'postal address'):
+                        if _c0 and _c0.lower() != 'delivery address:':
+                            _dlines.append(_c0)
+                        if _c1 and _c1.lower() != 'postal address:':
+                            _plines.append(_c1)
+                    else:
+                        # Pure address continuation
+                        if _c0:
+                            _dlines.append(_c0)
+                        if _c1:
+                            _plines.append(_c1)
+                
+                _lflush()
+                
+                if _flat_rows:
+                    # Replace rows with a clean flat table so all downstream logic
+                    # (header detection, pruning, AI mapping) works as normal.
+                    _flat_header = ['Code', 'Name', 'Category', 'Contact Name', 'Phone', 'Cell',
+                                    'Fax', 'Email', 'Credit Limit', 'Sales Rep', 'Price List',
+                                    'Active', 'Balance', 'Address', 'Postal Address']
+                    rows = [_flat_header] + _flat_rows
+                    logger.info(f"[IMPORT] Flattened Listing Report: {len(_flat_rows)} records, header={_flat_header}")
+        except Exception as _listing_err:
+            logger.error(f"[IMPORT] Listing Report flatten failed: {_listing_err} - continuing with raw rows")
         
         # === SMART HEADER DETECTION ===
         # Many accounting exports have report titles in first few rows

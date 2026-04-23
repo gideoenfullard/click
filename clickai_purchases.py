@@ -137,6 +137,7 @@ def register_purchases_routes(app, db, login_required, Auth, render_page,
                     <option value="credit">In Credit</option>
                     <option value="zero">Zero Balance</option>
                 </select>
+                {('<button onclick="confirmDeleteAllSuppliers()" class="btn btn-secondary" style="background:rgba(239,68,68,0.12);color:var(--red);border:1px solid rgba(239,68,68,0.35);" title="Delete every supplier (owner/admin only)">🗑️ Delete All</button>') if role in ("owner", "admin") else ''}
                 <a href="/supplier/new" class="btn btn-primary">+ Add Supplier</a>
             </div>
         </div>
@@ -149,6 +150,38 @@ def register_purchases_routes(app, db, login_required, Auth, render_page,
         </div>
         
         <script>
+        async function confirmDeleteAllSuppliers() {{
+            const total = {total_suppliers};
+            if (total === 0) {{
+                alert('There are no suppliers to delete.');
+                return;
+            }}
+            if (!confirm('⚠️ DELETE ALL SUPPLIERS\\n\\nThis will permanently delete all ' + total + ' suppliers from this business.\\n\\nSupplier invoices, purchase orders and financial records will NOT be deleted, but they will be orphaned (no linked supplier).\\n\\nContinue?')) return;
+            
+            const phrase = prompt('To confirm, type: DELETE ALL');
+            if ((phrase || '').trim() !== 'DELETE ALL') {{
+                alert('Confirmation phrase did not match. Nothing was deleted.');
+                return;
+            }}
+            
+            try {{
+                const resp = await fetch('/api/suppliers/delete-all', {{
+                    method: 'POST',
+                    headers: {{'Content-Type': 'application/json'}},
+                    body: JSON.stringify({{confirm: 'DELETE ALL'}})
+                }});
+                const data = await resp.json();
+                if (data.success) {{
+                    alert('✅ Deleted ' + data.deleted + ' of ' + data.total + ' suppliers.' + (data.failed ? ('\\nFailed: ' + data.failed) : ''));
+                    window.location.reload();
+                }} else {{
+                    alert('❌ ' + (data.error || 'Delete failed'));
+                }}
+            }} catch (e) {{
+                alert('❌ Network error: ' + e.message);
+            }}
+        }}
+        
         function filterSuppliers() {{
             const search = document.getElementById('supplierSearch').value.toLowerCase();
             const balanceFilter = document.getElementById('balanceFilter').value;
