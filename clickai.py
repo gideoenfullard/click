@@ -31157,9 +31157,19 @@ def api_smart_import_analyse():
                 if current is None:
                     continue
                 
-                # Sub-field rows: col 2 has a label ending with ":", col 4 has the value
+                # Sub-field rows: col 2 has a label ending with ":", col 4 has the value.
+                # Separately, col 0 / col 1 may ALSO carry address lines on the same row —
+                # Sage Pastel interleaves them. Harvest both independently.
                 label = c2.rstrip(':').strip().lower() if c2.endswith(':') else ''
                 
+                # --- Address harvest (always runs, independent of any col2 label) ---
+                _addr_labels = {'delivery address', 'postal address'}
+                if c0 and c0.lower().rstrip(':') not in _addr_labels:
+                    delivery_lines.append(c0)
+                if c1 and c1.lower().rstrip(':') not in _addr_labels:
+                    postal_lines.append(c1)
+                
+                # --- Col2 label handling ---
                 if label == 'fax':
                     if c4:
                         current['fax'] = c4
@@ -31178,18 +31188,8 @@ def api_smart_import_analyse():
                 elif label == 'default price list':
                     if c4:
                         current['price_list'] = c4
-                elif label in ('delivery address', 'postal address'):
-                    # Header sub-row for addresses - col 0 & col 1 may still carry data
-                    if c0 and c0.lower() != 'delivery address:':
-                        delivery_lines.append(c0)
-                    if c1 and c1.lower() != 'postal address:':
-                        postal_lines.append(c1)
-                else:
-                    # Pure address continuation row (no label in col 2)
-                    if c0:
-                        delivery_lines.append(c0)
-                    if c1:
-                        postal_lines.append(c1)
+                # 'delivery address' / 'postal address' labels themselves need no action —
+                # col0/col1 address harvest above already handled them.
             
             # Flush final customer
             _flush(current, delivery_lines, postal_lines)
@@ -34411,6 +34411,17 @@ def api_import_analyze():
                     
                     _label = _c2.rstrip(':').strip().lower() if _c2.endswith(':') else ''
                     
+                    # --- Address harvest (always runs, independent of any col2 label).
+                    # Sage Pastel interleaves address lines in col0/col1 with sub-field
+                    # labels in col2 on the SAME row. Skip only when col0/col1 is itself
+                    # a literal label like "Delivery Address:" / "Postal Address:".
+                    _addr_labels = {'delivery address', 'postal address'}
+                    if _c0 and _c0.lower().rstrip(':') not in _addr_labels:
+                        _dlines.append(_c0)
+                    if _c1 and _c1.lower().rstrip(':') not in _addr_labels:
+                        _plines.append(_c1)
+                    
+                    # --- Col2 label handling ---
                     if _label == 'fax':
                         if _c4: _cur['fax'] = _c4
                     elif _label == 'mobile':
@@ -34423,17 +34434,8 @@ def api_import_analyze():
                         if _c4: _cur['sales_rep'] = _c4
                     elif _label == 'default price list':
                         if _c4: _cur['price_list'] = _c4
-                    elif _label in ('delivery address', 'postal address'):
-                        if _c0 and _c0.lower() != 'delivery address:':
-                            _dlines.append(_c0)
-                        if _c1 and _c1.lower() != 'postal address:':
-                            _plines.append(_c1)
-                    else:
-                        # Pure address continuation
-                        if _c0:
-                            _dlines.append(_c0)
-                        if _c1:
-                            _plines.append(_c1)
+                    # 'delivery address' / 'postal address' labels need no action here —
+                    # col0/col1 harvest above has already dealt with those rows.
                 
                 _lflush()
                 
