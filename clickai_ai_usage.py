@@ -207,23 +207,27 @@ class AIUsageTracker:
             today = date.today()
             month_start = today.replace(day=1).isoformat()
 
-            # Simple count via Supabase — filtered by business_id and created_at
-            # Note: using db.get with filter, then sum in Python for accuracy
+            # Server-side filter (business_id + created_at >= month_start) so we only
+            # transfer this month's rows, not the entire history. Uses PostgREST's
+            # gte operator which db.get() doesn't support — hence the direct request.
+            mtd_credits = 0
+            mtd_cost_zar = 0.0
             try:
-                rows = self.db.get("ai_usage_log",
-                                    {"business_id": business_id},
-                                    limit=10000)
-                mtd_credits = 0
-                mtd_cost_zar = 0.0
-                for r in rows:
-                    created = str(r.get("created_at", ""))
-                    if created >= month_start:
+                import requests as _rq
+                url = (f"{self.db.url}/rest/v1/ai_usage_log"
+                       f"?select=credits_used,cost_zar"
+                       f"&business_id=eq.{business_id}"
+                       f"&created_at=gte.{month_start}"
+                       f"&limit=10000")
+                resp = _rq.get(url, headers=self.db.headers, timeout=10)
+                if resp.status_code == 200:
+                    for r in resp.json():
                         mtd_credits += int(r.get("credits_used") or 0)
                         mtd_cost_zar += float(r.get("cost_zar") or 0)
+                else:
+                    logger.error(f"[AI-USAGE] MTD query returned {resp.status_code}: {resp.text[:200]}")
             except Exception as e:
-                logger.error(f"[AI-USAGE] cache hydrate query failed: {e}")
-                mtd_credits = 0
-                mtd_cost_zar = 0.0
+                logger.error(f"[AI-USAGE] MTD query failed: {e}")
 
             return {
                 "business_id": business_id,
@@ -462,6 +466,9 @@ def register_ai_usage_routes(app, db, login_required, Auth, render_page=None):
         if not biz_id:
             return "No business selected", 400
 
+        # Lazy lookup of render_page — it's defined later in clickai.py than our registration runs
+        _render_page = render_page or getattr(app, "_render_page_fn", None)
+
         status = tracker.get_status(biz_id)
 
         # Get recent usage rows for the table
@@ -576,8 +583,8 @@ def register_ai_usage_routes(app, db, login_required, Auth, render_page=None):
         </div>
         '''
 
-        if render_page:
-            return render_page("AI Usage", content, user, "settings")
+        if _render_page:
+            return _render_page("AI Usage", content, user, "settings")
         return content
 
     @app.route("/api/ai-usage/status")

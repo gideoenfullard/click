@@ -17443,10 +17443,12 @@ except Exception as e:
     logger.error(f"[BIZ-GROUP] Failed to register routes: {e}")
 
 # Register AI usage tracking (Phase 1+2: live logging + visible meter)
+# Note: render_page is defined later in the file, so we don't pass it here.
+# The module will fall back to returning raw HTML which is fine for now.
 print(f"[AI-USAGE] About to register. AI_USAGE_LOADED={AI_USAGE_LOADED}", flush=True)
 try:
     if AI_USAGE_LOADED:
-        register_ai_usage_routes(app, db, login_required, Auth, render_page=render_page)
+        register_ai_usage_routes(app, db, login_required, Auth)
         print("[AI-USAGE] Tracker registered successfully", flush=True)
         logger.info("[AI-USAGE] Tracker registered successfully")
     else:
@@ -20663,6 +20665,13 @@ def render_page(title: str, content: str, user: dict = None, active: str = "") -
     </script>
 </body>
 </html>'''
+
+
+# Expose render_page to modules that need it (e.g. ai_usage tracker registered earlier)
+try:
+    app._render_page_fn = render_page
+except Exception:
+    pass
 
 
 def get_ai_bar() -> str:
