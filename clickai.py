@@ -244,6 +244,14 @@ try:
 except ImportError:
     CONTRACTS_ROUTES_LOADED = False
 
+try:
+    from clickai_ai_usage import (
+        AIUsageTracker, register_ai_usage_routes, get_usage_meter_html
+    )
+    AI_USAGE_LOADED = True
+except ImportError:
+    AI_USAGE_LOADED = False
+
 import io
 
 # Fulltech Smart Quote addon (optional - only loads if file exists)
@@ -10458,6 +10466,28 @@ Fokus op verkope en invorderings vir die res van die maand."
                 
                 if response.status_code == 200:
                     data = response.json()
+                    # ─── AI-USAGE TRACKING ───
+                    try:
+                        if hasattr(app, "_ai_usage_tracker"):
+                            biz = Auth.get_current_business()
+                            usr = Auth.get_current_user()
+                            biz_id = biz.get("id") if biz else None
+                            usr_id = usr.get("id") if usr else None
+                            if biz_id:
+                                app._ai_usage_tracker.log_usage(
+                                    business_id=biz_id,
+                                    tool="zane_chat",
+                                    model=data.get("model", cls.MODEL_SONNET),
+                                    input_tokens=int((data.get("usage") or {}).get("input_tokens", 0)),
+                                    output_tokens=int((data.get("usage") or {}).get("output_tokens", 0)),
+                                    cache_read_tokens=int((data.get("usage") or {}).get("cache_read_input_tokens", 0)),
+                                    cache_write_tokens=int((data.get("usage") or {}).get("cache_creation_input_tokens", 0)),
+                                    user_id=usr_id,
+                                    success=True,
+                                )
+                    except Exception as _track_err:
+                        logger.error(f"[AI-USAGE] zane tracking skipped: {_track_err}")
+                    # ─── END TRACKING ───
                     result = data.get("content", [{}])[0].get("text", "")
                     if result:
                         logger.info("[BRAIN] Claude Sonnet success")
@@ -17407,6 +17437,14 @@ try:
 except Exception as e:
     logger.error(f"[BIZ-GROUP] Failed to register routes: {e}")
 
+# Register AI usage tracking (Phase 1+2: live logging + visible meter)
+try:
+    if AI_USAGE_LOADED:
+        register_ai_usage_routes(app, db, login_required, Auth, render_page=render_page)
+        logger.info("[AI-USAGE] Tracker registered successfully")
+except Exception as e:
+    logger.error(f"[AI-USAGE] Failed to register routes: {e}")
+
 # === DEBUG: Temporary endpoint to diagnose business group dropdown ===
 @app.route("/api/debug-businesses")
 @login_required
@@ -19795,10 +19833,21 @@ def render_page(title: str, content: str, user: dict = None, active: str = "") -
     
     user_html = ""
     _user_theme = request.cookies.get("clickai_theme", "midnight")
+
+    # AI usage meter HTML (empty if tracker not loaded or no business) — renders inline in header
+    _ai_meter_html = ""
+    try:
+        if AI_USAGE_LOADED and biz_id and hasattr(app, "_ai_usage_tracker"):
+            _ai_meter_html = get_usage_meter_html(app._ai_usage_tracker, biz_id)
+    except Exception as _meter_err:
+        logger.error(f"[AI-USAGE] meter render failed: {_meter_err}")
+        _ai_meter_html = ""
+
     if user:
         user_html = f'''
         <div class="user-info" style="display:flex;align-items:center;gap:10px;">
             {business_html}
+            {_ai_meter_html}
             <div class="theme-picker-btn" onclick="document.getElementById('themeDrop').classList.toggle('show')" title="Theme">
                 <div class="theme-dot" style="background:var(--primary);"></div>
                 <span>Theme</span>
@@ -25434,7 +25483,7 @@ def _supplier_form(v=None, is_edit=False):
                 <div class="fg3"><div><label class="fl">Code</label><input type="text" name="code" class="fi" value="{val('code')}" placeholder="Auto: AFR001"><div class="fh">Leave empty — auto-generates from name</div></div><div><label class="fl">Category</label><input type="text" name="category" class="fi" value="{val('category')}" placeholder="e.g. Building Materials"></div><div><label class="fl">Currency</label><select name="currency" class="fi">{_cur_opts(val('currency','ZAR'))}</select></div></div>
             </div>
             <div class="fs"><h3>👤 Primary Contact</h3>
-                <div class="fg2"><div><label class="fl">Contact Person</label><input type="text" name="contact_name" class="fi" value="{val('contact_name')}" placeholder="Full name"></div><div><label class="fl">Email</label><input type="text" name="email" class="fi" value="{val('email')}" placeholder="main@company.com (separate multiple with ;)"></div></div>
+                <div class="fg2"><div><label class="fl">Contact Person</label><input type="text" name="contact_name" class="fi" value="{val('contact_name')}" placeholder="Full name"></div><div><label class="fl">Email</label><input type="email" name="email" class="fi" value="{val('email')}" placeholder="main@company.com"></div></div>
                 <div class="fg3"><div><label class="fl">Phone (Landline)</label><input type="text" name="phone" class="fi" value="{val('phone')}" placeholder="011 123 4567"></div><div><label class="fl">Cell / Mobile</label><input type="text" name="cell" class="fi" value="{val('cell')}" placeholder="082 123 4567"></div><div><label class="fl">Fax</label><input type="text" name="fax" class="fi" value="{val('fax')}" placeholder="011 123 4568"></div></div>
                 <div class="fg1"><label class="fl">Website</label><input type="text" name="website" class="fi" value="{val('website')}" placeholder="https://www.company.co.za"></div>
             </div>
@@ -25489,7 +25538,7 @@ def _customer_form(v=None, is_edit=False):
                 <div class="fg3"><div><label class="fl">Code</label><input type="text" name="code" class="fi" value="{val('code')}" placeholder="Auto: ABC001"><div class="fh">Leave empty — auto-generates from name</div></div><div><label class="fl">Category</label><input type="text" name="category" class="fi" value="{val('category')}" placeholder="e.g. Construction"></div><div><label class="fl">Currency</label><select name="currency" class="fi">{_cur_opts(val('currency','ZAR'))}</select></div></div>
             </div>
             <div class="fs"><h3>👤 Primary Contact</h3>
-                <div class="fg2"><div><label class="fl">Contact Person</label><input type="text" name="contact_name" class="fi" value="{val('contact_name')}" placeholder="Full name"></div><div><label class="fl">Email</label><input type="text" name="email" class="fi" value="{val('email')}" placeholder="main@company.com (separate multiple with ;)"></div></div>
+                <div class="fg2"><div><label class="fl">Contact Person</label><input type="text" name="contact_name" class="fi" value="{val('contact_name')}" placeholder="Full name"></div><div><label class="fl">Email</label><input type="email" name="email" class="fi" value="{val('email')}" placeholder="main@company.com"></div></div>
                 <div class="fg3"><div><label class="fl">Phone (Landline)</label><input type="text" name="phone" class="fi" value="{val('phone')}" placeholder="011 123 4567"></div><div><label class="fl">Cell / Mobile</label><input type="text" name="cell" class="fi" value="{val('cell')}" placeholder="082 123 4567"></div><div><label class="fl">Fax</label><input type="text" name="fax" class="fi" value="{val('fax')}" placeholder="011 123 4568"></div></div>
                 <div class="fg1"><label class="fl">Website</label><input type="text" name="website" class="fi" value="{val('website')}" placeholder="https://www.customer.co.za"></div>
             </div>
@@ -30824,9 +30873,6 @@ def smart_import_page():
                         if (r.status === 'imported') {
                             imported++;
                             addLog(r.name, 'success');
-                        } else if (r.status === 'updated') {
-                            imported++;
-                            addLog(r.name + ' (updated)', 'success');
                         } else if (r.status === 'skipped') {
                             skipped++;
                             addLog(r.name + ' (already exists)', 'skip');
@@ -45748,6 +45794,24 @@ If ANY number is not visible on the document, set it to 0. Python handles all ma
                             ]
                         }]
                     )
+                    # ─── AI-USAGE TRACKING (bank statement split) ───
+                    try:
+                        if hasattr(app, "_ai_usage_tracker") and biz_id:
+                            _u = getattr(part_message, "usage", None)
+                            app._ai_usage_tracker.log_usage(
+                                business_id=biz_id,
+                                tool="scan_bank",
+                                model=getattr(part_message, "model", "claude-sonnet-4-6"),
+                                input_tokens=int(getattr(_u, "input_tokens", 0) or 0),
+                                output_tokens=int(getattr(_u, "output_tokens", 0) or 0),
+                                cache_read_tokens=int(getattr(_u, "cache_read_input_tokens", 0) or 0),
+                                cache_write_tokens=int(getattr(_u, "cache_creation_input_tokens", 0) or 0),
+                                metadata={"part": part_name, "split": True},
+                                success=True,
+                            )
+                    except Exception as _track_err:
+                        logger.error(f"[AI-USAGE] scan tracking skipped: {_track_err}")
+                    # ─── END TRACKING ───
                     
                     part_text = part_message.content[0].text.strip()
                     part_data_json = extract_json_from_text(part_text)
@@ -45797,6 +45861,24 @@ If ANY number is not visible on the document, set it to 0. Python handles all ma
                         ]
                     }]
                 )
+                # ─── AI-USAGE TRACKING (bank fallback) ───
+                try:
+                    if hasattr(app, "_ai_usage_tracker") and biz_id:
+                        _u = getattr(message, "usage", None)
+                        app._ai_usage_tracker.log_usage(
+                            business_id=biz_id,
+                            tool="scan_bank",
+                            model=getattr(message, "model", "claude-sonnet-4-6"),
+                            input_tokens=int(getattr(_u, "input_tokens", 0) or 0),
+                            output_tokens=int(getattr(_u, "output_tokens", 0) or 0),
+                            cache_read_tokens=int(getattr(_u, "cache_read_input_tokens", 0) or 0),
+                            cache_write_tokens=int(getattr(_u, "cache_creation_input_tokens", 0) or 0),
+                            metadata={"fallback": True},
+                            success=True,
+                        )
+                except Exception as _track_err:
+                    logger.error(f"[AI-USAGE] scan tracking skipped: {_track_err}")
+                # ─── END TRACKING ───
                 response_text = message.content[0].text.strip()
                 extracted = extract_json_from_text(response_text)
                 if not extracted:
@@ -45814,6 +45896,24 @@ If ANY number is not visible on the document, set it to 0. Python handles all ma
                     ]
                 }]
             )
+            # ─── AI-USAGE TRACKING (single document scan) ───
+            try:
+                if hasattr(app, "_ai_usage_tracker") and biz_id:
+                    _u = getattr(message, "usage", None)
+                    app._ai_usage_tracker.log_usage(
+                        business_id=biz_id,
+                        tool="scan_doc",
+                        model=getattr(message, "model", "claude-sonnet-4-6"),
+                        input_tokens=int(getattr(_u, "input_tokens", 0) or 0),
+                        output_tokens=int(getattr(_u, "output_tokens", 0) or 0),
+                        cache_read_tokens=int(getattr(_u, "cache_read_input_tokens", 0) or 0),
+                        cache_write_tokens=int(getattr(_u, "cache_creation_input_tokens", 0) or 0),
+                        metadata={"scan_type": scan_type, "media_type": media_type},
+                        success=True,
+                    )
+            except Exception as _track_err:
+                logger.error(f"[AI-USAGE] scan tracking skipped: {_track_err}")
+            # ─── END TRACKING ───
         
             response_text = message.content[0].text.strip()
             extracted = extract_json_from_text(response_text)
