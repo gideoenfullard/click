@@ -249,8 +249,13 @@ try:
         AIUsageTracker, register_ai_usage_routes, get_usage_meter_html
     )
     AI_USAGE_LOADED = True
-except ImportError:
+    print("[AI-USAGE] Module imported successfully", flush=True)
+except ImportError as _aiu_err:
     AI_USAGE_LOADED = False
+    print(f"[AI-USAGE] ImportError: {_aiu_err}", flush=True)
+except Exception as _aiu_err:
+    AI_USAGE_LOADED = False
+    print(f"[AI-USAGE] Other error during import: {_aiu_err}", flush=True)
 
 import io
 
@@ -17438,12 +17443,19 @@ except Exception as e:
     logger.error(f"[BIZ-GROUP] Failed to register routes: {e}")
 
 # Register AI usage tracking (Phase 1+2: live logging + visible meter)
+print(f"[AI-USAGE] About to register. AI_USAGE_LOADED={AI_USAGE_LOADED}", flush=True)
 try:
     if AI_USAGE_LOADED:
         register_ai_usage_routes(app, db, login_required, Auth, render_page=render_page)
+        print("[AI-USAGE] Tracker registered successfully", flush=True)
         logger.info("[AI-USAGE] Tracker registered successfully")
+    else:
+        print("[AI-USAGE] Skipped registration (AI_USAGE_LOADED is False)", flush=True)
 except Exception as e:
+    print(f"[AI-USAGE] Failed to register routes: {e}", flush=True)
     logger.error(f"[AI-USAGE] Failed to register routes: {e}")
+    import traceback
+    print(traceback.format_exc(), flush=True)
 
 # === DEBUG: Temporary endpoint to diagnose business group dropdown ===
 @app.route("/api/debug-businesses")
