@@ -1258,6 +1258,39 @@ Keep it direct, practical, and thorough. Use South African business context (Ran
                 messages=[{"role": "user", "content": prompt}],
             )
 
+            # ─── AI-USAGE TRACKING ───
+            try:
+                if hasattr(app, "_ai_usage_tracker"):
+                    # biz_id: try Auth first, then request.json, then session
+                    _biz = Auth.get_current_business()
+                    _biz_id = _biz.get("id") if _biz else None
+                    if not _biz_id:
+                        _biz_id = (data or {}).get("business_id")
+                    if not _biz_id:
+                        try:
+                            from flask import session as _sess
+                            _biz_id = _sess.get("current_business_id") or _sess.get("business_id")
+                        except Exception:
+                            _biz_id = None
+                    _usr = Auth.get_current_user()
+                    _usr_id = _usr.get("id") if _usr else None
+                    if _biz_id:
+                        _usage = getattr(response, "usage", None)
+                        app._ai_usage_tracker.log_usage(
+                            business_id=_biz_id,
+                            tool="gl_analysis",
+                            model=getattr(response, "model", "claude-haiku-4-5-20251001"),
+                            input_tokens=int(getattr(_usage, "input_tokens", 0) or 0),
+                            output_tokens=int(getattr(_usage, "output_tokens", 0) or 0),
+                            cache_read_tokens=int(getattr(_usage, "cache_read_input_tokens", 0) or 0),
+                            cache_write_tokens=int(getattr(_usage, "cache_creation_input_tokens", 0) or 0),
+                            user_id=_usr_id,
+                            success=True,
+                        )
+            except Exception as _track_err:
+                logger.error(f"[AI-USAGE] gl_analysis tracking skipped: {_track_err}")
+            # ─── END TRACKING ───
+
             analysis_html = ""
             for block in response.content:
                 if hasattr(block, "text"):

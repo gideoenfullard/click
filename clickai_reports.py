@@ -2234,6 +2234,26 @@ def register_report_routes(app, db, login_required, Auth, render_page,
                     ai_prompt = f"Analyze this trial balance file columns.\nCOLUMNS: {col_list}\nSAMPLE:\n{sample_rows}\nReturn ONLY JSON: {{\"account_code\": \"col or null\", \"account_name\": \"col\", \"debit\": \"col or null\", \"credit\": \"col or null\", \"balance\": \"col or null\"}}"
                     client = _anthropic_client
                     ai_resp = client.messages.create(model="claude-sonnet-4-6", max_tokens=300, messages=[{"role": "user", "content": ai_prompt}])
+                    # ─── AI-USAGE TRACKING ───
+                    try:
+                        if hasattr(app, "_ai_usage_tracker") and biz_id:
+                            _usr = Auth.get_current_user()
+                            _usr_id = _usr.get("id") if _usr else None
+                            _usage = getattr(ai_resp, "usage", None)
+                            app._ai_usage_tracker.log_usage(
+                                business_id=biz_id,
+                                tool="tb_column_detect",
+                                model=getattr(ai_resp, "model", "claude-sonnet-4-6"),
+                                input_tokens=int(getattr(_usage, "input_tokens", 0) or 0),
+                                output_tokens=int(getattr(_usage, "output_tokens", 0) or 0),
+                                cache_read_tokens=int(getattr(_usage, "cache_read_input_tokens", 0) or 0),
+                                cache_write_tokens=int(getattr(_usage, "cache_creation_input_tokens", 0) or 0),
+                                user_id=_usr_id,
+                                success=True,
+                            )
+                    except Exception as _track_err:
+                        logger.error(f"[AI-USAGE] tb_column_detect tracking skipped: {_track_err}")
+                    # ─── END TRACKING ───
                     ai_text = ai_resp.content[0].text.strip()
                     if '```' in ai_text: ai_text = ai_text.split('```')[1].replace('json', '').strip()
                     ai_map = json.loads(ai_text)
@@ -3763,6 +3783,29 @@ def register_report_routes(app, db, login_required, Auth, render_page,
                 messages=[{"role": "user", "content": insights_prompt}]
             )
             
+            # ─── AI-USAGE TRACKING ───
+            try:
+                if hasattr(app, "_ai_usage_tracker"):
+                    _biz_id = business.get("id") if business else None
+                    _usr = Auth.get_current_user()
+                    _usr_id = _usr.get("id") if _usr else None
+                    if _biz_id:
+                        _usage = getattr(message, "usage", None)
+                        app._ai_usage_tracker.log_usage(
+                            business_id=_biz_id,
+                            tool="tb_insights",
+                            model=getattr(message, "model", "claude-sonnet-4-6"),
+                            input_tokens=int(getattr(_usage, "input_tokens", 0) or 0),
+                            output_tokens=int(getattr(_usage, "output_tokens", 0) or 0),
+                            cache_read_tokens=int(getattr(_usage, "cache_read_input_tokens", 0) or 0),
+                            cache_write_tokens=int(getattr(_usage, "cache_creation_input_tokens", 0) or 0),
+                            user_id=_usr_id,
+                            success=True,
+                        )
+            except Exception as _track_err:
+                logger.error(f"[AI-USAGE] tb_insights tracking skipped: {_track_err}")
+            # ─── END TRACKING ───
+            
             # Log truncation
             if message.stop_reason == "max_tokens":
                 logger.warning(f"[TB INSIGHTS] ⚠️ TRUNCATED — hit max_tokens")
@@ -4105,6 +4148,29 @@ def register_report_routes(app, db, login_required, Auth, render_page,
                         max_tokens=500,
                         messages=[{"role": "user", "content": ai_prompt}]
                     )
+                    
+                    # ─── AI-USAGE TRACKING ───
+                    try:
+                        if hasattr(app, "_ai_usage_tracker"):
+                            _biz_id = business.get("id") if business else None
+                            _usr = Auth.get_current_user()
+                            _usr_id = _usr.get("id") if _usr else None
+                            if _biz_id:
+                                _usage = getattr(ai_response, "usage", None)
+                                app._ai_usage_tracker.log_usage(
+                                    business_id=_biz_id,
+                                    tool="tb_column_detect",
+                                    model=getattr(ai_response, "model", "claude-sonnet-4-6"),
+                                    input_tokens=int(getattr(_usage, "input_tokens", 0) or 0),
+                                    output_tokens=int(getattr(_usage, "output_tokens", 0) or 0),
+                                    cache_read_tokens=int(getattr(_usage, "cache_read_input_tokens", 0) or 0),
+                                    cache_write_tokens=int(getattr(_usage, "cache_creation_input_tokens", 0) or 0),
+                                    user_id=_usr_id,
+                                    success=True,
+                                )
+                    except Exception as _track_err:
+                        logger.error(f"[AI-USAGE] tb_column_detect tracking skipped: {_track_err}")
+                    # ─── END TRACKING ───
                     
                     ai_text = ai_response.content[0].text.strip()
                     # Clean markdown if present
@@ -4518,6 +4584,31 @@ def register_report_routes(app, db, login_required, Auth, render_page,
                 system=system_prompt,
                 messages=[{"role": "user", "content": f"{data_for_ai}\n\n{prompt}"}]
             )
+            
+            # ─── AI-USAGE TRACKING ───
+            try:
+                if hasattr(app, "_ai_usage_tracker"):
+                    _biz = Auth.get_current_business()
+                    _biz_id = _biz.get("id") if _biz else None
+                    _usr = Auth.get_current_user()
+                    _usr_id = _usr.get("id") if _usr else None
+                    if _biz_id:
+                        _usage = getattr(message, "usage", None)
+                        app._ai_usage_tracker.log_usage(
+                            business_id=_biz_id,
+                            tool="tb_smart_report",
+                            model=getattr(message, "model", "claude-sonnet-4-6"),
+                            input_tokens=int(getattr(_usage, "input_tokens", 0) or 0),
+                            output_tokens=int(getattr(_usage, "output_tokens", 0) or 0),
+                            cache_read_tokens=int(getattr(_usage, "cache_read_input_tokens", 0) or 0),
+                            cache_write_tokens=int(getattr(_usage, "cache_creation_input_tokens", 0) or 0),
+                            user_id=_usr_id,
+                            success=True,
+                            metadata={"report_type": report_type},
+                        )
+            except Exception as _track_err:
+                logger.error(f"[AI-USAGE] tb_smart_report tracking skipped: {_track_err}")
+            # ─── END TRACKING ───
             
             report = message.content[0].text if message.content else ""
             
