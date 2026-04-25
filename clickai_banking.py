@@ -164,7 +164,7 @@ def register_banking_routes(app, db, login_required, Auth, render_page,
                 '''
             
             return f'''
-            <tr data-id="{txn_id}">
+            <tr data-id="{txn_id}" data-debit="{debit}" data-credit="{credit}">
                 <td style="white-space:nowrap;">{txn.get("date", "-")}</td>
                 <td>
                     <div style="max-width:300px;">{desc}</div>
@@ -468,6 +468,8 @@ def register_banking_routes(app, db, login_required, Auth, render_page,
                 if (data.success) {{
                     const row = document.querySelector(`tr[data-id="${{id}}"]`);
                     if (row) {{
+                        // Mark as allocated IMMEDIATELY so updateCounts excludes it from totals
+                        row.dataset.allocated = '1';
                         const cells = row.querySelectorAll('td');
                         const lastCell = cells[cells.length - 1];
                         lastCell.innerHTML = `<span style="background:var(--green);color:white;padding:4px 10px;border-radius:4px;font-size:12px;font-weight:bold;">GOOD: ${{category}}</span>`;
@@ -850,8 +852,70 @@ def register_banking_routes(app, db, login_required, Auth, render_page,
         }}
         
         function updateCounts() {{
-            // Simple reload after a few categorizations
-            // Could be smarter but this works
+            // Live-update the HUD counters at the top of the page when a transaction is allocated.
+            // Counts only rows that are NOT yet allocated in this session (data-allocated attr unset).
+            try {{
+                const total = {total_count};
+                
+                function liveRows(secId) {{
+                    return document.querySelectorAll('#' + secId + ' tbody tr[data-id]:not([data-allocated])');
+                }}
+                
+                const autoRows = liveRows('section-auto');
+                const sugRows = liveRows('section-suggested');
+                const needsRows = liveRows('section-needs');
+                
+                const autoCount = autoRows.length;
+                const sugCount = sugRows.length;
+                const needsCount = needsRows.length;
+                const doneCount = total - (autoCount + sugCount + needsCount);
+                
+                // Sum unmatched debit/credit only on still-open rows (auto + suggested + needs)
+                let unmatchedDr = 0, unmatchedCr = 0;
+                [autoRows, sugRows, needsRows].forEach(set => {{
+                    set.forEach(r => {{
+                        unmatchedDr += parseFloat(r.dataset.debit || 0) || 0;
+                        unmatchedCr += parseFloat(r.dataset.credit || 0) || 0;
+                    }});
+                }});
+                
+                const matchPct = Math.round((doneCount / Math.max(total, 1)) * 100);
+                
+                function fmtMoney(v) {{
+                    return 'R ' + Number(v).toLocaleString('en-ZA', {{minimumFractionDigits:2, maximumFractionDigits:2}});
+                }}
+                
+                // Update each HUD flank item by matching its label text
+                const hudItems = document.querySelectorAll('.j-hud-wrap .j-fi');
+                hudItems.forEach(item => {{
+                    const lbl = item.querySelector('.j-fl');
+                    const val = item.querySelector('.j-fv');
+                    if (!lbl || !val) return;
+                    const t = (lbl.textContent || '').trim().toUpperCase();
+                    if (t === 'TRANSACTIONS') val.textContent = String(total);
+                    else if (t === 'RECONCILED') val.textContent = String(doneCount);
+                    else if (t === 'AUTO MATCHED') val.textContent = String(autoCount);
+                    else if (t === 'SUGGESTED') val.textContent = String(sugCount);
+                    else if (t === 'NEEDS REVIEW') val.textContent = String(needsCount);
+                    else if (t === 'UNMATCHED DR') val.textContent = fmtMoney(unmatchedDr);
+                    else if (t === 'UNMATCHED CR') val.textContent = fmtMoney(unmatchedCr);
+                    else if (t === 'MATCH RATE') val.textContent = matchPct + '%';
+                }});
+                
+                // Update the alert ticker (needs review banner) — hide it if everything done
+                const ticker = document.querySelector('.j-hud-wrap .j-ticker');
+                if (ticker) {{
+                    if (needsCount === 0) {{
+                        ticker.style.display = 'none';
+                    }} else {{
+                        const msg = ticker.querySelector('.jt-msg');
+                        if (msg) msg.innerHTML = needsCount + ' transactions need attention &mdash; ' + fmtMoney(unmatchedDr) + ' debits, ' + fmtMoney(unmatchedCr) + ' credits unmatched';
+                    }}
+                }}
+            }} catch(e) {{
+                // Silent fail — counter is cosmetic, never break the page
+                console.warn('updateCounts failed', e);
+            }}
         }}
         
         async function deleteAllTransactions() {{
