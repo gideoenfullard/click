@@ -23923,6 +23923,165 @@ def is_jarvis():
         return False
 
 
+def build_linked_documents_panel(db, biz_id, doc_type, doc_id, doc_data=None):
+    """
+    Build a 'Linked Documents' panel showing all documents related to the given doc.
+    Returns clickable HTML so the user never has to search.
+    
+    Supported doc_types: 'invoice', 'quote', 'delivery_note', 'credit_note', 'customer'
+    
+    For 'customer', doc_id is customer_id and the panel shows totals/counts of related docs.
+    For document types, the panel shows the linked customer + sibling docs in both directions.
+    """
+    if not biz_id or not doc_id:
+        return ""
+    
+    try:
+        # Load the source doc if not provided
+        if doc_data is None:
+            table_map = {
+                "invoice": "invoices",
+                "quote": "quotes",
+                "delivery_note": "delivery_notes",
+                "credit_note": "credit_notes",
+                "customer": "customers",
+            }
+            tbl = table_map.get(doc_type)
+            if not tbl:
+                return ""
+            doc_data = db.get_one(tbl, doc_id) or {}
+        
+        # Helpers to render link rows
+        def _link_row(icon, label, url, ref, sub=""):
+            sub_html = f' <span style="color:var(--text-muted);font-size:11px;">{safe_string(sub)}</span>' if sub else ""
+            return f'''<a href="{url}" style="display:flex;align-items:center;gap:8px;padding:8px 10px;border-radius:6px;background:var(--bg);border:1px solid var(--border);text-decoration:none;color:var(--text);transition:all 0.15s;margin-bottom:6px;"
+                onmouseover="this.style.borderColor='var(--primary)';this.style.background='rgba(139,92,246,0.05)';"
+                onmouseout="this.style.borderColor='var(--border)';this.style.background='var(--bg)';">
+                <span style="font-size:16px;">{icon}</span>
+                <span style="font-size:12px;color:var(--text-muted);min-width:80px;">{label}</span>
+                <span style="font-weight:600;color:var(--primary);">{safe_string(ref)}</span>
+                {sub_html}
+            </a>'''
+        
+        rows = []
+        
+        # ── Resolve invoice number this doc belongs to (used to find CNs/DNs) ──
+        invoice_id = None
+        invoice_number = None
+        quote_id = None
+        quote_number = None
+        customer_id = doc_data.get("customer_id")
+        customer_name = doc_data.get("customer_name", "")
+        
+        if doc_type == "invoice":
+            invoice_id = doc_id
+            invoice_number = doc_data.get("invoice_number", "")
+            quote_id = doc_data.get("source_quote_id")
+            quote_number = doc_data.get("source_quote_number", "")
+        elif doc_type == "quote":
+            quote_id = doc_id
+            quote_number = doc_data.get("quote_number", "")
+            invoice_id = doc_data.get("invoice_id")
+            invoice_number = doc_data.get("invoice_number", "")
+        elif doc_type == "delivery_note":
+            invoice_id = doc_data.get("source_invoice_id")
+            invoice_number = doc_data.get("source_invoice_number", "")
+        elif doc_type == "credit_note":
+            invoice_id = doc_data.get("invoice_id")
+            invoice_number = doc_data.get("invoice_number", "")
+        
+        # ── For DN/CN: hop to invoice to get the source quote ──
+        if doc_type in ("delivery_note", "credit_note") and invoice_id and not quote_id:
+            try:
+                _inv = db.get_one("invoices", invoice_id) or {}
+                quote_id = _inv.get("source_quote_id")
+                quote_number = _inv.get("source_quote_number", "")
+                if not customer_id:
+                    customer_id = _inv.get("customer_id")
+                    customer_name = _inv.get("customer_name", customer_name)
+            except Exception:
+                pass
+        
+        # ── Customer link (always show if we have one) ──
+        if customer_id and doc_type != "customer":
+            rows.append(_link_row("👤", "Customer", f"/customer/{customer_id}", customer_name or "View customer"))
+        
+        # ── Source quote (for invoice / DN / CN) ──
+        if doc_type != "quote" and quote_id:
+            rows.append(_link_row("📋", "Quote", f"/quote/{quote_id}", quote_number or "View quote"))
+        
+        # ── Source invoice (for quote / DN / CN) ──
+        if doc_type != "invoice" and invoice_id:
+            rows.append(_link_row("🧾", "Invoice", f"/invoice/{invoice_id}", invoice_number or "View invoice"))
+        
+        # ── For QUOTE: show resulting invoice if exists ──
+        # (already handled above via invoice_id from quote.invoice_id)
+        
+        # ── For INVOICE / CN / DN: find sibling DNs from this invoice ──
+        if invoice_number and doc_type != "delivery_note":
+            try:
+                all_dns = db.get("delivery_notes", {"business_id": biz_id}) or []
+                siblings = [d for d in all_dns 
+                            if (d.get("source_invoice_id") == invoice_id 
+                                or d.get("source_invoice_number") == invoice_number)
+                            and d.get("id") != doc_id]
+                for d in siblings[:5]:
+                    dn_num = d.get("dn_number") or d.get("delivery_note_number") or "DN"
+                    dn_date = (d.get("date") or "")[:10]
+                    rows.append(_link_row("📦", "Delivery Note", f"/delivery-note/{d.get('id')}", dn_num, dn_date))
+            except Exception:
+                pass
+        
+        # ── For INVOICE / DN / CN: find sibling CNs from this invoice ──
+        if invoice_number and doc_type != "credit_note":
+            try:
+                all_cns = db.get("credit_notes", {"business_id": biz_id}) or []
+                siblings = [c for c in all_cns 
+                            if (c.get("invoice_id") == invoice_id 
+                                or c.get("invoice_number") == invoice_number)
+                            and c.get("id") != doc_id]
+                for c in siblings[:5]:
+                    cn_num = c.get("credit_note_number") or c.get("cn_number") or "CN"
+                    cn_date = (c.get("date") or c.get("created_at") or "")[:10]
+                    cn_total = c.get("total", 0)
+                    sub = f"{cn_date} • {money(cn_total)}" if cn_total else cn_date
+                    rows.append(_link_row("↩️", "Credit Note", f"/credit-note/{c.get('id')}", cn_num, sub))
+            except Exception:
+                pass
+        
+        # ── For QUOTE: also scan ALL invoices that source this quote (in case multiple) ──
+        if doc_type == "quote":
+            try:
+                all_invs = db.get("invoices", {"business_id": biz_id}) or []
+                for inv in all_invs:
+                    if inv.get("source_quote_id") == doc_id and inv.get("id") != invoice_id:
+                        i_num = inv.get("invoice_number", "")
+                        i_date = (inv.get("date") or "")[:10]
+                        rows.append(_link_row("🧾", "Invoice", f"/invoice/{inv.get('id')}", i_num, i_date))
+            except Exception:
+                pass
+        
+        if not rows:
+            return ""
+        
+        return f'''
+        <div style="background:var(--card);border:1px solid var(--border);border-radius:10px;padding:16px;margin-bottom:20px;">
+            <div style="display:flex;align-items:center;gap:8px;margin-bottom:12px;">
+                <span style="font-size:13px;font-weight:600;color:var(--text);letter-spacing:0.5px;">🔗 LINKED DOCUMENTS</span>
+                <span style="font-size:11px;color:var(--text-muted);">— click to navigate</span>
+            </div>
+            {"".join(rows)}
+        </div>
+        '''
+    except Exception as _e:
+        # Silent fail — panel is helpful but never break the page
+        try:
+            logger.warning(f"build_linked_documents_panel failed: {_e}")
+        except Exception:
+            pass
+        return ""
+
+
 def has_reactor_hud():
     """Check if current theme supports the reactor HUD (all dark themes)"""
     try:
@@ -24964,17 +25123,23 @@ def customer_view(customer_id):
         </tr>
         '''
     
-    # ── CROSS-REFERENCE MAP: Link Invoices ↔ CN/DN ──
-    _inv_to_cn = {}   # invoice_number → [cn_numbers]
-    _inv_to_dn = {}   # invoice_number → [dn_numbers]
+    # ── CROSS-REFERENCE MAP: Link Invoices ↔ CN/DN (with IDs for clickable links) ──
+    _inv_to_cn = {}   # invoice_number → [{number, id}]
+    _inv_to_dn = {}   # invoice_number → [{number, id}]
     for cn in credit_notes:
         _cn_inv = cn.get("invoice_number", "")
         if _cn_inv:
-            _inv_to_cn.setdefault(_cn_inv, []).append(cn.get("credit_note_number", "CN"))
+            _inv_to_cn.setdefault(_cn_inv, []).append({
+                "number": cn.get("credit_note_number", "CN"),
+                "id": cn.get("id"),
+            })
     for dn in delivery_notes:
         _dn_inv = dn.get("source_invoice_number", "") or dn.get("invoice_number", "")
         if _dn_inv:
-            _inv_to_dn.setdefault(_dn_inv, []).append(dn.get("dn_number", dn.get("delivery_note_number", "DN")))
+            _inv_to_dn.setdefault(_dn_inv, []).append({
+                "number": dn.get("dn_number", dn.get("delivery_note_number", "DN")),
+                "id": dn.get("id"),
+            })
     
     invoices_html = ""
     for inv in invoices[:200]:
@@ -24990,17 +25155,23 @@ def customer_view(customer_id):
                 _inv_method = inv.get("payment_method", "").upper()
             _inv_paid_info = f' <span style="font-size:10px;color:var(--text-muted);">({inv.get("paid_date", "")[:10]}{" - " + _inv_method if _inv_method else ""})</span>'
         
-        # Build linked docs column (CN/DN references)
+        # Build linked docs column (CN/DN references) — CLICKABLE links
         _inv_num = inv.get("invoice_number", "")
         _linked_docs_parts = []
         _cn_list = _inv_to_cn.get(_inv_num, [])
         if _cn_list:
-            _cn_labels = ", ".join(_cn_list[:2])
-            _linked_docs_parts.append(f'<span style="color:var(--red);font-size:11px;">{_cn_labels}</span>')
+            _cn_links = ", ".join(
+                f'<a href="/credit-note/{c["id"]}" onclick="event.stopPropagation();" style="color:var(--red);text-decoration:none;">{safe_string(c["number"])}</a>'
+                for c in _cn_list[:2]
+            )
+            _linked_docs_parts.append(f'<span style="font-size:11px;">{_cn_links}</span>')
         _dn_list = _inv_to_dn.get(_inv_num, [])
         if _dn_list:
-            _dn_labels = ", ".join(_dn_list[:2])
-            _linked_docs_parts.append(f'<span style="color:#3b82f6;font-size:11px;">{_dn_labels}</span>')
+            _dn_links = ", ".join(
+                f'<a href="/delivery-note/{d["id"]}" onclick="event.stopPropagation();" style="color:#3b82f6;text-decoration:none;">{safe_string(d["number"])}</a>'
+                for d in _dn_list[:2]
+            )
+            _linked_docs_parts.append(f'<span style="font-size:11px;">{_dn_links}</span>')
         _linked_docs_html = " ".join(_linked_docs_parts) if _linked_docs_parts else '<span style="font-size:11px;color:var(--text-muted);">-</span>'
         
         invoices_html += f'''
@@ -44613,6 +44784,16 @@ def view_credit_note(cn_id):
         if cn_customer:
             cn_cust_email = cn_customer.get("email", "")
     
+    # Build "Linked Documents" panel — gives one-click access to invoice/quote/customer/etc.
+    cn_biz_id = business.get("id") if business else None
+    linked_docs_html = ""
+    try:
+        linked_docs_html = build_linked_documents_panel(db, cn_biz_id, "credit_note", cn_id, cn)
+        if linked_docs_html:
+            linked_docs_html = '<div class="no-print">' + linked_docs_html + '</div>'
+    except Exception:
+        linked_docs_html = ""
+    
     content = f'''
     <div class="no-print" style="display:flex;justify-content:space-between;align-items:center;margin-bottom:20px;">
         <a href="/invoices" style="color:var(--text-muted);">← Back to Invoices</a>
@@ -44621,6 +44802,8 @@ def view_credit_note(cn_id):
             <button class="btn btn-secondary" onclick="document.getElementById('cnEmailModal').style.display='flex';" style="background:rgba(153,27,27,0.15);color:#991b1b;border-color:#991b1b;">📧 Email</button>
         </div>
     </div>
+    
+    {linked_docs_html}
     
     <!-- CN EMAIL MODAL -->
     <div id="cnEmailModal" style="display:none;position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.7);z-index:9999;align-items:center;justify-content:center;">
@@ -54152,7 +54335,8 @@ try:
             gl, create_journal_entry, log_allocation,
             has_reactor_hud, jarvis_hud_header, jarvis_techline,
             RecordFactory, Email, FraudGuard, RecurringInvoices,
-            JARVIS_HUD_CSS, THEME_REACTOR_SKINS, VAT_RATE
+            JARVIS_HUD_CSS, THEME_REACTOR_SKINS, VAT_RATE,
+            build_linked_documents_panel
         )
         logger.info("[INVOICING] Routes registered ✓")
 except Exception as e:

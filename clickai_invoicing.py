@@ -22,7 +22,8 @@ def register_invoicing_routes(app, db, login_required, Auth, render_page,
                               gl, create_journal_entry, log_allocation,
                               has_reactor_hud, jarvis_hud_header, jarvis_techline,
                               RecordFactory, Email, FraudGuard, RecurringInvoices,
-                              JARVIS_HUD_CSS, THEME_REACTOR_SKINS, VAT_RATE):
+                              JARVIS_HUD_CSS, THEME_REACTOR_SKINS, VAT_RATE,
+                              build_linked_documents_panel=None):
     """Register all Invoicing routes with the Flask app."""
 
     # === INVOICES + RECURRING INVOICES ===
@@ -882,6 +883,16 @@ def register_invoicing_routes(app, db, login_required, Auth, render_page,
             </div>
         </div>'''
         
+        # Build "Linked Documents" panel — gives one-click access to related quote/DN/CN/customer
+        linked_docs_html = ""
+        if build_linked_documents_panel:
+            try:
+                linked_docs_html = build_linked_documents_panel(db, biz_id, "invoice", invoice_id, invoice)
+                if linked_docs_html:
+                    linked_docs_html = '<div class="no-print">' + linked_docs_html + '</div>'
+            except Exception:
+                linked_docs_html = ""
+        
         content = f'''{_inv_error_html}{zero_warning}
         <div class="no-print" style="display:flex;justify-content:space-between;align-items:center;margin-bottom:20px;">
             <div>
@@ -913,6 +924,8 @@ def register_invoicing_routes(app, db, login_required, Auth, render_page,
                 </div>
             </div>
         </div>
+        
+        {linked_docs_html}
         
         <!-- EDIT INVOICE DETAILS (no-print) -->
         <div class="no-print card" style="margin-bottom:15px;">
@@ -3005,6 +3018,16 @@ def register_invoicing_routes(app, db, login_required, Auth, render_page,
         cust_vat = customer.get("vat_number", "") if customer else ""
         cust_tel = cust_phone or cust_cell
         
+        # Build "Linked Documents" panel — gives one-click access to related invoice/customer/etc.
+        linked_docs_html = ""
+        if build_linked_documents_panel:
+            try:
+                linked_docs_html = build_linked_documents_panel(db, biz_id, "quote", quote_id, quote)
+                if linked_docs_html:
+                    linked_docs_html = '<div class="no-print">' + linked_docs_html + '</div>'
+            except Exception:
+                linked_docs_html = ""
+        
         content = f'''
         <div class="no-print" style="display:flex;justify-content:space-between;align-items:center;margin-bottom:20px;">
             <a href="/quotes" style="color:var(--text-muted);">← Back to Quotes</a>
@@ -3014,6 +3037,8 @@ def register_invoicing_routes(app, db, login_required, Auth, render_page,
                 {action_buttons}
             </div>
         </div>
+        
+        {linked_docs_html}
         
         <!-- EMAIL MODAL -->
         <div id="emailModal" style="display:none;position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.7);z-index:9999;align-items:center;justify-content:center;">
@@ -4214,6 +4239,17 @@ def register_invoicing_routes(app, db, login_required, Auth, render_page,
         biz_name = business.get("name", "Business") if business else "Business"
         biz_address = safe_string(business.get("address", "")).replace("\n", "<br>") if business else ""
         biz_phone = business.get("phone", "") if business else ""
+        biz_id = business.get("id") if business else None
+        
+        # Build "Linked Documents" panel — gives one-click access to invoice/quote/customer/etc.
+        linked_docs_html = ""
+        if build_linked_documents_panel:
+            try:
+                linked_docs_html = build_linked_documents_panel(db, biz_id, "delivery_note", dn_id, dn)
+                if linked_docs_html:
+                    linked_docs_html = '<div class="no-print">' + linked_docs_html + '</div>'
+            except Exception:
+                linked_docs_html = ""
         
         content = f'''
         <div class="no-print" style="display:flex;justify-content:space-between;align-items:center;margin-bottom:20px;">
@@ -4223,6 +4259,8 @@ def register_invoicing_routes(app, db, login_required, Auth, render_page,
                 <button onclick="window.print()" class="btn btn-secondary">🖨️ Print</button>
             </div>
         </div>
+        
+        {linked_docs_html}
         
         <div class="card" style="background:white;color:#333;padding:0;overflow:hidden;">
             <!-- TOP BAR -->
