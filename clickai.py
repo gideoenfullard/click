@@ -24615,14 +24615,18 @@ def dashboard():
         else:
             _overdue_sub = "Nothing outstanding"
         
-        # 3. STOCK HEALTH — weighted: out-of-stock counts double vs low-stock
+        # 3. STOCK HEALTH — % of items at healthy stock levels, with mild penalty for out-of-stock
         # Use TRUE counts from full stock table (low_stock list itself is capped at 20 items for display)
         _true_low_count = context.get("low_stock_count", len(low_stock))
         _true_out_count = context.get("out_of_stock_count", 0)
         _low_only_count = max(0, _true_low_count - _true_out_count)  # low-but-not-out
         if stock_count > 0:
-            _problem_weight = _low_only_count + (_true_out_count * 2)
-            _stock_pct = max(0, min(100, 100 - int((_problem_weight / stock_count) * 100)))
+            # Base: % of items NOT in low stock
+            _healthy_count = max(0, stock_count - _true_low_count)
+            _healthy_pct = (_healthy_count / stock_count) * 100
+            # Penalty: up to 15 points off based on proportion fully out of stock
+            _out_penalty = (_true_out_count / stock_count) * 15
+            _stock_pct = max(0, min(100, int(_healthy_pct - _out_penalty)))
         else:
             _stock_pct = 100
         _stock_off = _circ - (_circ * _stock_pct / 100)
