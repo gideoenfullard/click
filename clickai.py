@@ -14757,7 +14757,7 @@ Write the full {report_title} now."""
             client = _anthropic_client
             response = client.messages.create(
                 model="claude-sonnet-4-6",
-                max_tokens=12000,
+                max_tokens=32000,
                 system=system_prompt,
                 messages=[{"role": "user", "content": user_prompt}]
             )
@@ -22260,7 +22260,7 @@ BUSINESS PROFILE FOR {biz_name}:
             client = _anthropic_client
             message = client.messages.create(
                 model="claude-sonnet-4-6",
-                max_tokens=6000,
+                max_tokens=16000,
                 messages=[{
                     "role": "user",
                     "content": [
@@ -22450,7 +22450,7 @@ You analyze financial documents and provide clear, professional analysis in HTML
             system=system_prompt,
             user=analysis_prompt,
             model=Brain.MODEL_SONNET,  # Use Claude Sonnet for analysis
-            max_tokens=4000
+            max_tokens=16000
         )
         
         if not analysis_html:

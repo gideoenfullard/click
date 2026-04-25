@@ -346,6 +346,207 @@ def _classify_account(name):
     return "Other"
 
 
+def build_accounts_from_own_data(db, biz_id):
+    """
+    Build the same `accounts` structure as parse_sage_gl() — but from ClickAI's
+    OWN data (chart_of_accounts + journals + journal_entries OB).
+    
+    Returns a list with the same shape as parse_sage_gl():
+      [
+        {
+          "name": str,
+          "opening_debit": float, "opening_credit": float,
+          "closing_debit": float, "closing_credit": float,
+          "closing_net_debit": float, "closing_net_credit": float,
+          "total_debit": float, "total_credit": float,
+          "movement": float,
+          "transaction_count": int,
+          "transactions": [{date, date_display, party, ref, type, desc, debit, credit}]
+        },
+        ...
+      ]
+    """
+    if not biz_id:
+        return []
+    
+    try:
+        # 1. Chart of accounts — gives us names, opening balances, and any imported balances
+        coa = db.get("chart_of_accounts", {"business_id": biz_id}) or []
+        
+        # 2. Live journals (created by ClickAI when invoices/expenses/etc. happen)
+        journals = db.get("journals", {"business_id": biz_id}) or []
+        
+        # 3. Imported opening balances (from TB import — stored in journal_entries with reference="OB")
+        journal_entries = db.get("journal_entries", {"business_id": biz_id}) or []
+        ob_entries = [je for je in journal_entries if je.get("reference") == "OB"]
+        
+        # Build a map: account_code → account record
+        accounts_map = {}
+        order = []
+        
+        # Start with COA entries
+        for acc in coa:
+            if not acc.get("is_active", True):
+                continue
+            code = (acc.get("account_code", "") or "").strip()
+            if not code:
+                continue
+            name = acc.get("account_name", code) or code
+            display_name = f"{code} - {name}"
+            
+            # Opening balance from COA
+            opening = float(acc.get("opening_balance", 0) or 0)
+            cat = (acc.get("category", "") or "").lower()
+            is_dr_natured = any(t in cat for t in ("asset", "expense", "cost of sale", "other expense"))
+            
+            if opening != 0:
+                if is_dr_natured:
+                    op_dr = abs(opening)
+                    op_cr = 0
+                elif opening > 0:
+                    op_dr = opening
+                    op_cr = 0
+                else:
+                    op_dr = 0
+                    op_cr = abs(opening)
+            else:
+                op_dr = float(acc.get("debit", 0) or 0)
+                op_cr = float(acc.get("credit", 0) or 0)
+            
+            accounts_map[code] = {
+                "name": display_name,
+                "_code": code,
+                "_category": acc.get("category", "") or "",
+                "opening_debit": op_dr,
+                "opening_credit": op_cr,
+                "closing_debit": op_dr,  # will be updated as we add transactions
+                "closing_credit": op_cr,
+                "transactions": [],
+            }
+            order.append(code)
+        
+        # Apply OB entries (override COA opening if present) — TB import is authoritative
+        for ob in ob_entries:
+            code = (ob.get("account_code", "") or "").strip()
+            if not code:
+                continue
+            dr = float(ob.get("debit", 0) or 0)
+            cr = float(ob.get("credit", 0) or 0)
+            if code in accounts_map:
+                accounts_map[code]["opening_debit"] = dr
+                accounts_map[code]["opening_credit"] = cr
+                accounts_map[code]["closing_debit"] = dr
+                accounts_map[code]["closing_credit"] = cr
+            else:
+                accounts_map[code] = {
+                    "name": code,
+                    "_code": code,
+                    "_category": "",
+                    "opening_debit": dr,
+                    "opening_credit": cr,
+                    "closing_debit": dr,
+                    "closing_credit": cr,
+                    "transactions": [],
+                }
+                order.append(code)
+        
+        # Apply live journals as transactions
+        for jl in journals:
+            code = (jl.get("account_code", "") or "").strip()
+            if not code:
+                continue
+            dr = float(jl.get("debit", 0) or 0)
+            cr = float(jl.get("credit", 0) or 0)
+            if dr == 0 and cr == 0:
+                continue
+            
+            if code not in accounts_map:
+                accounts_map[code] = {
+                    "name": code,
+                    "_code": code,
+                    "_category": "",
+                    "opening_debit": 0,
+                    "opening_credit": 0,
+                    "closing_debit": 0,
+                    "closing_credit": 0,
+                    "transactions": [],
+                }
+                order.append(code)
+            
+            # Format date
+            raw_date = jl.get("date", "") or jl.get("created_at", "") or ""
+            date_iso = raw_date[:10] if raw_date else ""
+            try:
+                dt = datetime.fromisoformat(date_iso) if date_iso else None
+                date_display = dt.strftime("%d %b %Y") if dt else date_iso
+            except Exception:
+                date_display = date_iso
+            
+            accounts_map[code]["transactions"].append({
+                "date": date_iso,
+                "date_display": date_display,
+                "party": "",
+                "ref": jl.get("reference", "") or "",
+                "type": "Journal",
+                "desc": jl.get("description", "") or "",
+                "debit": dr,
+                "credit": cr,
+            })
+            
+            # Update closing balance
+            accounts_map[code]["closing_debit"] += dr
+            accounts_map[code]["closing_credit"] += cr
+        
+        # Build final ordered list with totals (same as parse_sage_gl)
+        result = []
+        for code in order:
+            acc = accounts_map.get(code)
+            if not acc:
+                continue
+            
+            # Sort transactions by date
+            try:
+                acc["transactions"].sort(key=lambda t: t.get("date", ""))
+            except Exception:
+                pass
+            
+            total_dr = sum(t["debit"] for t in acc["transactions"])
+            total_cr = sum(t["credit"] for t in acc["transactions"])
+            
+            # Net closing balance
+            net_dr = round(acc["opening_debit"] + total_dr, 2)
+            net_cr = round(acc["opening_credit"] + total_cr, 2)
+            # Squash to net side (only one side should remain)
+            net_balance = net_dr - net_cr
+            if net_balance >= 0:
+                acc["closing_net_debit"] = round(net_balance, 2)
+                acc["closing_net_credit"] = 0
+            else:
+                acc["closing_net_debit"] = 0
+                acc["closing_net_credit"] = round(abs(net_balance), 2)
+            
+            acc["closing_debit"] = round(acc["closing_debit"], 2)
+            acc["closing_credit"] = round(acc["closing_credit"], 2)
+            acc["total_debit"] = round(total_dr, 2)
+            acc["total_credit"] = round(total_cr, 2)
+            acc["movement"] = round(total_dr - total_cr, 2)
+            acc["transaction_count"] = len(acc["transactions"])
+            
+            # Skip accounts with no activity AND no balance
+            if (acc["transaction_count"] == 0 
+                and acc["opening_debit"] == 0 
+                and acc["opening_credit"] == 0):
+                continue
+            
+            result.append(acc)
+        
+        return result
+    
+    except Exception as e:
+        logger.error(f"[GL OWN DATA] Error building accounts: {e}\n{traceback.format_exc()}")
+        return []
+
+
 def run_gl_analysis(accounts):
     """
     Run comprehensive analysis on parsed GL accounts.
@@ -1117,6 +1318,60 @@ ${aiHtml}
             btn.disabled = false;
             btn.textContent = 'Send';
         }
+        
+        // ═══ AUTO-LOAD OWN DATA when ?source=own ═══
+        (function autoLoadOwnDataIfRequested() {
+            try {
+                const params = new URLSearchParams(window.location.search);
+                if (params.get('source') !== 'own') return;
+                
+                // Hide upload card, show loading state
+                const uploadCard = document.getElementById('uploadCard');
+                if (uploadCard) {
+                    uploadCard.innerHTML = '<div style="text-align:center;padding:40px;"><div style="font-size:2rem;">⏳</div><div style="margin-top:10px;color:var(--text-muted);">Loading your business data...</div></div>';
+                }
+                
+                fetch('/api/reports/gl/own-data', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: '{}'
+                })
+                .then(r => r.json())
+                .then(data => {
+                    if (!data.success) {
+                        if (uploadCard) {
+                            uploadCard.innerHTML = '<div style="text-align:center;padding:40px;color:#ef4444;"><div style="font-size:2rem;">⚠️</div><div style="margin-top:10px;">' + (data.error || 'Failed to load') + '</div><div style="margin-top:20px;"><a href="/reports/gl-analysis" class="btn btn-secondary">Try uploading instead</a></div></div>';
+                        }
+                        return;
+                    }
+                    
+                    glAnalysisData = data;
+                    if (uploadCard) {
+                        uploadCard.innerHTML = '<div style="text-align:center;padding:20px;color:#10b981;">✅ Live business data loaded — ' + data.summary.account_count + ' accounts, ' + data.summary.transaction_count + ' transactions</div>';
+                    }
+                    
+                    // Update the page heading to clarify this is own data
+                    const heading = document.querySelector('h2');
+                    if (heading && heading.textContent.includes('GL Analysis')) {
+                        heading.innerHTML = 'GL Analysis <span style="font-size:14px;color:#10b981;font-weight:normal;">— My Business (Live Data)</span>';
+                    }
+                    
+                    renderResults(data);
+                    document.getElementById('glResults').style.display = 'block';
+                    
+                    // Fire async AI analysis
+                    fetchAIInsights(data);
+                })
+                .catch(e => {
+                    if (uploadCard) {
+                        uploadCard.innerHTML = '<div style="text-align:center;padding:40px;color:#ef4444;"><div style="font-size:2rem;">⚠️</div><div style="margin-top:10px;">Network error: ' + e.message + '</div></div>';
+                    }
+                });
+            } catch (e) {
+                // Silent fail — upload page still works normally
+                console.warn('Auto-load own data failed:', e);
+            }
+        })();
         </script>
         '''
 
@@ -1311,4 +1566,43 @@ Keep it direct, practical, and thorough. Use South African business context (Ran
             logger.error(f"[GL ANALYSIS] AI error: {e}")
             return jsonify({"success": False, "error": str(e)})
 
-    logger.info("[GL ANALYSIS] Module loaded — routes: /reports/gl-analysis, /api/reports/gl/upload, /api/reports/gl/ai-analysis")
+    # ───────────────────────────────────────────────────────────
+    # API: Run GL Analysis on OWN ClickAI data (no upload needed)
+    # ───────────────────────────────────────────────────────────
+    @app.route("/api/reports/gl/own-data", methods=["POST"])
+    @login_required
+    def api_gl_own_data():
+        """Run GL analysis on the logged-in business's OWN data (journals + COA + OB)."""
+        from flask import jsonify
+        
+        try:
+            business = Auth.get_current_business()
+            biz_id = business.get("id") if business else None
+            biz_name = business.get("name", "Business") if business else "Business"
+            
+            if not biz_id:
+                return jsonify({"success": False, "error": "No business selected"})
+            
+            # Build accounts in the same shape as parse_sage_gl()
+            accounts = build_accounts_from_own_data(db, biz_id)
+            
+            if not accounts:
+                return jsonify({
+                    "success": False,
+                    "error": "No GL data found. Make sure you have a chart of accounts imported, or transactions recorded."
+                })
+            
+            # Run the same analysis as the upload path
+            analysis = run_gl_analysis(accounts)
+            
+            return jsonify({
+                "success": True,
+                "filename": f"{biz_name} (Live Data)",
+                **analysis,
+            })
+        
+        except Exception as e:
+            logger.error(f"[GL ANALYSIS OWN DATA] Error: {e}\n{traceback.format_exc()}")
+            return jsonify({"success": False, "error": str(e)})
+
+    logger.info("[GL ANALYSIS] Module loaded — routes: /reports/gl-analysis, /api/reports/gl/upload, /api/reports/gl/ai-analysis, /api/reports/gl/own-data")

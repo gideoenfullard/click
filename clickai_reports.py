@@ -3779,7 +3779,7 @@ def register_report_routes(app, db, login_required, Auth, render_page,
             client = _anthropic_client
             message = client.messages.create(
                 model="claude-sonnet-4-6",
-                max_tokens=12000,
+                max_tokens=32000,
                 messages=[{"role": "user", "content": insights_prompt}]
             )
             
@@ -4580,7 +4580,7 @@ def register_report_routes(app, db, login_required, Auth, render_page,
             
             message = _anthropic_client.messages.create(
                 model="claude-sonnet-4-6",
-                max_tokens=12000,
+                max_tokens=32000,
                 system=system_prompt,
                 messages=[{"role": "user", "content": f"{data_for_ai}\n\n{prompt}"}]
             )
@@ -5493,9 +5493,9 @@ def register_report_routes(app, db, login_required, Auth, render_page,
                     <h4>Cash Flow Forecast</h4>
                     <p style="color:var(--text-muted);font-size:13px;">Next 30 days projection</p>
                 </div>
-                <div class="card report-btn" style="cursor:pointer;border:1px solid rgba(16,185,129,0.3);background:linear-gradient(135deg, rgba(16,185,129,0.08), rgba(99,102,241,0.05));" onclick="window.location='/reports/gl-analysis'">
+                <div class="card report-btn" style="cursor:pointer;border:1px solid rgba(16,185,129,0.3);background:linear-gradient(135deg, rgba(16,185,129,0.08), rgba(99,102,241,0.05));" onclick="goToGLAnalysis()">
                     <h4>🔬 GL Analysis</h4>
-                    <p style="color:var(--text-muted);font-size:13px;">Upload Sage/Xero GL — full analysis with AI</p>
+                    <p style="color:var(--text-muted);font-size:13px;">Live data when in 'My Business' mode — Upload for client GLs</p>
                 </div>
             </div>
             
@@ -5726,6 +5726,15 @@ def register_report_routes(app, db, login_required, Auth, render_page,
             });
             
             input.value = '';
+        }
+        
+        function goToGLAnalysis() {
+            // Respect the data source toggle: own data → auto-load live GL; otherwise → upload page
+            if (dataSource === 'own') {
+                window.location = '/reports/gl-analysis?source=own';
+            } else {
+                window.location = '/reports/gl-analysis';
+            }
         }
         
         async function generateReport(type) {
