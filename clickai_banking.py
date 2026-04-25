@@ -285,22 +285,22 @@ def register_banking_routes(app, db, login_required, Auth, render_page,
         <!-- SUMMARY CARDS -->
         <div class="stats-grid" style="margin-bottom:20px;">
             <div class="stat-card" style="background:rgba(16,185,129,0.1);border-color:var(--green);cursor:pointer;" onclick="showTab('auto')">
-                <div class="stat-value" style="color:var(--green);">{auto_count}</div>
+                <div class="stat-value" id="statAuto" style="color:var(--green);">{auto_count}</div>
                 <div class="stat-label">✅ Auto-Matched</div>
                 <div style="font-size:11px;color:var(--text-muted);margin-top:5px;">High confidence - just approve</div>
             </div>
             <div class="stat-card" style="background:rgba(245,158,11,0.1);border-color:var(--yellow);cursor:pointer;" onclick="showTab('suggested')">
-                <div class="stat-value" style="color:var(--yellow);">{suggested_count}</div>
+                <div class="stat-value" id="statSuggested" style="color:var(--yellow);">{suggested_count}</div>
                 <div class="stat-label">🤖 AI Suggested</div>
                 <div style="font-size:11px;color:var(--text-muted);margin-top:5px;">Review suggestions</div>
             </div>
             <div class="stat-card" style="background:rgba(239,68,68,0.1);border-color:var(--red);cursor:pointer;" onclick="showTab('needs')">
-                <div class="stat-value" style="color:var(--red);">{needs_count}</div>
+                <div class="stat-value" id="statNeeds" style="color:var(--red);">{needs_count}</div>
                 <div class="stat-label">❓ Needs You</div>
                 <div style="font-size:11px;color:var(--text-muted);margin-top:5px;">No suggestion - you decide</div>
             </div>
             <div class="stat-card" style="cursor:pointer;" onclick="showTab('done')">
-                <div class="stat-value">{done_count}</div>
+                <div class="stat-value" id="statDone">{done_count}</div>
                 <div class="stat-label">GOOD: Done</div>
                 <div style="font-size:11px;color:var(--text-muted);margin-top:5px;">Already categorized</div>
             </div>
@@ -315,10 +315,10 @@ def register_banking_routes(app, db, login_required, Auth, render_page,
         
         <!-- TABS -->
         <div class="recon-tabs">
-            <div class="recon-tab active" onclick="showTab('auto')">✅ Auto-Matched <span class="count">{auto_count}</span></div>
-            <div class="recon-tab" onclick="showTab('suggested')">🤖 Suggested <span class="count">{suggested_count}</span></div>
-            <div class="recon-tab" onclick="showTab('needs')">❓ Needs You <span class="count">{needs_count}</span></div>
-            <div class="recon-tab" onclick="showTab('done')">✅ Done <span class="count">{done_count}</span></div>
+            <div class="recon-tab active" onclick="showTab('auto')">✅ Auto-Matched <span class="count" id="tabAuto">{auto_count}</span></div>
+            <div class="recon-tab" onclick="showTab('suggested')">🤖 Suggested <span class="count" id="tabSuggested">{suggested_count}</span></div>
+            <div class="recon-tab" onclick="showTab('needs')">❓ Needs You <span class="count" id="tabNeeds">{needs_count}</span></div>
+            <div class="recon-tab" onclick="showTab('done')">✅ Done <span class="count" id="tabDone">{done_count}</span></div>
         </div>
         
         <!-- AUTO-MATCHED SECTION -->
@@ -880,6 +880,26 @@ def register_banking_routes(app, db, login_required, Auth, render_page,
                 }});
                 
                 const matchPct = Math.round((doneCount / Math.max(total, 1)) * 100);
+                
+                // Update stat-cards (the 4 big number cards above the tabs)
+                const sAuto = document.getElementById('statAuto');
+                const sSug = document.getElementById('statSuggested');
+                const sNeeds = document.getElementById('statNeeds');
+                const sDone = document.getElementById('statDone');
+                if (sAuto) sAuto.textContent = String(autoCount);
+                if (sSug) sSug.textContent = String(sugCount);
+                if (sNeeds) sNeeds.textContent = String(needsCount);
+                if (sDone) sDone.textContent = String(doneCount);
+                
+                // Update tab counters (the small pill counters inside the tabs)
+                const tAuto = document.getElementById('tabAuto');
+                const tSug = document.getElementById('tabSuggested');
+                const tNeeds = document.getElementById('tabNeeds');
+                const tDone = document.getElementById('tabDone');
+                if (tAuto) tAuto.textContent = String(autoCount);
+                if (tSug) tSug.textContent = String(sugCount);
+                if (tNeeds) tNeeds.textContent = String(needsCount);
+                if (tDone) tDone.textContent = String(doneCount);
                 
                 function fmtMoney(v) {{
                     return 'R ' + Number(v).toLocaleString('en-ZA', {{minimumFractionDigits:2, maximumFractionDigits:2}});
