@@ -314,7 +314,7 @@ def register_pulse_routes(app, db, login_required, Auth, generate_id, now, today
 
             <div class="card" style="margin-bottom:20px;border:1px solid rgba(16,185,129,0.3);">
                 <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:15px;">
-                    <h3 style="margin:0;color:#10b981;">&#9889; Live Feed — Wie het wat gedoen</h3>
+                    <h3 style="margin:0;color:#10b981;">&#9889; Live Feed — Who did what</h3>
                     <span style="color:var(--text-muted);font-size:11px;">Laaste 7 dae</span>
                 </div>
                 <div id="pulseRecentActivity"><div class="pulse-loading">Loading...</div></div>

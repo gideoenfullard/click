@@ -24279,18 +24279,103 @@ def dashboard():
             _ls_more = f" and {len(low_stock)-4} more" if len(low_stock) > 4 else ""
             _j_ticker = f'<div class="j-ticker"><b>&#9888; ALERT</b><span class="jt-msg">Low Stock: {_ls_items}{_ls_more}</span><a href="/stock" class="jt-act">INVESTIGATE &rarr;</a></div>'
         
-        # Gauge calculations
+        # Gauge calculations — REAL business metrics, not cosmetic
         _circ = 2 * 3.14159 * 43
-        _total_inv = len(recent) if recent else 1
-        _paid_inv = len([i for i in recent if i.get("status") == "paid"])
-        _collect_pct = int((_paid_inv / _total_inv) * 100) if _total_inv > 0 else 0
+        biz_id = business.get("id") if business else None
+        
+        # Pull invoices with dates for accurate metrics (Context strips dates)
+        try:
+            _all_invoices = db.get_columns("invoices", ["total", "status", "date", "customer_name"], {"business_id": biz_id}, limit=2000) if biz_id else []
+        except Exception:
+            _all_invoices = []
+        
+        # 1. COLLECTION RATE — % of last 90-day invoices that are paid (sustained metric, big sample)
+        from datetime import datetime as _dt, timedelta as _td
+        try:
+            _cutoff_90 = (_dt.now() - _td(days=90)).strftime("%Y-%m-%d")
+        except Exception:
+            _cutoff_90 = "1900-01-01"
+        _recent_invs = [i for i in _all_invoices if (i.get("date") or "") >= _cutoff_90]
+        _recent_paid = [i for i in _recent_invs if (i.get("status") or "").lower() == "paid"]
+        _collect_total = len(_recent_invs)
+        _collect_paid = len(_recent_paid)
+        _collect_pct = int((_collect_paid / _collect_total) * 100) if _collect_total > 0 else 100
         _collect_off = _circ - (_circ * _collect_pct / 100)
-        _overdue_pct = min(100, int((total_debtors / max(total_sales, 1)) * 100)) if total_sales > 0 else 0
+        _collect_sub = f"{_collect_paid}/{_collect_total} paid (90d)" if _collect_total > 0 else "No invoices yet"
+        
+        # 2. CASHFLOW HEALTH — inverse of overdue: 100% = nothing overdue, 0% = all overdue
+        # All four gauges are now consistent: higher = better.
+        try:
+            _cutoff_30 = (_dt.now() - _td(days=30)).strftime("%Y-%m-%d")
+        except Exception:
+            _cutoff_30 = "1900-01-01"
+        _unpaid_invs = [i for i in _all_invoices if (i.get("status") or "").lower() != "paid"]
+        _outstanding_total = sum(float(i.get("total", 0) or 0) for i in _unpaid_invs)
+        _overdue_value = sum(float(i.get("total", 0) or 0) for i in _unpaid_invs if (i.get("date") or "") < _cutoff_30)
+        _overdue_pct_raw = (_overdue_value / _outstanding_total) if _outstanding_total > 0 else 0
+        _overdue_pct = max(0, min(100, int((1 - _overdue_pct_raw) * 100))) if _outstanding_total > 0 else 100
         _overdue_off = _circ - (_circ * _overdue_pct / 100)
-        _stock_pct = min(100, max(10, 100 - int((len(low_stock) / max(stock_count, 1)) * 500))) if stock_count > 0 else 50
+        if _outstanding_total > 0 and _overdue_value > 0:
+            _overdue_sub = f"{money(_overdue_value)} overdue (>30d)"
+        elif _outstanding_total > 0:
+            _overdue_sub = f"{money(_outstanding_total)} due, none overdue"
+        else:
+            _overdue_sub = "Nothing outstanding"
+        
+        # 3. STOCK HEALTH — weighted: out-of-stock counts double vs low-stock
+        _out_of_stock = [l for l in low_stock if float(l.get("qty", 0) or 0) <= 0]
+        _low_only = [l for l in low_stock if float(l.get("qty", 0) or 0) > 0]
+        if stock_count > 0:
+            _problem_weight = len(_low_only) + (len(_out_of_stock) * 2)
+            _stock_pct = max(0, min(100, 100 - int((_problem_weight / stock_count) * 100)))
+        else:
+            _stock_pct = 100
         _stock_off = _circ - (_circ * _stock_pct / 100)
-        _sys_pct = 95
+        if stock_count == 0:
+            _stock_sub = "No stock items yet"
+        elif len(_out_of_stock) > 0 and len(_low_only) > 0:
+            _stock_sub = f"{len(_out_of_stock)} out, {len(_low_only)} low"
+        elif len(_out_of_stock) > 0:
+            _stock_sub = f"{len(_out_of_stock)} out of stock"
+        elif len(_low_only) > 0:
+            _stock_sub = f"{len(_low_only)} low stock"
+        else:
+            _stock_sub = "All items healthy"
+        
+        # 4. ACTION ITEMS (was "System Health") — what needs your attention right now
+        # Lower numbers are better. We invert: 100% = clean inbox.
+        try:
+            _bank_total = db.count("bank_transactions", {"business_id": biz_id}) if biz_id else 0
+            _bank_unmatched = db.count("bank_transactions", {"business_id": biz_id, "matched": False}) if biz_id else 0
+        except Exception:
+            _bank_total = 0
+            _bank_unmatched = 0
+        # Score: 50 points for bank reconciliation, 30 for no overdue invoices, 20 for recent activity
+        _action_score = 0
+        if _bank_total > 0:
+            _bank_match_ratio = (_bank_total - _bank_unmatched) / _bank_total
+            _action_score += int(50 * _bank_match_ratio)
+        else:
+            _action_score += 50  # nothing to reconcile = clean
+        if _outstanding_total > 0:
+            _action_score += int(30 * (1 - (_overdue_value / _outstanding_total)))
+        else:
+            _action_score += 30
+        if today_sales > 0 or len(_recent_invs) > 0:
+            _action_score += 20
+        else:
+            _action_score += 0
+        _sys_pct = max(0, min(100, _action_score))
         _sys_off = _circ - (_circ * _sys_pct / 100)
+        # Build subtitle from the loudest issue
+        _action_issues = []
+        if _bank_unmatched > 0:
+            _action_issues.append(f"{_bank_unmatched} bank txns")
+        if _overdue_value > 0:
+            _action_issues.append(f"{money(_overdue_value)} overdue")
+        if today_sales == 0 and len(_recent_invs) == 0:
+            _action_issues.append("No recent activity")
+        _sys_sub = ", ".join(_action_issues[:2]) if _action_issues else "All clear"
         
         # Build HUD header with BIG reactor
         _hud = jarvis_hud_header(
@@ -24335,6 +24420,7 @@ def dashboard():
         .j-marc .jbar{{fill:none;stroke-width:3;stroke-linecap:round;}}
         .j-marc .jval{{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;font-family:'Orbitron',monospace;font-size:16px;font-weight:600;color:#a0ddff;text-shadow:0 0 10px rgba(120,200,255,0.3);}}
         .j-arc .jasl{{font-size:11px;color:#3a7aaa;letter-spacing:1.5px;font-weight:600;margin-top:8px;text-transform:uppercase;text-align:center;}}
+        .j-arc .jarc-sub{{font-size:10px;color:#5a7a99;font-family:'Share Tech Mono',monospace;margin-top:4px;text-align:center;letter-spacing:0.3px;opacity:0.85;line-height:1.3;}}
         /* Light theme — HUD panels readable on white */
         [data-theme="light"] .j-panel{{background:#ffffff;border:1px solid #e2e5ea;}}
         [data-theme="light"] .j-panel::before{{border-color:#d1d5db;}}
@@ -24348,6 +24434,7 @@ def dashboard():
         [data-theme="light"] .j-marc .jtrack{{stroke:#e2e5ea;}}
         [data-theme="light"] .j-marc .jval{{color:#1a1a2e;text-shadow:none;}}
         [data-theme="light"] .j-arc .jasl{{color:#374151;}}
+        [data-theme="light"] .j-arc .jarc-sub{{color:#6b7280;}}
         /* Light theme — debtor & invoice row text colors (override inline styles) */
         [data-theme="light"] .jd-row{{border-bottom-color:#e2e5ea !important;}}
         [data-theme="light"] .jd-name{{color:#1a1a2e !important;}}
@@ -24376,10 +24463,10 @@ def dashboard():
         
         <!-- ARC GAUGES -->
         <div class="j-arcs">
-            <div class="j-arc"><div class="j-marc"><svg viewBox="0 0 100 100"><circle class="jtrack" cx="50" cy="50" r="43"/><circle class="jbar" cx="50" cy="50" r="43" stroke="#00ffcc" stroke-dasharray="{_circ:.1f}" stroke-dashoffset="{_collect_off:.1f}" style="filter:drop-shadow(0 0 4px rgba(0,255,204,0.5)) drop-shadow(0 0 10px rgba(0,255,204,0.2))"/></svg><div class="jval">{_collect_pct}%</div></div><div class="jasl">Collection Rate</div></div>
-            <div class="j-arc"><div class="j-marc"><svg viewBox="0 0 100 100"><circle class="jtrack" cx="50" cy="50" r="43"/><circle class="jbar" cx="50" cy="50" r="43" stroke="#ff4466" stroke-dasharray="{_circ:.1f}" stroke-dashoffset="{_overdue_off:.1f}" style="filter:drop-shadow(0 0 4px rgba(255,68,102,0.5)) drop-shadow(0 0 10px rgba(255,68,102,0.2))"/></svg><div class="jval" style="color:#ff8899;">{_overdue_pct}%</div></div><div class="jasl">Overdue Ratio</div></div>
-            <div class="j-arc"><div class="j-marc"><svg viewBox="0 0 100 100"><circle class="jtrack" cx="50" cy="50" r="43"/><circle class="jbar" cx="50" cy="50" r="43" stroke="#00aaff" stroke-dasharray="{_circ:.1f}" stroke-dashoffset="{_stock_off:.1f}" style="filter:drop-shadow(0 0 4px rgba(0,170,255,0.5)) drop-shadow(0 0 10px rgba(0,170,255,0.2))"/></svg><div class="jval">{_stock_pct}%</div></div><div class="jasl">Stock Health</div></div>
-            <div class="j-arc"><div class="j-marc"><svg viewBox="0 0 100 100"><circle class="jtrack" cx="50" cy="50" r="43"/><circle class="jbar" cx="50" cy="50" r="43" stroke="#aa55ff" stroke-dasharray="{_circ:.1f}" stroke-dashoffset="{_sys_off:.1f}" style="filter:drop-shadow(0 0 4px rgba(170,85,255,0.5)) drop-shadow(0 0 10px rgba(170,85,255,0.2))"/></svg><div class="jval" style="color:#cc99ff;">{_sys_pct}%</div></div><div class="jasl">System Health</div></div>
+            <div class="j-arc" title="Percentage of invoices issued in the last 90 days that have been paid. Higher = customers paying faster."><div class="j-marc"><svg viewBox="0 0 100 100"><circle class="jtrack" cx="50" cy="50" r="43"/><circle class="jbar" cx="50" cy="50" r="43" stroke="#00ffcc" stroke-dasharray="{_circ:.1f}" stroke-dashoffset="{_collect_off:.1f}" style="filter:drop-shadow(0 0 4px rgba(0,255,204,0.5)) drop-shadow(0 0 10px rgba(0,255,204,0.2))"/></svg><div class="jval">{_collect_pct}%</div></div><div class="jasl">Collection Rate</div><div class="jarc-sub">{_collect_sub}</div></div>
+            <div class="j-arc" title="Health of your outstanding receivables. 100% = nothing older than 30 days. Lower = more cash tied up in old debt."><div class="j-marc"><svg viewBox="0 0 100 100"><circle class="jtrack" cx="50" cy="50" r="43"/><circle class="jbar" cx="50" cy="50" r="43" stroke="#ffaa00" stroke-dasharray="{_circ:.1f}" stroke-dashoffset="{_overdue_off:.1f}" style="filter:drop-shadow(0 0 4px rgba(255,170,0,0.5)) drop-shadow(0 0 10px rgba(255,170,0,0.2))"/></svg><div class="jval" style="color:#ffcc66;">{_overdue_pct}%</div></div><div class="jasl">Cashflow Health</div><div class="jarc-sub">{_overdue_sub}</div></div>
+            <div class="j-arc" title="Stock availability. Out-of-stock items count double. Higher = better stocked."><div class="j-marc"><svg viewBox="0 0 100 100"><circle class="jtrack" cx="50" cy="50" r="43"/><circle class="jbar" cx="50" cy="50" r="43" stroke="#00aaff" stroke-dasharray="{_circ:.1f}" stroke-dashoffset="{_stock_off:.1f}" style="filter:drop-shadow(0 0 4px rgba(0,170,255,0.5)) drop-shadow(0 0 10px rgba(0,170,255,0.2))"/></svg><div class="jval">{_stock_pct}%</div></div><div class="jasl">Stock Health</div><div class="jarc-sub">{_stock_sub}</div></div>
+            <div class="j-arc" title="What needs your attention. Combines bank reconciliation, overdue invoices, and trading activity. 100% = inbox zero."><div class="j-marc"><svg viewBox="0 0 100 100"><circle class="jtrack" cx="50" cy="50" r="43"/><circle class="jbar" cx="50" cy="50" r="43" stroke="#aa55ff" stroke-dasharray="{_circ:.1f}" stroke-dashoffset="{_sys_off:.1f}" style="filter:drop-shadow(0 0 4px rgba(170,85,255,0.5)) drop-shadow(0 0 10px rgba(170,85,255,0.2))"/></svg><div class="jval" style="color:#cc99ff;">{_sys_pct}%</div></div><div class="jasl">Action Items</div><div class="jarc-sub">{_sys_sub}</div></div>
         </div>
         
         {jarvis_techline()}
