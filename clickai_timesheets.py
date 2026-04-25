@@ -999,6 +999,24 @@ def register_timesheet_routes(app, db, login_required, Auth, render_page,
                 ]
             )
             
+            # ─── AI-USAGE TRACKING ───
+            try:
+                if hasattr(app, "_ai_usage_tracker") and biz_id:
+                    _usage = getattr(message, "usage", None)
+                    app._ai_usage_tracker.log_usage(
+                        business_id=biz_id,
+                        tool="timesheet_scan",
+                        model=getattr(message, "model", "claude-sonnet-4-6"),
+                        input_tokens=int(getattr(_usage, "input_tokens", 0) or 0),
+                        output_tokens=int(getattr(_usage, "output_tokens", 0) or 0),
+                        cache_read_tokens=int(getattr(_usage, "cache_read_input_tokens", 0) or 0),
+                        cache_write_tokens=int(getattr(_usage, "cache_creation_input_tokens", 0) or 0),
+                        success=True,
+                    )
+            except Exception as _track_err:
+                logger.error(f"[AI-USAGE] timesheet_scan tracking skipped: {_track_err}")
+            # ─── END TRACKING ───
+            
             response_text = message.content[0].text.strip()
             
             if response_text.startswith("```"):

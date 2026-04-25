@@ -1437,7 +1437,7 @@ class EmailScanner:
         return results
     
     @classmethod
-    def process_attachment(cls, attachment_data: bytes, filename: str, content_type: str) -> dict:
+    def process_attachment(cls, attachment_data: bytes, filename: str, content_type: str, _biz_id: str = None) -> dict:
         """Process a single attachment - direct to Claude Sonnet (no Google)"""
         
         result = {
@@ -1639,6 +1639,8 @@ TAKE YOUR TIME. ACCURACY > SPEED. Read every number, every word carefully!"""
                 max_tokens=2500,
                 messages=[{"role": "user", "content": message_content}]
             )
+            
+            _track_ai_usage(response, _biz_id, "email_scan", metadata={"filename": filename[:80]})
             
             ai_response = response.content[0].text
             logger.info(f"[EMAIL] Claude Sonnet raw response: {ai_response[:500]}")
@@ -2357,6 +2359,45 @@ def format_extra_data(data) -> str:
     
     html += "</div>"
     return html
+
+
+def _track_ai_usage(message_response, biz_id, tool_name, user_id=None, metadata=None, success=True):
+    """
+    Track an Anthropic API call in the AI usage tracker.
+    Drop-in helper — call right after a client.messages.create() returns.
+    Silently fails so tracking errors never break the calling code.
+    
+    Args:
+        message_response: The object returned by client.messages.create()
+        biz_id: Business ID for the call
+        tool_name: Short identifier (e.g. "zane_chat", "scan_pdf", "briefing")
+        user_id: Optional user ID
+        metadata: Optional dict with extra info (e.g. {"doc_type": "invoice"})
+        success: Whether the call succeeded
+    """
+    try:
+        if not biz_id:
+            return
+        if not hasattr(app, "_ai_usage_tracker"):
+            return
+        usage = getattr(message_response, "usage", None)
+        app._ai_usage_tracker.log_usage(
+            business_id=biz_id,
+            tool=tool_name,
+            model=getattr(message_response, "model", "claude-sonnet-4-6"),
+            input_tokens=int(getattr(usage, "input_tokens", 0) or 0),
+            output_tokens=int(getattr(usage, "output_tokens", 0) or 0),
+            cache_read_tokens=int(getattr(usage, "cache_read_input_tokens", 0) or 0),
+            cache_write_tokens=int(getattr(usage, "cache_creation_input_tokens", 0) or 0),
+            user_id=user_id,
+            success=success,
+            metadata=metadata or {},
+        )
+    except Exception as _e:
+        try:
+            logger.error(f"[AI-USAGE] {tool_name} tracking skipped: {_e}")
+        except Exception:
+            pass
 
 
 # 
@@ -14582,6 +14623,7 @@ Write with confidence - you KNOW what you're talking about. Sign off with "- Zan
                     max_tokens=900,
                     messages=[{"role": "user", "content": prompt}]
                 )
+                _track_ai_usage(message, business_id, "daily_briefing")
                 if message.content:
                     logger.info("[BRIEFING] Claude Haiku 4.5 success")
                     import re as _re
@@ -14761,6 +14803,29 @@ Write the full {report_title} now."""
                 system=system_prompt,
                 messages=[{"role": "user", "content": user_prompt}]
             )
+            
+            # ─── AI-USAGE TRACKING ───
+            try:
+                if hasattr(app, "_ai_usage_tracker"):
+                    _biz_id = context.get("business_id")
+                    _usr_id = context.get("user_id")
+                    if _biz_id:
+                        _usage = getattr(response, "usage", None)
+                        app._ai_usage_tracker.log_usage(
+                            business_id=_biz_id,
+                            tool="smart_report",
+                            model=getattr(response, "model", "claude-sonnet-4-6"),
+                            input_tokens=int(getattr(_usage, "input_tokens", 0) or 0),
+                            output_tokens=int(getattr(_usage, "output_tokens", 0) or 0),
+                            cache_read_tokens=int(getattr(_usage, "cache_read_input_tokens", 0) or 0),
+                            cache_write_tokens=int(getattr(_usage, "cache_creation_input_tokens", 0) or 0),
+                            user_id=_usr_id,
+                            success=True,
+                            metadata={"report_type": report_type},
+                        )
+            except Exception as _track_err:
+                logger.error(f"[AI-USAGE] smart_report tracking skipped: {_track_err}")
+            # ─── END TRACKING ───
             
             return response.content[0].text
                 
@@ -22324,6 +22389,8 @@ Be direct. Be specific. Use actual numbers from both the document AND the busine
                 }]
             )
             
+            _track_ai_usage(message, biz_id, "zane_analyze_pdf", metadata={"filename": (file.filename or "")[:80]})
+            
             analysis_html = message.content[0].text.strip()
             analysis_html = analysis_html.replace("```html", "").replace("```", "").strip()
             
@@ -26826,6 +26893,12 @@ Return valid JSON only, no other text."""
             
             db.update("rentals", rental_id, {"municipal_items": json.dumps(municipal_items)})
             
+            try:
+                _biz = Auth.get_current_business()
+                _track_ai_usage(response, _biz.get("id") if _biz else None, "rental_scan_municipal", metadata={"rental_id": rental_id})
+            except Exception:
+                pass
+            
             # Build result HTML
             result_html = "<br>".join([f"{item['name']}: R{item['amount']:,.2f}" for item in municipal_items if item['amount'] > 0])
             
@@ -27356,6 +27429,12 @@ Extract the recurring amount. Return valid JSON only."""
                     ]
                 }]
             )
+            
+            try:
+                _biz = Auth.get_current_business()
+                _track_ai_usage(response, _biz.get("id") if _biz else None, "subscription_scan")
+            except Exception:
+                pass
             
             result_text = response.content[0].text.strip()
             
@@ -32153,6 +32232,12 @@ Return ONLY the JSON, nothing else."""
                 messages=[{"role": "user", "content": opus_prompt}]
             )
             
+            try:
+                _biz = Auth.get_current_business()
+                _track_ai_usage(response, _biz.get("id") if _biz else None, "smart_import_analyse")
+            except Exception:
+                pass
+            
             opus_response = response.content[0].text.strip()
             
             # Clean response
@@ -35771,6 +35856,12 @@ Rules:
                     max_tokens=500,
                     messages=[{"role": "user", "content": ai_prompt}]
                 )
+                
+                try:
+                    _biz = Auth.get_current_business()
+                    _track_ai_usage(response, _biz.get("id") if _biz else None, "import_analyze", metadata={"import_type": import_type})
+                except Exception:
+                    pass
                 
                 ai_text = response.content[0].text.strip()
                 # Extract JSON from response
@@ -46425,6 +46516,8 @@ IMPORTANT: Read ALL numbers exactly as printed on the document. Do NOT calculate
                         }]
                     )
                     
+                    _track_ai_usage(retry_message, biz_id, "scan_document_retry", metadata={"scan_type": scan_type, "missing": missing_critical})
+                    
                     retry_text = retry_message.content[0].text.strip()
                     retry_extracted = extract_json_from_text(retry_text)
                     
@@ -48696,7 +48789,8 @@ def api_email_check():
                     processed = EmailScanner.process_attachment(
                         attachment.get("data"),
                         filename,
-                        attachment.get("content_type", "application/octet-stream")
+                        attachment.get("content_type", "application/octet-stream"),
+                        _biz_id=biz_id
                     )
                     
                     # Try to match supplier
@@ -48996,7 +49090,8 @@ def api_email_test_extraction():
         result = EmailScanner.process_attachment(
             attachment.get("data"),
             attachment.get("filename"),
-            attachment.get("content_type")
+            attachment.get("content_type"),
+            _biz_id=business.get("id") if business else None
         )
         
         # Return the raw extraction result for debugging
@@ -49659,6 +49754,12 @@ JSON only:
             messages=[{"role": "user", "content": prompt}]
         )
         
+        try:
+            _biz = Auth.get_current_business()
+            _track_ai_usage(response, _biz.get("id") if _biz else None, "scan_suggest_category", metadata={"supplier": supplier_name[:50]})
+        except Exception:
+            pass
+        
         ai_response = response.content[0].text
         suggestion = extract_json_from_text(ai_response)
         
@@ -50209,6 +50310,12 @@ Return ONLY JSON."""}
                 ]
             }]
         )
+        
+        try:
+            _biz = Auth.get_current_business()
+            _track_ai_usage(message, _biz.get("id") if _biz else None, "smart_scan", metadata={"filename": (file.filename or "")[:80]})
+        except Exception:
+            pass
         
         response_text = message.content[0].text.strip()
         if response_text.startswith("```"):
