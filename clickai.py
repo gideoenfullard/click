@@ -13791,6 +13791,12 @@ class Context:
         low_stock = [{"code": s.get("code"), "description": s.get("description", ""), "qty": s.get("qty") or s.get("quantity", 0)} 
                      for s in stock_data if float(s.get("qty") or s.get("quantity") or 0) < float(s.get("reorder_level", 5) or 5)][:20]
         
+        # TRUE counts (not capped) — for accurate dashboard health metrics
+        _low_stock_count = sum(1 for s in stock_data 
+                               if float(s.get("qty") or s.get("quantity") or 0) < float(s.get("reorder_level", 5) or 5))
+        _out_of_stock_count = sum(1 for s in stock_data 
+                                  if float(s.get("qty") or s.get("quantity") or 0) <= 0)
+        
         result = {
             "business_id": biz_id,
             "business_name": business.get("name", "Business") if business else "Business",
@@ -13806,7 +13812,9 @@ class Context:
             "stock_retail_value": stock_retail_value,
             "customers_summary": debtors[:50],
             "recent_invoices": recent_invoices,
-            "low_stock": low_stock
+            "low_stock": low_stock,
+            "low_stock_count": _low_stock_count,
+            "out_of_stock_count": _out_of_stock_count
         }
         
         # Cache in-memory (not session)
@@ -24608,22 +24616,24 @@ def dashboard():
             _overdue_sub = "Nothing outstanding"
         
         # 3. STOCK HEALTH — weighted: out-of-stock counts double vs low-stock
-        _out_of_stock = [l for l in low_stock if float(l.get("qty", 0) or 0) <= 0]
-        _low_only = [l for l in low_stock if float(l.get("qty", 0) or 0) > 0]
+        # Use TRUE counts from full stock table (low_stock list itself is capped at 20 items for display)
+        _true_low_count = context.get("low_stock_count", len(low_stock))
+        _true_out_count = context.get("out_of_stock_count", 0)
+        _low_only_count = max(0, _true_low_count - _true_out_count)  # low-but-not-out
         if stock_count > 0:
-            _problem_weight = len(_low_only) + (len(_out_of_stock) * 2)
+            _problem_weight = _low_only_count + (_true_out_count * 2)
             _stock_pct = max(0, min(100, 100 - int((_problem_weight / stock_count) * 100)))
         else:
             _stock_pct = 100
         _stock_off = _circ - (_circ * _stock_pct / 100)
         if stock_count == 0:
             _stock_sub = "No stock items yet"
-        elif len(_out_of_stock) > 0 and len(_low_only) > 0:
-            _stock_sub = f"{len(_out_of_stock)} out, {len(_low_only)} low"
-        elif len(_out_of_stock) > 0:
-            _stock_sub = f"{len(_out_of_stock)} out of stock"
-        elif len(_low_only) > 0:
-            _stock_sub = f"{len(_low_only)} low stock"
+        elif _true_out_count > 0 and _low_only_count > 0:
+            _stock_sub = f"{_true_out_count} out, {_low_only_count} low"
+        elif _true_out_count > 0:
+            _stock_sub = f"{_true_out_count} out of stock"
+        elif _low_only_count > 0:
+            _stock_sub = f"{_low_only_count} low stock"
         else:
             _stock_sub = "All items healthy"
         
