@@ -23928,10 +23928,12 @@ def build_linked_documents_panel(db, biz_id, doc_type, doc_id, doc_data=None):
     Build a 'Linked Documents' panel showing all documents related to the given doc.
     Returns clickable HTML so the user never has to search.
     
-    Supported doc_types: 'invoice', 'quote', 'delivery_note', 'credit_note', 'customer'
+    Supported doc_types:
+      - Customer-side: 'invoice', 'quote', 'delivery_note', 'credit_note', 'customer'
+      - Supplier-side: 'purchase_order', 'grv', 'supplier_invoice'
     
     For 'customer', doc_id is customer_id and the panel shows totals/counts of related docs.
-    For document types, the panel shows the linked customer + sibling docs in both directions.
+    For document types, the panel shows the linked customer/supplier + sibling docs in both directions.
     """
     if not biz_id or not doc_id:
         return ""
@@ -23945,6 +23947,10 @@ def build_linked_documents_panel(db, biz_id, doc_type, doc_id, doc_data=None):
                 "delivery_note": "delivery_notes",
                 "credit_note": "credit_notes",
                 "customer": "customers",
+                "purchase_order": "purchase_orders",
+                "grv": "goods_received",
+                "supplier_invoice": "supplier_invoices",
+                "supplier": "suppliers",
             }
             tbl = table_map.get(doc_type)
             if not tbl:
@@ -23999,6 +24005,47 @@ def build_linked_documents_panel(db, biz_id, doc_type, doc_id, doc_data=None):
                 if not customer_id:
                     customer_id = _inv.get("customer_id")
                     customer_name = _inv.get("customer_name", customer_name)
+            except Exception:
+                pass
+        
+        # ── SUPPLIER-SIDE: Resolve PO/GRV/SI relationships ──
+        po_id = None
+        po_number = None
+        grv_id = None
+        grv_number = None
+        si_id = None
+        si_number = None
+        supplier_id = doc_data.get("supplier_id") if doc_type in ("purchase_order", "grv", "supplier_invoice", "supplier") else None
+        supplier_name = doc_data.get("supplier_name", "") if doc_type in ("purchase_order", "grv", "supplier_invoice") else ""
+        if doc_type == "supplier":
+            supplier_id = doc_id
+            supplier_name = doc_data.get("name", "")
+        
+        if doc_type == "purchase_order":
+            po_id = doc_id
+            po_number = doc_data.get("po_number", "")
+        elif doc_type == "grv":
+            grv_id = doc_id
+            grv_number = doc_data.get("grv_number", "")
+            po_id = doc_data.get("po_id")
+            po_number = doc_data.get("po_number", "")
+        elif doc_type == "supplier_invoice":
+            si_id = doc_id
+            si_number = doc_data.get("invoice_number", "")
+            # SI does not store po_id directly — derive from notes field "From PO: PO-xxxx"
+            _notes = doc_data.get("notes", "") or ""
+            try:
+                import re as _re
+                _po_match = _re.search(r'PO[-\s]?\d+', _notes, _re.IGNORECASE)
+                if _po_match:
+                    _po_num_from_notes = _po_match.group(0).upper().replace(" ", "")
+                    if not _po_num_from_notes.startswith("PO-"):
+                        _po_num_from_notes = "PO-" + _po_num_from_notes.replace("PO", "").lstrip("-")
+                    _all_pos = db.get("purchase_orders", {"business_id": biz_id}) or []
+                    _po_match_rec = next((p for p in _all_pos if (p.get("po_number") or "").upper() == _po_num_from_notes.upper()), None)
+                    if _po_match_rec:
+                        po_id = _po_match_rec.get("id")
+                        po_number = _po_match_rec.get("po_number")
             except Exception:
                 pass
         
@@ -24058,6 +24105,85 @@ def build_linked_documents_panel(db, biz_id, doc_type, doc_id, doc_data=None):
                         i_num = inv.get("invoice_number", "")
                         i_date = (inv.get("date") or "")[:10]
                         rows.append(_link_row("🧾", "Invoice", f"/invoice/{inv.get('id')}", i_num, i_date))
+            except Exception:
+                pass
+        
+        # ════════════════════════════════════════════════════════════════════
+        # SUPPLIER-SIDE LINKED DOCS
+        # ════════════════════════════════════════════════════════════════════
+        
+        # ── Supplier link (always show if we have one) ──
+        if supplier_id and doc_type != "supplier":
+            rows.append(_link_row("🏭", "Supplier", f"/supplier/{supplier_id}", supplier_name or "View supplier"))
+        
+        # ── Source PO (for GRV / SI) ──
+        if doc_type in ("grv", "supplier_invoice") and po_id:
+            rows.append(_link_row("📋", "Purchase Order", f"/purchase/{po_id}", po_number or "View PO"))
+        
+        # ── For PO / SI: find sibling GRVs from this PO ──
+        if po_number and doc_type != "grv":
+            try:
+                all_grvs = db.get("goods_received", {"business_id": biz_id}) or []
+                siblings = [g for g in all_grvs 
+                            if (g.get("po_id") == po_id 
+                                or g.get("po_number") == po_number)
+                            and g.get("id") != doc_id]
+                for g in siblings[:5]:
+                    g_num = g.get("grv_number") or "GRV"
+                    g_date = (g.get("date") or g.get("created_at") or "")[:10]
+                    rows.append(_link_row("📦", "GRV", f"/grv/{g.get('id')}", g_num, g_date))
+            except Exception:
+                pass
+        
+        # ── For PO / GRV: find sibling Supplier Invoices from this PO ──
+        if po_number and doc_type != "supplier_invoice":
+            try:
+                all_sis = db.get("supplier_invoices", {"business_id": biz_id}) or []
+                # Match by po_id (if SI ever stored it) or by notes field containing the PO number
+                _po_num_upper = (po_number or "").upper()
+                siblings = []
+                for s in all_sis:
+                    if s.get("id") == doc_id:
+                        continue
+                    if s.get("po_id") == po_id and po_id:
+                        siblings.append(s)
+                        continue
+                    _s_notes = (s.get("notes", "") or "").upper()
+                    if _po_num_upper and _po_num_upper in _s_notes:
+                        siblings.append(s)
+                for s in siblings[:5]:
+                    s_num = s.get("invoice_number") or "SI"
+                    s_date = (s.get("date") or "")[:10]
+                    s_total = s.get("total", 0)
+                    sub = f"{s_date} • {money(s_total)}" if s_total else s_date
+                    rows.append(_link_row("🧾", "Supplier Invoice", f"/supplier-invoice/{s.get('id')}", s_num, sub))
+            except Exception:
+                pass
+        
+        # ── For GRV / SI: also try to find a related GRV/SI when no PO is known ──
+        # (e.g. SI without PO link — find GRVs by supplier within ~14 days)
+        if doc_type == "supplier_invoice" and not po_id and supplier_id:
+            try:
+                all_grvs = db.get("goods_received", {"business_id": biz_id}) or []
+                _si_date = doc_data.get("date", "") or ""
+                related_grvs = []
+                for g in all_grvs:
+                    if g.get("supplier_id") != supplier_id:
+                        continue
+                    g_date = g.get("date") or g.get("created_at") or ""
+                    if _si_date and g_date:
+                        try:
+                            from datetime import datetime as _dt2
+                            _d1 = _dt2.fromisoformat(_si_date[:10])
+                            _d2 = _dt2.fromisoformat(g_date[:10])
+                            if abs((_d1 - _d2).days) <= 14:
+                                related_grvs.append(g)
+                        except Exception:
+                            pass
+                for g in related_grvs[:3]:
+                    g_num = g.get("grv_number") or "GRV"
+                    g_date = (g.get("date") or g.get("created_at") or "")[:10]
+                    rows.append(_link_row("📦", "GRV (likely)", f"/grv/{g.get('id')}", g_num, g_date))
             except Exception:
                 pass
         
@@ -28407,6 +28533,8 @@ def grv_view(grv_id):
     if not grv:
         return redirect("/grv")
     
+    biz_id = business.get("id") if business else None
+    
     try:
         items = json.loads(grv.get("items", "[]"))
     except:
@@ -28423,6 +28551,15 @@ def grv_view(grv_id):
         </tr>
         '''
     
+    # Build "Linked Documents" panel — gives one-click access to PO, supplier invoices, supplier
+    linked_docs_html = ""
+    try:
+        linked_docs_html = build_linked_documents_panel(db, biz_id, "grv", grv_id, grv)
+        if linked_docs_html:
+            linked_docs_html = '<div class="no-print">' + linked_docs_html + '</div>'
+    except Exception:
+        linked_docs_html = ""
+    
     content = f'''
     <div class="no-print" style="display:flex;justify-content:space-between;align-items:center;margin-bottom:20px;">
         <a href="/grv" style="color:var(--text-muted);">← Back to GRV List</a>
@@ -28431,6 +28568,8 @@ def grv_view(grv_id):
             <button onclick="window.print()" class="btn btn-secondary">🖨️ Print</button>
         </div>
     </div>
+    
+    {linked_docs_html}
     
     <div class="card" style="background:white;color:#333;padding:0;overflow:hidden;">
         <!-- TOP BAR -->
@@ -54405,7 +54544,8 @@ try:
             RecordFactory, Email,
             JARVIS_HUD_CSS, THEME_REACTOR_SKINS,
             calc_all_supplier_balances=calc_all_supplier_balances,
-            calc_supplier_balance=calc_supplier_balance
+            calc_supplier_balance=calc_supplier_balance,
+            build_linked_documents_panel=build_linked_documents_panel
         )
         logger.info("[PURCHASES] Routes registered ✓")
 except Exception as e:
