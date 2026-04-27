@@ -24262,8 +24262,269 @@ def build_linked_documents_panel(db, biz_id, doc_type, doc_id, doc_data=None):
             except Exception:
                 pass
         
-        if not rows:
+        # ════════════════════════════════════════════════════════════════════
+        # ATTACHED IMAGES (scanned/uploaded documents linked to this doc)
+        # ════════════════════════════════════════════════════════════════════
+        # Customer-side doc types: show attached images (signed DN, supplier INV, POD, etc.)
+        attach_supported = doc_type in ("invoice", "quote", "delivery_note", "credit_note")
+        
+        if attach_supported:
+            try:
+                all_scanned = db.get("scanned_documents", {"business_id": biz_id}) or []
+                attachments = []
+                for sd in all_scanned:
+                    # New-style linkage
+                    if sd.get("linked_doc_type") == doc_type and sd.get("linked_doc_id") == doc_id:
+                        attachments.append(sd)
+                    # Backwards-compat: invoice attached via linked_invoice_id
+                    elif doc_type == "invoice" and sd.get("linked_invoice_id") == doc_id and not sd.get("linked_doc_type"):
+                        attachments.append(sd)
+                
+                # Sort newest first
+                attachments.sort(key=lambda x: x.get("created_at", ""), reverse=True)
+                
+                # Map attachment_type code → display label
+                _att_labels = {
+                    "signed_dn": ("📎", "Signed DN"),
+                    "supplier_inv": ("📎", "Supplier INV"),
+                    "pod": ("📎", "POD"),
+                    "other": ("📎", "Attachment"),
+                }
+                
+                for att in attachments:
+                    att_type_code = att.get("attachment_type", "other") or "other"
+                    icon, label = _att_labels.get(att_type_code, ("📎", "Attachment"))
+                    fname = att.get("original_filename") or att.get("reference") or "image"
+                    att_date = (att.get("created_at") or "")[:10]
+                    att_id = att.get("id", "")
+                    # Use onclick to open modal instead of navigate
+                    rows.append(f'''<a href="javascript:void(0)" onclick="linkedDocViewAttachment('{att_id}')" style="display:flex;align-items:center;gap:8px;padding:8px 10px;border-radius:6px;background:var(--bg);border:1px solid var(--border);text-decoration:none;color:var(--text);transition:all 0.15s;margin-bottom:6px;"
+                        onmouseover="this.style.borderColor='var(--primary)';this.style.background='rgba(139,92,246,0.05)';"
+                        onmouseout="this.style.borderColor='var(--border)';this.style.background='var(--bg)';">
+                        <span style="font-size:16px;">{icon}</span>
+                        <span style="font-size:12px;color:var(--text-muted);min-width:80px;">{label}</span>
+                        <span style="font-weight:600;color:var(--primary);">{safe_string(fname)}</span>
+                        <span style="color:var(--text-muted);font-size:11px;">{att_date}</span>
+                    </a>''')
+            except Exception as _e_att:
+                try:
+                    logger.warning(f"linked_documents attachments load failed: {_e_att}")
+                except Exception:
+                    pass
+        
+        if not rows and not attach_supported:
             return ""
+        
+        # Build attach button + modal (only for customer-side doc types)
+        _attach_button_html = ""
+        _attach_modal_html = ""
+        if attach_supported:
+            _attach_button_html = f'''
+            <div style="margin-top:10px;padding-top:10px;border-top:1px dashed var(--border);">
+                <button type="button" onclick="linkedDocOpenAttach('{doc_type}','{doc_id}')" 
+                    style="background:transparent;border:1px dashed var(--primary);color:var(--primary);padding:8px 14px;border-radius:6px;cursor:pointer;font-size:12px;font-weight:600;width:100%;">
+                    + Attach Document (Signed DN / Supplier INV / POD / Other)
+                </button>
+            </div>'''
+            
+            _attach_modal_html = '''
+            <!-- Linked Doc Attach Modal -->
+            <div id="linkedDocAttachModal" style="display:none;position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.7);z-index:9999;align-items:center;justify-content:center;">
+                <div style="background:var(--card);padding:24px;border-radius:12px;width:92%;max-width:480px;border:1px solid var(--border);">
+                    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px;">
+                        <h3 style="margin:0;font-size:16px;">📎 Attach Document</h3>
+                        <button onclick="linkedDocCloseAttach()" style="background:none;border:none;color:var(--text-muted);font-size:22px;cursor:pointer;">&times;</button>
+                    </div>
+                    <div style="display:flex;flex-direction:column;gap:12px;">
+                        <div>
+                            <label style="display:block;margin-bottom:4px;font-weight:600;font-size:12px;color:var(--text-muted);">Document type</label>
+                            <select id="linkedDocAttachType" style="width:100%;padding:10px;border:1px solid var(--border);border-radius:6px;background:var(--bg);color:var(--text);font-size:13px;">
+                                <option value="signed_dn">Signed Delivery Note</option>
+                                <option value="supplier_inv">Supplier Invoice (auto-process)</option>
+                                <option value="pod">Proof of Delivery (POD)</option>
+                                <option value="other">Other</option>
+                            </select>
+                        </div>
+                        <div>
+                            <label style="display:block;margin-bottom:4px;font-weight:600;font-size:12px;color:var(--text-muted);">Image (JPG / PNG)</label>
+                            <input type="file" id="linkedDocAttachFile" accept="image/jpeg,image/jpg,image/png" style="width:100%;padding:8px;border:1px solid var(--border);border-radius:6px;background:var(--bg);color:var(--text);font-size:13px;">
+                        </div>
+                        <div id="linkedDocAttachStatus" style="font-size:12px;color:var(--text-muted);min-height:18px;"></div>
+                    </div>
+                    <div style="display:flex;gap:10px;justify-content:flex-end;margin-top:16px;">
+                        <button onclick="linkedDocCloseAttach()" class="btn btn-secondary" style="padding:8px 16px;font-size:13px;">Cancel</button>
+                        <button onclick="linkedDocSubmitAttach()" id="linkedDocAttachSubmitBtn" class="btn btn-primary" style="padding:8px 16px;font-size:13px;">Upload</button>
+                    </div>
+                </div>
+            </div>
+            
+            <!-- Linked Doc Image Viewer Modal -->
+            <div id="linkedDocViewerModal" style="display:none;position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.85);z-index:9999;align-items:center;justify-content:center;padding:20px;">
+                <div style="background:var(--card);padding:20px;border-radius:12px;max-width:90vw;max-height:90vh;overflow:auto;border:1px solid var(--border);">
+                    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;">
+                        <h3 style="margin:0;font-size:14px;" id="linkedDocViewerTitle">Document</h3>
+                        <button onclick="linkedDocCloseViewer()" style="background:none;border:none;color:var(--text-muted);font-size:22px;cursor:pointer;">&times;</button>
+                    </div>
+                    <div id="linkedDocViewerBody" style="text-align:center;">Loading...</div>
+                </div>
+            </div>
+            
+            <script>
+            (function(){
+                if (window.__linkedDocAttachJSLoaded) return;
+                window.__linkedDocAttachJSLoaded = true;
+                
+                window.linkedDocOpenAttach = function(docType, docId){
+                    window.__linkedDocCtx = {docType: docType, docId: docId};
+                    document.getElementById('linkedDocAttachStatus').textContent = '';
+                    document.getElementById('linkedDocAttachFile').value = '';
+                    document.getElementById('linkedDocAttachType').value = 'signed_dn';
+                    document.getElementById('linkedDocAttachSubmitBtn').disabled = false;
+                    document.getElementById('linkedDocAttachSubmitBtn').textContent = 'Upload';
+                    document.getElementById('linkedDocAttachModal').style.display = 'flex';
+                };
+                
+                window.linkedDocCloseAttach = function(){
+                    document.getElementById('linkedDocAttachModal').style.display = 'none';
+                };
+                
+                window.linkedDocSubmitAttach = async function(){
+                    var ctx = window.__linkedDocCtx || {};
+                    var fileEl = document.getElementById('linkedDocAttachFile');
+                    var typeEl = document.getElementById('linkedDocAttachType');
+                    var statusEl = document.getElementById('linkedDocAttachStatus');
+                    var btn = document.getElementById('linkedDocAttachSubmitBtn');
+                    
+                    if (!fileEl.files || !fileEl.files[0]){
+                        statusEl.textContent = 'Please select an image first.';
+                        statusEl.style.color = 'var(--red)';
+                        return;
+                    }
+                    var file = fileEl.files[0];
+                    if (!/^image\\/(jpe?g|png)$/i.test(file.type)){
+                        statusEl.textContent = 'Only JPG or PNG images are allowed.';
+                        statusEl.style.color = 'var(--red)';
+                        return;
+                    }
+                    
+                    btn.disabled = true;
+                    btn.textContent = 'Uploading...';
+                    statusEl.style.color = 'var(--text-muted)';
+                    statusEl.textContent = 'Uploading image...';
+                    
+                    var attachType = typeEl.value;
+                    
+                    if (attachType === 'supplier_inv'){
+                        // Run through full OCR scan flow — same as scan-supplier-invoice
+                        statusEl.textContent = 'Reading invoice with AI...';
+                        try {
+                            var fd = new FormData();
+                            fd.append('file', file);
+                            fd.append('type', 'invoice');
+                            var rsp = await fetch('/api/scan/document', {method:'POST', body: fd});
+                            var dat = await rsp.json();
+                            if (!dat.success){
+                                statusEl.style.color = 'var(--red)';
+                                statusEl.textContent = 'AI scan failed: ' + (dat.error || 'unknown error');
+                                btn.disabled = false; btn.textContent = 'Upload';
+                                return;
+                            }
+                            // Persist context for the save step
+                            window.__linkedDocPendingScan = {
+                                scan_data: dat.data || dat,
+                                image_data: dat.image_data || null,
+                                doc_type: ctx.docType,
+                                doc_id: ctx.docId
+                            };
+                            statusEl.style.color = 'var(--green)';
+                            statusEl.textContent = 'AI read the invoice. Saving as supplier invoice...';
+                            
+                            // Save it directly via save-supplier-invoice with linked-doc fields
+                            var saveBody = Object.assign({}, dat.data || dat, {
+                                image_data: dat.image_data || null,
+                                linked_doc_type: ctx.docType,
+                                linked_doc_id: ctx.docId
+                            });
+                            var sresp = await fetch('/api/scan/save-supplier-invoice', {
+                                method:'POST',
+                                headers:{'Content-Type':'application/json'},
+                                body: JSON.stringify(saveBody)
+                            });
+                            var sdat = await sresp.json();
+                            if (sdat.success){
+                                statusEl.style.color = 'var(--green)';
+                                statusEl.textContent = 'Supplier invoice created and attached. Reloading...';
+                                setTimeout(function(){ location.reload(); }, 900);
+                            } else {
+                                statusEl.style.color = 'var(--red)';
+                                statusEl.textContent = 'Save failed: ' + (sdat.error || 'unknown');
+                                btn.disabled = false; btn.textContent = 'Upload';
+                            }
+                        } catch(e){
+                            statusEl.style.color = 'var(--red)';
+                            statusEl.textContent = 'Error: ' + e.message;
+                            btn.disabled = false; btn.textContent = 'Upload';
+                        }
+                    } else {
+                        // Plain attach — just store image as proof
+                        try {
+                            var fd2 = new FormData();
+                            fd2.append('file', file);
+                            fd2.append('doc_type', ctx.docType);
+                            fd2.append('doc_id', ctx.docId);
+                            fd2.append('attachment_type', attachType);
+                            var rsp2 = await fetch('/api/linked-doc/upload', {method:'POST', body: fd2});
+                            var dat2 = await rsp2.json();
+                            if (dat2.success){
+                                statusEl.style.color = 'var(--green)';
+                                statusEl.textContent = 'Attached. Reloading...';
+                                setTimeout(function(){ location.reload(); }, 600);
+                            } else {
+                                statusEl.style.color = 'var(--red)';
+                                statusEl.textContent = 'Upload failed: ' + (dat2.error || 'unknown');
+                                btn.disabled = false; btn.textContent = 'Upload';
+                            }
+                        } catch(e){
+                            statusEl.style.color = 'var(--red)';
+                            statusEl.textContent = 'Error: ' + e.message;
+                            btn.disabled = false; btn.textContent = 'Upload';
+                        }
+                    }
+                };
+                
+                window.linkedDocViewAttachment = async function(docId){
+                    document.getElementById('linkedDocViewerTitle').textContent = 'Document';
+                    document.getElementById('linkedDocViewerBody').innerHTML = 'Loading...';
+                    document.getElementById('linkedDocViewerModal').style.display = 'flex';
+                    try {
+                        var r = await fetch('/api/scanned-document/' + docId);
+                        var d = await r.json();
+                        if (d.success && d.image_data){
+                            document.getElementById('linkedDocViewerTitle').textContent = d.reference || 'Document';
+                            document.getElementById('linkedDocViewerBody').innerHTML = 
+                                '<img src="data:image/jpeg;base64,' + d.image_data + '" style="max-width:100%;max-height:75vh;border-radius:8px;" />' +
+                                '<div style="margin-top:10px;font-size:12px;color:var(--text-muted);">' + (d.date || '') + '</div>';
+                        } else {
+                            document.getElementById('linkedDocViewerBody').innerHTML = '<p style="color:var(--red);">Image not available</p>';
+                        }
+                    } catch(e){
+                        document.getElementById('linkedDocViewerBody').innerHTML = '<p style="color:var(--red);">Error: ' + e.message + '</p>';
+                    }
+                };
+                
+                window.linkedDocCloseViewer = function(){
+                    document.getElementById('linkedDocViewerModal').style.display = 'none';
+                };
+                
+                document.addEventListener('click', function(e){
+                    var am = document.getElementById('linkedDocAttachModal');
+                    var vm = document.getElementById('linkedDocViewerModal');
+                    if (am && e.target === am) linkedDocCloseAttach();
+                    if (vm && e.target === vm) linkedDocCloseViewer();
+                });
+            })();
+            </script>
+            '''
         
         return f'''
         <div style="background:var(--card);border:1px solid var(--border);border-radius:10px;padding:16px;margin-bottom:20px;">
@@ -24272,7 +24533,9 @@ def build_linked_documents_panel(db, biz_id, doc_type, doc_id, doc_data=None):
                 <span style="font-size:11px;color:var(--text-muted);">— click to navigate</span>
             </div>
             {"".join(rows)}
+            {_attach_button_html}
         </div>
+        {_attach_modal_html}
         '''
     except Exception as _e:
         # Silent fail — panel is helpful but never break the page
@@ -49298,6 +49561,121 @@ def api_get_scanned_document(doc_id):
     })
 
 
+@app.route("/api/linked-doc/upload", methods=["POST"])
+@login_required
+def api_linked_doc_upload():
+    """
+    Upload an image as an attachment to a customer-side document
+    (invoice / quote / delivery_note / credit_note).
+    
+    Stores the image in scanned_documents with linkage fields:
+      - linked_doc_type, linked_doc_id, attachment_type, original_filename
+    
+    For attachment_type='supplier_inv' the front-end calls /api/scan/document
+    + /api/scan/save-supplier-invoice instead — this endpoint is for plain
+    proof-of-record attachments (signed_dn, pod, other).
+    """
+    try:
+        business = Auth.get_current_business()
+        biz_id = business.get("id") if business else None
+        if not biz_id:
+            return jsonify({"success": False, "error": "No business selected"})
+        
+        file = request.files.get("file")
+        if not file:
+            return jsonify({"success": False, "error": "No file uploaded"})
+        
+        doc_type = (request.form.get("doc_type", "") or "").strip()
+        doc_id = (request.form.get("doc_id", "") or "").strip()
+        attachment_type = (request.form.get("attachment_type", "other") or "other").strip()
+        
+        if doc_type not in ("invoice", "quote", "delivery_note", "credit_note"):
+            return jsonify({"success": False, "error": "Invalid doc_type"})
+        if not doc_id:
+            return jsonify({"success": False, "error": "Missing doc_id"})
+        if attachment_type not in ("signed_dn", "supplier_inv", "pod", "other"):
+            attachment_type = "other"
+        
+        # Validate the source document exists and belongs to this business
+        _table_map = {
+            "invoice": "invoices",
+            "quote": "quotes",
+            "delivery_note": "delivery_notes",
+            "credit_note": "credit_notes",
+        }
+        src_doc = db.get_one(_table_map[doc_type], doc_id)
+        if not src_doc or src_doc.get("business_id") != biz_id:
+            return jsonify({"success": False, "error": "Source document not found"})
+        
+        # Read + preprocess + base64
+        file_data = file.read()
+        original_filename = file.filename or "image.jpg"
+        
+        try:
+            file_data = preprocess_image_for_ocr(file_data, original_filename)
+        except Exception:
+            pass  # Use original bytes if preprocessing fails
+        
+        try:
+            image_b64 = base64.b64encode(file_data).decode("utf-8")
+        except Exception as _enc_e:
+            return jsonify({"success": False, "error": f"Image encode failed: {_enc_e}"})
+        
+        # Build a friendly reference label
+        _label_map = {
+            "signed_dn": "Signed DN",
+            "supplier_inv": "Supplier INV",
+            "pod": "POD",
+            "other": "Attachment",
+        }
+        _src_ref_field = {
+            "invoice": "invoice_number",
+            "quote": "quote_number",
+            "delivery_note": "dn_number",
+            "credit_note": "credit_note_number",
+        }
+        _src_ref = src_doc.get(_src_ref_field.get(doc_type, ""), "") or doc_id[:8]
+        reference = f"{_label_map[attachment_type]} — {_src_ref}"
+        
+        # Try to inherit customer_id where useful (for cross-page surfacing later)
+        customer_id = src_doc.get("customer_id")
+        
+        scanned_doc = {
+            "id": generate_id(),
+            "business_id": biz_id,
+            "supplier_id": None,
+            "customer_id": customer_id,
+            "document_type": attachment_type,
+            "reference": reference,
+            "description": original_filename,
+            "date": today(),
+            "amount": 0,
+            "image_data": image_b64,
+            "linked_invoice_id": doc_id if doc_type == "invoice" else None,
+            "linked_doc_type": doc_type,
+            "linked_doc_id": doc_id,
+            "attachment_type": attachment_type,
+            "original_filename": original_filename,
+            "created_at": now()
+        }
+        
+        ok, result = db.save("scanned_documents", scanned_doc)
+        if not ok:
+            return jsonify({"success": False, "error": f"Save failed: {result}"})
+        
+        return jsonify({
+            "success": True,
+            "id": scanned_doc["id"],
+            "reference": reference
+        })
+    except Exception as _e:
+        try:
+            logger.error(f"[LINKED-DOC UPLOAD] {_e}")
+        except Exception:
+            pass
+        return jsonify({"success": False, "error": str(_e)})
+
+
 @app.route("/api/scan/save-supplier-invoice", methods=["POST"])
 @login_required
 def api_scan_save_supplier_invoice():
@@ -49594,6 +49972,30 @@ def api_scan_save_supplier_invoice():
                 "linked_invoice_id": inv_id,
                 "created_at": now()
             }
+            # If this scan was triggered from a customer-side document's
+            # "Attach Document" flow, carry the linkage so the customer-side
+            # invoice/quote/DN/CN page also shows this image as an attachment.
+            _ld_type = data.get("linked_doc_type")
+            _ld_id = data.get("linked_doc_id")
+            if _ld_type in ("invoice", "quote", "delivery_note", "credit_note") and _ld_id:
+                scanned_doc["linked_doc_type"] = _ld_type
+                scanned_doc["linked_doc_id"] = _ld_id
+                scanned_doc["attachment_type"] = "supplier_inv"
+                scanned_doc["original_filename"] = data.get("original_filename") or "supplier_invoice.jpg"
+                # Try to inherit customer_id from the source customer-side doc
+                try:
+                    _src_table = {
+                        "invoice": "invoices",
+                        "quote": "quotes",
+                        "delivery_note": "delivery_notes",
+                        "credit_note": "credit_notes",
+                    }.get(_ld_type)
+                    if _src_table:
+                        _src = db.get_one(_src_table, _ld_id) or {}
+                        if _src.get("customer_id"):
+                            scanned_doc["customer_id"] = _src.get("customer_id")
+                except Exception:
+                    pass
             db.save("scanned_documents", scanned_doc)
             logger.info(f"[SCAN] Saved document image for supplier {supplier_name}")        
         # Create journal entries for GL
