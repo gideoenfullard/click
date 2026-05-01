@@ -232,7 +232,7 @@ def register_stock_routes(app, db, login_required, Auth, render_page,
         }
         
         async function confirmDeleteAllStock() {
-            const phrase = prompt('This will permanently delete ALL stock items for this business.\\n\\nType DELETE ALL to confirm:');
+            const phrase = prompt('This will permanently delete ALL stock items for this business.\n\nType DELETE ALL to confirm:');
             if (phrase === null) return;
             if (phrase.trim() !== 'DELETE ALL') {
                 alert('Confirmation phrase did not match. No stock was deleted.');
