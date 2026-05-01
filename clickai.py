@@ -33113,10 +33113,18 @@ def api_smart_import_batch():
                                     continue
                                 if k in _numeric_update_fields:
                                     try:
-                                        if float(v) > 0:
+                                        fv = float(v)
+                                        if fv > 0:
                                             # Normalise qty alias
                                             tgt = 'quantity' if k == 'qty' else k
-                                            updates[tgt] = v
+                                            # quantity column is INTEGER in stock_items;
+                                            # prices/costs are NUMERIC. Send proper types
+                                            # (not strings) so PostgREST does not silently
+                                            # reject with type-cast errors.
+                                            if tgt == 'quantity':
+                                                updates[tgt] = int(fv)
+                                            else:
+                                                updates[tgt] = fv
                                     except (ValueError, TypeError):
                                         pass
                                 elif k in _text_update_fields:
