@@ -31711,6 +31711,9 @@ def smart_import_page():
                         if (r.status === 'imported') {
                             imported++;
                             addLog(r.name, 'success');
+                        } else if (r.status === 'updated') {
+                            imported++;
+                            addLog(r.name + ' (updated)', 'success');
                         } else if (r.status === 'skipped') {
                             skipped++;
                             addLog(r.name + ' (already exists)', 'skip');
