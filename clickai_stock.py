@@ -73,6 +73,7 @@ def register_stock_routes(app, db, login_required, Auth, render_page,
                     <a href="/stock/movements" class="btn btn-secondary">📋 Movements</a>
                     <button onclick="showStockManager()" class="btn" style="background:#f59e0b;">⚡ Stock Manager</button>
                     <a href="/stock/new" class="btn btn-primary">+ Add Stock</a>
+                    <button onclick="confirmDeleteAllStock()" class="btn btn-secondary" style="background:#dc2626;color:#fff;">Delete All Stock</button>
                 </div>
             </div>
             
@@ -228,6 +229,31 @@ def register_stock_routes(app, db, login_required, Auth, render_page,
         
         function hideStockManager() {
             document.getElementById('stockManagerModal').style.display = 'none';
+        }
+        
+        async function confirmDeleteAllStock() {
+            const phrase = prompt('This will permanently delete ALL stock items for this business.\n\nType DELETE ALL to confirm:');
+            if (phrase === null) return;
+            if (phrase.trim() !== 'DELETE ALL') {
+                alert('Confirmation phrase did not match. No stock was deleted.');
+                return;
+            }
+            try {
+                const resp = await fetch('/api/stock/delete-all', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({confirm: 'DELETE ALL'})
+                });
+                const data = await resp.json();
+                if (data.success) {
+                    alert(data.message || ('Deleted ' + (data.deleted || 0) + ' stock items.'));
+                    location.reload();
+                } else {
+                    alert('Error: ' + (data.error || 'Unknown error'));
+                }
+            } catch (e) {
+                alert('Request failed: ' + e);
+            }
         }
         
         async function runStockCommand(command) {

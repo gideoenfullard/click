@@ -28612,6 +28612,70 @@ def api_suppliers_delete_all():
         return jsonify({"success": False, "error": str(e)[:200]}), 500
 
 
+@app.route("/api/stock/delete-all", methods=["POST"])
+@login_required
+def api_stock_delete_all():
+    """Delete ALL stock items for the current business. Owner/admin only.
+    Requires {"confirm": "DELETE ALL"} in request body.
+    Clears both stock_items and the legacy stock table."""
+    try:
+        user = Auth.get_current_user()
+        business = Auth.get_current_business()
+        biz_id = business.get("id") if business else None
+        
+        if not biz_id:
+            return jsonify({"success": False, "error": "No business selected"}), 400
+        
+        role = get_user_role()
+        if role not in ("owner", "admin"):
+            return jsonify({"success": False, "error": "Only owners and admins can delete all stock"}), 403
+        
+        data = request.get_json(silent=True) or {}
+        if (data.get("confirm") or "").strip() != "DELETE ALL":
+            return jsonify({"success": False, "error": "Confirmation phrase not provided"}), 400
+        
+        total_before = 0
+        total_success = 0
+        total_failed = 0
+        
+        # Clear both stock_items (preferred) and legacy stock table
+        for tbl in ("stock_items", "stock"):
+            items = db.get(tbl, {"business_id": biz_id}, limit=10000) or []
+            if not items:
+                continue
+            ids = [it.get("id") for it in items if it.get("id")]
+            total_before += len(ids)
+            success, failed = db.delete_many(tbl, ids, biz_id)
+            total_success += success
+            total_failed += failed
+        
+        # Invalidate stock cache so the UI shows zero
+        try:
+            _stock_cache.pop(biz_id, None)
+        except Exception:
+            pass
+        
+        logger.warning(f"[DELETE-ALL] biz={biz_id} user={user.get('email') if user else '?'} "
+                       f"stock deleted: {total_success}/{total_before} (failed={total_failed})")
+        try:
+            AuditLog.log("DELETE_ALL", "stock", biz_id,
+                         details=f"Bulk delete: {total_success} stock items removed "
+                                 f"(failed={total_failed}) by {user.get('email') if user else 'unknown'}")
+        except Exception:
+            pass
+        
+        return jsonify({
+            "success": True,
+            "deleted": total_success,
+            "failed": total_failed,
+            "total": total_before,
+            "message": f"Deleted {total_success} of {total_before} stock items"
+        })
+    except Exception as e:
+        logger.error(f"[DELETE-ALL stock] Error: {e}")
+        return jsonify({"success": False, "error": str(e)[:200]}), 500
+
+
 # ==================== GOODS RECEIVED VOUCHERS (GRV) ====================
 
 @app.route("/grv")
@@ -31858,6 +31922,11 @@ def api_smart_import_analyse():
         # Also detect quoted variant
         if not is_sage_stock:
             is_sage_stock = ('"Code"' in header_line and '"Description"' in header_line and 'Price' in header_line)
+        # Sage Pastel ItemQuantitiesReport: "Code","Description","Category","Active","Qty on Hand","Qty Reserved","Qty Available"
+        # No Price column — qty-only stock report. Also handled by the same is_sage_stock parser below.
+        if not is_sage_stock:
+            _hl_low_stock = header_line.lower()
+            is_sage_stock = ('"code"' in _hl_low_stock and '"description"' in _hl_low_stock and 'qty on hand' in _hl_low_stock)
         
         # Sage Trial Balance Report: "Name","Category","Source","Debit","Credit"
         is_sage_tb = ('"Name"' in header_line and '"Category"' in header_line and '"Source"' in header_line and '"Debit"' in header_line and '"Credit"' in header_line)
@@ -32094,6 +32163,13 @@ def api_smart_import_analyse():
                 elif h_clean == 'description': col_map[str(i)] = 'description'
                 elif h_clean == 'category': col_map[str(i)] = 'category'
                 elif h_clean == 'unit': col_map[str(i)] = 'unit'
+                # Sage Price List Report: "Price list default" + "Price list 1..10".
+                # Default is the main selling price; numbered lists feed price_1..price_10.
+                elif h_clean == 'price list default':
+                    col_map[str(i)] = 'selling_price'
+                elif h_clean.startswith('price list ') and h_clean.replace('price list ', '').strip().isdigit():
+                    _n = h_clean.replace('price list ', '').strip()
+                    col_map[str(i)] = f'price_{_n}'
                 elif 'price excl' in h_clean or (h_clean.startswith('price list') and 'exclusive' in h_clean):
                     # Prefer "default" price list over numbered ones
                     if 'default' in h_clean:
@@ -33005,22 +33081,69 @@ def api_smart_import_batch():
                     if not name and not code:
                         status = "skipped"
                     else:
-                        # Pass ALL row data to RecordFactory - exclude fields we pass explicitly
-                        exclude_fields = {'description', 'business_id'}
-                        extra_kwargs = {k: v for k, v in row.items() if k not in exclude_fields}
-                        record = RecordFactory.stock_item(
-                            business_id=biz_id,
-                            description=name or code,
-                            **extra_kwargs
-                        )
-                        result = db.save_stock(record)
-                        success = result[0] if isinstance(result, tuple) else result
-                        resp = result[1] if isinstance(result, tuple) else ""
-                        if success:
-                            status = "imported"
+                        # Match existing by CODE first to prevent duplicates and to MERGE
+                        # data from multiple Sage exports (e.g. PriceListReport for prices +
+                        # ItemQuantitiesReport for qty). Only non-blank/non-zero values from
+                        # the new row update the existing record, so a qty-only import
+                        # does NOT wipe prices already loaded, and vice versa.
+                        existing = None
+                        if not replace_mode and code:
+                            existing = db.get("stock_items", {"business_id": biz_id, "code": code})
+                            if not existing:
+                                existing = db.get("stock", {"business_id": biz_id, "code": code})
+                        if existing:
+                            exist_rec = existing[0] if isinstance(existing, list) else existing
+                            exist_id = exist_rec.get("id")
+                            # Fields we'll consider updating. Numbers (price/qty/cost) only
+                            # update when > 0 so a blank "0" in a qty-less price report
+                            # doesn't wipe existing qty.
+                            _numeric_update_fields = {'quantity', 'qty', 'cost_price', 'cost',
+                                                      'selling_price', 'price',
+                                                      'price_1', 'price_2', 'price_3', 'price_4', 'price_5',
+                                                      'price_6', 'price_7', 'price_8', 'price_9', 'price_10',
+                                                      'reorder_level'}
+                            _text_update_fields = {'description', 'category', 'unit', 'barcode',
+                                                   'supplier', 'supplier_code', 'vat_type', 'notes', 'active'}
+                            updates = {}
+                            for k, v in row.items():
+                                if v in (None, ""):
+                                    continue
+                                if k in _numeric_update_fields:
+                                    try:
+                                        if float(v) > 0:
+                                            # Normalise qty alias
+                                            tgt = 'quantity' if k == 'qty' else k
+                                            updates[tgt] = v
+                                    except (ValueError, TypeError):
+                                        pass
+                                elif k in _text_update_fields:
+                                    updates[k] = v
+                            if name: updates["description"] = name
+                            if code: updates["code"] = code
+                            success = db.update("stock_items", exist_id, updates)
+                            try:
+                                _stock_cache.pop(biz_id, None)
+                            except Exception:
+                                pass
+                            status = "updated" if success else "error"
+                            if not success: error_msg = "Update failed"
                         else:
-                            status = "error"
-                            error_msg = str(resp)[:50]
+                            # New record - pass ALL row data to RecordFactory
+                            exclude_fields = {'description', 'business_id'}
+                            extra_kwargs = {k: v for k, v in row.items() if k not in exclude_fields}
+                            record = RecordFactory.stock_item(
+                                business_id=biz_id,
+                                description=name or code,
+                                **extra_kwargs
+                            )
+                            result = db.save_stock(record)
+                            success = result[0] if isinstance(result, tuple) else result
+                            resp = result[1] if isinstance(result, tuple) else ""
+                            if success:
+                                status = "imported"
+                            else:
+                                status = "error"
+                                error_msg = str(resp)[:50]
                 
                 elif data_type == "chart_of_accounts":
                     name = str(row.get("account_name", "")).strip()
