@@ -32555,11 +32555,19 @@ def api_sage_drop_import():
             desc = rec.get("description", "").strip()
             if not desc and not rec.get("code"):
                 continue
+            # Mirror Sage's price_1 into the legacy selling_price/price fields so
+            # that pages reading `selling_price` (the Stock list, POS, etc.) show
+            # the price. RecordFactory.stock_item already mirrors selling_price
+            # → price_1 but not the other direction.
+            kwargs = {k: v for k, v in rec.items() if k != "description"}
+            if "price_1" in kwargs and kwargs["price_1"] and not kwargs.get("selling_price"):
+                kwargs["selling_price"] = kwargs["price_1"]
+                kwargs["price"] = kwargs["price_1"]
             r = RecordFactory.stock_item(
                 business_id=biz_id,
                 description=desc or rec.get("code", ""),
                 created_by=user_id,
-                **{k: v for k, v in rec.items() if k != "description"}
+                **kwargs
             )
             stock_records.append(r)
         if stock_records:
