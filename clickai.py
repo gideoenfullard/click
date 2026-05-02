@@ -3145,6 +3145,80 @@ class DB:
         
         return success, errors
     
+    def save_many_fast(self, table: str, records: List[dict],
+                       batch_size: int = 1000,
+                       max_workers: int = 4,
+                       on_conflict: str = None) -> Tuple[int, int]:
+        """High-speed bulk insert/upsert.
+        
+        - Sends batches of `batch_size` records per HTTP call (Supabase accepts up
+          to ~1000 cleanly).
+        - Runs `max_workers` batches in parallel using threads.
+        - If `on_conflict` is given (e.g. "business_id,code"), uses
+          PostgREST's resolution=merge-duplicates header so existing rows with
+          the same key are UPDATED in place (Sage data wins, per user request).
+        
+        Returns (success_count, error_count).
+        """
+        if not records:
+            return 0, 0
+        
+        # Ensure each record has an id (used as fallback conflict key)
+        for r in records:
+            if not r.get("id"):
+                r["id"] = generate_id()
+            if not r.get("created_at"):
+                r["created_at"] = now()
+        
+        # Build URL & headers once
+        if on_conflict:
+            url = f"{self.url}/rest/v1/{table}?on_conflict={on_conflict}"
+            headers = {**self.headers,
+                       "Prefer": "return=minimal,resolution=merge-duplicates"}
+        else:
+            url = f"{self.url}/rest/v1/{table}"
+            headers = {**self.headers, "Prefer": "return=minimal"}
+        
+        # Slice into batches
+        batches = [records[i:i + batch_size]
+                   for i in range(0, len(records), batch_size)]
+        
+        success = 0
+        errors = 0
+        
+        def _send(batch):
+            try:
+                resp = requests.post(url, headers=headers, json=batch, timeout=60)
+                if resp.status_code in (200, 201, 204):
+                    return len(batch), 0, None
+                # Don't fall back to per-record save() here — the caller handles
+                # retry. We surface the error so the caller can decide.
+                return 0, len(batch), f"HTTP {resp.status_code}: {resp.text[:200]}"
+            except Exception as e:
+                return 0, len(batch), str(e)[:200]
+        
+        # Cap workers at number of batches (no point in 4 threads for 1 batch)
+        workers = min(max_workers, len(batches))
+        if workers <= 1:
+            for batch in batches:
+                ok, fail, err = _send(batch)
+                success += ok
+                errors += fail
+                if err:
+                    logger.error(f"[DB FAST] {table} batch failed: {err}")
+        else:
+            from concurrent.futures import ThreadPoolExecutor, as_completed
+            with ThreadPoolExecutor(max_workers=workers) as pool:
+                futures = [pool.submit(_send, b) for b in batches]
+                for fut in as_completed(futures):
+                    ok, fail, err = fut.result()
+                    success += ok
+                    errors += fail
+                    if err:
+                        logger.error(f"[DB FAST] {table} batch failed: {err}")
+        
+        return success, errors
+    
     def delete(self, table: str, id: str, business_id: str = None) -> bool:
         """Delete record - with verification"""
         try:
@@ -19886,7 +19960,7 @@ def render_page(title: str, content: str, user: dict = None, active: str = "") -
             ("ledger", "/ledger", "Ledger"),
             ("intelligence", "/intelligence", "AI"),
             ("tools", "/tools", "Tools"),
-            ("import", "/smart-import", "Import"),
+            ("import", "/sage-drop", "Import"),
             ("inbox", "/scan-inbox", "Inbox"),
             ("settings", "/settings", "Settings"),
         ]
@@ -24713,7 +24787,7 @@ def dashboard():
                 </div>
             </div>
             <div style="display: flex; flex-wrap: wrap; gap: 15px;">
-                <a href="/smart-import" class="btn btn-primary" style="padding: 15px 25px; background:linear-gradient(135deg,#10b981,#059669);">🚀 Switch from Sage / Xero / Pastel</a>
+                <a href="/sage-drop" class="btn btn-primary" style="padding: 15px 25px; background:linear-gradient(135deg,#10b981,#059669);">🚀 Switch from Sage / Xero / Pastel</a>
                 {import_btns}
                 <a href="/pos" class="btn" style="padding: 15px 25px; background:var(--surface);">🛒 Open POS</a>
                 <a href="/scan" class="btn" style="padding: 15px 25px; background:#f59e0b; color:white;">📸 Scan Invoice</a>
@@ -31044,6 +31118,1249 @@ def api_bulk_statements():
 #   User uploads a messy Sage export → ClickAI just handles it.
 #
 # ═══════════════════════════════════════════════════════════════════════════════
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# SAGE DROP — bulk-drop import with AI classification + smart merge
+# ═══════════════════════════════════════════════════════════════════════════════
+# User dumps 20+ Sage CSV/Excel files in one drop zone.
+# Haiku classifies each file/tab. Junk is auto-discarded.
+# Stock-qty + stock-prices merged on Code. Duplicates merged silently.
+# Bulk insert via save_many_fast (1000/batch, 4 threads).
+# Session state survives navigate-away (stored in /tmp + recovered on reopen).
+# ═══════════════════════════════════════════════════════════════════════════════
+
+import shutil as _sd_shutil
+from io import StringIO as _sd_StringIO, BytesIO as _sd_BytesIO
+
+# Storage
+SAGE_DROP_DIR = "/tmp/sage_drop"
+os.makedirs(SAGE_DROP_DIR, exist_ok=True)
+
+# Tunables
+SD_MAX_PREVIEW_ROWS = 8        # Rows we send to Haiku per file/tab for classification
+SD_CLASSIFY_BATCH = 5          # Files per Haiku call
+SD_HAIKU_MODEL = "claude-haiku-4-5-20251001"
+SD_MAX_FILE_BYTES = 50 * 1024 * 1024   # 50 MB cap per file (safety on 1GB worker)
+
+# File classes Haiku may return
+SD_KNOWN_TYPES = {
+    "customers_clean", "suppliers_clean",
+    "stock_qty", "stock_prices", "stock_full",
+    "trial_balance", "chart_of_accounts",
+    "customer_aging", "supplier_aging",
+    "bank_statement",
+    "junk", "unknown",
+}
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Session storage (survives navigate-away)
+# ─────────────────────────────────────────────────────────────────────────────
+
+def _sd_session_dir(biz_id):
+    safe = "".join(c for c in (biz_id or "default") if c.isalnum() or c in "-_")
+    d = os.path.join(SAGE_DROP_DIR, safe or "default")
+    os.makedirs(d, exist_ok=True)
+    return d
+
+def _sd_meta_path(biz_id):
+    return os.path.join(_sd_session_dir(biz_id), "meta.json")
+
+def _sd_files_dir(biz_id):
+    d = os.path.join(_sd_session_dir(biz_id), "files")
+    os.makedirs(d, exist_ok=True)
+    return d
+
+def _sd_load_session(biz_id):
+    p = _sd_meta_path(biz_id)
+    if not os.path.exists(p):
+        return {"files": [], "created_at": now()}
+    try:
+        with open(p, "r", encoding="utf-8") as f:
+            return json.load(f)
+    except Exception as e:
+        logger.error(f"[SAGE DROP] Failed to load session {p}: {e}")
+        return {"files": [], "created_at": now()}
+
+def _sd_save_session(biz_id, meta):
+    p = _sd_meta_path(biz_id)
+    try:
+        with open(p, "w", encoding="utf-8") as f:
+            json.dump(meta, f, indent=2, default=str)
+    except Exception as e:
+        logger.error(f"[SAGE DROP] Failed to save session {p}: {e}")
+
+def _sd_reset_session(biz_id):
+    d = _sd_session_dir(biz_id)
+    if os.path.exists(d):
+        try:
+            _sd_shutil.rmtree(d)
+        except Exception as e:
+            logger.error(f"[SAGE DROP] Failed to reset session: {e}")
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# CSV/XLSX parsing
+# ─────────────────────────────────────────────────────────────────────────────
+
+def _sd_strip_excel_sep(text):
+    if text.startswith("sep="):
+        nl = text.find("\n")
+        if 0 < nl < 20:
+            return text[nl + 1:]
+    return text
+
+def _sd_read_csv_rows(raw_bytes, max_rows=None):
+    try:
+        text = raw_bytes.decode("utf-8-sig")
+    except UnicodeDecodeError:
+        text = raw_bytes.decode("latin-1", errors="replace")
+    text = _sd_strip_excel_sep(text)
+    rows = []
+    reader = csv.reader(_sd_StringIO(text))
+    for i, row in enumerate(reader):
+        if max_rows is not None and i >= max_rows:
+            break
+        rows.append(row)
+    return rows
+
+def _sd_read_xlsx_tabs(raw_bytes):
+    try:
+        import openpyxl
+    except ImportError:
+        logger.error("[SAGE DROP] openpyxl not available")
+        return []
+    out = []
+    try:
+        wb = openpyxl.load_workbook(_sd_BytesIO(raw_bytes), read_only=True, data_only=True)
+        for sheet_name in wb.sheetnames:
+            ws = wb[sheet_name]
+            rows = []
+            for row in ws.iter_rows(values_only=True):
+                rows.append([("" if c is None else str(c)) for c in row])
+                if len(rows) > 50000:
+                    logger.warning(f"[SAGE DROP] Tab '{sheet_name}' truncated")
+                    break
+            if rows:
+                out.append((sheet_name, rows))
+        wb.close()
+    except Exception as e:
+        logger.error(f"[SAGE DROP] xlsx read error: {e}")
+    return out
+
+
+def _sd_ingest(biz_id, original_filename, raw_bytes):
+    """Save uploaded file to disk and split into logical files (tabs).
+    Returns list of dicts with file_id, source_name, rows_count, headers, saved_path."""
+    if len(raw_bytes) > SD_MAX_FILE_BYTES:
+        return [{"error": f"File too large ({len(raw_bytes)/1024/1024:.1f} MB)"}]
+    
+    fdir = _sd_files_dir(biz_id)
+    name_lower = (original_filename or "").lower()
+    out = []
+    
+    if name_lower.endswith((".xlsx", ".xlsm", ".xls")):
+        tabs = _sd_read_xlsx_tabs(raw_bytes)
+        if not tabs:
+            return [{"error": "Could not read Excel file"}]
+        for tab_name, rows in tabs:
+            if len(rows) < 2:
+                continue
+            file_id = hashlib.sha1(f"{original_filename}::{tab_name}::{time.time()}".encode()).hexdigest()[:16]
+            saved_path = os.path.join(fdir, f"{file_id}.json")
+            with open(saved_path, "w", encoding="utf-8") as f:
+                json.dump(rows, f)
+            out.append({
+                "file_id": file_id,
+                "source_name": f"{original_filename} :: {tab_name}",
+                "rows_count": len(rows) - 1,
+                "headers": rows[0] if rows else [],
+                "saved_path": saved_path,
+            })
+    else:
+        rows = _sd_read_csv_rows(raw_bytes)
+        if len(rows) < 2:
+            return [{"error": "File has no data rows"}]
+        file_id = hashlib.sha1(f"{original_filename}::{time.time()}".encode()).hexdigest()[:16]
+        saved_path = os.path.join(fdir, f"{file_id}.json")
+        with open(saved_path, "w", encoding="utf-8") as f:
+            json.dump(rows, f)
+        out.append({
+            "file_id": file_id,
+            "source_name": original_filename,
+            "rows_count": len(rows) - 1,
+            "headers": rows[0] if rows else [],
+            "saved_path": saved_path,
+        })
+    return out
+
+
+def _sd_load_file_rows(biz_id, file_id):
+    p = os.path.join(_sd_files_dir(biz_id), f"{file_id}.json")
+    if not os.path.exists(p):
+        return []
+    try:
+        with open(p, "r", encoding="utf-8") as f:
+            return json.load(f)
+    except Exception as e:
+        logger.error(f"[SAGE DROP] Load file {file_id} failed: {e}")
+        return []
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# AI classification (Haiku)
+# ─────────────────────────────────────────────────────────────────────────────
+
+def _sd_build_classify_prompt(files_preview):
+    parts = []
+    for i, fp in enumerate(files_preview):
+        rows_text = []
+        for r in fp["preview_rows"][:SD_MAX_PREVIEW_ROWS]:
+            rows_text.append(",".join(str(c)[:80] for c in r))
+        parts.append(f"=== FILE_{i} ({fp['source_name']}) ===\n" + "\n".join(rows_text))
+    files_block = "\n\n".join(parts)
+    
+    return f"""You are classifying CSV/Excel files exported from Sage accounting software.
+
+For each file below, return ONE of these classes:
+- customers_clean: tabular customer/debtor list, ONE row per customer (e.g. headers: Name, Balance, VAT Reference, Email)
+- suppliers_clean: tabular supplier/creditor list, ONE row per supplier
+- stock_qty: stock items with quantities but NO prices (headers like: Code, Description, Qty on Hand, Qty Reserved)
+- stock_prices: stock items with prices but NO quantities (headers like: Code, Description, Price list 1, Price list 2)
+- stock_full: stock items with BOTH quantity AND price columns
+- trial_balance: GL trial balance (Account Name, Debit, Credit columns)
+- chart_of_accounts: bare GL account list (Account Code, Account Name, Type) without amounts
+- customer_aging: outstanding customer invoices (Customer, Invoice No, Date, Amount, days)
+- supplier_aging: outstanding supplier invoices (Supplier, Invoice No, Date, Amount, days)
+- bank_statement: bank transactions (Date, Description, Debit, Credit, Balance)
+- junk: human-readable listing report (title row "X Listing Report", multi-line addresses per record, page numbers, "Date:", "Page:" rows). Anything that is NOT a flat table.
+- unknown: cannot determine
+
+CRITICAL: A file with a title like "Customer Listing Report" followed by company name and "Date:" / "Page:" rows is JUNK, even if it has customer data — because each customer takes multiple rows (address on separate lines, etc.). Only classify as customers_clean if there is ONE row per customer.
+
+Files to classify:
+
+{files_block}
+
+Respond with ONLY a JSON array, one object per file, in order:
+[{{"file_index": 0, "type": "customers_clean", "confidence": 0.95, "reason": "..."}}, ...]
+
+NO prose, NO markdown, ONLY the JSON array."""
+
+
+def _sd_classify_files(files_preview):
+    """Classify a list of files. Returns list of {type, confidence, reason} per file (in order)."""
+    if not files_preview:
+        return []
+    if not _anthropic_client:
+        return [{"type": "unknown", "confidence": 0.0, "reason": "no AI client"}
+                for _ in files_preview]
+    
+    results = [None] * len(files_preview)
+    
+    for start in range(0, len(files_preview), SD_CLASSIFY_BATCH):
+        batch = files_preview[start:start + SD_CLASSIFY_BATCH]
+        prompt = _sd_build_classify_prompt(batch)
+        try:
+            resp = _anthropic_client.messages.create(
+                model=SD_HAIKU_MODEL,
+                max_tokens=2000,
+                messages=[{"role": "user", "content": prompt}],
+            )
+            text = "".join(b.text for b in resp.content if hasattr(b, "text")).strip()
+            if text.startswith("```"):
+                text = text.split("\n", 1)[1] if "\n" in text else text
+                if text.endswith("```"):
+                    text = text[:-3]
+                if text.startswith("json"):
+                    text = text[4:]
+                text = text.strip()
+            parsed = json.loads(text)
+            if not isinstance(parsed, list):
+                raise ValueError("Expected JSON array")
+            for j, item in enumerate(parsed):
+                if not isinstance(item, dict):
+                    continue
+                t = item.get("type", "unknown")
+                if t not in SD_KNOWN_TYPES:
+                    t = "unknown"
+                idx = start + j
+                if idx < len(results):
+                    results[idx] = {
+                        "type": t,
+                        "confidence": float(item.get("confidence", 0.5)),
+                        "reason": str(item.get("reason", ""))[:200],
+                    }
+        except Exception as e:
+            logger.error(f"[SAGE DROP] Classify batch failed (start={start}): {e}")
+            for j in range(len(batch)):
+                idx = start + j
+                if idx < len(results) and results[idx] is None:
+                    results[idx] = {"type": "unknown", "confidence": 0.0,
+                                    "reason": f"classify error: {str(e)[:80]}"}
+    
+    for i in range(len(results)):
+        if results[i] is None:
+            results[i] = {"type": "unknown", "confidence": 0.0, "reason": "no result"}
+    return results
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Column mapping (Sage column names → internal field names)
+# ─────────────────────────────────────────────────────────────────────────────
+
+SD_COL_CUSTOMER = {
+    "name": "name_full", "category": "category",
+    "balance": "balance", "credit limit": "credit_limit",
+    "vat reference": "vat_number", "vat number": "vat_number",
+    "contact name": "contact_name",
+    "tel number": "phone", "telephone": "phone", "phone": "phone",
+    "mobile number": "cell", "mobile": "cell", "cell": "cell",
+    "email": "email", "active": "active",
+    "sales rep": "sales_rep", "price list": "price_list",
+    "discount percentage": "discount_percentage",
+    "default vat type": "vat_type", "vat type": "vat_type",
+    "address": "address", "physical address": "address",
+    "postal address": "postal_address", "delivery address": "delivery_address",
+    "fax": "fax", "website": "website",
+    "payment terms": "payment_terms", "notes": "notes",
+}
+SD_COL_SUPPLIER = SD_COL_CUSTOMER
+
+SD_COL_STOCK_QTY = {
+    "code": "code", "description": "description",
+    "category": "category", "active": "active",
+    "qty on hand": "quantity", "quantity on hand": "quantity",
+    "qty": "quantity", "quantity": "quantity",
+    "qty reserved": "qty_reserved", "qty available": "qty_available",
+    "unit": "unit",
+}
+
+SD_COL_STOCK_PRICES = {
+    "code": "code", "description": "description",
+    "category": "category", "unit": "unit",
+    "cost": "cost_price", "cost price": "cost_price", "average cost": "cost_price",
+    "price list 1": "price_1", "price list 2": "price_2", "price list 3": "price_3",
+    "price list 4": "price_4", "price list 5": "price_5", "price list 6": "price_6",
+    "price list 7": "price_7", "price list 8": "price_8", "price list 9": "price_9",
+    "price list 10": "price_10", "price list default": "price_1",
+    "selling price": "price_1", "price": "price_1",
+}
+
+SD_COL_TRIAL_BALANCE = {
+    "account": "account_name", "account name": "account_name", "name": "account_name",
+    "code": "account_code", "account code": "account_code",
+    "debit": "debit", "credit": "credit", "amount": "amount",
+    "type": "account_type", "account type": "account_type",
+}
+
+
+def _sd_norm_header(h):
+    return (h or "").strip().lower()
+
+def _sd_build_idx(headers, col_map):
+    idx = {}
+    for i, h in enumerate(headers):
+        nh = _sd_norm_header(h)
+        if nh in col_map:
+            idx[col_map[nh]] = i
+    return idx
+
+def _sd_find_data_start(rows, col_map):
+    for i, row in enumerate(rows[:10]):
+        if not row:
+            continue
+        idx_map = _sd_build_idx(row, col_map)
+        if len(idx_map) >= 2:
+            return i
+    return 0
+
+def _sd_split_code_name(s):
+    if not s:
+        return "", ""
+    s = str(s).strip()
+    if " : " in s:
+        parts = s.split(" : ", 1)
+        return parts[0].strip(), parts[1].strip()
+    return "", s
+
+def _sd_money(v):
+    if v is None:
+        return 0.0
+    s = str(v).replace("R", "").replace(",", "").replace(" ", "").strip()
+    if not s or s in ("-", "N/A", "n/a"):
+        return 0.0
+    try:
+        return float(s)
+    except (ValueError, TypeError):
+        return 0.0
+
+def _sd_int(v):
+    return int(_sd_money(v))
+
+def _sd_active(v):
+    return str(v or "").strip().lower() in ("yes", "true", "1", "y", "active")
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Row → record extractors
+# ─────────────────────────────────────────────────────────────────────────────
+
+def _sd_extract_customers(rows):
+    if not rows:
+        return []
+    header_idx = _sd_find_data_start(rows, SD_COL_CUSTOMER)
+    headers = rows[header_idx]
+    idx = _sd_build_idx(headers, SD_COL_CUSTOMER)
+    if "name_full" not in idx:
+        return []
+    out = []
+    for row in rows[header_idx + 1:]:
+        if not row or len(row) <= idx["name_full"]:
+            continue
+        name_full = (row[idx["name_full"]] or "").strip() if idx["name_full"] < len(row) else ""
+        if not name_full:
+            continue
+        if name_full.lower().startswith(("page", "date:", "total", "delivery address",
+                                         "physical address", "postal address",
+                                         "fax:", "mobile:", "email:")):
+            continue
+        code, name = _sd_split_code_name(name_full)
+        rec = {"name": name, "code": code}
+        for field, i in idx.items():
+            if field == "name_full" or i >= len(row):
+                continue
+            val = row[i]
+            if val is None or str(val).strip() == "":
+                continue
+            if field in ("balance", "credit_limit", "discount_percentage"):
+                rec[field] = _sd_money(val)
+            elif field == "active":
+                rec[field] = _sd_active(val)
+            else:
+                rec[field] = str(val).strip()
+        out.append(rec)
+    return out
+
+
+def _sd_extract_suppliers(rows):
+    return _sd_extract_customers(rows)
+
+
+def _sd_extract_stock_qty(rows):
+    if not rows:
+        return []
+    header_idx = _sd_find_data_start(rows, SD_COL_STOCK_QTY)
+    headers = rows[header_idx]
+    idx = _sd_build_idx(headers, SD_COL_STOCK_QTY)
+    if "code" not in idx and "description" not in idx:
+        return []
+    out = []
+    for row in rows[header_idx + 1:]:
+        if not row:
+            continue
+        rec = {}
+        for field, i in idx.items():
+            if i >= len(row):
+                continue
+            val = row[i]
+            if val is None or str(val).strip() == "":
+                continue
+            if field in ("quantity", "qty_reserved", "qty_available"):
+                rec[field] = _sd_int(val)
+            elif field == "active":
+                rec[field] = _sd_active(val)
+            else:
+                rec[field] = str(val).strip()
+        if rec.get("code") or rec.get("description"):
+            out.append(rec)
+    return out
+
+
+def _sd_extract_stock_prices(rows):
+    if not rows:
+        return []
+    header_idx = _sd_find_data_start(rows, SD_COL_STOCK_PRICES)
+    headers = rows[header_idx]
+    idx = _sd_build_idx(headers, SD_COL_STOCK_PRICES)
+    if "code" not in idx and "description" not in idx:
+        return []
+    out = []
+    for row in rows[header_idx + 1:]:
+        if not row:
+            continue
+        rec = {}
+        for field, i in idx.items():
+            if i >= len(row):
+                continue
+            val = row[i]
+            if val is None or str(val).strip() == "":
+                continue
+            if field.startswith("price_") or field == "cost_price":
+                rec[field] = _sd_money(val)
+            else:
+                rec[field] = str(val).strip()
+        if rec.get("code") or rec.get("description"):
+            out.append(rec)
+    return out
+
+
+def _sd_extract_trial_balance(rows):
+    if not rows:
+        return []
+    header_idx = _sd_find_data_start(rows, SD_COL_TRIAL_BALANCE)
+    headers = rows[header_idx]
+    idx = _sd_build_idx(headers, SD_COL_TRIAL_BALANCE)
+    if "account_name" not in idx:
+        return []
+    out = []
+    for row in rows[header_idx + 1:]:
+        if not row or idx["account_name"] >= len(row):
+            continue
+        name = (row[idx["account_name"]] or "").strip()
+        if not name or name.lower().startswith(("total", "page", "date:", "report")):
+            continue
+        debit = _sd_money(row[idx["debit"]]) if "debit" in idx and idx["debit"] < len(row) else 0
+        credit = _sd_money(row[idx["credit"]]) if "credit" in idx and idx["credit"] < len(row) else 0
+        amount = _sd_money(row[idx["amount"]]) if "amount" in idx and idx["amount"] < len(row) else 0
+        if debit == 0 and credit == 0 and amount != 0:
+            if amount > 0:
+                debit = amount
+            else:
+                credit = abs(amount)
+        if debit == 0 and credit == 0:
+            continue
+        code = ""
+        if "account_code" in idx and idx["account_code"] < len(row):
+            code = str(row[idx["account_code"]] or "").strip()
+        out.append({"account_name": name, "account_code": code,
+                    "debit": debit, "credit": credit})
+    return out
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Smart merge
+# ─────────────────────────────────────────────────────────────────────────────
+
+def _sd_merge_customers(buckets):
+    by_key = {}
+    for bucket in buckets:
+        for rec in bucket:
+            key = rec.get("code") or rec.get("name", "").lower()
+            if not key:
+                continue
+            existing = by_key.get(key, {})
+            for k, v in rec.items():
+                if v not in (None, "", 0, 0.0):
+                    existing[k] = v
+                elif k not in existing:
+                    existing[k] = v
+            by_key[key] = existing
+    return list(by_key.values())
+
+
+def _sd_merge_stock(qty_buckets, price_buckets, full_buckets):
+    by_code = {}
+    
+    def _merge_in(bucket, price_only=False, qty_only=False):
+        for rec in bucket:
+            code = rec.get("code", "").strip()
+            if not code:
+                continue
+            existing = by_code.get(code, {"code": code})
+            for k, v in rec.items():
+                if v in (None, "",):
+                    continue
+                if price_only and k in ("quantity", "qty_reserved", "qty_available"):
+                    continue
+                if qty_only and (k.startswith("price_") or k == "cost_price"):
+                    continue
+                existing[k] = v
+            by_code[code] = existing
+    
+    for b in qty_buckets:
+        _merge_in(b, qty_only=True)
+    for b in price_buckets:
+        _merge_in(b, price_only=True)
+    for b in full_buckets:
+        _merge_in(b)
+    return list(by_code.values())
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Flask routes
+# ─────────────────────────────────────────────────────────────────────────────
+
+@app.route("/sage-drop")
+@login_required
+def sage_drop_page():
+    """Bulk-drop import page. Drop 20+ files; AI classifies; smart merge; bulk import."""
+    user = Auth.get_current_user()
+    business = Auth.get_current_business()
+    biz_id = business.get("id") if business else None
+    biz_name = business.get("name", "your business") if business else "your business"
+    
+    # Show count of files already in session (so user can see they're picking up where they left off)
+    session_data = _sd_load_session(biz_id) if biz_id else {"files": []}
+    pending_count = len(session_data.get("files", []))
+    
+    pending_banner = ""
+    if pending_count > 0:
+        pending_banner = f'''
+        <div class="card" style="background:rgba(59,130,246,0.08);border:1px solid rgba(59,130,246,0.3);margin-bottom:20px;">
+            <div style="display:flex;align-items:center;gap:15px;">
+                <div style="font-size:32px;">📂</div>
+                <div style="flex:1;">
+                    <strong>You have {pending_count} file{"s" if pending_count != 1 else ""} from a previous session.</strong>
+                    <div style="color:var(--text-muted);font-size:13px;margin-top:3px;">Continue where you left off, or clear and start fresh.</div>
+                </div>
+                <button onclick="resetSession()" class="btn btn-secondary" style="font-size:13px;">Clear & Start Fresh</button>
+            </div>
+        </div>
+        '''
+    
+    content = f'''
+    <style>
+        .sd-zone {{
+            border: 3px dashed var(--border); border-radius: 16px;
+            padding: 50px 30px; text-align: center; cursor: pointer;
+            transition: all 0.2s;
+            background: linear-gradient(135deg, rgba(16,185,129,0.04), rgba(34,197,94,0.02));
+        }}
+        .sd-zone:hover, .sd-zone.over {{
+            border-color: var(--green);
+            background: linear-gradient(135deg, rgba(16,185,129,0.12), rgba(34,197,94,0.06));
+            transform: scale(1.005);
+        }}
+        .sd-zone.disabled {{ opacity: 0.5; pointer-events: none; }}
+        .sd-icon {{ font-size: 56px; margin-bottom: 15px; }}
+        .sd-files {{ display: grid; gap: 10px; margin-top: 20px; }}
+        .sd-file {{
+            background: var(--card); border: 1px solid var(--border); border-radius: 10px;
+            padding: 12px 16px; display: grid; grid-template-columns: 1fr auto auto auto; gap: 12px; align-items: center;
+        }}
+        .sd-file.junk {{ opacity: 0.55; }}
+        .sd-name {{ font-weight: 500; font-size: 14px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }}
+        .sd-rows {{ color: var(--text-muted); font-size: 12px; }}
+        .sd-type {{
+            padding: 4px 10px; border-radius: 12px; font-size: 11px; font-weight: 600;
+            background: rgba(16,185,129,0.15); color: var(--green); white-space: nowrap;
+        }}
+        .sd-type.junk {{ background: rgba(239,68,68,0.12); color: #dc2626; }}
+        .sd-type.unknown {{ background: rgba(245,158,11,0.12); color: #b45309; }}
+        .sd-type.classifying {{ background: rgba(99,102,241,0.12); color: #4f46e5; }}
+        .sd-x {{ background: none; border: none; color: var(--text-muted); cursor: pointer; font-size: 18px; padding: 4px 8px; }}
+        .sd-x:hover {{ color: #dc2626; }}
+        .sd-summary {{
+            background: var(--card); border: 1px solid var(--border); border-radius: 12px;
+            padding: 20px; margin-top: 20px;
+        }}
+        .sd-summary-row {{
+            display: flex; justify-content: space-between; padding: 8px 0;
+            border-bottom: 1px solid var(--border); font-size: 14px;
+        }}
+        .sd-summary-row:last-child {{ border-bottom: none; }}
+        .sd-summary-count {{ font-weight: 600; }}
+        .sd-progress {{
+            width: 100%; height: 6px; background: var(--border); border-radius: 3px;
+            overflow: hidden; margin-top: 10px;
+        }}
+        .sd-progress-bar {{
+            height: 100%; background: var(--green); width: 0%;
+            transition: width 0.3s ease;
+        }}
+        .sd-import-result {{
+            background: var(--card); border: 1px solid var(--border); border-radius: 12px;
+            padding: 20px; margin-top: 20px;
+        }}
+        .sd-result-row {{
+            display: flex; justify-content: space-between; align-items: center;
+            padding: 10px 0; border-bottom: 1px solid var(--border);
+        }}
+        .sd-result-row:last-child {{ border-bottom: none; }}
+    </style>
+    
+    <div class="card" style="background:linear-gradient(135deg,rgba(16,185,129,0.1),rgba(6,95,70,0.05));margin-bottom:20px;">
+        <div style="display:flex;align-items:center;gap:15px;">
+            <div style="font-size:42px;">📥</div>
+            <div style="flex:1;">
+                <h2 style="margin:0;font-size:22px;">Sage Bulk Drop</h2>
+                <p style="color:var(--text-muted);margin:5px 0 0 0;font-size:14px;">
+                    Dump every CSV/Excel file you exported from Sage. Click AI sorts, merges, and imports automatically into <strong>{safe_string(biz_name)}</strong>.
+                </p>
+            </div>
+        </div>
+    </div>
+    
+    {pending_banner}
+    
+    <!-- Drop zone -->
+    <div class="card">
+        <div class="sd-zone" id="sdZone" onclick="document.getElementById('sdInput').click()">
+            <div class="sd-icon">📁</div>
+            <div style="font-size:18px;font-weight:600;margin-bottom:8px;">Drop files here, or click to browse</div>
+            <div style="color:var(--text-muted);font-size:13px;">
+                CSV, XLSX, XLS &nbsp;•&nbsp; up to 50 MB per file &nbsp;•&nbsp; multiple at once
+            </div>
+            <input type="file" id="sdInput" multiple accept=".csv,.xlsx,.xls,.xlsm" style="display:none;">
+        </div>
+        
+        <div class="sd-files" id="sdFiles"></div>
+        
+        <div id="sdActions" style="display:none;margin-top:20px;text-align:center;">
+            <button onclick="classifyAll()" class="btn btn-primary" id="sdClassifyBtn" style="font-size:15px;padding:12px 30px;">
+                🤖 Analyse All Files
+            </button>
+            <button onclick="resetSession()" class="btn btn-secondary" style="margin-left:10px;">Clear All</button>
+        </div>
+        
+        <div id="sdSummary"></div>
+        <div id="sdImportResult"></div>
+    </div>
+    
+    <script>
+    let sdFiles = [];   // [{{file_id, source_name, rows_count, type, confidence, reason}}]
+    
+    // Load existing session on page load
+    (async () => {{
+        try {{
+            const r = await fetch('/api/sage-drop/session');
+            const d = await r.json();
+            if (d.success && d.files && d.files.length) {{
+                sdFiles = d.files;
+                renderFiles();
+            }}
+        }} catch (e) {{ console.error(e); }}
+    }})();
+    
+    // Drag & drop handlers
+    const zone = document.getElementById('sdZone');
+    ['dragenter','dragover'].forEach(ev => zone.addEventListener(ev, e => {{
+        e.preventDefault(); e.stopPropagation(); zone.classList.add('over');
+    }}));
+    ['dragleave','drop'].forEach(ev => zone.addEventListener(ev, e => {{
+        e.preventDefault(); e.stopPropagation(); zone.classList.remove('over');
+    }}));
+    zone.addEventListener('drop', e => handleFiles(e.dataTransfer.files));
+    document.getElementById('sdInput').addEventListener('change', e => handleFiles(e.target.files));
+    
+    async function handleFiles(fileList) {{
+        if (!fileList || !fileList.length) return;
+        zone.classList.add('disabled');
+        for (const f of fileList) {{
+            try {{
+                const fd = new FormData();
+                fd.append('file', f);
+                const r = await fetch('/api/sage-drop/upload', {{method:'POST', body: fd}});
+                const d = await r.json();
+                if (d.success) {{
+                    for (const sub of (d.files || [])) {{
+                        sdFiles.push(sub);
+                    }}
+                    renderFiles();
+                }} else {{
+                    alert('Upload failed for ' + f.name + ': ' + (d.error || 'unknown'));
+                }}
+            }} catch (e) {{
+                alert('Upload error for ' + f.name + ': ' + e.message);
+            }}
+        }}
+        zone.classList.remove('disabled');
+    }}
+    
+    function renderFiles() {{
+        const c = document.getElementById('sdFiles');
+        if (!sdFiles.length) {{
+            c.innerHTML = '';
+            document.getElementById('sdActions').style.display = 'none';
+            return;
+        }}
+        c.innerHTML = sdFiles.map((f, i) => {{
+            const t = f.type || 'pending';
+            const isJunk = t === 'junk';
+            const typeClass = (t === 'junk') ? 'junk' : (t === 'unknown' || t === 'pending') ? 'unknown' : '';
+            const typeLabel = t === 'pending' ? 'Pending' : t.replace(/_/g,' ');
+            return `
+                <div class="sd-file ${{isJunk ? 'junk' : ''}}">
+                    <div class="sd-name" title="${{escapeHtml(f.source_name)}}">${{escapeHtml(f.source_name)}}</div>
+                    <div class="sd-rows">${{f.rows_count}} rows</div>
+                    <div class="sd-type ${{typeClass}}">${{typeLabel}}</div>
+                    <button class="sd-x" onclick="removeFile(${{i}})" title="Remove">✕</button>
+                </div>
+            `;
+        }}).join('');
+        document.getElementById('sdActions').style.display = 'block';
+        const allClassified = sdFiles.every(f => f.type && f.type !== 'pending');
+        document.getElementById('sdClassifyBtn').textContent = allClassified ? '✓ Re-analyse' : '🤖 Analyse All Files';
+    }}
+    
+    function escapeHtml(s) {{
+        return String(s||'').replace(/[&<>"']/g, c => ({{'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}})[c]);
+    }}
+    
+    async function removeFile(idx) {{
+        const file_id = sdFiles[idx].file_id;
+        sdFiles.splice(idx, 1);
+        renderFiles();
+        try {{ await fetch('/api/sage-drop/remove?file_id=' + encodeURIComponent(file_id), {{method:'POST'}}); }} catch(e){{}}
+        document.getElementById('sdSummary').innerHTML = '';
+    }}
+    
+    async function resetSession() {{
+        if (!confirm('Clear all uploaded files and start fresh?')) return;
+        try {{
+            await fetch('/api/sage-drop/reset', {{method:'POST'}});
+            sdFiles = [];
+            renderFiles();
+            document.getElementById('sdSummary').innerHTML = '';
+            document.getElementById('sdImportResult').innerHTML = '';
+        }} catch(e){{ alert('Reset failed: ' + e.message); }}
+    }}
+    
+    async function classifyAll() {{
+        const btn = document.getElementById('sdClassifyBtn');
+        btn.disabled = true;
+        btn.textContent = '🤖 Analysing...';
+        // Mark all as classifying
+        sdFiles.forEach(f => {{ if (!f.type || f.type === 'pending') f.type = 'pending'; }});
+        renderFiles();
+        try {{
+            const r = await fetch('/api/sage-drop/classify', {{method:'POST'}});
+            const d = await r.json();
+            if (d.success) {{
+                sdFiles = d.files;
+                renderFiles();
+                renderSummary(d.summary);
+            }} else {{
+                alert('Analysis failed: ' + (d.error || 'unknown'));
+            }}
+        }} catch(e) {{
+            alert('Analysis error: ' + e.message);
+        }}
+        btn.disabled = false;
+    }}
+    
+    function renderSummary(summary) {{
+        if (!summary) {{ document.getElementById('sdSummary').innerHTML=''; return; }}
+        const planRows = [];
+        if (summary.customers > 0) planRows.push(['👥 Customers', summary.customers]);
+        if (summary.suppliers > 0) planRows.push(['🏭 Suppliers', summary.suppliers]);
+        if (summary.stock > 0) {{
+            let stockLabel = '📦 Stock items';
+            if (summary.stock_merged_from > 1) stockLabel += ` (merged from ${{summary.stock_merged_from}} files)`;
+            planRows.push([stockLabel, summary.stock]);
+        }}
+        if (summary.trial_balance > 0) planRows.push(['📊 Trial balance entries', summary.trial_balance]);
+        if (summary.junk > 0) planRows.push(['🗑 Junk files (will be ignored)', summary.junk]);
+        if (summary.unknown > 0) planRows.push(['❓ Unknown / cannot classify', summary.unknown]);
+        
+        const totalToImport = (summary.customers||0) + (summary.suppliers||0) + (summary.stock||0) + (summary.trial_balance||0);
+        
+        let html = '<div class="sd-summary"><h3 style="margin-top:0;">📋 Import plan</h3>';
+        for (const [label, count] of planRows) {{
+            html += `<div class="sd-summary-row"><span>${{label}}</span><span class="sd-summary-count">${{count.toLocaleString()}}</span></div>`;
+        }}
+        html += '</div>';
+        if (totalToImport > 0) {{
+            html += `<div style="text-align:center;margin-top:20px;">
+                <button onclick="runImport()" class="btn btn-primary" id="sdImportBtn" style="font-size:16px;padding:14px 36px;background:linear-gradient(135deg,#10b981,#059669);">
+                    ✓ Import ${{totalToImport.toLocaleString()}} Records
+                </button>
+            </div>`;
+        }} else {{
+            html += '<div style="text-align:center;margin-top:20px;color:var(--text-muted);">Nothing to import — all files were classified as junk or unknown.</div>';
+        }}
+        document.getElementById('sdSummary').innerHTML = html;
+    }}
+    
+    async function runImport() {{
+        if (!confirm('Import all classified data into your business now?\\n\\nThis cannot be undone.')) return;
+        const btn = document.getElementById('sdImportBtn');
+        btn.disabled = true;
+        btn.textContent = '⏳ Importing...';
+        const result = document.getElementById('sdImportResult');
+        result.innerHTML = '<div class="sd-import-result"><div class="sd-progress"><div class="sd-progress-bar" id="sdProgBar"></div></div><div id="sdProgText" style="margin-top:10px;color:var(--text-muted);">Starting import...</div></div>';
+        document.getElementById('sdProgBar').style.width = '20%';
+        try {{
+            const r = await fetch('/api/sage-drop/import', {{method:'POST'}});
+            const d = await r.json();
+            document.getElementById('sdProgBar').style.width = '100%';
+            if (d.success) {{
+                let html = '<div class="sd-import-result"><h3 style="margin-top:0;color:var(--green);">✓ Import complete</h3>';
+                for (const r of (d.results||[])) {{
+                    html += `<div class="sd-result-row">
+                        <span>${{r.label}}</span>
+                        <span><strong>${{r.imported.toLocaleString()}}</strong> imported${{r.errors ? ' &middot; ' + r.errors + ' errors' : ''}}</span>
+                    </div>`;
+                }}
+                html += `<div style="margin-top:15px;font-size:13px;color:var(--text-muted);">Took ${{d.elapsed_sec.toFixed(1)}}s.</div>`;
+                html += '<div style="margin-top:20px;text-align:center;"><a href="/dashboard" class="btn btn-primary">Go to Dashboard</a></div>';
+                html += '</div>';
+                result.innerHTML = html;
+            }} else {{
+                result.innerHTML = '<div class="sd-import-result" style="border-color:#dc2626;"><h3 style="color:#dc2626;margin-top:0;">Import failed</h3><div>' + escapeHtml(d.error || 'Unknown error') + '</div></div>';
+                btn.disabled = false;
+                btn.textContent = '✓ Retry Import';
+            }}
+        }} catch(e) {{
+            result.innerHTML = '<div class="sd-import-result" style="border-color:#dc2626;"><h3 style="color:#dc2626;margin-top:0;">Network error</h3><div>' + e.message + '</div></div>';
+            btn.disabled = false;
+            btn.textContent = '✓ Retry Import';
+        }}
+    }}
+    </script>
+    '''
+    return render_page("Sage Bulk Drop", content, user, "import")
+
+
+@app.route("/api/sage-drop/session", methods=["GET"])
+@login_required
+def api_sage_drop_session():
+    """Return current session files (for restore on page load)."""
+    business = Auth.get_current_business()
+    biz_id = business.get("id") if business else None
+    if not biz_id:
+        return jsonify({"success": False, "error": "No business"})
+    meta = _sd_load_session(biz_id)
+    return jsonify({"success": True, "files": meta.get("files", [])})
+
+
+@app.route("/api/sage-drop/upload", methods=["POST"])
+@login_required
+def api_sage_drop_upload():
+    """Receive a single file, split into logical files (tabs), save to session."""
+    business = Auth.get_current_business()
+    biz_id = business.get("id") if business else None
+    if not biz_id:
+        return jsonify({"success": False, "error": "No business"})
+    
+    f = request.files.get("file")
+    if not f:
+        return jsonify({"success": False, "error": "No file"})
+    
+    raw = f.read()
+    if not raw:
+        return jsonify({"success": False, "error": "Empty file"})
+    
+    ingested = _sd_ingest(biz_id, f.filename or "upload", raw)
+    
+    # Drop any error entries; keep good ones
+    good = [x for x in ingested if "error" not in x]
+    errors = [x["error"] for x in ingested if "error" in x]
+    
+    if not good and errors:
+        return jsonify({"success": False, "error": "; ".join(errors)})
+    
+    # Add to session
+    meta = _sd_load_session(biz_id)
+    files = meta.get("files", [])
+    for entry in good:
+        files.append({
+            "file_id": entry["file_id"],
+            "source_name": entry["source_name"],
+            "rows_count": entry["rows_count"],
+            "headers": entry["headers"][:20],   # cap header preview
+            "type": "pending",
+        })
+    meta["files"] = files
+    _sd_save_session(biz_id, meta)
+    
+    # Return only the just-added entries so the UI can append them
+    return jsonify({"success": True, "files": [
+        {"file_id": e["file_id"], "source_name": e["source_name"],
+         "rows_count": e["rows_count"], "type": "pending"}
+        for e in good
+    ]})
+
+
+@app.route("/api/sage-drop/remove", methods=["POST"])
+@login_required
+def api_sage_drop_remove():
+    business = Auth.get_current_business()
+    biz_id = business.get("id") if business else None
+    if not biz_id:
+        return jsonify({"success": False, "error": "No business"})
+    file_id = request.args.get("file_id", "")
+    if not file_id:
+        return jsonify({"success": False, "error": "No file_id"})
+    meta = _sd_load_session(biz_id)
+    meta["files"] = [f for f in meta.get("files", []) if f.get("file_id") != file_id]
+    _sd_save_session(biz_id, meta)
+    # Delete the actual file
+    try:
+        p = os.path.join(_sd_files_dir(biz_id), f"{file_id}.json")
+        if os.path.exists(p):
+            os.remove(p)
+    except Exception:
+        pass
+    return jsonify({"success": True})
+
+
+@app.route("/api/sage-drop/reset", methods=["POST"])
+@login_required
+def api_sage_drop_reset():
+    business = Auth.get_current_business()
+    biz_id = business.get("id") if business else None
+    if not biz_id:
+        return jsonify({"success": False, "error": "No business"})
+    _sd_reset_session(biz_id)
+    return jsonify({"success": True})
+
+
+@app.route("/api/sage-drop/classify", methods=["POST"])
+@login_required
+def api_sage_drop_classify():
+    """Classify all pending files using Haiku, then run merge to produce import plan."""
+    business = Auth.get_current_business()
+    biz_id = business.get("id") if business else None
+    if not biz_id:
+        return jsonify({"success": False, "error": "No business"})
+    
+    meta = _sd_load_session(biz_id)
+    files = meta.get("files", [])
+    if not files:
+        return jsonify({"success": False, "error": "No files to classify"})
+    
+    # Build preview rows for each file (header + 5 data rows)
+    previews = []
+    for f in files:
+        rows = _sd_load_file_rows(biz_id, f["file_id"])
+        previews.append({
+            "source_name": f["source_name"],
+            "preview_rows": rows[:SD_MAX_PREVIEW_ROWS] if rows else [],
+        })
+    
+    classifications = _sd_classify_files(previews)
+    
+    for i, c in enumerate(classifications):
+        if i < len(files):
+            files[i]["type"] = c["type"]
+            files[i]["confidence"] = c["confidence"]
+            files[i]["reason"] = c["reason"]
+    
+    meta["files"] = files
+    _sd_save_session(biz_id, meta)
+    
+    # Build summary by running extractors over each classified file (cheap dry run)
+    counts = {"customers": 0, "suppliers": 0, "stock": 0,
+              "trial_balance": 0, "junk": 0, "unknown": 0,
+              "stock_merged_from": 0}
+    
+    customer_buckets = []
+    supplier_buckets = []
+    stock_qty_buckets = []
+    stock_price_buckets = []
+    stock_full_buckets = []
+    tb_buckets = []
+    
+    for f in files:
+        t = f.get("type", "unknown")
+        if t == "junk":
+            counts["junk"] += 1
+            continue
+        if t == "unknown":
+            counts["unknown"] += 1
+            continue
+        rows = _sd_load_file_rows(biz_id, f["file_id"])
+        if t == "customers_clean":
+            recs = _sd_extract_customers(rows)
+            customer_buckets.append(recs)
+        elif t == "suppliers_clean":
+            recs = _sd_extract_suppliers(rows)
+            supplier_buckets.append(recs)
+        elif t == "stock_qty":
+            recs = _sd_extract_stock_qty(rows)
+            stock_qty_buckets.append(recs)
+            counts["stock_merged_from"] += 1
+        elif t == "stock_prices":
+            recs = _sd_extract_stock_prices(rows)
+            stock_price_buckets.append(recs)
+            counts["stock_merged_from"] += 1
+        elif t == "stock_full":
+            recs = _sd_extract_stock_qty(rows)  # try qty extractor first
+            recs2 = _sd_extract_stock_prices(rows)
+            # Merge per-file
+            stock_full_buckets.append(_sd_merge_stock([recs], [recs2], [])[:])
+            counts["stock_merged_from"] += 1
+        elif t == "trial_balance":
+            recs = _sd_extract_trial_balance(rows)
+            tb_buckets.append(recs)
+    
+    counts["customers"] = len(_sd_merge_customers(customer_buckets))
+    counts["suppliers"] = len(_sd_merge_customers(supplier_buckets))
+    counts["stock"] = len(_sd_merge_stock(stock_qty_buckets, stock_price_buckets, stock_full_buckets))
+    counts["trial_balance"] = sum(len(b) for b in tb_buckets)
+    
+    return jsonify({
+        "success": True,
+        "files": files,
+        "summary": counts,
+    })
+
+
+@app.route("/api/sage-drop/import", methods=["POST"])
+@login_required
+def api_sage_drop_import():
+    """Run the full import. Uses save_many_fast for speed."""
+    business = Auth.get_current_business()
+    biz_id = business.get("id") if business else None
+    if not biz_id:
+        return jsonify({"success": False, "error": "No business"})
+    
+    user = Auth.get_current_user()
+    user_id = user.get("id", "") if user else ""
+    
+    meta = _sd_load_session(biz_id)
+    files = meta.get("files", [])
+    if not files:
+        return jsonify({"success": False, "error": "No files"})
+    
+    t0 = time.time()
+    
+    # Re-run extraction + merge (state-of-the-art is files on disk; in-memory merge is cheap)
+    customer_buckets = []
+    supplier_buckets = []
+    stock_qty_buckets = []
+    stock_price_buckets = []
+    stock_full_buckets = []
+    tb_buckets = []
+    
+    for f in files:
+        t = f.get("type", "unknown")
+        if t in ("junk", "unknown"):
+            continue
+        rows = _sd_load_file_rows(biz_id, f["file_id"])
+        if t == "customers_clean":
+            customer_buckets.append(_sd_extract_customers(rows))
+        elif t == "suppliers_clean":
+            supplier_buckets.append(_sd_extract_suppliers(rows))
+        elif t == "stock_qty":
+            stock_qty_buckets.append(_sd_extract_stock_qty(rows))
+        elif t == "stock_prices":
+            stock_price_buckets.append(_sd_extract_stock_prices(rows))
+        elif t == "stock_full":
+            recs = _sd_extract_stock_qty(rows)
+            recs2 = _sd_extract_stock_prices(rows)
+            stock_full_buckets.append(_sd_merge_stock([recs], [recs2], []))
+        elif t == "trial_balance":
+            tb_buckets.append(_sd_extract_trial_balance(rows))
+    
+    customers = _sd_merge_customers(customer_buckets)
+    suppliers = _sd_merge_customers(supplier_buckets)
+    stock = _sd_merge_stock(stock_qty_buckets, stock_price_buckets, stock_full_buckets)
+    tb = []
+    for b in tb_buckets:
+        tb.extend(b)
+    
+    results = []
+    
+    # ── Customers
+    if customers:
+        cust_records = []
+        for rec in customers:
+            r = RecordFactory.customer(
+                business_id=biz_id,
+                name=rec.get("name", "").strip(),
+                code=rec.get("code", ""),
+                created_by=user_id,
+                **{k: v for k, v in rec.items() if k not in ("name", "code")}
+            )
+            if r.get("name"):
+                cust_records.append(r)
+        if cust_records:
+            ok, err = db.save_many_fast("customers", cust_records, on_conflict="business_id,code")
+            results.append({"label": "👥 Customers", "imported": ok, "errors": err})
+            logger.info(f"[SAGE DROP] Customers: {ok} ok, {err} errors")
+    
+    # ── Suppliers
+    if suppliers:
+        sup_records = []
+        for rec in suppliers:
+            r = RecordFactory.supplier(
+                business_id=biz_id,
+                name=rec.get("name", "").strip(),
+                code=rec.get("code", ""),
+                created_by=user_id,
+                **{k: v for k, v in rec.items() if k not in ("name", "code")}
+            )
+            if r.get("name"):
+                sup_records.append(r)
+        if sup_records:
+            ok, err = db.save_many_fast("suppliers", sup_records, on_conflict="business_id,code")
+            results.append({"label": "🏭 Suppliers", "imported": ok, "errors": err})
+            logger.info(f"[SAGE DROP] Suppliers: {ok} ok, {err} errors")
+    
+    # ── Stock
+    if stock:
+        stock_records = []
+        for rec in stock:
+            desc = rec.get("description", "").strip()
+            if not desc and not rec.get("code"):
+                continue
+            r = RecordFactory.stock_item(
+                business_id=biz_id,
+                description=desc or rec.get("code", ""),
+                created_by=user_id,
+                **{k: v for k, v in rec.items() if k != "description"}
+            )
+            stock_records.append(r)
+        if stock_records:
+            ok, err = db.save_many_fast("stock_items", stock_records, on_conflict="business_id,code")
+            results.append({"label": "📦 Stock items", "imported": ok, "errors": err})
+            logger.info(f"[SAGE DROP] Stock: {ok} ok, {err} errors")
+    
+    # ── Trial Balance → journal_entries with reference="OB"
+    if tb:
+        # First wipe existing OB entries (replace, not append)
+        try:
+            existing = db.get("journal_entries", {"business_id": biz_id}) or []
+            ob_ids = [j.get("id") for j in existing if j.get("reference") == "OB" and j.get("id")]
+            if ob_ids:
+                # Use existing delete_many if present, else loop
+                if hasattr(db, "delete_many"):
+                    db.delete_many("journal_entries", ob_ids, biz_id)
+                else:
+                    for jid in ob_ids:
+                        db.delete("journal_entries", jid, biz_id)
+                logger.info(f"[SAGE DROP] Cleared {len(ob_ids)} existing OB entries")
+        except Exception as e:
+            logger.error(f"[SAGE DROP] Could not clear old OB entries: {e}")
+        
+        tb_records = []
+        for rec in tb:
+            tb_records.append({
+                "id": generate_id(),
+                "business_id": biz_id,
+                "date": today(),
+                "reference": "OB",
+                "description": f"Opening Balance - {rec.get('account_name', '')}",
+                "account": rec.get("account_name", ""),
+                "account_code": rec.get("account_code", ""),
+                "debit": float(rec.get("debit", 0) or 0),
+                "credit": float(rec.get("credit", 0) or 0),
+                "created_at": now(),
+            })
+        if tb_records:
+            ok, err = db.save_many_fast("journal_entries", tb_records)
+            results.append({"label": "📊 Trial balance entries", "imported": ok, "errors": err})
+            logger.info(f"[SAGE DROP] TB: {ok} ok, {err} errors")
+    
+    elapsed = time.time() - t0
+    
+    # Clear session on success
+    _sd_reset_session(biz_id)
+    
+    return jsonify({
+        "success": True,
+        "results": results,
+        "elapsed_sec": elapsed,
+    })
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# END SAGE DROP
+# ═══════════════════════════════════════════════════════════════════════════════
+
 
 # Temporary storage for analysis results
 _smart_import_cache = {}
