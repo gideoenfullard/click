@@ -31369,8 +31369,8 @@ For each file below, return ONE of these classes:
 - stock_full: stock items with BOTH quantity AND price columns
 - trial_balance: GL trial balance (Account Name, Debit, Credit columns)
 - chart_of_accounts: bare GL account list (Account Code, Account Name, Type) without amounts
-- customer_aging: outstanding customer invoices (Customer, Invoice No, Date, Amount, days)
-- supplier_aging: outstanding supplier invoices (Supplier, Invoice No, Date, Amount, days)
+- customer_aging: Sage "Customer Balances Days Outstanding" report. Headers like: Customer, Reference, 120+ Days, 90 Days, 60 Days, 30 Days, Current, Total Due. Multi-line per customer (one row per outstanding invoice). VALUABLE — we import this as individual invoices.
+- supplier_aging: Sage "Supplier Balances Days Outstanding" report. Same structure as customer_aging but for suppliers. VALUABLE — we import this.
 - bank_statement: bank transactions (Date, Description, Debit, Credit, Balance)
 - junk: empty, corrupted, or completely unrecognizable file with no usable accounting data
 - unknown: cannot determine
@@ -31871,6 +31871,123 @@ def _sd_extract_trial_balance(rows):
     return out
 
 
+def _sd_parse_date_dmy(s):
+    """Sage gives DD/MM/YYYY. Return ISO YYYY-MM-DD or None."""
+    if not s: return None
+    s = str(s).strip()
+    if not s: return None
+    import re as _re
+    m = _re.match(r'^(\d{1,2})/(\d{1,2})/(\d{4})$', s)
+    if m:
+        d, mo, y = m.groups()
+        return f"{y}-{int(mo):02d}-{int(d):02d}"
+    m = _re.match(r'^(\d{4})-(\d{1,2})-(\d{1,2})$', s)
+    if m:
+        return s
+    return None
+
+
+def _sd_extract_aging(rows):
+    """Parse Sage 'Customer/Supplier Balances Days Outstanding' report.
+    Returns {"invoices": [...], "payments": [...]}.
+    
+    Each invoice has: entity_code, entity_name, invoice_number, invoice_date,
+                      reference, total
+    Each payment has: entity_code, entity_name, payment_number, payment_date,
+                      reference, amount (always positive)
+    
+    A row is classified as a payment if its total is negative OR its number
+    starts with REC/RCP/PAY/CN/IC/CADJ/SRT (Sage payment prefixes).
+    """
+    if not rows:
+        return {"invoices": [], "payments": []}
+    
+    invoices = []
+    payments = []
+    current_code = None
+    current_name = None
+    
+    import re as _re
+    
+    for row in rows:
+        if not row:
+            continue
+        first = (row[0] or "").strip() if len(row) > 0 else ""
+        fl = first.lower()
+        
+        # Skip header / sep markers
+        if fl in ("customer", "supplier") or fl.startswith("sep="):
+            continue
+        
+        # "Total For ..." → end of entity block
+        if fl.startswith("total for "):
+            current_code = None
+            current_name = None
+            continue
+        
+        # Entity name row: "CODE : NAME" with no leading digit
+        if " : " in first and not _re.match(r'^\d', first):
+            current_code, current_name = _sd_split_code_name(first)
+            continue
+        
+        if not current_code:
+            continue
+        
+        # Transaction row: date, invoice_number, reference, ...buckets..., total
+        if len(row) < 9:
+            continue
+        
+        date_raw = (row[0] or "").strip()
+        inv_num = (row[1] or "").strip()
+        ref = (row[2] or "").strip()
+        total = _sd_money(row[8] if len(row) > 8 else 0)
+        
+        if not date_raw or not inv_num:
+            continue
+        
+        iso_date = _sd_parse_date_dmy(date_raw)
+        if not iso_date:
+            continue
+        
+        # Payment classification
+        inv_upper = inv_num.upper()
+        ref_upper = (ref or "").upper()
+        is_payment = (
+            total < 0 or
+            inv_upper.startswith(("PAY", "REC", "RCP", "CN", "IC", "CADJ", "SRT")) or
+            ref_upper == "PAYMENT"
+        )
+        
+        if is_payment:
+            payments.append({
+                "entity_code": current_code,
+                "entity_name": current_name,
+                "payment_number": inv_num,
+                "payment_date": iso_date,
+                "reference": ref,
+                "amount": abs(total),
+            })
+        else:
+            invoices.append({
+                "entity_code": current_code,
+                "entity_name": current_name,
+                "invoice_number": inv_num,
+                "invoice_date": iso_date,
+                "reference": ref,
+                "total": total,
+            })
+    
+    return {"invoices": invoices, "payments": payments}
+
+
+def _sd_extract_customer_aging(rows):
+    return _sd_extract_aging(rows)
+
+
+def _sd_extract_supplier_aging(rows):
+    return _sd_extract_aging(rows)
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # Smart merge
 # ─────────────────────────────────────────────────────────────────────────────
@@ -32192,16 +32309,48 @@ def sage_drop_page():
             planRows.push([stockLabel, summary.stock]);
         }}
         if (summary.trial_balance > 0) planRows.push(['📊 Trial balance entries', summary.trial_balance]);
+        
+        // Aging
+        const agingNote = [];
+        if (summary.customer_aging_invoices > 0 || summary.customer_aging_payments > 0) {{
+            planRows.push(['🧾 Customer invoices (from aging)', summary.customer_aging_invoices]);
+            if (summary.customer_aging_payments > 0) {{
+                planRows.push(['💵 Customer receipts (from aging)', summary.customer_aging_payments]);
+            }}
+            agingNote.push(`Customers outstanding: R${{summary.customer_aging_outstanding.toLocaleString(undefined, {{minimumFractionDigits: 2, maximumFractionDigits: 2}})}}`);
+        }}
+        if (summary.supplier_aging_invoices > 0 || summary.supplier_aging_payments > 0) {{
+            planRows.push(['📄 Supplier invoices (from aging)', summary.supplier_aging_invoices]);
+            if (summary.supplier_aging_payments > 0) {{
+                planRows.push(['💸 Supplier payments (from aging)', summary.supplier_aging_payments]);
+            }}
+            agingNote.push(`Suppliers outstanding: R${{summary.supplier_aging_outstanding.toLocaleString(undefined, {{minimumFractionDigits: 2, maximumFractionDigits: 2}})}}`);
+        }}
+        
         if (summary.junk > 0) planRows.push(['🗑 Junk files (no usable data)', summary.junk]);
         if (summary.unknown > 0) planRows.push(['❓ Unknown / cannot classify', summary.unknown]);
         
-        const totalToImport = (summary.customers||0) + (summary.suppliers||0) + (summary.stock||0) + (summary.trial_balance||0);
+        const totalToImport = (summary.customers||0) + (summary.suppliers||0) + (summary.stock||0)
+            + (summary.trial_balance||0)
+            + (summary.customer_aging_invoices||0) + (summary.customer_aging_payments||0)
+            + (summary.supplier_aging_invoices||0) + (summary.supplier_aging_payments||0);
         
         let html = '<div class="sd-summary"><h3 style="margin-top:0;">📋 Import plan</h3>';
         for (const [label, count] of planRows) {{
             html += `<div class="sd-summary-row"><span>${{label}}</span><span class="sd-summary-count">${{count.toLocaleString()}}</span></div>`;
         }}
         html += '</div>';
+        
+        // Aging notice (double-counting prevention)
+        if (agingNote.length && summary.trial_balance > 0) {{
+            html += `<div style="background:rgba(245,158,11,0.08);border:1px solid rgba(245,158,11,0.3);padding:12px;border-radius:8px;margin-top:15px;font-size:13px;">
+                <strong>⚠️ Heads-up:</strong> Trial Balance "Debtors Control" / "Creditors Control" entries will be <strong>excluded automatically</strong> to avoid double-counting (the individual invoices imported below will rebuild those balances).
+                <br><br>${{agingNote.join(' &nbsp;•&nbsp; ')}}
+            </div>`;
+        }} else if (agingNote.length) {{
+            html += `<div style="background:rgba(59,130,246,0.08);border:1px solid rgba(59,130,246,0.3);padding:12px;border-radius:8px;margin-top:15px;font-size:13px;">${{agingNote.join(' &nbsp;•&nbsp; ')}}</div>`;
+        }}
+        
         if (totalToImport > 0) {{
             html += `<div style="text-align:center;margin-top:20px;">
                 <button onclick="runImport()" class="btn btn-primary" id="sdImportBtn" style="font-size:16px;padding:14px 36px;background:linear-gradient(135deg,#10b981,#059669);">
@@ -32386,7 +32535,11 @@ def api_sage_drop_classify():
     counts = {"customers": 0, "suppliers": 0, "stock": 0,
               "trial_balance": 0, "junk": 0, "unknown": 0,
               "stock_merged_from": 0,
-              "customers_merged_from": 0, "suppliers_merged_from": 0}
+              "customers_merged_from": 0, "suppliers_merged_from": 0,
+              "customer_aging_invoices": 0, "customer_aging_payments": 0,
+              "customer_aging_outstanding": 0.0,
+              "supplier_aging_invoices": 0, "supplier_aging_payments": 0,
+              "supplier_aging_outstanding": 0.0}
     
     customer_buckets = []
     supplier_buckets = []
@@ -32394,6 +32547,8 @@ def api_sage_drop_classify():
     stock_price_buckets = []
     stock_full_buckets = []
     tb_buckets = []
+    cust_aging_buckets = []
+    sup_aging_buckets = []
     
     for f in files:
         t = f.get("type", "unknown")
@@ -32437,11 +32592,34 @@ def api_sage_drop_classify():
         elif t == "trial_balance":
             recs = _sd_extract_trial_balance(rows)
             tb_buckets.append(recs)
+        elif t == "customer_aging":
+            ag = _sd_extract_customer_aging(rows)
+            cust_aging_buckets.append(ag)
+        elif t == "supplier_aging":
+            ag = _sd_extract_supplier_aging(rows)
+            sup_aging_buckets.append(ag)
     
     counts["customers"] = len(_sd_merge_customers(customer_buckets))
     counts["suppliers"] = len(_sd_merge_customers(supplier_buckets))
     counts["stock"] = len(_sd_merge_stock(stock_qty_buckets, stock_price_buckets, stock_full_buckets))
     counts["trial_balance"] = sum(len(b) for b in tb_buckets)
+    
+    # Aging totals (across all aging files)
+    for ag in cust_aging_buckets:
+        counts["customer_aging_invoices"] += len(ag.get("invoices", []))
+        counts["customer_aging_payments"] += len(ag.get("payments", []))
+        inv_total = sum(i.get("total", 0) for i in ag.get("invoices", []))
+        pay_total = sum(p.get("amount", 0) for p in ag.get("payments", []))
+        counts["customer_aging_outstanding"] += inv_total - pay_total
+    for ag in sup_aging_buckets:
+        counts["supplier_aging_invoices"] += len(ag.get("invoices", []))
+        counts["supplier_aging_payments"] += len(ag.get("payments", []))
+        inv_total = sum(i.get("total", 0) for i in ag.get("invoices", []))
+        pay_total = sum(p.get("amount", 0) for p in ag.get("payments", []))
+        counts["supplier_aging_outstanding"] += inv_total - pay_total
+    
+    counts["customer_aging_outstanding"] = round(counts["customer_aging_outstanding"], 2)
+    counts["supplier_aging_outstanding"] = round(counts["supplier_aging_outstanding"], 2)
     
     return jsonify({
         "success": True,
@@ -32476,6 +32654,8 @@ def api_sage_drop_import():
     stock_price_buckets = []
     stock_full_buckets = []
     tb_buckets = []
+    cust_aging_buckets = []
+    sup_aging_buckets = []
     
     for f in files:
         t = f.get("type", "unknown")
@@ -32500,6 +32680,10 @@ def api_sage_drop_import():
             stock_full_buckets.append(_sd_merge_stock([recs], [recs2], []))
         elif t == "trial_balance":
             tb_buckets.append(_sd_extract_trial_balance(rows))
+        elif t == "customer_aging":
+            cust_aging_buckets.append(_sd_extract_customer_aging(rows))
+        elif t == "supplier_aging":
+            sup_aging_buckets.append(_sd_extract_supplier_aging(rows))
     
     customers = _sd_merge_customers(customer_buckets)
     suppliers = _sd_merge_customers(supplier_buckets)
@@ -32577,6 +32761,36 @@ def api_sage_drop_import():
             logger.info(f"[SAGE DROP] Stock: {ok} ok, {err} errors")
     
     # ── Trial Balance → journal_entries with reference="OB"
+    # If aging is being imported in the same run, REMOVE Debtors/Creditors Control
+    # from the TB to prevent double-counting (the individual invoices below will
+    # rebuild those balances).
+    has_cust_aging = bool(cust_aging_buckets)
+    has_sup_aging = bool(sup_aging_buckets)
+    
+    tb_filtered_out = []
+    if tb and (has_cust_aging or has_sup_aging):
+        debtors_keywords = ("debtors control", "trade receivables", "customer control",
+                            "accounts receivable", "trade debtors")
+        creditors_keywords = ("creditors control", "trade payables", "supplier control",
+                              "accounts payable", "trade creditors")
+        new_tb = []
+        for rec in tb:
+            name_lower = (rec.get("account_name") or "").lower()
+            skip = False
+            if has_cust_aging and any(kw in name_lower for kw in debtors_keywords):
+                skip = True
+                tb_filtered_out.append(("Debtors", rec.get("account_name"),
+                                        rec.get("debit", 0), rec.get("credit", 0)))
+            elif has_sup_aging and any(kw in name_lower for kw in creditors_keywords):
+                skip = True
+                tb_filtered_out.append(("Creditors", rec.get("account_name"),
+                                        rec.get("debit", 0), rec.get("credit", 0)))
+            if not skip:
+                new_tb.append(rec)
+        if tb_filtered_out:
+            logger.info(f"[SAGE DROP] Filtered {len(tb_filtered_out)} control accounts from TB to avoid double-counting with aging")
+        tb = new_tb
+    
     if tb:
         # First wipe existing OB entries (replace, not append)
         try:
@@ -32609,8 +32823,206 @@ def api_sage_drop_import():
             })
         if tb_records:
             ok, err = db.save_many_fast("journal_entries", tb_records)
-            results.append({"label": "📊 Trial balance entries", "imported": ok, "errors": err})
+            label = "📊 Trial balance entries"
+            if tb_filtered_out:
+                label += f" ({len(tb_filtered_out)} control account(s) excluded — replaced by aging)"
+            results.append({"label": label, "imported": ok, "errors": err})
             logger.info(f"[SAGE DROP] TB: {ok} ok, {err} errors")
+    
+    # ── Customer aging → invoices
+    if cust_aging_buckets:
+        # Build entity_code → customer_id map (for quick lookup)
+        cust_rows = db.get("customers", {"business_id": biz_id}, limit=50000) or []
+        code_to_cust = {}
+        for c in cust_rows:
+            code = (c.get("code") or "").strip()
+            if code:
+                code_to_cust[code.lower()] = c
+        
+        # First wipe existing opening invoices for this business (replace, not append)
+        try:
+            existing_invs = db.get("invoices", {"business_id": biz_id}, limit=50000) or []
+            opening_ids = [i.get("id") for i in existing_invs
+                           if i.get("notes") == "OPENING_BALANCE_FROM_SAGE" and i.get("id")]
+            if opening_ids:
+                if hasattr(db, "delete_many"):
+                    db.delete_many("invoices", opening_ids, biz_id)
+                else:
+                    for iid in opening_ids:
+                        db.delete("invoices", iid, biz_id)
+                logger.info(f"[SAGE DROP] Cleared {len(opening_ids)} existing opening invoices")
+        except Exception as e:
+            logger.error(f"[SAGE DROP] Could not clear old opening invoices: {e}")
+        
+        # Also wipe receipts marked as opening
+        try:
+            existing_recs = db.get("receipts", {"business_id": biz_id}, limit=50000) or []
+            op_rec_ids = [r.get("id") for r in existing_recs
+                          if r.get("notes") == "OPENING_BALANCE_FROM_SAGE" and r.get("id")]
+            if op_rec_ids:
+                if hasattr(db, "delete_many"):
+                    db.delete_many("receipts", op_rec_ids, biz_id)
+                else:
+                    for rid in op_rec_ids:
+                        db.delete("receipts", rid, biz_id)
+                logger.info(f"[SAGE DROP] Cleared {len(op_rec_ids)} existing opening receipts")
+        except Exception as e:
+            logger.error(f"[SAGE DROP] Could not clear old opening receipts: {e}")
+        
+        # Build invoice records
+        inv_records = []
+        rec_records = []
+        skipped_no_match = 0
+        for ag in cust_aging_buckets:
+            for inv in ag.get("invoices", []):
+                code = (inv.get("entity_code") or "").lower()
+                cust = code_to_cust.get(code)
+                if not cust:
+                    skipped_no_match += 1
+                    continue
+                inv_records.append({
+                    "id": generate_id(),
+                    "business_id": biz_id,
+                    "invoice_number": inv["invoice_number"],
+                    "date": inv["invoice_date"],
+                    "customer_id": cust["id"],
+                    "customer_name": cust.get("name", inv.get("entity_name", "")),
+                    "items": [],
+                    "subtotal": float(inv["total"]),
+                    "vat": 0,
+                    "total": float(inv["total"]),
+                    "status": "unpaid",
+                    "reference": inv.get("reference", ""),
+                    "notes": "OPENING_BALANCE_FROM_SAGE",
+                    "created_at": now(),
+                    "created_by": user_id,
+                })
+            for pay in ag.get("payments", []):
+                code = (pay.get("entity_code") or "").lower()
+                cust = code_to_cust.get(code)
+                if not cust:
+                    skipped_no_match += 1
+                    continue
+                rec_records.append({
+                    "id": generate_id(),
+                    "business_id": biz_id,
+                    "receipt_number": pay["payment_number"],
+                    "date": pay["payment_date"],
+                    "customer_id": cust["id"],
+                    "customer_name": cust.get("name", pay.get("entity_name", "")),
+                    "amount": float(pay["amount"]),
+                    "reference": pay.get("reference", ""),
+                    "notes": "OPENING_BALANCE_FROM_SAGE",
+                    "created_at": now(),
+                    "created_by": user_id,
+                })
+        
+        if inv_records:
+            ok, err = db.save_many_fast("invoices", inv_records)
+            label = "🧾 Customer invoices (from aging)"
+            if skipped_no_match:
+                label += f" — {skipped_no_match} skipped (customer not found)"
+            results.append({"label": label, "imported": ok, "errors": err})
+            logger.info(f"[SAGE DROP] Customer invoices: {ok} ok, {err} errors")
+        if rec_records:
+            ok, err = db.save_many_fast("receipts", rec_records)
+            results.append({"label": "💵 Customer receipts (from aging)", "imported": ok, "errors": err})
+            logger.info(f"[SAGE DROP] Customer receipts: {ok} ok, {err} errors")
+    
+    # ── Supplier aging → supplier_invoices + supplier_payments
+    if sup_aging_buckets:
+        # Build entity_code → supplier map
+        sup_rows = db.get("suppliers", {"business_id": biz_id}, limit=50000) or []
+        code_to_sup = {}
+        for s in sup_rows:
+            code = (s.get("code") or "").strip()
+            if code:
+                code_to_sup[code.lower()] = s
+        
+        # Wipe existing opening supplier invoices
+        try:
+            existing_sinvs = db.get("supplier_invoices", {"business_id": biz_id}, limit=50000) or []
+            opening_ids = [i.get("id") for i in existing_sinvs
+                           if i.get("notes") == "OPENING_BALANCE_FROM_SAGE" and i.get("id")]
+            if opening_ids:
+                if hasattr(db, "delete_many"):
+                    db.delete_many("supplier_invoices", opening_ids, biz_id)
+                else:
+                    for iid in opening_ids:
+                        db.delete("supplier_invoices", iid, biz_id)
+                logger.info(f"[SAGE DROP] Cleared {len(opening_ids)} existing opening supplier invoices")
+        except Exception as e:
+            logger.error(f"[SAGE DROP] Could not clear old opening supplier invoices: {e}")
+        
+        # Wipe existing opening supplier payments
+        try:
+            existing_spays = db.get("supplier_payments", {"business_id": biz_id}, limit=50000) or []
+            op_pay_ids = [p.get("id") for p in existing_spays
+                          if p.get("notes") == "OPENING_BALANCE_FROM_SAGE" and p.get("id")]
+            if op_pay_ids:
+                if hasattr(db, "delete_many"):
+                    db.delete_many("supplier_payments", op_pay_ids, biz_id)
+                else:
+                    for pid in op_pay_ids:
+                        db.delete("supplier_payments", pid, biz_id)
+                logger.info(f"[SAGE DROP] Cleared {len(op_pay_ids)} existing opening supplier payments")
+        except Exception as e:
+            logger.error(f"[SAGE DROP] Could not clear old opening supplier payments: {e}")
+        
+        sup_inv_records = []
+        sup_pay_records = []
+        skipped_no_match = 0
+        for ag in sup_aging_buckets:
+            for inv in ag.get("invoices", []):
+                code = (inv.get("entity_code") or "").lower()
+                sup = code_to_sup.get(code)
+                if not sup:
+                    skipped_no_match += 1
+                    continue
+                sup_inv_records.append({
+                    "id": generate_id(),
+                    "business_id": biz_id,
+                    "supplier_id": sup["id"],
+                    "supplier_name": sup.get("name", inv.get("entity_name", "")),
+                    "invoice_number": inv["invoice_number"],
+                    "date": inv["invoice_date"],
+                    "subtotal": float(inv["total"]),
+                    "vat": 0,
+                    "total": float(inv["total"]),
+                    "status": "outstanding",
+                    "notes": "OPENING_BALANCE_FROM_SAGE",
+                    "created_at": now(),
+                })
+            for pay in ag.get("payments", []):
+                code = (pay.get("entity_code") or "").lower()
+                sup = code_to_sup.get(code)
+                if not sup:
+                    skipped_no_match += 1
+                    continue
+                sup_pay_records.append({
+                    "id": generate_id(),
+                    "business_id": biz_id,
+                    "supplier_id": sup["id"],
+                    "supplier_name": sup.get("name", pay.get("entity_name", "")),
+                    "payment_number": pay["payment_number"],
+                    "date": pay["payment_date"],
+                    "amount": float(pay["amount"]),
+                    "reference": pay.get("reference", ""),
+                    "notes": "OPENING_BALANCE_FROM_SAGE",
+                    "created_at": now(),
+                })
+        
+        if sup_inv_records:
+            ok, err = db.save_many_fast("supplier_invoices", sup_inv_records)
+            label = "📄 Supplier invoices (from aging)"
+            if skipped_no_match:
+                label += f" — {skipped_no_match} skipped (supplier not found)"
+            results.append({"label": label, "imported": ok, "errors": err})
+            logger.info(f"[SAGE DROP] Supplier invoices: {ok} ok, {err} errors")
+        if sup_pay_records:
+            ok, err = db.save_many_fast("supplier_payments", sup_pay_records)
+            results.append({"label": "💸 Supplier payments (from aging)", "imported": ok, "errors": err})
+            logger.info(f"[SAGE DROP] Supplier payments: {ok} ok, {err} errors")
     
     elapsed = time.time() - t0
     
