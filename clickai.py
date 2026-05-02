@@ -32791,6 +32791,39 @@ def api_sage_drop_import():
             logger.info(f"[SAGE DROP] Filtered {len(tb_filtered_out)} control accounts from TB to avoid double-counting with aging")
         tb = new_tb
     
+    # ── Balance the TB with a suspense entry if filtering created an imbalance.
+    # Removing Trade Receivables (debit) and Trade Payables (credit) typically
+    # leaves the TB out of balance — accounting requires Debits = Credits.
+    # We add ONE "Opening Balance Suspense" line so the books balance, with a
+    # clear marker so a bookkeeper can reclassify it later.
+    suspense_amount = 0.0
+    suspense_side = None
+    if tb and tb_filtered_out:
+        new_debit_total = sum(float(r.get("debit", 0) or 0) for r in tb)
+        new_credit_total = sum(float(r.get("credit", 0) or 0) for r in tb)
+        diff = round(new_debit_total - new_credit_total, 2)
+        # If diff > 0 → too many debits, suspense goes on credit side
+        # If diff < 0 → too many credits, suspense goes on debit side
+        if abs(diff) >= 0.01:
+            suspense_amount = abs(diff)
+            if diff > 0:
+                suspense_side = "credit"
+                tb.append({
+                    "account_name": "Opening Balance Suspense",
+                    "account_code": "9999",
+                    "debit": 0.0,
+                    "credit": suspense_amount,
+                })
+            else:
+                suspense_side = "debit"
+                tb.append({
+                    "account_name": "Opening Balance Suspense",
+                    "account_code": "9999",
+                    "debit": suspense_amount,
+                    "credit": 0.0,
+                })
+            logger.info(f"[SAGE DROP] Added R{suspense_amount:,.2f} Opening Balance Suspense ({suspense_side}) to balance TB")
+    
     if tb:
         # First wipe existing OB entries (replace, not append)
         try:
@@ -32809,13 +32842,22 @@ def api_sage_drop_import():
         
         tb_records = []
         for rec in tb:
+            # Suspense entry gets a clearer description so any bookkeeper
+            # reviewing the GL knows what it is and can reclassify it.
+            account_name = rec.get("account_name", "")
+            if account_name == "Opening Balance Suspense":
+                desc = ("Opening Balance Suspense — created during Sage migration. "
+                        "Balances Debtors/Creditors Control variance between TB and Aging Report. "
+                        "Should be cleared by bookkeeper review.")
+            else:
+                desc = f"Opening Balance - {account_name}"
             tb_records.append({
                 "id": generate_id(),
                 "business_id": biz_id,
                 "date": today(),
                 "reference": "OB",
-                "description": f"Opening Balance - {rec.get('account_name', '')}",
-                "account": rec.get("account_name", ""),
+                "description": desc,
+                "account": account_name,
                 "account_code": rec.get("account_code", ""),
                 "debit": float(rec.get("debit", 0) or 0),
                 "credit": float(rec.get("credit", 0) or 0),
@@ -32826,6 +32868,8 @@ def api_sage_drop_import():
             label = "📊 Trial balance entries"
             if tb_filtered_out:
                 label += f" ({len(tb_filtered_out)} control account(s) excluded — replaced by aging)"
+            if suspense_amount > 0:
+                label += f" + R{suspense_amount:,.2f} suspense to balance"
             results.append({"label": label, "imported": ok, "errors": err})
             logger.info(f"[SAGE DROP] TB: {ok} ok, {err} errors")
     
