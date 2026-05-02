@@ -542,6 +542,114 @@ def register_settings_routes(app, db, login_required, Auth, render_page,
             <p style="color:var(--text-muted);margin-bottom:15px;">Link multiple businesses to see cross-business insights, comparisons, and find opportunities.</p>
             <a href="/settings/business-groups" class="btn btn-primary">Manage Business Groups →</a>
         </div>
+        
+        <!-- DANGER ZONE: Wipe all transactional data (owner only) -->
+        ''' + ((f'''
+        <div class="card" style="margin-top:20px;border:2px solid #ef4444;">
+            <h2 style="margin-bottom:10px;color:#ef4444;">⚠️ Danger Zone</h2>
+            <p style="color:var(--text-muted);margin-bottom:15px;">
+                Wipe ALL transactional data for <strong>{safe_string(business.get("name", "this business"))}</strong>.
+                This is intended for re-importing a clean dataset from Sage (or similar) after testing.
+            </p>
+            <div style="background:rgba(239,68,68,0.08);padding:15px;border-radius:8px;margin-bottom:15px;font-size:13px;">
+                <div style="font-weight:bold;margin-bottom:8px;">Will be permanently deleted:</div>
+                <div style="color:var(--text-muted);line-height:1.7;">
+                    Invoices, sales, POS sales, quotes, credit notes, delivery notes, payments, receipts &bull;
+                    Supplier invoices, supplier payments, purchase orders, GRVs &bull;
+                    Expenses, scanned documents, scan inbox/queue &bull;
+                    Bank transactions, bank patterns &bull;
+                    Journal entries, allocation log &bull;
+                    Stock movements &bull;
+                    Cash-ups, bar tabs &bull;
+                    Timesheets, payslips &bull;
+                    Jobs, rentals, travel log &bull;
+                    Daily briefings, reminders, todos, notes, Zane memory &bull;
+                    Audit log, AI usage log, WhatsApp log &bull;
+                    Assets, budgets, year-ends
+                </div>
+                <div style="font-weight:bold;margin-top:12px;margin-bottom:8px;color:#10b981;">Will be preserved:</div>
+                <div style="color:var(--text-muted);line-height:1.7;">
+                    Chart of accounts (GL codes) &bull;
+                    Employees, employment contracts, HR documents &bull;
+                    Bank account setup &bull;
+                    Stock categories &bull;
+                    Safety files &bull;
+                    Business record, users, team members, subscriptions &bull;
+                    All settings on this page
+                </div>
+            </div>
+            <button onclick="confirmWipeBusinessData(event)" class="btn"
+                style="background:#ef4444;color:white;font-weight:bold;">
+                🗑️ Wipe All Transactional Data
+            </button>
+        </div>
+        
+        <script>
+        async function confirmWipeBusinessData(ev) {{
+            if (!confirm("⚠️ WIPE ALL TRANSACTIONAL DATA\\n\\n" +
+                         "This will permanently delete EVERY invoice, sale, payment, " +
+                         "expense, bank transaction, journal entry, timesheet, payslip, " +
+                         "and related record for this business.\\n\\n" +
+                         "Chart of accounts, employees, bank account setup, stock categories, " +
+                         "and settings will be kept.\\n\\n" +
+                         "This cannot be undone. Continue?")) return;
+            
+            const phrase = prompt("To confirm, type exactly: WIPE ALL DATA");
+            if ((phrase || "").trim() !== "WIPE ALL DATA") {{
+                alert("Confirmation phrase did not match. Nothing was deleted.");
+                return;
+            }}
+            
+            const btn = (ev && ev.target) ? ev.target : null;
+            let oldText = "";
+            if (btn) {{
+                oldText = btn.innerHTML;
+                btn.disabled = true;
+                btn.innerHTML = "⏳ Wiping... please wait";
+            }}
+            
+            try {{
+                const resp = await fetch("/api/business/wipe-transactions", {{
+                    method: "POST",
+                    headers: {{"Content-Type": "application/json"}},
+                    body: JSON.stringify({{confirm: "WIPE ALL DATA"}})
+                }});
+                const data = await resp.json();
+                
+                if (data.success) {{
+                    let summary = "✅ Wipe complete.\\n\\n" +
+                                  "Total records deleted: " + data.deleted + "\\n" +
+                                  "Failed: " + (data.failed || 0) + "\\n\\n" +
+                                  "Per-table breakdown:\\n";
+                    if (data.tables) {{
+                        for (const [tbl, info] of Object.entries(data.tables)) {{
+                            if (info.before > 0) {{
+                                summary += "  " + tbl + ": " + info.deleted + "/" + info.before;
+                                if (info.failed) summary += " (failed " + info.failed + ")";
+                                if (info.error) summary += " — error: " + info.error;
+                                summary += "\\n";
+                            }}
+                        }}
+                    }}
+                    alert(summary);
+                    window.location.href = "/dashboard";
+                }} else {{
+                    if (btn) {{
+                        btn.disabled = false;
+                        btn.innerHTML = oldText;
+                    }}
+                    alert("❌ " + (data.error || "Wipe failed"));
+                }}
+            }} catch (e) {{
+                if (btn) {{
+                    btn.disabled = false;
+                    btn.innerHTML = oldText;
+                }}
+                alert("❌ Network error: " + e.message);
+            }}
+        }}
+        </script>
+        ''') if (business and user and business.get("user_id") == user.get("id")) else "") + '''
         '''
         
         # -- JARVIS: Settings HUD header --

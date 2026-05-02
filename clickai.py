@@ -28676,6 +28676,181 @@ def api_stock_delete_all():
         return jsonify({"success": False, "error": str(e)[:200]}), 500
 
 
+# ══════════════════════════════════════════════════════════════════════════════
+# DESTRUCTIVE: WIPE ALL TRANSACTIONAL DATA FOR A BUSINESS
+# Owner only. Requires confirmation phrase "WIPE ALL DATA" in body.
+# Used to clear transactions before re-importing from Sage (or similar).
+# Does NOT touch: chart_of_accounts, employees, bank_accounts (setup),
+# stock_categories, business record, users, team_members, settings.
+# ══════════════════════════════════════════════════════════════════════════════
+
+# Tables holding TRANSACTIONAL data scoped by business_id.
+# Order does not matter for PostgREST DELETE — but kept logical.
+WIPE_TRANSACTION_TABLES = [
+    # Sales side
+    "invoices",
+    "sales",
+    "pos_sales",
+    "quotes",
+    "recurring_invoices",
+    "credit_notes",
+    "delivery_notes",
+    "payments",
+    "receipts",
+    # Purchase side
+    "supplier_invoices",
+    "supplier_payments",
+    "purchase_orders",
+    "goods_received",
+    # Expense / scanning
+    "expenses",
+    "scanned_documents",
+    "scan_inbox",
+    "scan_queue",
+    "scanner_memory",
+    "staged_transactions",
+    # Banking
+    "bank_transactions",
+    "bank_patterns",
+    # Accounting / GL postings (NOT chart_of_accounts itself)
+    "journal_entries",
+    "journals",
+    "allocation_log",
+    # Stock movements (NOT stock_categories, NOT stock_items themselves —
+    # the user has already cleared customers/suppliers/stock manually)
+    "stock_movements",
+    # POS / cashup
+    "cash_ups",
+    "bar_tabs",
+    # Timesheets (NOT employees themselves)
+    "timesheets",
+    "timesheet_batches",
+    "timesheet_entries",
+    # Payroll runs (NOT employees, NOT employment_contracts)
+    "payslips",
+    # Jobs / projects
+    "jobs",
+    "job_materials",
+    "rentals",
+    "travel_log",
+    # Pulse / Zane / reminders
+    "daily_briefings",
+    "pulse_views",
+    "reminders",
+    "todos",
+    "notes",
+    "zane_memories",
+    "zane_memory",
+    # Logs
+    "audit_log",
+    "ai_usage_log",
+    "whatsapp_log",
+    # Asset register and budgets — Sage will re-import these
+    "assets",
+    "budgets",
+    # Year-end snapshots
+    "year_ends",
+]
+
+
+@app.route("/api/business/wipe-transactions", methods=["POST"])
+@login_required
+def api_business_wipe_transactions():
+    """Wipe ALL transactional data for the current business.
+    Owner ONLY. Requires {"confirm": "WIPE ALL DATA"} in request body.
+    
+    Preserved (Sage will re-import or stays as setup):
+      - chart_of_accounts / accounts (GL codes)
+      - employees, employment_contracts, hr_documents
+      - bank_accounts (account setup, NOT transactions)
+      - stock_categories
+      - safety_files
+      - businesses, users, team_members, subscriptions
+    
+    Wiped: every table in WIPE_TRANSACTION_TABLES.
+    """
+    try:
+        user = Auth.get_current_user()
+        business = Auth.get_current_business()
+        biz_id = business.get("id") if business else None
+        
+        if not biz_id:
+            return jsonify({"success": False, "error": "No business selected"}), 400
+        
+        role = get_user_role()
+        if role != "owner":
+            return jsonify({"success": False, "error": "Only the business owner can wipe transactional data"}), 403
+        
+        data = request.get_json(silent=True) or {}
+        if (data.get("confirm") or "").strip() != "WIPE ALL DATA":
+            return jsonify({"success": False, "error": "Confirmation phrase not provided"}), 400
+        
+        biz_name = business.get("name", "?") if business else "?"
+        user_email = user.get("email") if user else "?"
+        
+        logger.warning(f"[WIPE] STARTING wipe for biz={biz_id} ({biz_name}) by {user_email}")
+        
+        per_table = {}
+        total_deleted = 0
+        total_failed = 0
+        total_before = 0
+        
+        for tbl in WIPE_TRANSACTION_TABLES:
+            try:
+                rows = db.get(tbl, {"business_id": biz_id}, limit=10000) or []
+                if not rows:
+                    per_table[tbl] = {"before": 0, "deleted": 0, "failed": 0}
+                    continue
+                ids = [r.get("id") for r in rows if r.get("id")]
+                count_before = len(ids)
+                total_before += count_before
+                
+                if not ids:
+                    per_table[tbl] = {"before": count_before, "deleted": 0, "failed": 0}
+                    continue
+                
+                success, failed = db.delete_many(tbl, ids, biz_id)
+                per_table[tbl] = {"before": count_before, "deleted": success, "failed": failed}
+                total_deleted += success
+                total_failed += failed
+                
+                logger.warning(f"[WIPE] {tbl}: deleted {success}/{count_before} (failed={failed})")
+            except Exception as e:
+                # A missing table or a column quirk should not abort the whole wipe.
+                logger.error(f"[WIPE] {tbl}: error {e}")
+                per_table[tbl] = {"before": 0, "deleted": 0, "failed": 0, "error": str(e)[:120]}
+        
+        # Invalidate stock cache (defensive — stock_movements just got wiped)
+        try:
+            _stock_cache.pop(biz_id, None)
+        except Exception:
+            pass
+        
+        logger.warning(f"[WIPE] DONE biz={biz_id} ({biz_name}): "
+                       f"deleted={total_deleted}, failed={total_failed}, "
+                       f"tables_processed={len(WIPE_TRANSACTION_TABLES)}")
+        
+        # Audit log entry — but write it AFTER the wipe (audit_log was wiped above).
+        try:
+            AuditLog.log("WIPE_TRANSACTIONS", "business", biz_id,
+                         details=f"Full transactional wipe: deleted={total_deleted}, "
+                                 f"failed={total_failed}, by {user_email}")
+        except Exception:
+            pass
+        
+        return jsonify({
+            "success": True,
+            "deleted": total_deleted,
+            "failed": total_failed,
+            "total_before": total_before,
+            "tables": per_table,
+            "message": f"Wiped {total_deleted} transactional records across {len(WIPE_TRANSACTION_TABLES)} tables"
+        })
+    except Exception as e:
+        logger.error(f"[WIPE] Fatal error: {e}")
+        return jsonify({"success": False, "error": str(e)[:200]}), 500
+
+
 # ==================== GOODS RECEIVED VOUCHERS (GRV) ====================
 
 @app.route("/grv")
