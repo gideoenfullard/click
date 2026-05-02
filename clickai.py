@@ -42856,124 +42856,13 @@ def customer_demand_letter(customer_id):
 @app.route("/settings/opening-balances", methods=["GET", "POST"])
 @login_required
 def opening_balances():
-    """Import opening balances for customers/suppliers"""
-    
-    user = Auth.get_current_user()
-    business = Auth.get_current_business()
-    biz_id = business.get("id") if business else None
-    
-    if request.method == "POST":
-        balance_type = request.form.get("type", "customers")
-        
-        entries = []
-        i = 0
-        while f"name_{i}" in request.form:
-            name = request.form.get(f"name_{i}", "").strip()
-            balance = request.form.get(f"balance_{i}", "0").strip()
-            if name:
-                try:
-                    balance = float(balance.replace("R", "").replace(",", ""))
-                except:
-                    balance = 0
-                entries.append({"name": name, "balance": balance})
-            i += 1
-        
-        # Save balances
-        table = "customers" if balance_type == "customers" else "suppliers"
-        for entry in entries:
-            existing = db.get(table, {"business_id": biz_id, "name": entry["name"]}) if biz_id else []
-            if existing:
-                db.save(table, {"id": existing[0]["id"], "balance": entry["balance"]})
-            else:
-                db.save(table, {
-                    "id": generate_id(),
-                    "business_id": biz_id,
-                    "name": entry["name"],
-                    "balance": entry["balance"],
-                    "created_at": now()
-                })
-        
-        return redirect("/settings/opening-balances?saved=1")
-    
-    # Get existing
-    customers = db.get("customers", {"business_id": biz_id}) if biz_id else []
-    suppliers = db.get("suppliers", {"business_id": biz_id}) if biz_id else []
-    _all_cust_bals = calc_all_customer_balances(biz_id)
-    _all_sup_bals = calc_all_supplier_balances(biz_id)
-    
-    saved_msg = '<div class="alert alert-success" style="margin-bottom:20px;"> Opening balances saved!</div>' if request.args.get("saved") else ""
-    
-    content = f'''
-    {saved_msg}
-    
-    <div class="card">
-        <h2 style="margin-bottom:20px;"> Opening Balances</h2>
-        <p style="color:var(--text-muted);margin-bottom:20px;">
-            Enter opening balances for customers (debtors) and suppliers (creditors) when migrating from another system.
-        </p>
-        
-        <div style="display:flex;gap:10px;margin-bottom:20px;">
-            <button class="btn btn-primary" onclick="showTab('customers')"> Customers (Debtors)</button>
-            <button class="btn btn-secondary" onclick="showTab('suppliers')"> Suppliers (Creditors)</button>
-        </div>
-        
-        <form method="POST" id="customersForm">
-            <input type="hidden" name="type" value="customers">
-            <table class="table" id="customersTable">
-                <thead>
-                    <tr><th>Customer Name</th><th>Opening Balance (Owes You)</th></tr>
-                </thead>
-                <tbody id="customersBody">
-                </tbody>
-            </table>
-            <button type="button" class="btn btn-secondary" onclick="addRow('customers')" style="margin:10px 0;">+ Add Row</button>
-            <br><br>
-            <button type="submit" class="btn btn-primary"> Save Customer Balances</button>
-        </form>
-        
-        <form method="POST" id="suppliersForm" style="display:none;">
-            <input type="hidden" name="type" value="suppliers">
-            <table class="table" id="suppliersTable">
-                <thead>
-                    <tr><th>Supplier Name</th><th>Opening Balance (You Owe)</th></tr>
-                </thead>
-                <tbody id="suppliersBody">
-                </tbody>
-            </table>
-            <button type="button" class="btn btn-secondary" onclick="addRow('suppliers')" style="margin:10px 0;">+ Add Row</button>
-            <br><br>
-            <button type="submit" class="btn btn-primary"> Save Supplier Balances</button>
-        </form>
-    </div>
-    
-    <script>
-    let customerIdx = 0;
-    let supplierIdx = 0;
-    
-    const existingCustomers = {json.dumps([{"name": c.get("name",""), "balance": _all_cust_bals.get(c.get("id"), 0)} for c in customers])};
-    const existingSuppliers = {json.dumps([{"name": s.get("name",""), "balance": _all_sup_bals.get(s.get("id"), 0)} for s in suppliers])};
-    
-    function showTab(tab) {{
-        document.getElementById('customersForm').style.display = tab === 'customers' ? 'block' : 'none';
-        document.getElementById('suppliersForm').style.display = tab === 'suppliers' ? 'block' : 'none';
-    }}
-    
-    function addRow(type, name='', balance=0) {{
-        const tbody = document.getElementById(type + 'Body');
-        const idx = type === 'customers' ? customerIdx++ : supplierIdx++;
-        tbody.innerHTML += '<tr><td><input type="text" name="name_' + idx + '" class="form-input" value="' + name + '" placeholder="Name"></td><td><input type="text" name="balance_' + idx + '" class="form-input" value="' + balance + '" placeholder="0.00"></td></tr>';
-    }}
-    
-    // Load existing
-    existingCustomers.forEach(c => addRow('customers', c.name, c.balance));
-    existingSuppliers.forEach(s => addRow('suppliers', s.name, s.balance));
-    
-    // Add empty rows
-    for (let i = 0; i < 5; i++) {{ addRow('customers'); addRow('suppliers'); }}
-    </script>
-    '''
-    
-    return render_page("Opening Balances", content, user, "settings")
+    """DEPRECATED: This page wrote a flat 'balance' field to customers/suppliers
+    that the rest of the system never reads (balances are calculated from source
+    documents). Redirect users to the Sage Switch wizard at /smart-import which
+    creates proper journal_entries with reference='OB' that flow through to the
+    Trial Balance, Balance Sheet, and aging reports correctly.
+    """
+    return redirect("/smart-import?from=opening-balances")
 
 
 # 
