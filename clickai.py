@@ -3146,40 +3146,79 @@ class DB:
         return success, errors
     
     def save_many_fast(self, table: str, records: List[dict],
+                       business_id: str = None,
+                       merge_key: str = None,
                        batch_size: int = 1000,
-                       max_workers: int = 4,
-                       on_conflict: str = None) -> Tuple[int, int]:
-        """High-speed bulk insert/upsert.
+                       max_workers: int = 4) -> Tuple[int, int]:
+        """High-speed bulk insert with optional code-based UPSERT.
         
-        - Sends batches of `batch_size` records per HTTP call (Supabase accepts up
-          to ~1000 cleanly).
+        - If `business_id` and `merge_key` (e.g. "code") are given, this first
+          BULK-FETCHES existing rows for that business in a single GET, then
+          maps incoming records to existing IDs by `merge_key`. New records get
+          fresh IDs; existing records keep their existing IDs (so the POST
+          becomes an UPDATE via id-conflict).
+        - Sends batches of `batch_size` records per HTTP call.
         - Runs `max_workers` batches in parallel using threads.
-        - If `on_conflict` is given (e.g. "business_id,code"), uses
-          PostgREST's resolution=merge-duplicates header so existing rows with
-          the same key are UPDATED in place (Sage data wins, per user request).
+        - Uses `Prefer: resolution=merge-duplicates` on `id` (already supported
+          by the standard `save()` call), so existing rows are UPDATED rather
+          than rejected.
         
         Returns (success_count, error_count).
         """
         if not records:
             return 0, 0
         
-        # Ensure each record has an id (used as fallback conflict key)
+        # ─── Phase 1: optional code-based merge with existing rows ───
+        # Fetch all existing rows for the business (one GET, fast even for 10k rows)
+        # and build a {code: id} map. Then assign existing IDs to incoming records
+        # whose code matches, so the POST acts as an UPDATE.
+        if business_id and merge_key:
+            try:
+                fetch_url = (f"{self.url}/rest/v1/{table}"
+                             f"?select=id,{merge_key}"
+                             f"&business_id=eq.{business_id}"
+                             f"&limit=50000")
+                resp = requests.get(fetch_url, headers=self.headers, timeout=60)
+                if resp.status_code == 200:
+                    existing = resp.json() or []
+                    code_to_id = {}
+                    for row in existing:
+                        k = row.get(merge_key)
+                        rid = row.get("id")
+                        if k and rid:
+                            code_to_id[str(k).strip().lower()] = rid
+                    
+                    matched = 0
+                    for rec in records:
+                        k = rec.get(merge_key)
+                        if k:
+                            existing_id = code_to_id.get(str(k).strip().lower())
+                            if existing_id:
+                                rec["id"] = existing_id
+                                matched += 1
+                    logger.info(f"[DB FAST] {table}: matched {matched}/{len(records)} "
+                                f"to existing rows by {merge_key}")
+                else:
+                    logger.warning(f"[DB FAST] {table}: bulk-fetch returned "
+                                   f"{resp.status_code}, proceeding without merge")
+            except Exception as e:
+                logger.error(f"[DB FAST] {table}: bulk-fetch failed: {e}, "
+                             f"proceeding without merge")
+        
+        # Ensure each record has an id (used as id-conflict key)
         for r in records:
             if not r.get("id"):
                 r["id"] = generate_id()
             if not r.get("created_at"):
                 r["created_at"] = now()
         
-        # Build URL & headers once
-        if on_conflict:
-            url = f"{self.url}/rest/v1/{table}?on_conflict={on_conflict}"
-            headers = {**self.headers,
-                       "Prefer": "return=minimal,resolution=merge-duplicates"}
-        else:
-            url = f"{self.url}/rest/v1/{table}"
-            headers = {**self.headers, "Prefer": "return=minimal"}
+        # ─── Phase 2: bulk POST with id-based upsert ───
+        # The standard `save()` uses on_conflict=id with merge-duplicates, which
+        # works because every PostgREST table has a primary key on id.
+        url = f"{self.url}/rest/v1/{table}?on_conflict=id"
+        headers = {**self.headers,
+                   "Prefer": "return=minimal,resolution=merge-duplicates"}
         
-        # Slice into batches
         batches = [records[i:i + batch_size]
                    for i in range(0, len(records), batch_size)]
         
@@ -3191,13 +3230,10 @@ class DB:
                 resp = requests.post(url, headers=headers, json=batch, timeout=60)
                 if resp.status_code in (200, 201, 204):
                     return len(batch), 0, None
-                # Don't fall back to per-record save() here — the caller handles
-                # retry. We surface the error so the caller can decide.
                 return 0, len(batch), f"HTTP {resp.status_code}: {resp.text[:200]}"
             except Exception as e:
                 return 0, len(batch), str(e)[:200]
         
-        # Cap workers at number of batches (no point in 4 threads for 1 batch)
         workers = min(max_workers, len(batches))
         if workers <= 1:
             for batch in batches:
@@ -31145,6 +31181,7 @@ SD_MAX_FILE_BYTES = 50 * 1024 * 1024   # 50 MB cap per file (safety on 1GB worke
 # File classes Haiku may return
 SD_KNOWN_TYPES = {
     "customers_clean", "suppliers_clean",
+    "customers_listing", "suppliers_listing",
     "stock_qty", "stock_prices", "stock_full",
     "trial_balance", "chart_of_accounts",
     "customer_aging", "supplier_aging",
@@ -31323,8 +31360,10 @@ def _sd_build_classify_prompt(files_preview):
     return f"""You are classifying CSV/Excel files exported from Sage accounting software.
 
 For each file below, return ONE of these classes:
-- customers_clean: tabular customer/debtor list, ONE row per customer (e.g. headers: Name, Balance, VAT Reference, Email)
-- suppliers_clean: tabular supplier/creditor list, ONE row per supplier
+- customers_clean: tabular customer/debtor list, ONE row per customer (headers like: Name, Balance, VAT Reference, Email — flat single-row-per-record format)
+- suppliers_clean: tabular supplier/creditor list, ONE row per supplier (flat single-row-per-record format)
+- customers_listing: Sage "Customer Listing Report" — STARTS with title "Customer Listing Report", followed by company name and "Date:" / "Page:" rows. Each customer takes MULTIPLE rows (Delivery Address, Mobile, Email, VAT, Credit Limit, Sales Rep on separate lines). Despite the multi-line format, this file IS valuable — it often contains VAT numbers and addresses missing from the clean export.
+- suppliers_listing: Sage "Supplier Listing Report" — same multi-line format, for suppliers.
 - stock_qty: stock items with quantities but NO prices (headers like: Code, Description, Qty on Hand, Qty Reserved)
 - stock_prices: stock items with prices but NO quantities (headers like: Code, Description, Price list 1, Price list 2)
 - stock_full: stock items with BOTH quantity AND price columns
@@ -31333,10 +31372,14 @@ For each file below, return ONE of these classes:
 - customer_aging: outstanding customer invoices (Customer, Invoice No, Date, Amount, days)
 - supplier_aging: outstanding supplier invoices (Supplier, Invoice No, Date, Amount, days)
 - bank_statement: bank transactions (Date, Description, Debit, Credit, Balance)
-- junk: human-readable listing report (title row "X Listing Report", multi-line addresses per record, page numbers, "Date:", "Page:" rows). Anything that is NOT a flat table.
+- junk: empty, corrupted, or completely unrecognizable file with no usable accounting data
 - unknown: cannot determine
 
-CRITICAL: A file with a title like "Customer Listing Report" followed by company name and "Date:" / "Page:" rows is JUNK, even if it has customer data — because each customer takes multiple rows (address on separate lines, etc.). Only classify as customers_clean if there is ONE row per customer.
+CRITICAL DISTINCTIONS:
+1. "Customer Listing Report" with title row → customers_listing (NOT junk — we parse it).
+2. "Supplier Listing Report" with title row → suppliers_listing (NOT junk — we parse it).
+3. Tabular file with one row per customer (no "Listing Report" title) → customers_clean.
+4. Only classify as `junk` if there is genuinely no accounting data (e.g. empty file, page numbers only, blank template).
 
 Files to classify:
 
@@ -31545,6 +31588,196 @@ def _sd_extract_customers(rows):
 
 def _sd_extract_suppliers(rows):
     return _sd_extract_customers(rows)
+
+
+def _sd_extract_listing(rows):
+    """Parse Sage 'Customer Listing Report' or 'Supplier Listing Report' format.
+    Multi-line per record. Returns customer/supplier-shaped dicts.
+    Common output fields: code, name, vat_number, contact_name, phone, cell,
+    fax, email, address, postal_address, balance, credit_limit, sales_rep,
+    price_list, active, reg_number.
+    """
+    if not rows:
+        return []
+    
+    out = []
+    current = None
+    address_buffer = []
+    postal_buffer = []
+    physical_buffer = []
+    addr_col_map = {"delivery": None, "postal": None, "physical": None}
+    
+    def _flush():
+        nonlocal current, address_buffer, postal_buffer, physical_buffer
+        if current and current.get("code"):
+            if physical_buffer:
+                current["address"] = "\n".join(physical_buffer).strip()
+            elif address_buffer:
+                current["address"] = "\n".join(address_buffer).strip()
+            if postal_buffer:
+                current["postal_address"] = "\n".join(postal_buffer).strip()
+            out.append(current)
+        current = None
+        address_buffer = []
+        postal_buffer = []
+        physical_buffer = []
+    
+    for row in rows:
+        if not row:
+            continue
+        first = (row[0] or "").strip() if len(row) > 0 else ""
+        
+        # Skip report-level header/footer rows
+        fl = first.lower()
+        if fl in ("customer listing report", "supplier listing report"):
+            continue
+        if any(str(c).strip().lower() in ("date:", "page:") for c in row):
+            continue
+        # Header row "Name,Category,,Active,Contact Name,Telephone,Balance"
+        if fl == "name" and any(str(c).strip().lower() == "balance" for c in row):
+            continue
+        
+        # Detect new record (code : name in col 0)
+        if " : " in first:
+            _flush()
+            code, name = _sd_split_code_name(first)
+            current = {"code": code, "name": name}
+            address_buffer = []
+            postal_buffer = []
+            physical_buffer = []
+            addr_col_map = {"delivery": None, "postal": None, "physical": None}
+            
+            try:
+                if len(row) > 3 and row[3]:
+                    val = str(row[3]).strip()
+                    if val.lower() in ("yes", "no", "true", "false"):
+                        current["active"] = val.lower() in ("yes", "true")
+                if len(row) > 4 and row[4]:
+                    current["contact_name"] = str(row[4]).strip()
+                if len(row) > 5 and row[5]:
+                    current["phone"] = str(row[5]).strip()
+                if len(row) > 6 and row[6]:
+                    bal = str(row[6]).replace("R", "").replace(",", "").strip()
+                    if bal and bal not in ("-", ""):
+                        try:
+                            current["balance"] = float(bal)
+                        except ValueError:
+                            pass
+            except Exception:
+                pass
+            continue
+        
+        if current is None:
+            continue
+        
+        # Address-header row: maps which column is delivery/postal/physical
+        joined_lower = ",".join(str(c).strip().lower() for c in row)
+        if ("delivery address:" in joined_lower or "physical address:" in joined_lower
+                or "postal address:" in joined_lower):
+            for i, c in enumerate(row):
+                cl = str(c).strip().lower()
+                if cl == "delivery address:":
+                    addr_col_map["delivery"] = i
+                elif cl == "physical address:":
+                    addr_col_map["physical"] = i
+                elif cl == "postal address:":
+                    addr_col_map["postal"] = i
+                elif cl == "fax:":
+                    for j in range(i + 1, min(len(row), i + 4)):
+                        v = str(row[j]).strip()
+                        if v and v.lower() != "fax:":
+                            current.setdefault("fax", v)
+                            break
+            continue
+        
+        # Look for keyword labels in any cell of this row
+        has_label = False
+        for i, cell in enumerate(row):
+            cl = str(cell).strip().lower()
+            if not cl:
+                continue
+            value = ""
+            for j in range(i + 1, len(row)):
+                v = str(row[j]).strip()
+                if v:
+                    value = v
+                    break
+            
+            if cl == "mobile:":
+                if value:
+                    current.setdefault("cell", value)
+                has_label = True
+            elif cl == "email:":
+                if value:
+                    current.setdefault("email", value)
+                has_label = True
+            elif cl == "fax:":
+                if value and value.lower() != "fax:":
+                    current.setdefault("fax", value)
+                has_label = True
+            elif cl == "credit limit:":
+                if value:
+                    bal = value.replace("R", "").replace(",", "").strip()
+                    try:
+                        current.setdefault("credit_limit", float(bal))
+                    except ValueError:
+                        pass
+                has_label = True
+            elif cl == "sales rep:":
+                if value:
+                    current.setdefault("sales_rep", value)
+                has_label = True
+            elif cl in ("default price list:", "price list:"):
+                if value:
+                    current.setdefault("price_list", value)
+                has_label = True
+            elif cl.startswith("vat:"):
+                import re as _re
+                m = _re.search(r"vat:\s*([\d]+)", cl)
+                if m:
+                    current.setdefault("vat_number", m.group(1))
+                has_label = True
+            elif cl.startswith("reg:"):
+                import re as _re
+                m = _re.search(r"reg:\s*([\d/]+)", str(cell).lower())
+                if m:
+                    current.setdefault("reg_number", m.group(1))
+                has_label = True
+        
+        # VAT may also be embedded in any cell as "VAT: 4xxxxx"
+        for cell in row:
+            cs = str(cell).strip()
+            if "VAT:" in cs and "vat_number" not in current:
+                import re as _re
+                m = _re.search(r"VAT:\s*(\d+)", cs)
+                if m:
+                    current["vat_number"] = m.group(1)
+        
+        # If no label keywords in this row, treat content as address continuation
+        if not has_label and any(addr_col_map.values()):
+            for kind_, col in addr_col_map.items():
+                if col is None or col >= len(row):
+                    continue
+                line = str(row[col]).strip()
+                if not line:
+                    continue
+                if kind_ == "delivery":
+                    address_buffer.append(line)
+                elif kind_ == "physical":
+                    physical_buffer.append(line)
+                elif kind_ == "postal":
+                    postal_buffer.append(line)
+    
+    _flush()
+    return out
+
+
+def _sd_extract_customers_listing(rows):
+    return _sd_extract_listing(rows)
+
+
+def _sd_extract_suppliers_listing(rows):
+    return _sd_extract_listing(rows)
 
 
 def _sd_extract_stock_qty(rows):
@@ -31943,15 +32176,23 @@ def sage_drop_page():
     function renderSummary(summary) {{
         if (!summary) {{ document.getElementById('sdSummary').innerHTML=''; return; }}
         const planRows = [];
-        if (summary.customers > 0) planRows.push(['👥 Customers', summary.customers]);
-        if (summary.suppliers > 0) planRows.push(['🏭 Suppliers', summary.suppliers]);
+        if (summary.customers > 0) {{
+            let lbl = '👥 Customers';
+            if (summary.customers_merged_from > 1) lbl += ` (merged from ${{summary.customers_merged_from}} files)`;
+            planRows.push([lbl, summary.customers]);
+        }}
+        if (summary.suppliers > 0) {{
+            let lbl = '🏭 Suppliers';
+            if (summary.suppliers_merged_from > 1) lbl += ` (merged from ${{summary.suppliers_merged_from}} files)`;
+            planRows.push([lbl, summary.suppliers]);
+        }}
         if (summary.stock > 0) {{
             let stockLabel = '📦 Stock items';
             if (summary.stock_merged_from > 1) stockLabel += ` (merged from ${{summary.stock_merged_from}} files)`;
             planRows.push([stockLabel, summary.stock]);
         }}
         if (summary.trial_balance > 0) planRows.push(['📊 Trial balance entries', summary.trial_balance]);
-        if (summary.junk > 0) planRows.push(['🗑 Junk files (will be ignored)', summary.junk]);
+        if (summary.junk > 0) planRows.push(['🗑 Junk files (no usable data)', summary.junk]);
         if (summary.unknown > 0) planRows.push(['❓ Unknown / cannot classify', summary.unknown]);
         
         const totalToImport = (summary.customers||0) + (summary.suppliers||0) + (summary.stock||0) + (summary.trial_balance||0);
@@ -32144,7 +32385,8 @@ def api_sage_drop_classify():
     # Build summary by running extractors over each classified file (cheap dry run)
     counts = {"customers": 0, "suppliers": 0, "stock": 0,
               "trial_balance": 0, "junk": 0, "unknown": 0,
-              "stock_merged_from": 0}
+              "stock_merged_from": 0,
+              "customers_merged_from": 0, "suppliers_merged_from": 0}
     
     customer_buckets = []
     supplier_buckets = []
@@ -32165,9 +32407,19 @@ def api_sage_drop_classify():
         if t == "customers_clean":
             recs = _sd_extract_customers(rows)
             customer_buckets.append(recs)
+            counts["customers_merged_from"] += 1
+        elif t == "customers_listing":
+            recs = _sd_extract_customers_listing(rows)
+            customer_buckets.append(recs)
+            counts["customers_merged_from"] += 1
         elif t == "suppliers_clean":
             recs = _sd_extract_suppliers(rows)
             supplier_buckets.append(recs)
+            counts["suppliers_merged_from"] += 1
+        elif t == "suppliers_listing":
+            recs = _sd_extract_suppliers_listing(rows)
+            supplier_buckets.append(recs)
+            counts["suppliers_merged_from"] += 1
         elif t == "stock_qty":
             recs = _sd_extract_stock_qty(rows)
             stock_qty_buckets.append(recs)
@@ -32232,8 +32484,12 @@ def api_sage_drop_import():
         rows = _sd_load_file_rows(biz_id, f["file_id"])
         if t == "customers_clean":
             customer_buckets.append(_sd_extract_customers(rows))
+        elif t == "customers_listing":
+            customer_buckets.append(_sd_extract_customers_listing(rows))
         elif t == "suppliers_clean":
             supplier_buckets.append(_sd_extract_suppliers(rows))
+        elif t == "suppliers_listing":
+            supplier_buckets.append(_sd_extract_suppliers_listing(rows))
         elif t == "stock_qty":
             stock_qty_buckets.append(_sd_extract_stock_qty(rows))
         elif t == "stock_prices":
@@ -32268,7 +32524,8 @@ def api_sage_drop_import():
             if r.get("name"):
                 cust_records.append(r)
         if cust_records:
-            ok, err = db.save_many_fast("customers", cust_records, on_conflict="business_id,code")
+            ok, err = db.save_many_fast("customers", cust_records,
+                                        business_id=biz_id, merge_key="code")
             results.append({"label": "👥 Customers", "imported": ok, "errors": err})
             logger.info(f"[SAGE DROP] Customers: {ok} ok, {err} errors")
     
@@ -32286,7 +32543,8 @@ def api_sage_drop_import():
             if r.get("name"):
                 sup_records.append(r)
         if sup_records:
-            ok, err = db.save_many_fast("suppliers", sup_records, on_conflict="business_id,code")
+            ok, err = db.save_many_fast("suppliers", sup_records,
+                                        business_id=biz_id, merge_key="code")
             results.append({"label": "🏭 Suppliers", "imported": ok, "errors": err})
             logger.info(f"[SAGE DROP] Suppliers: {ok} ok, {err} errors")
     
@@ -32305,7 +32563,8 @@ def api_sage_drop_import():
             )
             stock_records.append(r)
         if stock_records:
-            ok, err = db.save_many_fast("stock_items", stock_records, on_conflict="business_id,code")
+            ok, err = db.save_many_fast("stock_items", stock_records,
+                                        business_id=biz_id, merge_key="code")
             results.append({"label": "📦 Stock items", "imported": ok, "errors": err})
             logger.info(f"[SAGE DROP] Stock: {ok} ok, {err} errors")
     
