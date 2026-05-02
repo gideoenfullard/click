@@ -32854,11 +32854,16 @@ def api_sage_drop_import():
         except Exception as e:
             logger.error(f"[SAGE DROP] Could not clear old opening invoices: {e}")
         
-        # Also wipe receipts marked as opening
+        # Also wipe receipts marked as opening. Two markers checked for back-compat:
+        # (1) notes="OPENING_BALANCE_FROM_SAGE" (older imports)
+        # (2) reference starts with "OPENING:" (newer imports)
         try:
             existing_recs = db.get("receipts", {"business_id": biz_id}, limit=50000) or []
             op_rec_ids = [r.get("id") for r in existing_recs
-                          if r.get("notes") == "OPENING_BALANCE_FROM_SAGE" and r.get("id")]
+                          if r.get("id") and (
+                              r.get("notes") == "OPENING_BALANCE_FROM_SAGE" or
+                              str(r.get("reference") or "").startswith("OPENING:")
+                          )]
             if op_rec_ids:
                 if hasattr(db, "delete_many"):
                     db.delete_many("receipts", op_rec_ids, biz_id)
@@ -32903,18 +32908,21 @@ def api_sage_drop_import():
                 if not cust:
                     skipped_no_match += 1
                     continue
+                # Use "OPENING:" prefix on reference so re-import can find and wipe these.
+                # Receipts schema is minimal — see line 11981 — so keep only known-safe fields.
+                rec_ref = f"OPENING:{pay['payment_number']}"
+                if pay.get("reference") and pay["reference"] != pay["payment_number"]:
+                    rec_ref = f"OPENING:{pay['payment_number']} - {pay['reference']}"
                 rec_records.append({
                     "id": generate_id(),
                     "business_id": biz_id,
-                    "receipt_number": pay["payment_number"],
-                    "date": pay["payment_date"],
                     "customer_id": cust["id"],
                     "customer_name": cust.get("name", pay.get("entity_name", "")),
                     "amount": float(pay["amount"]),
-                    "reference": pay.get("reference", ""),
-                    "notes": "OPENING_BALANCE_FROM_SAGE",
-                    "created_at": now(),
+                    "date": pay["payment_date"],
+                    "reference": rec_ref,
                     "created_by": user_id,
+                    "created_at": now(),
                 })
         
         if inv_records:
@@ -32954,11 +32962,11 @@ def api_sage_drop_import():
         except Exception as e:
             logger.error(f"[SAGE DROP] Could not clear old opening supplier invoices: {e}")
         
-        # Wipe existing opening supplier payments
+        # Wipe existing opening supplier payments (identified by source="sage_aging_import")
         try:
             existing_spays = db.get("supplier_payments", {"business_id": biz_id}, limit=50000) or []
             op_pay_ids = [p.get("id") for p in existing_spays
-                          if p.get("notes") == "OPENING_BALANCE_FROM_SAGE" and p.get("id")]
+                          if p.get("source") == "sage_aging_import" and p.get("id")]
             if op_pay_ids:
                 if hasattr(db, "delete_many"):
                     db.delete_many("supplier_payments", op_pay_ids, biz_id)
@@ -32999,16 +33007,21 @@ def api_sage_drop_import():
                 if not sup:
                     skipped_no_match += 1
                     continue
+                # Combine Sage payment number + reference into the reference field,
+                # since supplier_payments has no payment_number column
+                pay_ref = pay["payment_number"]
+                if pay.get("reference") and pay["reference"] != pay["payment_number"]:
+                    pay_ref = f"{pay['payment_number']} - {pay['reference']}"
                 sup_pay_records.append({
                     "id": generate_id(),
                     "business_id": biz_id,
                     "supplier_id": sup["id"],
                     "supplier_name": sup.get("name", pay.get("entity_name", "")),
-                    "payment_number": pay["payment_number"],
-                    "date": pay["payment_date"],
                     "amount": float(pay["amount"]),
-                    "reference": pay.get("reference", ""),
-                    "notes": "OPENING_BALANCE_FROM_SAGE",
+                    "date": pay["payment_date"],
+                    "method": "opening_balance",
+                    "reference": pay_ref,
+                    "source": "sage_aging_import",
                     "created_at": now(),
                 })
         
