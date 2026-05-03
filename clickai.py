@@ -24986,6 +24986,43 @@ def dashboard():
     total_sales = 0 if is_staff else context.get("total_sales", 0)
     stock_value = 0 if is_staff else context.get("stock_retail_value", 0)
     
+    # Suspense Account Banner - show if any GL entries are tagged as suspense
+    # Surgical: only checks journal_entries table, never blocks page load on error
+    suspense_banner_html = ""
+    if not is_staff:
+        try:
+            biz_id = business.get("id") if business else None
+            if biz_id:
+                _je = db.get("journal_entries", {"business_id": biz_id}, limit=10000) or []
+                _suspense = []
+                for je in _je:
+                    desc = (je.get("description", "") or "").lower()
+                    account = (je.get("account", "") or "").lower()
+                    if "suspense" in desc or "suspense" in account:
+                        _suspense.append(je)
+                if _suspense:
+                    _net_d = sum(float(j.get("debit", 0) or 0) for j in _suspense)
+                    _net_c = sum(float(j.get("credit", 0) or 0) for j in _suspense)
+                    _net = abs(_net_d - _net_c)
+                    if _net > 0.01:
+                        suspense_banner_html = f'''
+        <div class="card" style="background:linear-gradient(135deg,rgba(245,158,11,0.18),rgba(239,68,68,0.10));border:1px solid rgba(245,158,11,0.45);margin-bottom:20px;cursor:pointer;" onclick="window.location='/suspense-explainer'">
+            <div style="display:flex;align-items:center;gap:15px;">
+                <span style="font-size:36px;">⚠️</span>
+                <div style="flex:1;">
+                    <h3 style="margin:0;color:var(--text);">Suspense Account: R{_net:,.2f}</h3>
+                    <p style="margin:5px 0 0 0;color:var(--text-muted);font-size:14px;">
+                        {len(_suspense)} entrie(s) sitting in a suspense holding account &mdash;
+                        click to see where they came from and how to clear them.
+                    </p>
+                </div>
+                <span style="color:var(--primary);font-size:14px;font-weight:600;">View →</span>
+            </div>
+        </div>
+        '''
+        except Exception as _e:
+            logger.warning(f"[DASHBOARD] Could not compute suspense banner: {_e}")
+    
     # Getting Started section - show if no data yet
     getting_started_html = ""
     if stock_count == 0 or customer_count == 0:
@@ -25154,6 +25191,8 @@ def dashboard():
         '''
     
     content = f'''
+    {suspense_banner_html}
+    
     {getting_started_html}
     
     {low_stock_html}
