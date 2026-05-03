@@ -31185,6 +31185,7 @@ SD_KNOWN_TYPES = {
     "stock_qty", "stock_prices", "stock_full",
     "trial_balance", "chart_of_accounts",
     "customer_aging", "supplier_aging",
+    "customer_invoices", "supplier_invoices",
     "bank_statement",
     "junk", "unknown",
 }
@@ -31371,6 +31372,8 @@ For each file below, return ONE of these classes:
 - chart_of_accounts: bare GL account list (Account Code, Account Name, Type) without amounts
 - customer_aging: Sage "Customer Balances Days Outstanding" report. Headers like: Customer, Reference, 120+ Days, 90 Days, 60 Days, 30 Days, Current, Total Due. Multi-line per customer (one row per outstanding invoice). VALUABLE — we import this as individual invoices.
 - supplier_aging: Sage "Supplier Balances Days Outstanding" report. Same structure as customer_aging but for suppliers. VALUABLE — we import this.
+- customer_invoices: Sage "Customer Invoices Report" / "Sales Invoices Report" — flat tabular list of ALL customer invoices (paid AND outstanding). Headers like: Date, Document No., Customer Ref., Customer, Sales Rep, Due Date, Exclusive, VAT, Total Selling, Total Outstanding. ONE row per invoice (no aging buckets). VALUABLE — gives complete invoice history.
+- supplier_invoices: Sage "Supplier Invoices Report" / "Purchase Invoices Report" — flat tabular list of ALL supplier invoices (paid AND outstanding). Headers like: Date, Document No., Supplier Inv. No., Supplier, Due Date, Exclusive, VAT, Total Purchases, Total Outstanding. ONE row per invoice. VALUABLE — gives complete supplier invoice history.
 - bank_statement: bank transactions (Date, Description, Debit, Credit, Balance)
 - junk: empty, corrupted, or completely unrecognizable file with no usable accounting data
 - unknown: cannot determine
@@ -31379,7 +31382,9 @@ CRITICAL DISTINCTIONS:
 1. "Customer Listing Report" with title row → customers_listing (NOT junk — we parse it).
 2. "Supplier Listing Report" with title row → suppliers_listing (NOT junk — we parse it).
 3. Tabular file with one row per customer (no "Listing Report" title) → customers_clean.
-4. Only classify as `junk` if there is genuinely no accounting data (e.g. empty file, page numbers only, blank template).
+4. AGING vs INVOICES: aging reports have buckets ("120+ Days", "90 Days", etc.) and group rows under each customer/supplier. Invoice reports are flat — one invoice per row, no buckets, no groupings.
+5. customer_invoices vs supplier_invoices: look for "Customer" / "Total Selling" → customer_invoices. Look for "Supplier" / "Supplier Inv. No." / "Total Purchases" → supplier_invoices.
+6. Only classify as `junk` if there is genuinely no accounting data (e.g. empty file, page numbers only, blank template).
 
 Files to classify:
 
@@ -31988,6 +31993,237 @@ def _sd_extract_supplier_aging(rows):
     return _sd_extract_aging(rows)
 
 
+def _sd_extract_customer_invoices(rows):
+    """Parse Sage 'Customer Invoices Report' / 'Sales Invoices Report' (flat list).
+    
+    Expected headers (column order may vary):
+      Date, Document No., Customer Ref., Customer, Sales Rep, Due Date,
+      Ant. Pmt., Exclusive, VAT, Total Selling, Total Outstanding
+    
+    Returns {"invoices": [...]} where each invoice has:
+      entity_code, entity_name, invoice_number, invoice_date, due_date,
+      reference (customer ref), subtotal, vat, total, outstanding, status
+    """
+    if not rows:
+        return {"invoices": []}
+    
+    import csv as _csv
+    
+    # Find header row — look for both "Document No." and "Total Selling" or "Customer"
+    header_idx = -1
+    headers = []
+    for i, row in enumerate(rows[:30]):
+        if not row:
+            continue
+        joined = ",".join(str(c).strip() for c in row).lower()
+        if "document no" in joined and "customer" in joined and (
+            "total selling" in joined or "total outstanding" in joined
+        ):
+            header_idx = i
+            headers = [str(c).strip().strip('"') for c in row]
+            break
+    
+    if header_idx < 0:
+        return {"invoices": []}
+    
+    # Build column index map
+    col = {}
+    for i, h in enumerate(headers):
+        hl = h.lower().strip()
+        if hl == "date":
+            col["date"] = i
+        elif "document no" in hl:
+            col["document_no"] = i
+        elif "customer ref" in hl or hl == "reference":
+            col["reference"] = i
+        elif hl == "customer":
+            col["customer"] = i
+        elif "sales rep" in hl:
+            col["sales_rep"] = i
+        elif "due date" in hl:
+            col["due_date"] = i
+        elif hl == "exclusive":
+            col["exclusive"] = i
+        elif hl == "vat":
+            col["vat"] = i
+        elif "total selling" in hl:
+            col["total"] = i
+        elif "total outstanding" in hl:
+            col["outstanding"] = i
+    
+    if "customer" not in col or "document_no" not in col:
+        return {"invoices": []}
+    
+    invoices = []
+    
+    def _g(row, key, default=""):
+        i = col.get(key, -1)
+        if i < 0 or i >= len(row):
+            return default
+        return (row[i] or "").strip()
+    
+    for row in rows[header_idx + 1:]:
+        if not row:
+            continue
+        first = (row[0] or "").strip()
+        # Skip "Grand Total" / total rows
+        if first.lower().startswith(("grand total", "total ", "subtotal")):
+            continue
+        
+        cust_raw = _g(row, "customer")
+        doc_no = _g(row, "document_no")
+        if not cust_raw or not doc_no:
+            continue
+        
+        # Split "CODE : NAME"
+        entity_code, entity_name = _sd_split_code_name(cust_raw)
+        
+        date_iso = _sd_parse_date_dmy(_g(row, "date"))
+        due_iso = _sd_parse_date_dmy(_g(row, "due_date"))
+        
+        subtotal = _sd_money(_g(row, "exclusive"))
+        vat = _sd_money(_g(row, "vat"))
+        total = _sd_money(_g(row, "total"))
+        outstanding = _sd_money(_g(row, "outstanding"))
+        
+        # Derive status
+        if outstanding <= 0.01:
+            status = "paid"
+        elif abs(outstanding - total) < 0.01:
+            status = "outstanding"
+        else:
+            status = "partial"
+        
+        invoices.append({
+            "entity_code": entity_code,
+            "entity_name": entity_name,
+            "invoice_number": doc_no,
+            "invoice_date": date_iso or "",
+            "due_date": due_iso or "",
+            "reference": _g(row, "reference"),
+            "subtotal": subtotal,
+            "vat": vat,
+            "total": total,
+            "outstanding": outstanding,
+            "status": status,
+        })
+    
+    return {"invoices": invoices}
+
+
+def _sd_extract_supplier_invoices(rows):
+    """Parse Sage 'Supplier Invoices Report' / 'Purchase Invoices Report' (flat list).
+    
+    Expected headers (column order may vary):
+      Date, Document No., Supplier Inv. No., Supplier, Due Date,
+      Ant. Pmt., Exclusive, VAT, Total Purchases, Total Outstanding
+    
+    Returns {"invoices": [...]} where each invoice has:
+      entity_code, entity_name, invoice_number (Sage doc no),
+      supplier_inv_no (supplier's own number), invoice_date, due_date,
+      reference, subtotal, vat, total, outstanding, status
+    """
+    if not rows:
+        return {"invoices": []}
+    
+    # Find header row — look for "Supplier Inv. No." or "Total Purchases"
+    header_idx = -1
+    headers = []
+    for i, row in enumerate(rows[:30]):
+        if not row:
+            continue
+        joined = ",".join(str(c).strip() for c in row).lower()
+        if "document no" in joined and "supplier" in joined and (
+            "total purchases" in joined or "supplier inv" in joined
+        ):
+            header_idx = i
+            headers = [str(c).strip().strip('"') for c in row]
+            break
+    
+    if header_idx < 0:
+        return {"invoices": []}
+    
+    col = {}
+    for i, h in enumerate(headers):
+        hl = h.lower().strip()
+        if hl == "date":
+            col["date"] = i
+        elif "document no" in hl:
+            col["document_no"] = i
+        elif "supplier inv" in hl:
+            col["supplier_inv_no"] = i
+        elif hl == "supplier":
+            col["supplier"] = i
+        elif "due date" in hl:
+            col["due_date"] = i
+        elif hl == "exclusive":
+            col["exclusive"] = i
+        elif hl == "vat":
+            col["vat"] = i
+        elif "total purchases" in hl:
+            col["total"] = i
+        elif "total outstanding" in hl:
+            col["outstanding"] = i
+    
+    if "supplier" not in col or "document_no" not in col:
+        return {"invoices": []}
+    
+    invoices = []
+    
+    def _g(row, key, default=""):
+        i = col.get(key, -1)
+        if i < 0 or i >= len(row):
+            return default
+        return (row[i] or "").strip()
+    
+    for row in rows[header_idx + 1:]:
+        if not row:
+            continue
+        first = (row[0] or "").strip()
+        if first.lower().startswith(("grand total", "total ", "subtotal")):
+            continue
+        
+        sup_raw = _g(row, "supplier")
+        doc_no = _g(row, "document_no")
+        if not sup_raw or not doc_no:
+            continue
+        
+        entity_code, entity_name = _sd_split_code_name(sup_raw)
+        
+        date_iso = _sd_parse_date_dmy(_g(row, "date"))
+        due_iso = _sd_parse_date_dmy(_g(row, "due_date"))
+        
+        subtotal = _sd_money(_g(row, "exclusive"))
+        vat = _sd_money(_g(row, "vat"))
+        total = _sd_money(_g(row, "total"))
+        outstanding = _sd_money(_g(row, "outstanding"))
+        sup_inv_no = _g(row, "supplier_inv_no")
+        
+        if outstanding <= 0.01:
+            status = "paid"
+        elif abs(outstanding - total) < 0.01:
+            status = "outstanding"
+        else:
+            status = "partial"
+        
+        invoices.append({
+            "entity_code": entity_code,
+            "entity_name": entity_name,
+            "invoice_number": doc_no,           # Sage's SIVxxxxx — the anchor
+            "supplier_inv_no": sup_inv_no,      # Supplier's own invoice number
+            "invoice_date": date_iso or "",
+            "due_date": due_iso or "",
+            "reference": sup_inv_no,            # Mirror into reference for consistency with aging
+            "subtotal": subtotal,
+            "vat": vat,
+            "total": total,
+            "outstanding": outstanding,
+            "status": status,
+        })
+    
+    return {"invoices": invoices}
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # Smart merge
 # ─────────────────────────────────────────────────────────────────────────────
@@ -32035,6 +32271,75 @@ def _sd_merge_stock(qty_buckets, price_buckets, full_buckets):
     for b in full_buckets:
         _merge_in(b)
     return list(by_code.values())
+
+
+def _sd_merge_invoice_into_existing(existing, incoming):
+    """Merge incoming invoice data into existing record, filling empty fields.
+    Returns dict of fields that need to be updated (empty if no changes).
+    
+    Rules:
+    - Existing non-empty values are NEVER overwritten
+    - Incoming values fill empty/missing fields only
+    - Numbers: existing > 0 wins. If existing is 0, take incoming
+    - Strings: existing non-empty wins. If existing is empty/whitespace, take incoming
+    - 'items' (list): existing non-empty list wins. If empty, take incoming if non-empty
+    - 'notes': special — append "+ Sage merge" tag if both exist and differ
+    """
+    updates = {}
+    
+    # String fields that get filled if existing is empty
+    string_fields = ["reference", "supplier_inv_no", "due_date", "customer_name",
+                     "supplier_name", "sage_doc_no"]
+    for f in string_fields:
+        new_val = incoming.get(f)
+        if new_val and not (existing.get(f) or "").strip():
+            updates[f] = new_val
+    
+    # Numeric fields: only fill if existing is 0/missing
+    numeric_fields = ["subtotal", "vat", "total"]
+    for f in numeric_fields:
+        new_val = incoming.get(f)
+        if new_val is not None:
+            try:
+                new_num = float(new_val)
+            except (TypeError, ValueError):
+                new_num = 0
+            try:
+                old_num = float(existing.get(f) or 0)
+            except (TypeError, ValueError):
+                old_num = 0
+            if new_num > 0 and old_num <= 0:
+                updates[f] = new_num
+    
+    # Items list: fill if existing is empty
+    new_items = incoming.get("items")
+    if new_items and not existing.get("items"):
+        updates["items"] = new_items
+    
+    # Status: only update if existing is missing
+    if incoming.get("status") and not existing.get("status"):
+        updates["status"] = incoming["status"]
+    
+    return updates
+
+
+def _sd_match_existing_invoice(existing_invoices_by_entity, entity_id, invoice_number):
+    """Find existing invoice for (entity_id, invoice_number) — case-insensitive match.
+    Returns the matched record or None.
+    
+    existing_invoices_by_entity: dict mapping entity_id (str) → list of invoice dicts
+    """
+    if not entity_id or not invoice_number:
+        return None
+    bucket = existing_invoices_by_entity.get(entity_id, [])
+    inv_lower = invoice_number.strip().lower()
+    if not inv_lower:
+        return None
+    for inv in bucket:
+        existing_no = (inv.get("invoice_number") or "").strip().lower()
+        if existing_no and existing_no == inv_lower:
+            return inv
+    return None
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -32327,13 +32632,24 @@ def sage_drop_page():
             agingNote.push(`Suppliers outstanding: R${{summary.supplier_aging_outstanding.toLocaleString(undefined, {{minimumFractionDigits: 2, maximumFractionDigits: 2}})}}`);
         }}
         
+        // Full invoice lists (paid + outstanding) — separate from aging
+        if (summary.customer_invoices_total > 0) {{
+            planRows.push(['🧾 Customer invoices (full list)', summary.customer_invoices_total]);
+            agingNote.push(`Customer invoices total: ${{summary.customer_invoices_total}} (R${{summary.customer_invoices_outstanding.toLocaleString(undefined, {{minimumFractionDigits: 2, maximumFractionDigits: 2}})}} still outstanding)`);
+        }}
+        if (summary.supplier_invoices_total > 0) {{
+            planRows.push(['📄 Supplier invoices (full list)', summary.supplier_invoices_total]);
+            agingNote.push(`Supplier invoices total: ${{summary.supplier_invoices_total}} (R${{summary.supplier_invoices_outstanding.toLocaleString(undefined, {{minimumFractionDigits: 2, maximumFractionDigits: 2}})}} still outstanding)`);
+        }}
+        
         if (summary.junk > 0) planRows.push(['🗑 Junk files (no usable data)', summary.junk]);
         if (summary.unknown > 0) planRows.push(['❓ Unknown / cannot classify', summary.unknown]);
         
         const totalToImport = (summary.customers||0) + (summary.suppliers||0) + (summary.stock||0)
             + (summary.trial_balance||0)
             + (summary.customer_aging_invoices||0) + (summary.customer_aging_payments||0)
-            + (summary.supplier_aging_invoices||0) + (summary.supplier_aging_payments||0);
+            + (summary.supplier_aging_invoices||0) + (summary.supplier_aging_payments||0)
+            + (summary.customer_invoices_total||0) + (summary.supplier_invoices_total||0);
         
         let html = '<div class="sd-summary"><h3 style="margin-top:0;">📋 Import plan</h3>';
         for (const [label, count] of planRows) {{
@@ -32539,7 +32855,9 @@ def api_sage_drop_classify():
               "customer_aging_invoices": 0, "customer_aging_payments": 0,
               "customer_aging_outstanding": 0.0,
               "supplier_aging_invoices": 0, "supplier_aging_payments": 0,
-              "supplier_aging_outstanding": 0.0}
+              "supplier_aging_outstanding": 0.0,
+              "customer_invoices_total": 0, "customer_invoices_outstanding": 0.0,
+              "supplier_invoices_total": 0, "supplier_invoices_outstanding": 0.0}
     
     customer_buckets = []
     supplier_buckets = []
@@ -32549,6 +32867,8 @@ def api_sage_drop_classify():
     tb_buckets = []
     cust_aging_buckets = []
     sup_aging_buckets = []
+    cust_invoice_buckets = []
+    sup_invoice_buckets = []
     
     for f in files:
         t = f.get("type", "unknown")
@@ -32598,6 +32918,12 @@ def api_sage_drop_classify():
         elif t == "supplier_aging":
             ag = _sd_extract_supplier_aging(rows)
             sup_aging_buckets.append(ag)
+        elif t == "customer_invoices":
+            ci = _sd_extract_customer_invoices(rows)
+            cust_invoice_buckets.append(ci)
+        elif t == "supplier_invoices":
+            si = _sd_extract_supplier_invoices(rows)
+            sup_invoice_buckets.append(si)
     
     counts["customers"] = len(_sd_merge_customers(customer_buckets))
     counts["suppliers"] = len(_sd_merge_customers(supplier_buckets))
@@ -32618,8 +32944,22 @@ def api_sage_drop_classify():
         pay_total = sum(p.get("amount", 0) for p in ag.get("payments", []))
         counts["supplier_aging_outstanding"] += inv_total - pay_total
     
+    # Invoice list totals
+    for ci in cust_invoice_buckets:
+        counts["customer_invoices_total"] += len(ci.get("invoices", []))
+        counts["customer_invoices_outstanding"] += sum(
+            i.get("outstanding", 0) for i in ci.get("invoices", [])
+        )
+    for si in sup_invoice_buckets:
+        counts["supplier_invoices_total"] += len(si.get("invoices", []))
+        counts["supplier_invoices_outstanding"] += sum(
+            i.get("outstanding", 0) for i in si.get("invoices", [])
+        )
+    
     counts["customer_aging_outstanding"] = round(counts["customer_aging_outstanding"], 2)
     counts["supplier_aging_outstanding"] = round(counts["supplier_aging_outstanding"], 2)
+    counts["customer_invoices_outstanding"] = round(counts["customer_invoices_outstanding"], 2)
+    counts["supplier_invoices_outstanding"] = round(counts["supplier_invoices_outstanding"], 2)
     
     return jsonify({
         "success": True,
@@ -32656,6 +32996,8 @@ def api_sage_drop_import():
     tb_buckets = []
     cust_aging_buckets = []
     sup_aging_buckets = []
+    cust_invoice_buckets = []
+    sup_invoice_buckets = []
     
     for f in files:
         t = f.get("type", "unknown")
@@ -32684,6 +33026,10 @@ def api_sage_drop_import():
             cust_aging_buckets.append(_sd_extract_customer_aging(rows))
         elif t == "supplier_aging":
             sup_aging_buckets.append(_sd_extract_supplier_aging(rows))
+        elif t == "customer_invoices":
+            cust_invoice_buckets.append(_sd_extract_customer_invoices(rows))
+        elif t == "supplier_invoices":
+            sup_invoice_buckets.append(_sd_extract_supplier_invoices(rows))
     
     customers = _sd_merge_customers(customer_buckets)
     suppliers = _sd_merge_customers(supplier_buckets)
@@ -32764,8 +33110,8 @@ def api_sage_drop_import():
     # If aging is being imported in the same run, REMOVE Debtors/Creditors Control
     # from the TB to prevent double-counting (the individual invoices below will
     # rebuild those balances).
-    has_cust_aging = bool(cust_aging_buckets)
-    has_sup_aging = bool(sup_aging_buckets)
+    has_cust_aging = bool(cust_aging_buckets) or bool(cust_invoice_buckets)
+    has_sup_aging = bool(sup_aging_buckets) or bool(sup_invoice_buckets)
     
     tb_filtered_out = []
     if tb and (has_cust_aging or has_sup_aging):
@@ -32873,87 +33219,133 @@ def api_sage_drop_import():
             results.append({"label": label, "imported": ok, "errors": err})
             logger.info(f"[SAGE DROP] TB: {ok} ok, {err} errors")
     
-    # ── Customer aging → invoices
-    if cust_aging_buckets:
+    # ── Customer aging + Customer invoices → invoices (MERGE, no wipe)
+    if cust_aging_buckets or cust_invoice_buckets:
         # Build entity_code → customer_id map (for quick lookup)
         cust_rows = db.get("customers", {"business_id": biz_id}, limit=50000) or []
         code_to_cust = {}
+        name_to_cust = {}
         for c in cust_rows:
             code = (c.get("code") or "").strip()
             if code:
                 code_to_cust[code.lower()] = c
+            nm = (c.get("name") or "").strip().lower()
+            if nm:
+                name_to_cust[nm] = c
         
-        # First wipe existing opening invoices for this business (replace, not append)
+        # Load existing invoices for merge-detection (group by customer_id for fast lookup)
         try:
             existing_invs = db.get("invoices", {"business_id": biz_id}, limit=50000) or []
-            opening_ids = [i.get("id") for i in existing_invs
-                           if i.get("notes") == "OPENING_BALANCE_FROM_SAGE" and i.get("id")]
-            if opening_ids:
-                if hasattr(db, "delete_many"):
-                    db.delete_many("invoices", opening_ids, biz_id)
-                else:
-                    for iid in opening_ids:
-                        db.delete("invoices", iid, biz_id)
-                logger.info(f"[SAGE DROP] Cleared {len(opening_ids)} existing opening invoices")
-        except Exception as e:
-            logger.error(f"[SAGE DROP] Could not clear old opening invoices: {e}")
+        except Exception:
+            existing_invs = []
+        existing_by_cust = {}
+        for inv in existing_invs:
+            cid = inv.get("customer_id") or ""
+            if cid:
+                existing_by_cust.setdefault(cid, []).append(inv)
         
-        # Also wipe receipts marked as opening. Two markers checked for back-compat:
-        # (1) notes="OPENING_BALANCE_FROM_SAGE" (older imports)
-        # (2) reference starts with "OPENING:" (newer imports)
-        try:
-            existing_recs = db.get("receipts", {"business_id": biz_id}, limit=50000) or []
-            op_rec_ids = [r.get("id") for r in existing_recs
-                          if r.get("id") and (
-                              r.get("notes") == "OPENING_BALANCE_FROM_SAGE" or
-                              str(r.get("reference") or "").startswith("OPENING:")
-                          )]
-            if op_rec_ids:
-                if hasattr(db, "delete_many"):
-                    db.delete_many("receipts", op_rec_ids, biz_id)
-                else:
-                    for rid in op_rec_ids:
-                        db.delete("receipts", rid, biz_id)
-                logger.info(f"[SAGE DROP] Cleared {len(op_rec_ids)} existing opening receipts")
-        except Exception as e:
-            logger.error(f"[SAGE DROP] Could not clear old opening receipts: {e}")
+        # Combine all customer invoice sources into one stream
+        # Source 1: aging files (already structured as {invoices: [...], payments: [...]})
+        # Source 2: customer_invoices files (full invoice list with subtotal/vat)
+        # Strategy: process invoice-list files FIRST (richer data), then aging fills gaps
+        all_inv_sources = []
+        for ci in cust_invoice_buckets:
+            all_inv_sources.append(("invoice_list", ci.get("invoices", []), []))
+        for ag in cust_aging_buckets:
+            all_inv_sources.append(("aging", ag.get("invoices", []), ag.get("payments", [])))
         
-        # Build invoice records
-        inv_records = []
+        new_inv_records = []          # NEW invoices to insert
+        update_inv_records = []        # Existing invoices to update (merged fields only)
         rec_records = []
         skipped_no_match = 0
-        for ag in cust_aging_buckets:
-            for inv in ag.get("invoices", []):
+        merged_count = 0
+        
+        # Track which (cust_id, invoice_no) we've already processed in this run
+        # to avoid duplicate work when same invoice appears in both aging + invoice list
+        seen_in_run = {}
+        
+        for source_type, inv_list, pay_list in all_inv_sources:
+            for inv in inv_list:
                 code = (inv.get("entity_code") or "").lower()
                 cust = code_to_cust.get(code)
                 if not cust:
+                    # Try by name as fallback
+                    nm = (inv.get("entity_name") or "").strip().lower()
+                    cust = name_to_cust.get(nm) if nm else None
+                if not cust:
                     skipped_no_match += 1
                     continue
-                inv_records.append({
-                    "id": generate_id(),
-                    "business_id": biz_id,
-                    "invoice_number": inv["invoice_number"],
-                    "date": inv["invoice_date"],
-                    "customer_id": cust["id"],
+                
+                cust_id = cust["id"]
+                inv_no = (inv.get("invoice_number") or "").strip()
+                if not inv_no:
+                    continue
+                
+                seen_key = (cust_id, inv_no.lower())
+                
+                # Build the canonical incoming record from this source
+                incoming = {
+                    "invoice_number": inv_no,
                     "customer_name": cust.get("name", inv.get("entity_name", "")),
-                    "items": [],
-                    "subtotal": float(inv["total"]),
-                    "vat": 0,
-                    "total": float(inv["total"]),
-                    "status": "unpaid",
                     "reference": inv.get("reference", ""),
-                    "notes": "OPENING_BALANCE_FROM_SAGE",
-                    "created_at": now(),
-                    "created_by": user_id,
-                })
-            for pay in ag.get("payments", []):
+                    "due_date": inv.get("due_date", ""),
+                    "subtotal": inv.get("subtotal", inv.get("total", 0)),
+                    "vat": inv.get("vat", 0),
+                    "total": inv.get("total", 0),
+                    "status": inv.get("status", "outstanding" if inv.get("outstanding", inv.get("total", 0)) > 0 else "paid"),
+                }
+                
+                # Already processed earlier in this run? Skip.
+                if seen_key in seen_in_run:
+                    continue
+                
+                # Look for existing invoice in DB
+                existing = _sd_match_existing_invoice(existing_by_cust, cust_id, inv_no)
+                
+                if existing:
+                    # MERGE: only fill empty fields
+                    updates = _sd_merge_invoice_into_existing(existing, incoming)
+                    if updates:
+                        updates["id"] = existing["id"]
+                        updates["business_id"] = biz_id
+                        updates["updated_at"] = now()
+                        update_inv_records.append(updates)
+                        merged_count += 1
+                    seen_in_run[seen_key] = "merged"
+                else:
+                    # NEW invoice
+                    new_rec = {
+                        "id": generate_id(),
+                        "business_id": biz_id,
+                        "invoice_number": inv_no,
+                        "date": inv.get("invoice_date", "") or now()[:10],
+                        "due_date": inv.get("due_date", ""),
+                        "customer_id": cust_id,
+                        "customer_name": cust.get("name", inv.get("entity_name", "")),
+                        "items": [],
+                        "subtotal": float(incoming.get("subtotal") or 0),
+                        "vat": float(incoming.get("vat") or 0),
+                        "total": float(incoming.get("total") or 0),
+                        "status": incoming.get("status", "outstanding"),
+                        "reference": incoming.get("reference", ""),
+                        "notes": "OPENING_BALANCE_FROM_SAGE" if source_type == "aging" else "Sage import",
+                        "created_at": now(),
+                        "created_by": user_id,
+                    }
+                    new_inv_records.append(new_rec)
+                    seen_in_run[seen_key] = "created"
+            
+            # Receipts/payments only come from aging files
+            for pay in pay_list:
                 code = (pay.get("entity_code") or "").lower()
                 cust = code_to_cust.get(code)
+                if not cust:
+                    nm = (pay.get("entity_name") or "").strip().lower()
+                    cust = name_to_cust.get(nm) if nm else None
                 if not cust:
                     skipped_no_match += 1
                     continue
                 # Use "OPENING:" prefix on reference so re-import can find and wipe these.
-                # Receipts schema is minimal — see line 11981 — so keep only known-safe fields.
                 rec_ref = f"OPENING:{pay['payment_number']}"
                 if pay.get("reference") and pay["reference"] != pay["payment_number"]:
                     rec_ref = f"OPENING:{pay['payment_number']} - {pay['reference']}"
@@ -32969,90 +33361,195 @@ def api_sage_drop_import():
                     "created_at": now(),
                 })
         
-        if inv_records:
-            ok, err = db.save_many_fast("invoices", inv_records)
-            label = "🧾 Customer invoices (from aging)"
+        # Save new invoices
+        if new_inv_records:
+            ok, err = db.save_many_fast("invoices", new_inv_records)
+            label = f"🧾 Customer invoices — {ok} new"
+            if merged_count:
+                label += f", {merged_count} merged"
             if skipped_no_match:
-                label += f" — {skipped_no_match} skipped (customer not found)"
+                label += f", {skipped_no_match} skipped (customer not found)"
             results.append({"label": label, "imported": ok, "errors": err})
-            logger.info(f"[SAGE DROP] Customer invoices: {ok} ok, {err} errors")
+            logger.info(f"[SAGE DROP] Customer invoices: {ok} new, {merged_count} merged, {err} errors, {skipped_no_match} skipped")
+        elif merged_count:
+            results.append({
+                "label": f"🧾 Customer invoices — {merged_count} merged (no new)",
+                "imported": merged_count, "errors": 0
+            })
+            logger.info(f"[SAGE DROP] Customer invoices: 0 new, {merged_count} merged, {skipped_no_match} skipped")
+        
+        # Apply updates one-by-one (no save_many_fast for partial updates — falls back to save)
+        if update_inv_records:
+            update_ok = 0
+            update_err = 0
+            for u in update_inv_records:
+                try:
+                    db.save("invoices", u)
+                    update_ok += 1
+                except Exception as e:
+                    update_err += 1
+                    logger.error(f"[SAGE DROP] Failed to merge invoice {u.get('id')}: {e}")
+            if update_err:
+                logger.info(f"[SAGE DROP] Customer invoice merges: {update_ok} ok, {update_err} errors")
+        
+        # MERGE receipts (don't wipe existing — match on customer_id + reference + amount + date)
         if rec_records:
-            ok, err = db.save_many_fast("receipts", rec_records)
-            results.append({"label": "💵 Customer receipts (from aging)", "imported": ok, "errors": err})
-            logger.info(f"[SAGE DROP] Customer receipts: {ok} ok, {err} errors")
+            try:
+                existing_recs = db.get("receipts", {"business_id": biz_id}, limit=50000) or []
+            except Exception:
+                existing_recs = []
+            # Build set of existing receipt fingerprints
+            existing_keys = set()
+            for r in existing_recs:
+                key = (
+                    (r.get("customer_id") or ""),
+                    (r.get("reference") or "").strip(),
+                    round(float(r.get("amount") or 0), 2),
+                    (r.get("date") or "")[:10],
+                )
+                existing_keys.add(key)
+            # Filter out duplicates
+            new_rec_records = []
+            dup_recs = 0
+            for r in rec_records:
+                key = (
+                    r.get("customer_id", ""),
+                    (r.get("reference") or "").strip(),
+                    round(float(r.get("amount") or 0), 2),
+                    (r.get("date") or "")[:10],
+                )
+                if key in existing_keys:
+                    dup_recs += 1
+                    continue
+                new_rec_records.append(r)
+                existing_keys.add(key)  # avoid intra-batch dups too
+            if new_rec_records:
+                ok, err = db.save_many_fast("receipts", new_rec_records)
+                label = f"💵 Customer receipts — {ok} new"
+                if dup_recs:
+                    label += f", {dup_recs} already on file (skipped)"
+                results.append({"label": label, "imported": ok, "errors": err})
+                logger.info(f"[SAGE DROP] Customer receipts: {ok} new, {dup_recs} dups, {err} errors")
+            elif dup_recs:
+                results.append({
+                    "label": f"💵 Customer receipts — all {dup_recs} already on file",
+                    "imported": 0, "errors": 0
+                })
     
-    # ── Supplier aging → supplier_invoices + supplier_payments
-    if sup_aging_buckets:
+    # ── Supplier aging + Supplier invoices → supplier_invoices (MERGE, no wipe)
+    if sup_aging_buckets or sup_invoice_buckets:
         # Build entity_code → supplier map
         sup_rows = db.get("suppliers", {"business_id": biz_id}, limit=50000) or []
         code_to_sup = {}
+        name_to_sup = {}
         for s in sup_rows:
             code = (s.get("code") or "").strip()
             if code:
                 code_to_sup[code.lower()] = s
+            nm = (s.get("name") or "").strip().lower()
+            if nm:
+                name_to_sup[nm] = s
         
-        # Wipe existing opening supplier invoices
+        # Load existing supplier invoices for merge-detection
         try:
             existing_sinvs = db.get("supplier_invoices", {"business_id": biz_id}, limit=50000) or []
-            opening_ids = [i.get("id") for i in existing_sinvs
-                           if i.get("notes") == "OPENING_BALANCE_FROM_SAGE" and i.get("id")]
-            if opening_ids:
-                if hasattr(db, "delete_many"):
-                    db.delete_many("supplier_invoices", opening_ids, biz_id)
-                else:
-                    for iid in opening_ids:
-                        db.delete("supplier_invoices", iid, biz_id)
-                logger.info(f"[SAGE DROP] Cleared {len(opening_ids)} existing opening supplier invoices")
-        except Exception as e:
-            logger.error(f"[SAGE DROP] Could not clear old opening supplier invoices: {e}")
+        except Exception:
+            existing_sinvs = []
+        existing_by_sup = {}
+        for inv in existing_sinvs:
+            sid = inv.get("supplier_id") or ""
+            if sid:
+                existing_by_sup.setdefault(sid, []).append(inv)
         
-        # Wipe existing opening supplier payments (identified by source="sage_aging_import")
-        try:
-            existing_spays = db.get("supplier_payments", {"business_id": biz_id}, limit=50000) or []
-            op_pay_ids = [p.get("id") for p in existing_spays
-                          if p.get("source") == "sage_aging_import" and p.get("id")]
-            if op_pay_ids:
-                if hasattr(db, "delete_many"):
-                    db.delete_many("supplier_payments", op_pay_ids, biz_id)
-                else:
-                    for pid in op_pay_ids:
-                        db.delete("supplier_payments", pid, biz_id)
-                logger.info(f"[SAGE DROP] Cleared {len(op_pay_ids)} existing opening supplier payments")
-        except Exception as e:
-            logger.error(f"[SAGE DROP] Could not clear old opening supplier payments: {e}")
+        # Combine all supplier invoice sources — invoice_list FIRST (richer), then aging
+        all_sup_sources = []
+        for si in sup_invoice_buckets:
+            all_sup_sources.append(("invoice_list", si.get("invoices", []), []))
+        for ag in sup_aging_buckets:
+            all_sup_sources.append(("aging", ag.get("invoices", []), ag.get("payments", [])))
         
-        sup_inv_records = []
+        new_sup_inv_records = []
+        update_sup_inv_records = []
         sup_pay_records = []
         skipped_no_match = 0
-        for ag in sup_aging_buckets:
-            for inv in ag.get("invoices", []):
+        merged_count = 0
+        seen_in_run = {}
+        
+        for source_type, inv_list, pay_list in all_sup_sources:
+            for inv in inv_list:
                 code = (inv.get("entity_code") or "").lower()
                 sup = code_to_sup.get(code)
                 if not sup:
-                    skipped_no_match += 1
-                    continue
-                sup_inv_records.append({
-                    "id": generate_id(),
-                    "business_id": biz_id,
-                    "supplier_id": sup["id"],
-                    "supplier_name": sup.get("name", inv.get("entity_name", "")),
-                    "invoice_number": inv["invoice_number"],
-                    "date": inv["invoice_date"],
-                    "subtotal": float(inv["total"]),
-                    "vat": 0,
-                    "total": float(inv["total"]),
-                    "status": "outstanding",
-                    "notes": "OPENING_BALANCE_FROM_SAGE",
-                    "created_at": now(),
-                })
-            for pay in ag.get("payments", []):
-                code = (pay.get("entity_code") or "").lower()
-                sup = code_to_sup.get(code)
+                    nm = (inv.get("entity_name") or "").strip().lower()
+                    sup = name_to_sup.get(nm) if nm else None
                 if not sup:
                     skipped_no_match += 1
                     continue
-                # Combine Sage payment number + reference into the reference field,
-                # since supplier_payments has no payment_number column
+                
+                sup_id = sup["id"]
+                inv_no = (inv.get("invoice_number") or "").strip()
+                if not inv_no:
+                    continue
+                
+                seen_key = (sup_id, inv_no.lower())
+                
+                incoming = {
+                    "invoice_number": inv_no,
+                    "supplier_name": sup.get("name", inv.get("entity_name", "")),
+                    "supplier_inv_no": inv.get("supplier_inv_no", ""),
+                    "reference": inv.get("reference", ""),
+                    "due_date": inv.get("due_date", ""),
+                    "subtotal": inv.get("subtotal", inv.get("total", 0)),
+                    "vat": inv.get("vat", 0),
+                    "total": inv.get("total", 0),
+                    "status": inv.get("status", "outstanding" if inv.get("outstanding", inv.get("total", 0)) > 0 else "paid"),
+                }
+                
+                if seen_key in seen_in_run:
+                    continue
+                
+                existing = _sd_match_existing_invoice(existing_by_sup, sup_id, inv_no)
+                
+                if existing:
+                    updates = _sd_merge_invoice_into_existing(existing, incoming)
+                    if updates:
+                        updates["id"] = existing["id"]
+                        updates["business_id"] = biz_id
+                        updates["updated_at"] = now()
+                        update_sup_inv_records.append(updates)
+                        merged_count += 1
+                    seen_in_run[seen_key] = "merged"
+                else:
+                    new_rec = {
+                        "id": generate_id(),
+                        "business_id": biz_id,
+                        "supplier_id": sup_id,
+                        "supplier_name": sup.get("name", inv.get("entity_name", "")),
+                        "invoice_number": inv_no,
+                        "supplier_inv_no": inv.get("supplier_inv_no", ""),
+                        "date": inv.get("invoice_date", "") or now()[:10],
+                        "due_date": inv.get("due_date", ""),
+                        "reference": incoming.get("reference", ""),
+                        "subtotal": float(incoming.get("subtotal") or 0),
+                        "vat": float(incoming.get("vat") or 0),
+                        "total": float(incoming.get("total") or 0),
+                        "status": incoming.get("status", "outstanding"),
+                        "notes": "OPENING_BALANCE_FROM_SAGE" if source_type == "aging" else "Sage import",
+                        "created_at": now(),
+                    }
+                    new_sup_inv_records.append(new_rec)
+                    seen_in_run[seen_key] = "created"
+            
+            # Payments only from aging
+            for pay in pay_list:
+                code = (pay.get("entity_code") or "").lower()
+                sup = code_to_sup.get(code)
+                if not sup:
+                    nm = (pay.get("entity_name") or "").strip().lower()
+                    sup = name_to_sup.get(nm) if nm else None
+                if not sup:
+                    skipped_no_match += 1
+                    continue
                 pay_ref = pay["payment_number"]
                 if pay.get("reference") and pay["reference"] != pay["payment_number"]:
                     pay_ref = f"{pay['payment_number']} - {pay['reference']}"
@@ -33069,17 +33566,78 @@ def api_sage_drop_import():
                     "created_at": now(),
                 })
         
-        if sup_inv_records:
-            ok, err = db.save_many_fast("supplier_invoices", sup_inv_records)
-            label = "📄 Supplier invoices (from aging)"
+        # Save new supplier invoices
+        if new_sup_inv_records:
+            ok, err = db.save_many_fast("supplier_invoices", new_sup_inv_records)
+            label = f"📄 Supplier invoices — {ok} new"
+            if merged_count:
+                label += f", {merged_count} merged"
             if skipped_no_match:
-                label += f" — {skipped_no_match} skipped (supplier not found)"
+                label += f", {skipped_no_match} skipped (supplier not found)"
             results.append({"label": label, "imported": ok, "errors": err})
-            logger.info(f"[SAGE DROP] Supplier invoices: {ok} ok, {err} errors")
+            logger.info(f"[SAGE DROP] Supplier invoices: {ok} new, {merged_count} merged, {err} errors, {skipped_no_match} skipped")
+        elif merged_count:
+            results.append({
+                "label": f"📄 Supplier invoices — {merged_count} merged (no new)",
+                "imported": merged_count, "errors": 0
+            })
+            logger.info(f"[SAGE DROP] Supplier invoices: 0 new, {merged_count} merged, {skipped_no_match} skipped")
+        
+        # Apply supplier invoice updates
+        if update_sup_inv_records:
+            update_ok = 0
+            update_err = 0
+            for u in update_sup_inv_records:
+                try:
+                    db.save("supplier_invoices", u)
+                    update_ok += 1
+                except Exception as e:
+                    update_err += 1
+                    logger.error(f"[SAGE DROP] Failed to merge supplier invoice {u.get('id')}: {e}")
+            if update_err:
+                logger.info(f"[SAGE DROP] Supplier invoice merges: {update_ok} ok, {update_err} errors")
+        
+        # MERGE supplier payments (don't wipe — match on supplier_id + reference + amount + date)
         if sup_pay_records:
-            ok, err = db.save_many_fast("supplier_payments", sup_pay_records)
-            results.append({"label": "💸 Supplier payments (from aging)", "imported": ok, "errors": err})
-            logger.info(f"[SAGE DROP] Supplier payments: {ok} ok, {err} errors")
+            try:
+                existing_spays = db.get("supplier_payments", {"business_id": biz_id}, limit=50000) or []
+            except Exception:
+                existing_spays = []
+            existing_keys = set()
+            for p in existing_spays:
+                key = (
+                    (p.get("supplier_id") or ""),
+                    (p.get("reference") or "").strip(),
+                    round(float(p.get("amount") or 0), 2),
+                    (p.get("date") or "")[:10],
+                )
+                existing_keys.add(key)
+            new_pay_records = []
+            dup_pays = 0
+            for p in sup_pay_records:
+                key = (
+                    p.get("supplier_id", ""),
+                    (p.get("reference") or "").strip(),
+                    round(float(p.get("amount") or 0), 2),
+                    (p.get("date") or "")[:10],
+                )
+                if key in existing_keys:
+                    dup_pays += 1
+                    continue
+                new_pay_records.append(p)
+                existing_keys.add(key)
+            if new_pay_records:
+                ok, err = db.save_many_fast("supplier_payments", new_pay_records)
+                label = f"💸 Supplier payments — {ok} new"
+                if dup_pays:
+                    label += f", {dup_pays} already on file (skipped)"
+                results.append({"label": label, "imported": ok, "errors": err})
+                logger.info(f"[SAGE DROP] Supplier payments: {ok} new, {dup_pays} dups, {err} errors")
+            elif dup_pays:
+                results.append({
+                    "label": f"💸 Supplier payments — all {dup_pays} already on file",
+                    "imported": 0, "errors": 0
+                })
     
     elapsed = time.time() - t0
     
