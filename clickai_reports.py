@@ -92,6 +92,10 @@ def register_report_routes(app, db, login_required, Auth, render_page,
                 <h3> Trial Balance</h3>
                 <p style="color:var(--text-muted)">Debit/Credit summary</p>
             </div>
+            <div class="card" style="cursor:pointer;border:1px solid rgba(245,158,11,0.3);" onclick="window.location='/suspense-explainer'">
+                <h3>⚠️ Suspense Explainer</h3>
+                <p style="color:var(--text-muted)">Where opening-balance variances came from</p>
+            </div>
             <div class="card" style="cursor:pointer" onclick="window.location='/reports/pnl'">
                 <h3> Profit & Loss</h3>
                 <p style="color:var(--text-muted)">Income vs Expenses</p>
