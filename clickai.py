@@ -4828,13 +4828,13 @@ ZANE_TOOLS = [
     },
     {
         "name": "get_journal_entries",
-        "description": "Get journal entries / GL entries. Use when user asks about journals, general ledger, accounting entries, GL, double-entry records.",
+        "description": "Get journal entries / GL entries. Use when user asks about journals, general ledger, accounting entries, GL, double-entry records, suspense accounts, opening balances, or 'where does X come from' for any GL line. For suspense/opening-balance queries set days_back to 3650 (10 years) since these entries date back to migration.",
         "input_schema": {
             "type": "object",
             "properties": {
-                "description": {"type": "string", "description": "Search in journal description/reference"},
+                "description": {"type": "string", "description": "Search in journal description/reference. Examples: 'suspense', 'opening balance', 'OB', 'migration'."},
                 "account": {"type": "string", "description": "Filter by account name"},
-                "days_back": {"type": "integer", "description": "Only entries from last N days (default 30)", "default": 30},
+                "days_back": {"type": "integer", "description": "Only entries from last N days (default 30). For opening balance / suspense / migration queries use 3650.", "default": 30},
                 "limit": {"type": "integer", "description": "Max results (default 20)", "default": 20}
             }
         }
@@ -7760,6 +7760,16 @@ class ZaneToolHandler:
         account_filter = params.get("account", "").lower()
         days_back = params.get("days_back", 30)
         limit = params.get("limit", 20)
+        # Auto-extend lookback for opening-balance / suspense / migration searches —
+        # these entries are dated to the migration cut-off, often months/years old.
+        _ob_keywords = ("suspense", "opening balance", "migration")
+        _ob_refs = ("ob", "opening")
+        if days_back < 365 and (
+            any(kw in desc_search for kw in _ob_keywords)
+            or any(kw in account_filter for kw in _ob_keywords)
+            or desc_search in _ob_refs
+        ):
+            days_back = 3650
         entries = db.get("journal_entries", {"business_id": self.biz_id}) or []
         cutoff = (datetime.now() - timedelta(days=days_back)).strftime("%Y-%m-%d")
         results = []
@@ -8683,6 +8693,7 @@ You have TOOLS to look up data and knowledge. ALWAYS use them for DATA:
 - Payments in/out → get_payments (money received or paid)
 - Receipts → get_receipts (customer payment records)
 - Journal entries / GL → get_journal_entries (accounting double-entry records)
+- Suspense / Opening Balance / "where does this GL come from" → get_journal_entries with description="suspense" or "opening balance" or "OB" AND days_back=3650 (these entries date back to data migration, NOT just 30 days). Read the journal description field carefully — it contains the full origin story (e.g. "Opening Balance Suspense — created during Sage migration. Balances Debtors/Creditors Control variance between TB and Aging Report. Should be cleared by bookkeeper review."). Quote that explanation back to the user verbatim — it is exactly what they need to know.
 - Scan inbox → get_scan_queue (scanned docs waiting to be processed)
 - Recurring invoices → get_recurring_invoices (auto-billing setups)
 - Rentals/tenants → get_rentals (property management, leases, municipal)
@@ -24757,6 +24768,185 @@ except Exception as e:
 def dashboard_redirect():
     """Redirect /dashboard to /"""
     return redirect("/")
+
+
+@app.route("/suspense-explainer")
+@login_required
+def suspense_explainer():
+    """Show all suspense / opening-balance entries with their full origin story.
+    Built for Daphne — when she sees a "Suspense" line in her TB she clicks here
+    instead of asking Zane or hunting through Sage logs."""
+    business = Auth.get_current_business()
+    biz_id = business.get("id") if business else None
+    if not biz_id:
+        return redirect("/")
+    
+    # Find all journal entries that look like suspense or opening-balance
+    try:
+        all_je = db.get("journal_entries", {"business_id": biz_id}, limit=50000) or []
+    except Exception:
+        all_je = []
+    
+    suspense_entries = []
+    ob_entries = []
+    for je in all_je:
+        desc = (je.get("description", "") or "").lower()
+        ref = (je.get("reference", "") or "").lower()
+        account = (je.get("account", "") or "").lower()
+        # Suspense match
+        if "suspense" in desc or "suspense" in account:
+            suspense_entries.append(je)
+        # Opening balance match (broad — show all OB-tagged entries)
+        elif ref == "ob" or "opening balance" in desc:
+            ob_entries.append(je)
+    
+    # Sort by date desc
+    suspense_entries.sort(key=lambda x: x.get("date", "") or "", reverse=True)
+    ob_entries.sort(key=lambda x: x.get("date", "") or "", reverse=True)
+    
+    total_suspense_debit = sum(float(j.get("debit", 0) or 0) for j in suspense_entries)
+    total_suspense_credit = sum(float(j.get("credit", 0) or 0) for j in suspense_entries)
+    suspense_net = total_suspense_debit - total_suspense_credit
+    
+    def _fmt(amount):
+        try:
+            return f"R{float(amount):,.2f}"
+        except Exception:
+            return str(amount)
+    
+    # Build suspense table HTML
+    if suspense_entries:
+        suspense_rows = []
+        for je in suspense_entries:
+            debit = float(je.get("debit", 0) or 0)
+            credit = float(je.get("credit", 0) or 0)
+            debit_html = _fmt(debit) if debit > 0 else "—"
+            credit_html = _fmt(credit) if credit > 0 else "—"
+            suspense_rows.append(f'''
+                <tr>
+                    <td style="padding:10px;border-bottom:1px solid var(--border);white-space:nowrap;">{je.get("date", "")[:10]}</td>
+                    <td style="padding:10px;border-bottom:1px solid var(--border);">{je.get("account", "Suspense")}</td>
+                    <td style="padding:10px;border-bottom:1px solid var(--border);font-size:13px;color:var(--text-muted);">{je.get("description", "")}</td>
+                    <td style="padding:10px;border-bottom:1px solid var(--border);text-align:right;font-family:monospace;">{debit_html}</td>
+                    <td style="padding:10px;border-bottom:1px solid var(--border);text-align:right;font-family:monospace;">{credit_html}</td>
+                </tr>''')
+        
+        suspense_block = f'''
+        <div class="card" style="margin-bottom:20px;border:2px solid rgba(245,158,11,0.4);background:rgba(245,158,11,0.06);">
+            <div style="display:flex;align-items:center;gap:12px;margin-bottom:15px;">
+                <div style="font-size:32px;">⚠️</div>
+                <div>
+                    <h2 style="margin:0;color:var(--text);">Suspense Account — {len(suspense_entries)} entrie(s)</h2>
+                    <div style="color:var(--text-muted);font-size:13px;margin-top:3px;">
+                        Net balance: <strong>{_fmt(abs(suspense_net))}</strong> {"DEBIT" if suspense_net > 0 else "CREDIT" if suspense_net < 0 else ""}
+                        &nbsp;•&nbsp; Total debits: {_fmt(total_suspense_debit)}
+                        &nbsp;•&nbsp; Total credits: {_fmt(total_suspense_credit)}
+                    </div>
+                </div>
+            </div>
+            <table style="width:100%;border-collapse:collapse;font-size:14px;">
+                <thead>
+                    <tr style="background:rgba(255,255,255,0.04);">
+                        <th style="padding:10px;text-align:left;border-bottom:2px solid var(--border);">Date</th>
+                        <th style="padding:10px;text-align:left;border-bottom:2px solid var(--border);">Account</th>
+                        <th style="padding:10px;text-align:left;border-bottom:2px solid var(--border);">Where it came from</th>
+                        <th style="padding:10px;text-align:right;border-bottom:2px solid var(--border);">Debit</th>
+                        <th style="padding:10px;text-align:right;border-bottom:2px solid var(--border);">Credit</th>
+                    </tr>
+                </thead>
+                <tbody>{"".join(suspense_rows)}</tbody>
+            </table>
+            <div style="background:rgba(59,130,246,0.08);border-left:3px solid rgba(59,130,246,0.5);padding:12px 15px;margin-top:15px;border-radius:6px;font-size:13px;">
+                <strong>What is this?</strong> A suspense account is a temporary holding line that bookkeepers use when an
+                opening balance can't be matched to a normal account. ClickAI created this during the Sage migration
+                to make sure Debits = Credits (a hard accounting rule). Once you're confident the rest of the migrated
+                data is correct, your bookkeeper should reclassify the suspense balance to the right account(s) and
+                journal it out — usually a write-off, a reclassification to retained income, or splitting it across
+                misallocated entries.
+            </div>
+        </div>
+        '''
+    else:
+        suspense_block = '''
+        <div class="card" style="margin-bottom:20px;background:rgba(16,185,129,0.06);border:1px solid rgba(16,185,129,0.3);">
+            <div style="display:flex;align-items:center;gap:12px;">
+                <div style="font-size:28px;">✅</div>
+                <div>
+                    <strong style="color:var(--text);">No suspense entries.</strong>
+                    <div style="color:var(--text-muted);font-size:13px;">
+                        Your books are balanced — no holding-account variances from migration.
+                    </div>
+                </div>
+            </div>
+        </div>
+        '''
+    
+    # Build OB block (collapsible — usually a lot of entries)
+    if ob_entries:
+        ob_count = len(ob_entries)
+        ob_total_debit = sum(float(j.get("debit", 0) or 0) for j in ob_entries)
+        ob_total_credit = sum(float(j.get("credit", 0) or 0) for j in ob_entries)
+        ob_rows_html = []
+        for je in ob_entries[:200]:  # cap UI at 200
+            debit = float(je.get("debit", 0) or 0)
+            credit = float(je.get("credit", 0) or 0)
+            ob_rows_html.append(f'''
+                <tr>
+                    <td style="padding:8px;border-bottom:1px solid var(--border);white-space:nowrap;font-size:13px;">{je.get("date", "")[:10]}</td>
+                    <td style="padding:8px;border-bottom:1px solid var(--border);font-size:13px;">{je.get("account", "")}</td>
+                    <td style="padding:8px;border-bottom:1px solid var(--border);text-align:right;font-family:monospace;font-size:13px;">{_fmt(debit) if debit else "—"}</td>
+                    <td style="padding:8px;border-bottom:1px solid var(--border);text-align:right;font-family:monospace;font-size:13px;">{_fmt(credit) if credit else "—"}</td>
+                </tr>''')
+        more_note = f'<div style="color:var(--text-muted);font-size:12px;margin-top:10px;">Showing first 200 of {ob_count} entries.</div>' if ob_count > 200 else ""
+        ob_block = f'''
+        <div class="card" style="margin-bottom:20px;">
+            <details>
+                <summary style="cursor:pointer;font-weight:600;font-size:16px;padding:5px 0;">
+                    📊 Other opening-balance entries from migration ({ob_count})
+                    &nbsp;<span style="color:var(--text-muted);font-weight:400;font-size:13px;">— click to expand</span>
+                </summary>
+                <div style="margin-top:15px;color:var(--text-muted);font-size:13px;margin-bottom:10px;">
+                    These are normal opening balance entries (one per GL account) created when migrating from Sage.
+                    They're NOT suspense — they're real account balances brought across.
+                    Total debit: <strong>{_fmt(ob_total_debit)}</strong> &nbsp;•&nbsp; Total credit: <strong>{_fmt(ob_total_credit)}</strong>
+                </div>
+                <table style="width:100%;border-collapse:collapse;">
+                    <thead>
+                        <tr style="background:rgba(255,255,255,0.04);">
+                            <th style="padding:8px;text-align:left;border-bottom:2px solid var(--border);font-size:13px;">Date</th>
+                            <th style="padding:8px;text-align:left;border-bottom:2px solid var(--border);font-size:13px;">Account</th>
+                            <th style="padding:8px;text-align:right;border-bottom:2px solid var(--border);font-size:13px;">Debit</th>
+                            <th style="padding:8px;text-align:right;border-bottom:2px solid var(--border);font-size:13px;">Credit</th>
+                        </tr>
+                    </thead>
+                    <tbody>{"".join(ob_rows_html)}</tbody>
+                </table>
+                {more_note}
+            </details>
+        </div>
+        '''
+    else:
+        ob_block = ""
+    
+    content = f'''
+    <div style="max-width:1100px;margin:0 auto;">
+        <div style="display:flex;align-items:center;gap:15px;margin-bottom:25px;">
+            <a href="/" style="color:var(--text-muted);text-decoration:none;font-size:14px;">← Dashboard</a>
+            <h1 style="margin:0;flex:1;">Suspense & Opening Balance Explainer</h1>
+        </div>
+        {suspense_block}
+        {ob_block}
+        <div style="margin-top:30px;padding:15px;background:rgba(139,92,246,0.05);border-radius:10px;font-size:13px;color:var(--text-muted);">
+            💡 <strong>Need to ask Zane about a specific entry?</strong> Go to
+            <a href="/pulse" style="color:var(--primary);">Pulse</a> and ask
+            <em>"where does my suspense account come from"</em> or
+            <em>"explain the opening balance for [account name]"</em>.
+        </div>
+    </div>
+    '''
+    
+    return render_page(title="Suspense Explainer", content=content, active="dashboard")
+
 
 @app.route("/")
 @login_required
