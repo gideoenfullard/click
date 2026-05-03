@@ -110,11 +110,13 @@ def register_banking_routes(app, db, login_required, Auth, render_page,
                     suggestion_html = f'<div style="font-size:11px;color:#22d3ee;margin-top:3px;">Invoice match: {suggested_cat}</div>'
                     if match_ref:
                         suggestion_html += f'<div style="font-size:10px;color:var(--text-muted);">{match_ref}</div>'
-                elif match_type in ("customer_payment", "possible_payment"):
+                elif match_type in ("customer_payment", "possible_payment", "customer_payment_combo"):
                     # Show customer name prominently
                     _cust_display = match_ref.split(" - ", 1)[1].strip() if " - " in match_ref else match_ref.replace("Maybe ", "").replace("?", "").strip()
                     _inv_display = match_ref.split(" - ", 1)[0].strip() if " - " in match_ref else ""
-                    suggestion_html = f'<div style="font-size:12px;color:#22d3ee;margin-top:3px;font-weight:600;">👤 {_cust_display}</div>'
+                    # For combo matches, prefix the customer name with a multi-invoice indicator
+                    _cust_prefix = "👤📑" if match_type == "customer_payment_combo" else "👤"
+                    suggestion_html = f'<div style="font-size:12px;color:#22d3ee;margin-top:3px;font-weight:600;">{_cust_prefix} {_cust_display}</div>'
                     if _inv_display:
                         suggestion_html += f'<div style="font-size:11px;color:var(--green);">{suggested_cat} — {_inv_display} ({conf_pct}%)</div>'
                     else:
@@ -163,8 +165,16 @@ def register_banking_routes(app, db, login_required, Auth, render_page,
                 </div>
                 '''
             
+            # Combo-match hint attributes (only present when match was a multi-invoice combo)
+            combo_attrs = ""
+            if txn.get("match_type") == "customer_payment_combo":
+                _combo_ids = txn.get("combo_invoice_ids") or []
+                _combo_cust = txn.get("combo_customer_id") or ""
+                if _combo_ids:
+                    combo_attrs = f' data-combo-invoices="{",".join(_combo_ids)}" data-combo-customer="{_combo_cust}"'
+            
             return f'''
-            <tr data-id="{txn_id}" data-debit="{debit}" data-credit="{credit}">
+            <tr data-id="{txn_id}" data-debit="{debit}" data-credit="{credit}"{combo_attrs}>
                 <td style="white-space:nowrap;">{txn.get("date", "-")}</td>
                 <td>
                     <div style="max-width:300px;">{desc}</div>
@@ -501,15 +511,30 @@ def register_banking_routes(app, db, login_required, Auth, render_page,
             const actionCell = row ? row.querySelectorAll('td')[row.querySelectorAll('td').length - 1] : null;
             if (!actionCell) return;
             
-            let optionsHtml = entities.map(e => 
-                `<option value="${{e.id}}" data-name="${{(e.name||'').replace(/"/g,'&quot;')}}">${{e.name}}</option>`
-            ).join('');
+            // Read combo hints from row data attributes (set when ClickAI auto-matched a multi-invoice combo)
+            const comboCustomer = row ? row.getAttribute('data-combo-customer') || '' : '';
+            const comboInvoicesStr = row ? row.getAttribute('data-combo-invoices') || '' : '';
+            const comboInvoiceIds = comboInvoicesStr ? comboInvoicesStr.split(',').filter(Boolean) : [];
+            const hasCombo = comboCustomer && comboInvoiceIds.length > 0;
+            
+            let optionsHtml = entities.map(e => {{
+                const selected = (hasCombo && e.id === comboCustomer) ? ' selected' : '';
+                return `<option value="${{e.id}}" data-name="${{(e.name||'').replace(/"/g,'&quot;')}}"${{selected}}>${{e.name}}</option>`;
+            }}).join('');
             
             const safeDesc = (description || '').replace(/'/g, "\\\\'");
+            
+            // Combo banner — shown only when ClickAI pre-selected based on multi-invoice match
+            const comboBanner = hasCombo ? `
+                <div style="background:rgba(34,211,238,0.10);border:1px solid rgba(34,211,238,0.4);border-radius:6px;padding:8px 10px;margin-bottom:8px;font-size:11px;color:#22d3ee;">
+                    🔗 ClickAI matched this to ${{comboInvoiceIds.length}} invoices that sum to the payment amount.
+                    Verify the ticks below and click Allocate.
+                </div>` : '';
             
             actionCell.innerHTML = `
                 <div style="background:rgba(139,92,246,0.08);border:1px solid rgba(139,92,246,0.25);border-radius:10px;padding:12px;min-width:320px;">
                     <div style="font-size:13px;font-weight:700;color:#8b5cf6;margin-bottom:8px;">${{category}} — Select ${{label}}</div>
+                    ${{comboBanner}}
                     <select id="entityPick_${{txnId}}" onchange="loadEntityInvoices('${{txnId}}','${{category}}')" style="width:100%;padding:8px;border:1px solid var(--border);border-radius:6px;background:var(--card);color:var(--text);font-size:13px;margin-bottom:8px;">
                         <option value="">-- Select ${{label}} --</option>
                         ${{optionsHtml}}
@@ -526,6 +551,12 @@ def register_banking_routes(app, db, login_required, Auth, render_page,
                         </button>
                     </div>
                 </div>`;
+            
+            // If we have combo hints, the customer is already selected — auto-load their invoices
+            // (with a small delay so the DOM has settled)
+            if (hasCombo) {{
+                setTimeout(() => loadEntityInvoices(txnId, category), 50);
+            }}
         }}
         
         async function loadEntityInvoices(txnId, category) {{
@@ -534,6 +565,14 @@ def register_banking_routes(app, db, login_required, Auth, render_page,
             if (!sel || !container) return;
             const entityId = sel.value;
             if (!entityId) {{ container.innerHTML = ''; return; }}
+            
+            // Read combo hints from the row (if any) — used to auto-tick the right invoices
+            const row = document.querySelector(`tr[data-id="${{txnId}}"]`);
+            const comboCustomer = row ? row.getAttribute('data-combo-customer') || '' : '';
+            const comboInvoicesStr = row ? row.getAttribute('data-combo-invoices') || '' : '';
+            const comboInvoiceIds = (comboInvoicesStr && entityId === comboCustomer)
+                ? comboInvoicesStr.split(',').filter(Boolean)
+                : [];
             
             container.innerHTML = '<div style="color:var(--text-muted);font-size:12px;padding:6px;">Loading invoices...</div>';
             
@@ -555,8 +594,14 @@ def register_banking_routes(app, db, login_required, Auth, render_page,
                 
                 let html = '<div style="font-size:11px;color:var(--text-muted);margin-bottom:4px;font-weight:600;">Allocate against invoices:</div>';
                 for (const inv of data.invoices) {{
-                    html += `<label style="display:flex;align-items:center;gap:8px;padding:5px 8px;border-radius:6px;cursor:pointer;font-size:12px;background:rgba(255,255,255,0.03);margin-bottom:3px;">
-                        <input type="checkbox" class="invCheck_${{txnId}}" value="${{inv.id}}" data-num="${{inv.number}}" data-amount="${{inv.total}}" style="accent-color:var(--green);">
+                    // If invoice is part of the combo match, pre-tick it and highlight it
+                    const isComboInv = comboInvoiceIds.includes(inv.id);
+                    const checked = isComboInv ? ' checked' : '';
+                    const rowStyle = isComboInv 
+                        ? 'background:rgba(34,211,238,0.10);border:1px solid rgba(34,211,238,0.35);'
+                        : 'background:rgba(255,255,255,0.03);';
+                    html += `<label style="display:flex;align-items:center;gap:8px;padding:5px 8px;border-radius:6px;cursor:pointer;font-size:12px;${{rowStyle}}margin-bottom:3px;">
+                        <input type="checkbox" class="invCheck_${{txnId}}" value="${{inv.id}}" data-num="${{inv.number}}" data-amount="${{inv.total}}" style="accent-color:var(--green);"${{checked}}>
                         <span style="flex:1;">${{inv.number}} <span style="color:var(--text-muted);">(${{inv.date}})</span></span>
                         <span style="font-weight:700;">R${{inv.total.toLocaleString('en-ZA', {{minimumFractionDigits:2}})}}</span>
                     </label>`;
@@ -2051,6 +2096,9 @@ Return ONLY the JSON array. No markdown, no explanation."""
                     match_category = None
                     match_confidence = 0
                     match_reference = None
+                    combo_invoice_ids = None
+                    combo_invoice_nums = None
+                    combo_customer_id = None
                     
                     # 1. TRY: Match credit to POS daily total
                     if credit > 0:
@@ -2086,6 +2134,72 @@ Return ONLY the JSON array. No markdown, no explanation."""
                                 match_category = "Customer Payment?"
                                 match_confidence = 0.6
                                 match_reference = f"Maybe {inv.get('invoice_number')}?"
+                    
+                    # 2b. TRY: Match credit to SUM of multiple invoices for same customer
+                    # Only attempts this if the customer name appears in the description —
+                    # we don't want wild combination guesses without that anchor.
+                    # Combinations of 2 or 3 invoices only (4+ becomes guesswork).
+                    if credit > 0 and not match_type:
+                        # Group outstanding invoices by customer (only those whose name is in description)
+                        cust_invoice_groups = {}
+                        for inv in outstanding:
+                            cust_name = (inv.get("customer_name") or "").upper().strip()
+                            if not cust_name or len(cust_name) < 5:
+                                continue
+                            if cust_name[:5] not in desc_upper:
+                                continue
+                            cid = inv.get("customer_id") or cust_name
+                            if cid not in cust_invoice_groups:
+                                cust_invoice_groups[cid] = []
+                            cust_invoice_groups[cid].append(inv)
+                        
+                        # For each customer with 2+ outstanding invoices, try combinations
+                        combo_match = None
+                        for cid, cust_invs in cust_invoice_groups.items():
+                            if len(cust_invs) < 2:
+                                continue
+                            # Try pairs first (most common case)
+                            for i in range(len(cust_invs)):
+                                if combo_match:
+                                    break
+                                for j in range(i + 1, len(cust_invs)):
+                                    pair_total = float(cust_invs[i].get("total", 0)) + float(cust_invs[j].get("total", 0))
+                                    if abs(credit - pair_total) < 1:
+                                        combo_match = [cust_invs[i], cust_invs[j]]
+                                        break
+                            # Try triples only if no pair found and there are 3+ invoices
+                            if not combo_match and len(cust_invs) >= 3:
+                                for i in range(len(cust_invs)):
+                                    if combo_match:
+                                        break
+                                    for j in range(i + 1, len(cust_invs)):
+                                        if combo_match:
+                                            break
+                                        for k in range(j + 1, len(cust_invs)):
+                                            triple_total = (
+                                                float(cust_invs[i].get("total", 0))
+                                                + float(cust_invs[j].get("total", 0))
+                                                + float(cust_invs[k].get("total", 0))
+                                            )
+                                            if abs(credit - triple_total) < 1:
+                                                combo_match = [cust_invs[i], cust_invs[j], cust_invs[k]]
+                                                break
+                            if combo_match:
+                                break
+                        
+                        if combo_match:
+                            inv_numbers = " + ".join(inv.get("invoice_number", "") for inv in combo_match)
+                            cust_label = combo_match[0].get("customer_name", "")
+                            match_type = "customer_payment_combo"
+                            match_category = "Customer Payment (multi-invoice)"
+                            match_confidence = 0.85  # Slightly below single-match — Daphne reviews
+                            match_reference = f"{inv_numbers} - {cust_label}"
+                            # Store IDs for later — when Daphne confirms, backend will mark all paid
+                            combo_invoice_ids = [inv.get("id") for inv in combo_match if inv.get("id")]
+                            combo_invoice_nums = [inv.get("invoice_number", "") for inv in combo_match]
+                            combo_customer_id = combo_match[0].get("customer_id", "")
+                            suggested += 1
+                            logger.info(f"[BANK IMPORT] Combo match: {credit:.2f} → {inv_numbers} ({cust_label})")
                     
                     # 3. TRY: Match debit to known expense keywords
                     if debit > 0 and not match_type:
@@ -2198,6 +2312,12 @@ Return ONLY the JSON array. No markdown, no explanation."""
                         "auto_matched": match_confidence >= 0.85,
                         "created_at": now()
                     }
+                    # Persist combo-match invoice IDs so UI can pre-select them on confirm
+                    if combo_invoice_ids:
+                        txn["combo_invoice_ids"] = combo_invoice_ids
+                        txn["combo_invoice_nums"] = combo_invoice_nums
+                        if combo_customer_id:
+                            txn["combo_customer_id"] = combo_customer_id
                     
                     txns_to_save.append(txn)
                     imported += 1
