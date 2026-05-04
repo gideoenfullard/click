@@ -29051,12 +29051,16 @@ WIPE_TRANSACTION_TABLES = [
     # Banking
     "bank_transactions",
     "bank_patterns",
-    # Accounting / GL postings (NOT chart_of_accounts itself)
+    # Accounting / GL postings
     "journal_entries",
     "journals",
     "allocation_log",
     "gl_entries",       # Manual GL postings (PayFast etc.)
     "gl_transactions",  # Sage GL upload via Smart Import
+    # Chart of Accounts (Sage stores opening_balance/debit/credit ON each COA row,
+    # so a clean reset for fresh Sage import requires wiping the COA itself)
+    "chart_of_accounts",
+    "accounts",         # Legacy COA table (alias)
     # Stock movements (NOT stock_categories, NOT stock_items themselves —
     # the user has already cleared customers/suppliers/stock manually)
     "stock_movements",
@@ -29100,8 +29104,7 @@ def api_business_wipe_transactions():
     """Wipe ALL transactional data for the current business.
     Owner ONLY. Requires {"confirm": "WIPE ALL DATA"} in request body.
     
-    Preserved (Sage will re-import or stays as setup):
-      - chart_of_accounts / accounts (GL codes)
+    Preserved (master data and setup):
       - customers, suppliers (master data — balances are calculated from source documents)
       - stock_items, stock_categories (master data — re-import via Sage CSV if needed)
       - employees, employment_contracts, hr_documents
@@ -29109,8 +29112,10 @@ def api_business_wipe_transactions():
       - safety_files
       - businesses, users, team_members, subscriptions
     
-    Wiped: every table in WIPE_TRANSACTION_TABLES (includes gl_entries and gl_transactions
-    so GL/TB/Debtor/Creditor reports are completely cleared).
+    Wiped: every table in WIPE_TRANSACTION_TABLES (includes gl_entries,
+    gl_transactions, journal_entries, AND chart_of_accounts/accounts —
+    Sage stores opening_balance/debit/credit on each COA row, so a fresh
+    Sage import requires the COA itself to be wiped first).
     """
     try:
         user = Auth.get_current_user()
@@ -29180,6 +29185,12 @@ def api_business_wipe_transactions():
         # Invalidate stock cache (defensive — stock_movements just got wiped)
         try:
             _stock_cache.pop(biz_id, None)
+        except Exception:
+            pass
+        
+        # Invalidate GL map cache — chart_of_accounts was wiped, force rebuild on next access
+        try:
+            _gl_map_cache.pop(biz_id, None)
         except Exception:
             pass
         
