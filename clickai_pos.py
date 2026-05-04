@@ -1728,10 +1728,10 @@ def register_pos_routes(app, db, login_required, Auth, render_page,
             count.textContent = itemCount + ' item' + (itemCount !== 1 ? 's' : '');
             
             // Round to nearest cent
-            // 'total' here is sum of line items (qty × price) — prices are INCL VAT
-            const grandTotal = Math.round(total * 100) / 100;
-            const subtotal = Math.round((grandTotal / 1.15) * 100) / 100;
-            const vat = Math.round((grandTotal - subtotal) * 100) / 100;
+            // 'total' here is sum of line items (qty × price) — prices are EXCL VAT
+            const subtotal = Math.round(total * 100) / 100;
+            const vat = Math.round(subtotal * 0.15 * 100) / 100;  // ADD 15% VAT
+            const grandTotal = Math.round((subtotal + vat) * 100) / 100;
             
             document.getElementById('subtotal').textContent = 'R' + subtotal.toFixed(2);
             document.getElementById('vatAmount').textContent = 'R' + vat.toFixed(2);
@@ -2164,11 +2164,11 @@ def register_pos_routes(app, db, login_required, Auth, render_page,
                 return;
             }
             
-            // Calculate totals — prices are INCL VAT
-            let total = cart.reduce((sum, item) => sum + (item.price * item.qty), 0);
-            const grandTotal = Math.round(total * 100) / 100;
-            const subtotal = Math.round((grandTotal / 1.15) * 100) / 100;
-            const vat = Math.round((grandTotal - subtotal) * 100) / 100;
+            // Calculate totals — prices are EXCL VAT
+            let subtotal = cart.reduce((sum, item) => sum + (item.price * item.qty), 0);
+            subtotal = Math.round(subtotal * 100) / 100;
+            const vat = Math.round(subtotal * 0.15 * 100) / 100;
+            const grandTotal = Math.round((subtotal + vat) * 100) / 100;
             const itemCount = cart.reduce((sum, item) => sum + item.qty, 0);
             
             // SA rounding to nearest 10c (1c/5c coins phased out)
@@ -2302,10 +2302,10 @@ def register_pos_routes(app, db, login_required, Auth, render_page,
                 total: item.price * item.qty
             }));
             
-            // Prices are INCL VAT — back-derive subtotal and VAT
-            const grandTotal = Math.round(items.reduce((sum, item) => sum + item.total, 0) * 100) / 100;
-            const subtotal = Math.round((grandTotal / 1.15) * 100) / 100;
-            const vat = Math.round((grandTotal - subtotal) * 100) / 100;
+            // Prices are EXCL VAT - ADD VAT
+            const subtotal = Math.round(items.reduce((sum, item) => sum + item.total, 0) * 100) / 100;
+            const vat = Math.round(subtotal * 0.15 * 100) / 100;
+            const grandTotal = Math.round((subtotal + vat) * 100) / 100;
             
             try {
                 const response = await fetch('/api/pos/quote', {
@@ -2374,10 +2374,10 @@ def register_pos_routes(app, db, login_required, Auth, render_page,
                 posLocked = false;
                 return;
             }
-            let total = cart.reduce((sum, item) => sum + (item.price * item.qty), 0);
-            const grandTotal = Math.round(total * 100) / 100;
-            const subtotal = Math.round((grandTotal / 1.15) * 100) / 100;
-            const vat = Math.round((grandTotal - subtotal) * 100) / 100;
+            let subtotal = cart.reduce((sum, item) => sum + (item.price * item.qty), 0);
+            subtotal = Math.round(subtotal * 100) / 100;
+            const vat = Math.round(subtotal * 0.15 * 100) / 100;
+            const grandTotal = Math.round((subtotal + vat) * 100) / 100;
             const itemCount = cart.reduce((sum, item) => sum + item.qty, 0);
             
             let preview = '═══════════════════════\\n';
@@ -2563,11 +2563,11 @@ def register_pos_routes(app, db, login_required, Auth, render_page,
                 return;
             }
             
-            // Build preview — prices are INCL VAT, back-derive subtotal/VAT
-            let total = cart.reduce((sum, item) => sum + (item.price * item.qty), 0);
-            const grandTotal = Math.round(total * 100) / 100;
-            const subtotal = Math.round((grandTotal / 1.15) * 100) / 100;
-            const vat = Math.round((grandTotal - subtotal) * 100) / 100;
+            // Build preview - prices are EXCL VAT, ADD VAT
+            let subtotal = cart.reduce((sum, item) => sum + (item.price * item.qty), 0);
+            subtotal = Math.round(subtotal * 100) / 100;
+            const vat = Math.round(subtotal * 0.15 * 100) / 100;
+            const grandTotal = Math.round((subtotal + vat) * 100) / 100;
             const itemCount = cart.reduce((sum, item) => sum + item.qty, 0);
             
             let preview = '═══════════════════════\\n';
@@ -3268,11 +3268,10 @@ def register_pos_routes(app, db, login_required, Auth, render_page,
                 }
             }
             
-            const total = Math.round(subtotal * 100) / 100;
-            const exclSubtotal = Math.round((total / 1.15) * 100) / 100;
-            const vat = Math.round((total - exclSubtotal) * 100) / 100;
+            const vat = subtotal * 0.15;
+            const total = subtotal + vat;
             
-            document.getElementById('qqSubtotal').textContent = 'R' + exclSubtotal.toFixed(2);
+            document.getElementById('qqSubtotal').textContent = 'R' + subtotal.toFixed(2);
             document.getElementById('qqVat').textContent = 'R' + vat.toFixed(2);
             document.getElementById('qqTotal').textContent = 'R' + total.toFixed(2);
         }
@@ -3676,12 +3675,11 @@ def register_pos_routes(app, db, login_required, Auth, render_page,
             } catch (err) {
                 if (!navigator.onLine || err.message.includes('fetch') || err.message.includes('network') || err.message.includes('Network')) {
                     try {
-                        const grandTotal = Math.round(total * 100) / 100;
-                        const subtotal = Math.round((grandTotal / 1.15) * 100) / 100;
-                        const vatAmt = Math.round((grandTotal - subtotal) * 100) / 100;
+                        const subtotal = Math.round(total * 100) / 100;
+                        const vatAmt = Math.round(subtotal * 0.15 * 100) / 100;
                         await (window.queueOfflineItem || queueOfflineSale)('quote_queue', {
                             items: items, customer_id: customerId, customer_name: customerName,
-                            subtotal: subtotal, vat: vatAmt, total: grandTotal,
+                            subtotal: subtotal, vat: vatAmt, total: Math.round((subtotal + vatAmt) * 100) / 100,
                             offline_date: new Date().toISOString().slice(0,10), offline_time: new Date().toISOString()
                         });
                         alert('📴 OFFLINE QUOTE SAVED\\n\\nFor: ' + (customerName || 'Walk-in') + '\\nTotal: R' + total.toFixed(2) + '\\n\\nWill sync when internet returns.');
@@ -3926,15 +3924,15 @@ def register_pos_routes(app, db, login_required, Auth, render_page,
                     var qty = item.quantity || item.qty || 1;
                     var desc = item.description || item.desc || '-';
                     var price = parseFloat(item.price || 0);
-                    var inclTotal = parseFloat(item.total || (qty * price));
-                    var exclTotal = Math.round((inclTotal / 1.15) * 100) / 100;
-                    var vatAmt = Math.round((inclTotal - exclTotal) * 100) / 100;
+                    var lineTotal = parseFloat(item.total || (qty * price));
+                    var vatAmt = Math.round(lineTotal * 0.15 * 100) / 100;
+                    var inclTotal = Math.round((lineTotal + vatAmt) * 100) / 100;
                     itemsRows += '<tr style="border-bottom:1px solid #e5e7eb;">' +
                         '<td style="padding:6px 8px;font-size:12px;">' + desc + '</td>' +
                         '<td style="text-align:center;padding:6px 8px;font-size:12px;">' + qty + '</td>' +
                         '<td style="text-align:right;padding:6px 8px;font-size:12px;">R' + price.toFixed(2) + '</td>' +
                         '<td style="text-align:center;padding:6px 8px;font-size:12px;">15%</td>' +
-                        '<td style="text-align:right;padding:6px 8px;font-size:12px;">R' + exclTotal.toFixed(2) + '</td>' +
+                        '<td style="text-align:right;padding:6px 8px;font-size:12px;">R' + lineTotal.toFixed(2) + '</td>' +
                         '<td style="text-align:right;padding:6px 8px;font-size:12px;font-weight:600;">R' + inclTotal.toFixed(2) + '</td>' +
                         '</tr>';
                 });
@@ -5041,8 +5039,8 @@ def register_pos_routes(app, db, login_required, Auth, render_page,
                 html += '</tr>';
             }});
             tbody.innerHTML = html;
-            // Prices are INCL VAT — grandTotal IS the inclusive total
-            document.getElementById('f11Total').textContent = 'R' + grandTotal.toFixed(2);
+            const vat = Math.round(grandTotal * 0.15 * 100) / 100;
+            document.getElementById('f11Total').textContent = 'R' + (grandTotal + vat).toFixed(2);
         }}
     
         function syncF11Buttons() {{
@@ -6297,16 +6295,16 @@ def register_pos_routes(app, db, login_required, Auth, render_page,
             if not items:
                 return jsonify({"success": False, "error": "No items in cart"})
             
-            # Use frontend-calculated values (prices are INCL VAT, subtotal/VAT back-derived)
+            # Use frontend-calculated values (prices are EXCL VAT, VAT is ADDED)
             subtotal = Decimal(str(data.get("subtotal", 0)))
             vat = Decimal(str(data.get("vat", 0)))
             total = Decimal(str(data.get("total", 0)))
             
             # Fallback calculation if frontend didn't send values
             if subtotal == 0:
-                total = sum(Decimal(str(item.get("total", 0))) for item in items)
-                subtotal = (total / (Decimal("1") + VAT_RATE)).quantize(Decimal("0.01"))
-                vat = (total - subtotal).quantize(Decimal("0.01"))
+                subtotal = sum(Decimal(str(item.get("total", 0))) for item in items)
+                vat = (subtotal * VAT_RATE).quantize(Decimal("0.01"))
+                total = subtotal + vat
             
             # Cash rounding to nearest 10c (SA — 1c/5c phased out)
             # payment_total = what customer actually pays/tenders (rounded for cash)
@@ -6661,16 +6659,16 @@ def register_pos_routes(app, db, login_required, Auth, render_page,
             
             logger.info(f"[POS QUOTE] UUID valid: {safe_customer_id is not None}, using: {safe_customer_id}")
             
-            # Use frontend-calculated values (prices are INCL VAT, subtotal/VAT back-derived)
+            # Use frontend-calculated values (prices are EXCL VAT, VAT is ADDED)
             subtotal = Decimal(str(data.get("subtotal", 0)))
             vat = Decimal(str(data.get("vat", 0)))
             total = Decimal(str(data.get("total", 0)))
             
             # Fallback calculation if frontend didn't send values
             if subtotal == 0:
-                total = sum(Decimal(str(item.get("total", 0))) for item in items)
-                subtotal = (total / (Decimal("1") + VAT_RATE)).quantize(Decimal("0.01"))
-                vat = (total - subtotal).quantize(Decimal("0.01"))
+                subtotal = sum(Decimal(str(item.get("total", 0))) for item in items)
+                vat = (subtotal * VAT_RATE).quantize(Decimal("0.01"))
+                total = subtotal + vat
             
             # Generate quote number
             existing = db.get("quotes", {"business_id": biz_id}) if biz_id else []
@@ -6785,16 +6783,16 @@ def register_pos_routes(app, db, login_required, Auth, render_page,
                     db.save("customers", new_customer)
                     logger.info(f"[QUICK QUOTE] Created new customer: {customer_name}")
             
-            # Calculate totals — items come with INCL VAT prices
-            total = Decimal("0")
+            # Calculate totals - items come with excl VAT prices
+            subtotal = Decimal("0")
             quote_items = []
             
             for item in items:
                 desc = item.get("description", "Item")
                 qty = Decimal(str(item.get("quantity", 1)))
-                price = Decimal(str(item.get("price", 0)))  # Price INCL VAT
+                price = Decimal(str(item.get("price", 0)))  # Price excl VAT
                 line_total = qty * price
-                total += line_total
+                subtotal += line_total
                 
                 quote_items.append({
                     "code": "CUSTOM",
@@ -6804,10 +6802,9 @@ def register_pos_routes(app, db, login_required, Auth, render_page,
                     "total": float(line_total)
                 })
             
-            # Prices are INCL VAT — back-derive subtotal and VAT
-            total = total.quantize(Decimal("0.01"))
-            subtotal = (total / (Decimal("1") + VAT_RATE)).quantize(Decimal("0.01"))
-            vat = (total - subtotal).quantize(Decimal("0.01"))
+            # Prices are EXCL VAT - ADD VAT to get total
+            vat = (subtotal * VAT_RATE).quantize(Decimal("0.01"))
+            total = subtotal + vat
             
             # Generate quote number
             existing_quotes = db.get("quotes", {"business_id": biz_id}) or []
@@ -7000,16 +6997,16 @@ def register_pos_routes(app, db, login_required, Auth, render_page,
             if not safe_customer_id:
                 return jsonify({"success": False, "error": "Please select a valid customer from the list"})
             
-            # Use frontend-calculated values (prices are INCL VAT, subtotal/VAT back-derived)
+            # Use frontend-calculated values (prices are EXCL VAT, VAT is ADDED)
             subtotal = Decimal(str(data.get("subtotal", 0)))
             vat = Decimal(str(data.get("vat", 0)))
             total = Decimal(str(data.get("total", 0)))
             
             # Fallback calculation if frontend didn't send values
             if subtotal == 0:
-                total = sum(Decimal(str(item.get("total", 0))) for item in items)
-                subtotal = (total / (Decimal("1") + VAT_RATE)).quantize(Decimal("0.01"))
-                vat = (total - subtotal).quantize(Decimal("0.01"))
+                subtotal = sum(Decimal(str(item.get("total", 0))) for item in items)
+                vat = (subtotal * VAT_RATE).quantize(Decimal("0.01"))
+                total = subtotal + vat
             
             # Generate invoice number (safe even after deletions)
             existing = db.get("invoices", {"business_id": biz_id}) if biz_id else []
@@ -7179,16 +7176,16 @@ def register_pos_routes(app, db, login_required, Auth, render_page,
             if not customer_id:
                 return jsonify({"success": False, "error": "Customer required for credit note"})
             
-            # Use frontend-calculated values (prices are INCL VAT, subtotal/VAT back-derived)
+            # Use frontend-calculated values (prices are EXCL VAT, VAT is ADDED)
             subtotal = Decimal(str(data.get("subtotal", 0)))
             vat = Decimal(str(data.get("vat", 0)))
             total = Decimal(str(data.get("total", 0)))
             
             # Fallback calculation if frontend didn't send values
             if subtotal == 0:
-                total = sum(Decimal(str(item.get("total", 0))) for item in items)
-                subtotal = (total / (Decimal("1") + VAT_RATE)).quantize(Decimal("0.01"))
-                vat = (total - subtotal).quantize(Decimal("0.01"))
+                subtotal = sum(Decimal(str(item.get("total", 0))) for item in items)
+                vat = (subtotal * VAT_RATE).quantize(Decimal("0.01"))
+                total = subtotal + vat
             
             # Generate credit note number
             existing = db.get("credit_notes", {"business_id": biz_id}) if biz_id else []
