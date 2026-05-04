@@ -2171,15 +2171,24 @@ def register_pos_routes(app, db, login_required, Auth, render_page,
             const grandTotal = Math.round((subtotal + vat) * 100) / 100;
             const itemCount = cart.reduce((sum, item) => sum + item.qty, 0);
             
+            // SA cash rounding to nearest 10c (1c/5c coins phased out)
+            // Only applies to CASH payments — card/account stay exact
+            let paymentTotal = grandTotal;
+            let roundingAdj = 0;
+            if (method === 'cash') {
+                paymentTotal = Math.round(grandTotal * 10) / 10;
+                roundingAdj = Math.round((paymentTotal - grandTotal) * 100) / 100;
+            }
+            
             let cashReceived = 0;
             let changeGiven = 0;
             
             if (method === 'cash') {
-                const received = await posPrompt('CASH R' + grandTotal.toFixed(2) + ' (' + itemCount + ' items) — Cash received:', grandTotal.toFixed(2));
+                const received = await posPrompt('CASH R' + paymentTotal.toFixed(2) + ' (' + itemCount + ' items) — Cash received:', paymentTotal.toFixed(2));
                 if (received === null) { posLocked = false; return; }
                 cashReceived = parseFloat(received);
                 if (isNaN(cashReceived) || cashReceived < 0) { alert('Invalid amount'); posLocked = false; return; }
-                changeGiven = cashReceived - grandTotal;
+                changeGiven = cashReceived - paymentTotal;
                 if (changeGiven < -0.01) { alert('Short R' + Math.abs(changeGiven).toFixed(2)); posLocked = false; return; }
             } else if (method === 'card') {
                 // Card — no prompt needed, just go
@@ -2208,6 +2217,8 @@ def register_pos_routes(app, db, login_required, Auth, render_page,
                         subtotal: subtotal,
                         vat: vat,
                         total: grandTotal,
+                        payment_total: paymentTotal,
+                        rounding: roundingAdj,
                         cashier_id: currentCashierId,
                         cashier_name: currentCashierName
                     })
@@ -2217,7 +2228,7 @@ def register_pos_routes(app, db, login_required, Auth, render_page,
                 
                 if (data.success) {
                     // Show print dialog based on settings - pass cash info and customer details
-                    showPrintDialog(data.sale_number, data.sale_id, method, customer, items, subtotal, vat, grandTotal, cashReceived, changeGiven);
+                    showPrintDialog(data.sale_number, data.sale_id, method, customer, items, subtotal, vat, grandTotal, cashReceived, changeGiven, paymentTotal, roundingAdj);
                     clearCart();
                     // posLocked will be reset on page reload after print
                 } else {
@@ -2236,6 +2247,8 @@ def register_pos_routes(app, db, login_required, Auth, render_page,
                             subtotal: subtotal,
                             vat: vat,
                             total: grandTotal,
+                            payment_total: paymentTotal,
+                            rounding: roundingAdj,
                             cashier_id: currentCashierId,
                             cashier_name: currentCashierName,
                             offline_date: new Date().toISOString().slice(0,10),
@@ -2245,11 +2258,11 @@ def register_pos_routes(app, db, login_required, Auth, render_page,
                         const offlineNum = 'OFF' + Date.now().toString().slice(-6);
                         
                         // ═══ STILL PRINT — LAN printer works without internet ═══
-                        showPrintDialog(offlineNum, '', method, customer, items, subtotal, vat, grandTotal, cashReceived, changeGiven);
+                        showPrintDialog(offlineNum, '', method, customer, items, subtotal, vat, grandTotal, cashReceived, changeGiven, paymentTotal, roundingAdj);
                         clearCart();
                         updateOfflineIndicator();
                     } catch (dbErr) {
-                        alert('OFFLINE SAVE FAILED\\n\\nCould not save sale locally.\\n\\nPlease write down:\\nTotal: R' + grandTotal.toFixed(2) + ' (' + method + ')');
+                        alert('OFFLINE SAVE FAILED\\n\\nCould not save sale locally.\\n\\nPlease write down:\\nTotal: R' + paymentTotal.toFixed(2) + ' (' + method + ')');
                     }
                 } else {
                     alert('Connection error: ' + err.message);
@@ -3749,7 +3762,7 @@ def register_pos_routes(app, db, login_required, Auth, render_page,
             }
         }
         
-        function showPrintDialog(saleNum, saleId, method, customerObj, items, subtotal, vat, total, cashReceived = 0, changeGiven = 0) {
+        function showPrintDialog(saleNum, saleId, method, customerObj, items, subtotal, vat, total, cashReceived = 0, changeGiven = 0, paymentTotal = null, roundingAdj = 0) {
             loadPosSettings();
             
             // Handle both old string format and new object format
@@ -3758,7 +3771,10 @@ def register_pos_routes(app, db, login_required, Auth, render_page,
             const customerPhone = (typeof customerObj === 'object') ? (customerObj.phone || '') : '';
             const customerVat = (typeof customerObj === 'object') ? (customerObj.vat_number || '') : '';
             
-            lastSaleData = { saleNum, saleId, method, customerName, items, subtotal, vat, total, cashReceived, changeGiven };
+            // paymentTotal defaults to total when not provided (card/account/legacy callers)
+            if (paymentTotal === null || paymentTotal === undefined) paymentTotal = total;
+            
+            lastSaleData = { saleNum, saleId, method, customerName, items, subtotal, vat, total, cashReceived, changeGiven, paymentTotal, roundingAdj };
             
             // Build slip content
             const now = new Date();
@@ -3820,8 +3836,16 @@ def register_pos_routes(app, db, login_required, Auth, render_page,
                     <div style="display:flex;justify-content:space-between;font-size:13px;color:#666;padding:2px 0;">
                         <span>VAT (15%)</span><span>R${vat.toFixed(2)}</span>
                     </div>
+                    ${Math.abs(roundingAdj) >= 0.01 ? `
+                    <div style="display:flex;justify-content:space-between;font-size:13px;color:#666;padding:2px 0;">
+                        <span>Sub-total</span><span>R${total.toFixed(2)}</span>
+                    </div>
+                    <div style="display:flex;justify-content:space-between;font-size:13px;color:#666;padding:2px 0;">
+                        <span>Rounding</span><span>${roundingAdj >= 0 ? '+' : '-'}R${Math.abs(roundingAdj).toFixed(2)}</span>
+                    </div>
+                    ` : ''}
                     <div style="display:flex;justify-content:space-between;font-size:22px;font-weight:bold;margin-top:6px;">
-                        <span>TOTAL</span><span>R${total.toFixed(2)}</span>
+                        <span>TOTAL</span><span>R${paymentTotal.toFixed(2)}</span>
                     </div>
                 </div>
                 
@@ -6078,8 +6102,14 @@ def register_pos_routes(app, db, login_required, Auth, render_page,
                     <div style="display:flex;justify-content:space-between;font-size:13px;color:#666;padding:2px 0;">
                         <span>VAT (15%)</span><span>R{float(sale.get("vat", 0)):.2f}</span>
                     </div>
+                    {f'''<div style="display:flex;justify-content:space-between;font-size:13px;color:#666;padding:2px 0;">
+                        <span>Sub-total</span><span>R{float(sale.get("total", 0)):.2f}</span>
+                    </div>
+                    <div style="display:flex;justify-content:space-between;font-size:13px;color:#666;padding:2px 0;">
+                        <span>Rounding</span><span>{"+" if float(sale.get("rounding", 0)) >= 0 else "-"}R{abs(float(sale.get("rounding", 0))):.2f}</span>
+                    </div>''' if abs(float(sale.get("rounding", 0) or 0)) >= 0.01 else ''}
                     <div style="display:flex;justify-content:space-between;font-size:22px;font-weight:bold;margin-top:6px;">
-                        <span>TOTAL</span><span>R{float(sale.get("total", 0)):.2f}</span>
+                        <span>TOTAL</span><span>R{float(sale.get("payment_total") or sale.get("total", 0)):.2f}</span>
                     </div>
                 </div>
                 
@@ -6271,6 +6301,18 @@ def register_pos_routes(app, db, login_required, Auth, render_page,
                 vat = (subtotal * VAT_RATE).quantize(Decimal("0.01"))
                 total = subtotal + vat
             
+            # Cash rounding to nearest 10c (SA — 1c/5c phased out)
+            # payment_total = what customer actually pays/tenders (rounded for cash)
+            # rounding = adjustment (positive = customer paid extra, negative = customer paid less)
+            payment_total = Decimal(str(data.get("payment_total", float(total))))
+            rounding_adj = Decimal(str(data.get("rounding", 0))).quantize(Decimal("0.01"))
+            # Safety: if frontend didn't send payment_total but did send rounding, derive it
+            if payment_total == total and rounding_adj != 0:
+                payment_total = (total + rounding_adj).quantize(Decimal("0.01"))
+            # Safety: if frontend sent payment_total but no rounding, derive it
+            if rounding_adj == 0 and payment_total != total:
+                rounding_adj = (payment_total - total).quantize(Decimal("0.01"))
+            
             # Create sale record
             sale_id = generate_id()
             sale_num = f"POS{int(time.time()) % 100000:05d}"
@@ -6286,11 +6328,20 @@ def register_pos_routes(app, db, login_required, Auth, render_page,
                 "subtotal": float(subtotal),
                 "vat": float(vat),
                 "total": float(total),
+                "payment_total": float(payment_total),
+                "rounding": float(rounding_adj),
                 "created_by": cashier_id,
                 "created_at": now()
             }
             
             success, err = db.save("sales", sale)
+            
+            # If payment_total/rounding columns don't exist yet, retry without them
+            if not success and ("payment_total" in str(err) or "rounding" in str(err)):
+                logger.warning(f"[POS] payment_total/rounding columns missing, retrying without them")
+                sale.pop("payment_total", None)
+                sale.pop("rounding", None)
+                success, err = db.save("sales", sale)
             
             # If created_by column doesn't exist, retry without it
             if not success and "created_by" in str(err):
@@ -6316,17 +6367,29 @@ def register_pos_routes(app, db, login_required, Auth, render_page,
                 debit_account = "1200"  # Debtors
                 debit_name = "Account"
             
+            # Build journal lines
+            # Cash leg uses payment_total (actual money in drawer / on card / owed by debtor)
+            # Sales + VAT credits stay at original (pre-rounding) values
+            # Rounding adjustment balances the entry via cash_short account
+            journal_lines = [
+                {"account_code": debit_account, "debit": float(payment_total), "credit": 0},  # Cash/Bank/Debtors
+                {"account_code": gl(biz_id, "sales"), "debit": 0, "credit": float(subtotal)},       # Sales
+                {"account_code": gl(biz_id, "vat_output"), "debit": 0, "credit": float(vat)},            # VAT Output
+            ]
+            if rounding_adj > 0:
+                # Customer paid MORE (e.g. R10.04 → R10.10) — small income to cash_short
+                journal_lines.append({"account_code": gl(biz_id, "cash_short"), "debit": 0, "credit": float(rounding_adj)})
+            elif rounding_adj < 0:
+                # Customer paid LESS (e.g. R10.06 → R10.00) — small expense to cash_short
+                journal_lines.append({"account_code": gl(biz_id, "cash_short"), "debit": float(abs(rounding_adj)), "credit": 0})
+            
             # Create journal entry for the sale
             create_journal_entry(
                 biz_id,
                 today(),
                 f"POS Sale {sale_num} - {customer_name} ({debit_name})",
                 sale_num,
-                [
-                    {"account_code": debit_account, "debit": float(total), "credit": 0},  # Cash/Bank/Debtors
-                    {"account_code": gl(biz_id, "sales"), "debit": 0, "credit": float(subtotal)},       # Sales
-                    {"account_code": gl(biz_id, "vat_output"), "debit": 0, "credit": float(vat)},            # VAT Output
-                ]
+                journal_lines
             )
             
             # Update stock quantities and create Cost of Sales entries
@@ -6448,6 +6511,14 @@ def register_pos_routes(app, db, login_required, Auth, render_page,
                     vat = Decimal(str(queued_sale.get("vat", 0)))
                     total = Decimal(str(queued_sale.get("total", 0)))
                     
+                    # Cash rounding (offline sales include payment_total/rounding from frontend)
+                    payment_total = Decimal(str(queued_sale.get("payment_total", float(total))))
+                    rounding_adj = Decimal(str(queued_sale.get("rounding", 0))).quantize(Decimal("0.01"))
+                    if payment_total == total and rounding_adj != 0:
+                        payment_total = (total + rounding_adj).quantize(Decimal("0.01"))
+                    if rounding_adj == 0 and payment_total != total:
+                        rounding_adj = (payment_total - total).quantize(Decimal("0.01"))
+                    
                     # Use original date/time from when sale was made offline
                     sale_date = queued_sale.get("offline_date") or today()
                     sale_time = queued_sale.get("offline_time") or now()
@@ -6467,12 +6538,18 @@ def register_pos_routes(app, db, login_required, Auth, render_page,
                         "subtotal": float(subtotal),
                         "vat": float(vat),
                         "total": float(total),
+                        "payment_total": float(payment_total),
+                        "rounding": float(rounding_adj),
                         "created_by": cashier_id,
                         "created_at": sale_time,
                         "notes": f"OFFLINE SALE — synced {now()}"
                     }
                     
                     success, err = db.save("sales", sale)
+                    if not success and ("payment_total" in str(err) or "rounding" in str(err)):
+                        sale.pop("payment_total", None)
+                        sale.pop("rounding", None)
+                        success, err = db.save("sales", sale)
                     if not success and "created_by" in str(err):
                         sale.pop("created_by", None)
                         sale["notes"] = f"OFFLINE SALE — Cashier: {queued_sale.get('cashier_name', '')} — synced {now()}"
@@ -6490,15 +6567,21 @@ def register_pos_routes(app, db, login_required, Auth, render_page,
                     else:
                         debit_account, debit_name = "1200", "Account"
                     
+                    journal_lines = [
+                        {"account_code": debit_account, "debit": float(payment_total), "credit": 0},
+                        {"account_code": gl(biz_id, "sales"), "debit": 0, "credit": float(subtotal)},
+                        {"account_code": gl(biz_id, "vat_output"), "debit": 0, "credit": float(vat)},
+                    ]
+                    if rounding_adj > 0:
+                        journal_lines.append({"account_code": gl(biz_id, "cash_short"), "debit": 0, "credit": float(rounding_adj)})
+                    elif rounding_adj < 0:
+                        journal_lines.append({"account_code": gl(biz_id, "cash_short"), "debit": float(abs(rounding_adj)), "credit": 0})
+                    
                     create_journal_entry(
                         biz_id, sale_date,
                         f"OFFLINE POS Sale {sale_num} - {customer_name} ({debit_name})",
                         sale_num,
-                        [
-                            {"account_code": debit_account, "debit": float(total), "credit": 0},
-                            {"account_code": gl(biz_id, "sales"), "debit": 0, "credit": float(subtotal)},
-                            {"account_code": gl(biz_id, "vat_output"), "debit": 0, "credit": float(vat)},
-                        ]
+                        journal_lines
                     )
                     
                     # Update stock
