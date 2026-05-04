@@ -31659,8 +31659,15 @@ For each file below, return ONE of these classes:
 - stock_full: stock items with BOTH quantity AND price columns
 - trial_balance: GL trial balance (Account Name, Debit, Credit columns)
 - chart_of_accounts: bare GL account list (Account Code, Account Name, Type) without amounts
-- customer_aging: Sage "Customer Balances Days Outstanding" report. Headers like: Customer, Reference, 120+ Days, 90 Days, 60 Days, 30 Days, Current, Total Due. Multi-line per customer (one row per outstanding invoice). VALUABLE — we import this as individual invoices.
-- supplier_aging: Sage "Supplier Balances Days Outstanding" report. Same structure as customer_aging but for suppliers. VALUABLE — we import this.
+- customer_aging: Sage "Customer Balances Days Outstanding" report. TWO valid forms:
+  (a) DETAIL form — one row per outstanding invoice, with invoice number/reference column.
+  (b) SUMMARY form — ONE row per customer with aging buckets and Total Due. Headers like:
+      Customer (or first column), then optional blank cols, then "120+ Days", "90 Days",
+      "60 Days", "30 Days", "Current", "Total Due". First column has "CODE : NAME" format.
+      No invoice number column. NO multi-line per customer.
+  Both forms are VALUABLE — we import as customer balances + opening invoices.
+- supplier_aging: Sage "Supplier Balances Days Outstanding" report. Same TWO forms as
+  customer_aging, but for suppliers (first column header is "Supplier"). VALUABLE.
 - bank_statement: bank transactions (Date, Description, Debit, Credit, Balance)
 - junk: empty, corrupted, or completely unrecognizable file with no usable accounting data
 - unknown: cannot determine
@@ -32186,18 +32193,40 @@ def _sd_extract_aging(rows):
     Each payment has: entity_code, entity_name, payment_number, payment_date,
                       reference, amount (always positive)
     
-    A row is classified as a payment if its total is negative OR its number
-    starts with REC/RCP/PAY/CN/IC/CADJ/SRT (Sage payment prefixes).
+    Supports TWO forms:
+      DETAIL form  — multi-line per entity: each row is one outstanding invoice
+                     with its own date and invoice number. A row is a payment if
+                     total < 0 or its number starts with REC/RCP/PAY/CN/IC/CADJ/SRT.
+      SUMMARY form — one row per entity with aging buckets (120+/90/60/30/Current)
+                     and a Total Due column. No invoice numbers in the file.
+                     We synthesise one OPENING-* invoice per non-zero bucket, with
+                     a date placed in the middle of that bucket's age window so
+                     subsequent aging reports sort correctly.
     """
     if not rows:
         return {"invoices": [], "payments": []}
     
+    import re as _re
+    from datetime import datetime as _dt, timedelta as _td
+    
+    # ── Detect SUMMARY form: scan first ~6 rows for a header containing "Total Due"
+    summary_header_idx = None
+    for i, r in enumerate(rows[:8]):
+        if not r:
+            continue
+        joined = " ".join(str(c).lower().strip() for c in r if c is not None)
+        if "total due" in joined and ("days" in joined or "current" in joined):
+            summary_header_idx = i
+            break
+    
+    if summary_header_idx is not None:
+        return _sd_extract_aging_summary(rows, summary_header_idx)
+    
+    # ── DETAIL form (original logic)
     invoices = []
     payments = []
     current_code = None
     current_name = None
-    
-    import re as _re
     
     for row in rows:
         if not row:
@@ -32266,6 +32295,104 @@ def _sd_extract_aging(rows):
                 "reference": ref,
                 "total": total,
             })
+    
+    return {"invoices": invoices, "payments": payments}
+
+
+def _sd_extract_aging_summary(rows, header_idx):
+    """Parse SUMMARY-form aging (one row per entity with aging buckets).
+    Synthesises one invoice per non-zero bucket so the resulting aging report
+    sorts correctly. Negative bucket values become payments (credit balances).
+    """
+    import re as _re
+    from datetime import datetime as _dt, timedelta as _td
+    
+    invoices = []
+    payments = []
+    
+    # Map header positions to bucket ages. Look for "120+", "90", "60", "30",
+    # "Current", "Total Due" in header. Days = mid-point of band, capped to today.
+    header = rows[header_idx]
+    bucket_cols = []  # list of (col_index, days_back, label)
+    total_due_col = None
+    
+    for j, h in enumerate(header):
+        hs = str(h or "").strip().lower()
+        if not hs:
+            continue
+        if "120" in hs and ("+" in hs or "plus" in hs or "day" in hs):
+            bucket_cols.append((j, 135, "120+ Days"))   # 120-150 mid
+        elif hs.startswith("90") or hs == "90 days":
+            bucket_cols.append((j, 105, "90 Days"))     # 90-119 mid
+        elif hs.startswith("60") or hs == "60 days":
+            bucket_cols.append((j, 75, "60 Days"))      # 60-89 mid
+        elif hs.startswith("30") or hs == "30 days":
+            bucket_cols.append((j, 45, "30 Days"))      # 30-59 mid
+        elif hs == "current" or hs.startswith("current"):
+            bucket_cols.append((j, 15, "Current"))      # 0-29 mid
+        elif "total due" in hs or hs == "total":
+            total_due_col = j
+    
+    if not bucket_cols:
+        return {"invoices": [], "payments": []}
+    
+    today_dt = _dt.now().date()
+    
+    for row in rows[header_idx + 1:]:
+        if not row:
+            continue
+        first = (row[0] or "").strip() if len(row) > 0 else ""
+        fl = first.lower()
+        
+        # Skip empty / header echoes / total rows
+        if not first or fl in ("customer", "supplier") or fl.startswith("sep=") or fl.startswith("total"):
+            continue
+        
+        # Must look like "CODE : NAME"
+        if " : " not in first or _re.match(r'^\d', first):
+            continue
+        
+        code, name = _sd_split_code_name(first)
+        if not code:
+            continue
+        
+        # If total due is 0 (or absent), skip — entity has nothing outstanding
+        total_due = _sd_money(row[total_due_col]) if (total_due_col is not None and len(row) > total_due_col) else 0
+        # If Total Due column missing, sum the buckets
+        if total_due == 0 and total_due_col is None:
+            total_due = sum(_sd_money(row[j]) for j, _, _ in bucket_cols if len(row) > j)
+        if abs(total_due) < 0.01:
+            continue
+        
+        # One synthetic record per non-zero bucket
+        for j, days_back, label in bucket_cols:
+            if len(row) <= j:
+                continue
+            amt = _sd_money(row[j])
+            if abs(amt) < 0.01:
+                continue
+            
+            inv_date = (today_dt - _td(days=days_back)).isoformat()
+            inv_num = f"OPENING-{code}-{label.replace(' ', '').replace('+', 'P')}"
+            
+            if amt < 0:
+                payments.append({
+                    "entity_code": code,
+                    "entity_name": name,
+                    "payment_number": inv_num,
+                    "payment_date": inv_date,
+                    "reference": f"Opening balance ({label})",
+                    "amount": abs(amt),
+                })
+            else:
+                invoices.append({
+                    "entity_code": code,
+                    "entity_name": name,
+                    "invoice_number": inv_num,
+                    "invoice_date": inv_date,
+                    "reference": f"Opening balance ({label})",
+                    "total": amt,
+                })
     
     return {"invoices": invoices, "payments": payments}
 
@@ -33270,6 +33397,28 @@ def api_sage_drop_import():
             ok, err = db.save_many_fast("receipts", rec_records)
             results.append({"label": "💵 Customer receipts (from aging)", "imported": ok, "errors": err})
             logger.info(f"[SAGE DROP] Customer receipts: {ok} ok, {err} errors")
+        
+        # Update stored balance field on each customer = sum(inv.total) - sum(receipts.amount)
+        # (Debtors report and TB live-fallback read this field directly.)
+        try:
+            cust_balances = {}  # cust_id -> running net
+            for inv in inv_records:
+                cid = inv.get("customer_id")
+                if cid:
+                    cust_balances[cid] = cust_balances.get(cid, 0.0) + float(inv.get("total", 0))
+            for rec in rec_records:
+                cid = rec.get("customer_id")
+                if cid:
+                    cust_balances[cid] = cust_balances.get(cid, 0.0) - float(rec.get("amount", 0))
+            updated = 0
+            for cid, bal in cust_balances.items():
+                if db.update("customers", cid, {"balance": round(bal, 2)}, biz_id):
+                    updated += 1
+            if updated:
+                results.append({"label": "🔢 Customer balances updated", "imported": updated, "errors": 0})
+                logger.info(f"[SAGE DROP] Customer balances: {updated} updated")
+        except Exception as e:
+            logger.error(f"[SAGE DROP] Customer balance update failed: {e}")
     
     # ── Supplier aging → supplier_invoices + supplier_payments
     if sup_aging_buckets:
@@ -33370,6 +33519,28 @@ def api_sage_drop_import():
             ok, err = db.save_many_fast("supplier_payments", sup_pay_records)
             results.append({"label": "💸 Supplier payments (from aging)", "imported": ok, "errors": err})
             logger.info(f"[SAGE DROP] Supplier payments: {ok} ok, {err} errors")
+        
+        # Update stored balance field on each supplier = sum(inv.total) - sum(payments.amount)
+        # (Creditors report and TB live-fallback read this field directly.)
+        try:
+            sup_balances = {}  # sup_id -> running net
+            for inv in sup_inv_records:
+                sid = inv.get("supplier_id")
+                if sid:
+                    sup_balances[sid] = sup_balances.get(sid, 0.0) + float(inv.get("total", 0))
+            for pay in sup_pay_records:
+                sid = pay.get("supplier_id")
+                if sid:
+                    sup_balances[sid] = sup_balances.get(sid, 0.0) - float(pay.get("amount", 0))
+            updated = 0
+            for sid, bal in sup_balances.items():
+                if db.update("suppliers", sid, {"balance": round(bal, 2)}, biz_id):
+                    updated += 1
+            if updated:
+                results.append({"label": "🔢 Supplier balances updated", "imported": updated, "errors": 0})
+                logger.info(f"[SAGE DROP] Supplier balances: {updated} updated")
+        except Exception as e:
+            logger.error(f"[SAGE DROP] Supplier balance update failed: {e}")
     
     elapsed = time.time() - t0
     
