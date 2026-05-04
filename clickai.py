@@ -29140,24 +29140,38 @@ def api_business_wipe_transactions():
         
         for tbl in WIPE_TRANSACTION_TABLES:
             try:
+                # Step 1: try to count what's there for THIS business (informational)
                 rows = db.get(tbl, {"business_id": biz_id}, limit=10000) or []
-                if not rows:
-                    per_table[tbl] = {"before": 0, "deleted": 0, "failed": 0}
-                    continue
-                ids = [r.get("id") for r in rows if r.get("id")]
-                count_before = len(ids)
+                count_before = len(rows)
                 total_before += count_before
                 
-                if not ids:
-                    per_table[tbl] = {"before": count_before, "deleted": 0, "failed": 0}
-                    continue
+                # Step 2: delete directly via REST filter — works even if the GET above
+                # silently returned 0 rows due to column quirks. Supabase will return a
+                # clear error if the table or business_id column doesn't exist.
+                delete_url = f"{db.url}/rest/v1/{tbl}?business_id=eq.{biz_id}"
+                delete_headers = {**db.headers, "Prefer": "return=representation"}
+                resp = requests.delete(delete_url, headers=delete_headers, timeout=60)
                 
-                success, failed = db.delete_many(tbl, ids, biz_id)
-                per_table[tbl] = {"before": count_before, "deleted": success, "failed": failed}
-                total_deleted += success
-                total_failed += failed
-                
-                logger.warning(f"[WIPE] {tbl}: deleted {success}/{count_before} (failed={failed})")
+                if resp.status_code in (200, 204):
+                    # 200 returns the deleted rows; 204 = no content but success
+                    try:
+                        deleted_rows = resp.json() if resp.status_code == 200 else []
+                        deleted_count = len(deleted_rows) if isinstance(deleted_rows, list) else 0
+                    except Exception:
+                        deleted_count = 0
+                    # If 204 (no content), we trust the count_before from step 1
+                    if resp.status_code == 204 and deleted_count == 0:
+                        deleted_count = count_before
+                    per_table[tbl] = {"before": count_before, "deleted": deleted_count, "failed": 0}
+                    total_deleted += deleted_count
+                    logger.warning(f"[WIPE] {tbl}: deleted {deleted_count} rows (status={resp.status_code})")
+                else:
+                    # 404 = table missing, 400 = column missing, etc. Log loudly so
+                    # we know which tables didn't get cleared.
+                    err_text = resp.text[:200] if resp.text else f"status {resp.status_code}"
+                    per_table[tbl] = {"before": count_before, "deleted": 0, "failed": count_before, "error": err_text}
+                    total_failed += count_before
+                    logger.error(f"[WIPE] {tbl}: DELETE failed status={resp.status_code} body={err_text}")
             except Exception as e:
                 # A missing table or a column quirk should not abort the whole wipe.
                 logger.error(f"[WIPE] {tbl}: error {e}")
