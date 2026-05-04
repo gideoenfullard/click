@@ -6071,6 +6071,20 @@ def register_pos_routes(app, db, login_required, Auth, render_page,
                 </div>
             '''
         
+        # Rounding details (pre-built to avoid nested f-string in Python 3.11)
+        rounding_html = ""
+        rounding_val = float(sale.get("rounding", 0) or 0)
+        if abs(rounding_val) >= 0.01:
+            sale_total_val = float(sale.get("total", 0))
+            rounding_sign = "+" if rounding_val >= 0 else "-"
+            rounding_abs = abs(rounding_val)
+            rounding_html = f'''<div style="display:flex;justify-content:space-between;font-size:13px;color:#666;padding:2px 0;">
+                        <span>Sub-total</span><span>R{sale_total_val:.2f}</span>
+                    </div>
+                    <div style="display:flex;justify-content:space-between;font-size:13px;color:#666;padding:2px 0;">
+                        <span>Rounding</span><span>{rounding_sign}R{rounding_abs:.2f}</span>
+                    </div>'''
+        
         # Build slip HTML matching POS format exactly
         content = f'''
         <div style="max-width:500px;margin:0 auto;">
@@ -6102,12 +6116,7 @@ def register_pos_routes(app, db, login_required, Auth, render_page,
                     <div style="display:flex;justify-content:space-between;font-size:13px;color:#666;padding:2px 0;">
                         <span>VAT (15%)</span><span>R{float(sale.get("vat", 0)):.2f}</span>
                     </div>
-                    {f'''<div style="display:flex;justify-content:space-between;font-size:13px;color:#666;padding:2px 0;">
-                        <span>Sub-total</span><span>R{float(sale.get("total", 0)):.2f}</span>
-                    </div>
-                    <div style="display:flex;justify-content:space-between;font-size:13px;color:#666;padding:2px 0;">
-                        <span>Rounding</span><span>{"+" if float(sale.get("rounding", 0)) >= 0 else "-"}R{abs(float(sale.get("rounding", 0))):.2f}</span>
-                    </div>''' if abs(float(sale.get("rounding", 0) or 0)) >= 0.01 else ''}
+                    {rounding_html}
                     <div style="display:flex;justify-content:space-between;font-size:22px;font-weight:bold;margin-top:6px;">
                         <span>TOTAL</span><span>R{float(sale.get("payment_total") or sale.get("total", 0)):.2f}</span>
                     </div>
