@@ -29105,7 +29105,7 @@ def api_business_wipe_transactions():
     Owner ONLY. Requires {"confirm": "WIPE ALL DATA"} in request body.
     
     Preserved (master data and setup):
-      - customers, suppliers (master data — balances are calculated from source documents)
+      - customers, suppliers (records kept; 'balance' field reset to 0)
       - stock_items, stock_categories (master data — re-import via Sage CSV if needed)
       - employees, employment_contracts, hr_documents
       - bank_accounts (account setup, NOT transactions)
@@ -29116,6 +29116,10 @@ def api_business_wipe_transactions():
     gl_transactions, journal_entries, AND chart_of_accounts/accounts —
     Sage stores opening_balance/debit/credit on each COA row, so a fresh
     Sage import requires the COA itself to be wiped first).
+    
+    Reset to 0: customers.balance, suppliers.balance — these stored fields
+    are read directly by Debtors/Creditors reports and the TB live fallback,
+    so transactional wipe alone leaves stale balances visible.
     """
     try:
         user = Auth.get_current_user()
@@ -29194,6 +29198,33 @@ def api_business_wipe_transactions():
         except Exception:
             pass
         
+        # Reset customer/supplier balance fields to 0 (records themselves are kept).
+        # Debtors and Creditors reports read the stored 'balance' field directly,
+        # so transactional wipe alone leaves stale balances. Bulk PATCH per table
+        # via Supabase REST = one call updates all rows for this business.
+        balance_reset = {}
+        for tbl in ("customers", "suppliers"):
+            try:
+                patch_url = f"{db.url}/rest/v1/{tbl}?business_id=eq.{biz_id}"
+                patch_headers = {**db.headers, "Prefer": "return=representation"}
+                resp = requests.patch(patch_url, headers=patch_headers,
+                                      json={"balance": 0}, timeout=60)
+                if resp.status_code in (200, 204):
+                    try:
+                        updated_rows = resp.json() if resp.status_code == 200 else []
+                        n = len(updated_rows) if isinstance(updated_rows, list) else 0
+                    except Exception:
+                        n = 0
+                    balance_reset[tbl] = n
+                    logger.warning(f"[WIPE] {tbl} balance reset: {n} rows (status={resp.status_code})")
+                else:
+                    err_text = resp.text[:200] if resp.text else f"status {resp.status_code}"
+                    balance_reset[tbl] = {"error": err_text}
+                    logger.error(f"[WIPE] {tbl} balance reset failed status={resp.status_code} body={err_text}")
+            except Exception as e:
+                balance_reset[tbl] = {"error": str(e)[:120]}
+                logger.error(f"[WIPE] {tbl} balance reset error: {e}")
+        
         logger.warning(f"[WIPE] DONE biz={biz_id} ({biz_name}): "
                        f"deleted={total_deleted}, failed={total_failed}, "
                        f"tables_processed={len(WIPE_TRANSACTION_TABLES)}")
@@ -29212,6 +29243,7 @@ def api_business_wipe_transactions():
             "failed": total_failed,
             "total_before": total_before,
             "tables": per_table,
+            "balance_reset": balance_reset,
             "message": f"Wiped {total_deleted} transactional records across {len(WIPE_TRANSACTION_TABLES)} tables"
         })
     except Exception as e:
