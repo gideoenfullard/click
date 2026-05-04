@@ -29055,6 +29055,8 @@ WIPE_TRANSACTION_TABLES = [
     "journal_entries",
     "journals",
     "allocation_log",
+    "gl_entries",       # Manual GL postings (PayFast etc.)
+    "gl_transactions",  # Sage GL upload via Smart Import
     # Stock movements (NOT stock_categories, NOT stock_items themselves —
     # the user has already cleared customers/suppliers/stock manually)
     "stock_movements",
@@ -29100,13 +29102,15 @@ def api_business_wipe_transactions():
     
     Preserved (Sage will re-import or stays as setup):
       - chart_of_accounts / accounts (GL codes)
+      - customers, suppliers (master data — balances are calculated from source documents)
+      - stock_items, stock_categories (master data — re-import via Sage CSV if needed)
       - employees, employment_contracts, hr_documents
       - bank_accounts (account setup, NOT transactions)
-      - stock_categories
       - safety_files
       - businesses, users, team_members, subscriptions
     
-    Wiped: every table in WIPE_TRANSACTION_TABLES.
+    Wiped: every table in WIPE_TRANSACTION_TABLES (includes gl_entries and gl_transactions
+    so GL/TB/Debtor/Creditor reports are completely cleared).
     """
     try:
         user = Auth.get_current_user()
