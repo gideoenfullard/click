@@ -29,7 +29,8 @@ def register_purchases_routes(app, db, login_required, Auth, render_page,
                               has_reactor_hud, jarvis_hud_header, jarvis_techline,
                               RecordFactory, Email,
                               JARVIS_HUD_CSS, THEME_REACTOR_SKINS,
-                              calc_all_supplier_balances=None, calc_supplier_balance=None):
+                              calc_all_supplier_balances=None, calc_supplier_balance=None,
+                              build_linked_documents_panel=None):
     """Register all Supplier and Purchase routes with the Flask app."""
 
     # Import form helpers from clickai module level (defined in clickai.py)
