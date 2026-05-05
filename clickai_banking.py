@@ -2007,7 +2007,12 @@ Return ONLY the JSON array. No markdown, no explanation."""
             # ═══════════════════════════════════════════════════════════════
             txns_to_save = []
             
-            for row in data_rows:
+            # Anchor a base timestamp so each txn's created_at = base + idx microseconds.
+            # Guarantees statement-reading order is preserved exactly in created_at.
+            from datetime import timedelta as _td_seq
+            _seq_base = datetime.utcnow()
+            
+            for idx, row in enumerate(data_rows):
                 try:
                     txn_date = row[date_col] if date_col is not None else today()
                     description = row[desc_col] if desc_col is not None else ""
@@ -2364,7 +2369,7 @@ Return ONLY the JSON array. No markdown, no explanation."""
                         "match_reference": match_reference,
                         "matched": match_confidence >= 0.85,  # Auto-approve high confidence
                         "auto_matched": match_confidence >= 0.85,
-                        "created_at": now()
+                        "created_at": (_seq_base + _td_seq(microseconds=idx)).isoformat() + 'Z'
                     }
                     # Persist combo-match invoice IDs so UI can pre-select them on confirm
                     if combo_invoice_ids:
