@@ -1126,10 +1126,19 @@ def register_invoicing_routes(app, db, login_required, Auth, render_page,
         async function sendInvoiceEmail() {{
             const emailField = document.getElementById('emailTo').value.trim();
             // Support multiple comma-separated emails
-            const emails = emailField.split(',').map(e => e.trim()).filter(e => e.includes('@'));
+            const emails = emailField.split(',').map(e => e.trim()).filter(e => e.length > 0);
             if (emails.length === 0) {{
                 alert('Please enter at least one valid email address');
                 return;
+            }}
+            
+            // Basic client-side validation — catch obvious problems before sending
+            const emailPattern = /^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\\.[A-Za-z]{{2,}}$/;
+            const invalid = emails.filter(e => !emailPattern.test(e));
+            if (invalid.length > 0) {{
+                if (!confirm('These look invalid:\\n\\n' + invalid.join('\\n') + '\\n\\nSend anyway? (Invalid ones will be skipped)')) {{
+                    return;
+                }}
             }}
             
             const btn = event.target;
@@ -1142,15 +1151,24 @@ def register_invoicing_routes(app, db, login_required, Auth, render_page,
                     headers: {{'Content-Type': 'application/json'}},
                     body: JSON.stringify({{to_email: emails.join(',')}})
                 }});
-                const result = await response.json();
+                
+                // Read raw text first so we can give a useful error if response is empty
+                const rawText = await response.text();
+                let result;
+                try {{
+                    result = rawText ? JSON.parse(rawText) : {{success: false, error: 'Empty response from server (HTTP ' + response.status + ')'}};
+                }} catch (parseErr) {{
+                    result = {{success: false, error: 'Server returned invalid response (HTTP ' + response.status + '). Check email settings or try again.'}};
+                }}
+                
                 if (result.success) {{
-                    alert('✅ Invoice emailed to ' + emails.join(', '));
+                    alert('✅ ' + (result.message || 'Invoice emailed to ' + emails.join(', ')));
                     closeEmailModal();
                 }} else {{
                     alert('❌ ' + (result.error || 'Failed to send email'));
                 }}
             }} catch (err) {{
-                alert('❌ Error: ' + err.message);
+                alert('❌ Network error: ' + err.message);
             }} finally {{
                 btn.disabled = false;
                 btn.textContent = 'Send Email';
@@ -1412,9 +1430,32 @@ def register_invoicing_routes(app, db, login_required, Auth, render_page,
             data = request.get_json()
             to_email = data.get("to_email", "").strip()
             
-            # Support multiple comma-separated emails
-            if not to_email or "@" not in to_email:
-                return jsonify({"success": False, "error": "Valid email address required"})
+            # Support multiple comma-separated emails — validate EACH one
+            if not to_email:
+                return jsonify({"success": False, "error": "Email address required"})
+            
+            # Split, trim, deduplicate, and validate each email individually
+            import re as _re_email
+            _email_pattern = _re_email.compile(r'^[A-Za-z0-9._%+\-]+@[A-Za-z0-9.\-]+\.[A-Za-z]{2,}$')
+            
+            raw_emails = [e.strip() for e in to_email.split(",") if e.strip()]
+            valid_emails = []
+            invalid_emails = []
+            seen = set()
+            for e in raw_emails:
+                if e.lower() in seen:
+                    continue
+                seen.add(e.lower())
+                if _email_pattern.match(e):
+                    valid_emails.append(e)
+                else:
+                    invalid_emails.append(e)
+            
+            if not valid_emails:
+                return jsonify({
+                    "success": False,
+                    "error": f"No valid email addresses. Invalid: {', '.join(invalid_emails)}" if invalid_emails else "No valid email addresses provided"
+                })
             
             business = Auth.get_current_business()
             biz_id = business.get("id") if business else None
@@ -1534,18 +1575,51 @@ def register_invoicing_routes(app, db, login_required, Auth, render_page,
                 'content_type': 'text/html'
             }
             
-            # Send email
-            success = Email.send(to_email, subject, body_html, body_text, business=business, attachments=[inv_attachment])
+            # Send to each recipient INDIVIDUALLY so one bad address doesn't block the others
+            sent_to = []
+            failed_to = []
+            for recipient in valid_emails:
+                try:
+                    success = Email.send(recipient, subject, body_html, body_text, business=business, attachments=[inv_attachment])
+                    if success:
+                        sent_to.append(recipient)
+                        logger.info(f"[EMAIL] Invoice {inv_no} sent to {recipient}")
+                    else:
+                        failed_to.append(recipient)
+                        logger.warning(f"[EMAIL] Email.send returned False for {recipient}")
+                except Exception as send_err:
+                    failed_to.append(recipient)
+                    logger.error(f"[EMAIL] Exception sending to {recipient}: {send_err}")
             
-            if success:
-                logger.info(f"[EMAIL] Invoice {inv_no} sent to {to_email}")
-                return jsonify({"success": True, "message": f"Invoice sent to {to_email}"})
+            # Build response — succeed if at least one went through
+            if sent_to and not failed_to and not invalid_emails:
+                return jsonify({"success": True, "message": f"Invoice sent to {', '.join(sent_to)}"})
+            elif sent_to:
+                # Partial success
+                msg_parts = [f"Sent to: {', '.join(sent_to)}"]
+                if failed_to:
+                    msg_parts.append(f"Failed: {', '.join(failed_to)}")
+                if invalid_emails:
+                    msg_parts.append(f"Invalid: {', '.join(invalid_emails)}")
+                return jsonify({"success": True, "message": " | ".join(msg_parts), "partial": True})
             else:
-                return jsonify({"success": False, "error": "Failed to send email. Check SMTP settings in Settings page."})
+                # All failed
+                err_parts = []
+                if failed_to:
+                    err_parts.append(f"SMTP failed for: {', '.join(failed_to)}")
+                if invalid_emails:
+                    err_parts.append(f"Invalid addresses: {', '.join(invalid_emails)}")
+                if not err_parts:
+                    err_parts.append("Failed to send. Check SMTP settings.")
+                return jsonify({"success": False, "error": " | ".join(err_parts)})
             
         except Exception as e:
-            logger.error(f"[EMAIL] Error sending invoice: {e}")
-            return jsonify({"success": False, "error": str(e)})
+            logger.error(f"[EMAIL] Error sending invoice: {e}", exc_info=True)
+            # Always return JSON so the frontend doesn't get "Unexpected end of JSON input"
+            try:
+                return jsonify({"success": False, "error": f"Server error: {str(e)}"}), 200
+            except Exception:
+                return jsonify({"success": False, "error": "Unexpected server error"}), 200
     
     
     # ═══════════════════════════════════════════════════════════════════════════════
