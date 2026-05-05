@@ -173,6 +173,18 @@ def register_banking_routes(app, db, login_required, Auth, render_page,
                 if _combo_ids:
                     combo_attrs = f' data-combo-invoices="{",".join(_combo_ids)}" data-combo-customer="{_combo_cust}"'
             
+            # Running balance (from bank statement) — show in dim color so it doesn't compete with debit/credit
+            running_bal = txn.get("running_balance")
+            if running_bal is not None:
+                try:
+                    rb = float(running_bal)
+                    bal_color = "var(--red)" if rb < 0 else "var(--text-muted)"
+                    balance_html = f'<span style="color:{bal_color};">{money(rb)}</span>'
+                except (ValueError, TypeError):
+                    balance_html = '<span style="color:var(--text-muted);">-</span>'
+            else:
+                balance_html = '<span style="color:var(--text-muted);">-</span>'
+            
             return f'''
             <tr data-id="{txn_id}" data-debit="{debit}" data-credit="{credit}"{combo_attrs}>
                 <td style="white-space:nowrap;">{txn.get("date", "-")}</td>
@@ -182,6 +194,7 @@ def register_banking_routes(app, db, login_required, Auth, render_page,
                 </td>
                 <td style="text-align:right;color:var(--red);white-space:nowrap;">{money(debit) if debit > 0 else "-"}</td>
                 <td style="text-align:right;color:var(--green);white-space:nowrap;">{money(credit) if credit > 0 else "-"}</td>
+                <td style="text-align:right;white-space:nowrap;font-size:12px;">{balance_html}</td>
                 <td>{action_html}</td>
             </tr>
             '''
@@ -239,12 +252,25 @@ def register_banking_routes(app, db, login_required, Auth, render_page,
             if matched_invoice_num:
                 inv_link_html = f'<a href="/invoices/{matched_invoice_id}" style="font-size:11px;color:var(--primary);text-decoration:none;margin-top:2px;display:inline-block;" title="View invoice">{matched_invoice_num} →</a>'
             
+            # Running balance for done row
+            running_bal_done = t.get("running_balance")
+            if running_bal_done is not None:
+                try:
+                    rb_done = float(running_bal_done)
+                    bal_done_color = "var(--red)" if rb_done < 0 else "var(--text-muted)"
+                    balance_done_html = f'<span style="color:{bal_done_color};">{money(rb_done)}</span>'
+                except (ValueError, TypeError):
+                    balance_done_html = '<span style="color:var(--text-muted);">-</span>'
+            else:
+                balance_done_html = '<span style="color:var(--text-muted);">-</span>'
+            
             done_rows_html += f'''
             <tr data-id="{txn_id}">
                 <td style="white-space:nowrap;">{t.get("date", "-")}</td>
                 <td><div style="max-width:300px;">{desc}</div></td>
                 <td style="text-align:right;color:var(--red);white-space:nowrap;">{money(debit) if debit > 0 else "-"}</td>
                 <td style="text-align:right;color:var(--green);white-space:nowrap;">{money(credit) if credit > 0 else "-"}</td>
+                <td style="text-align:right;white-space:nowrap;font-size:12px;">{balance_done_html}</td>
                 <td>{cat_html}
                     {entity_html}
                     {inv_link_html}
@@ -351,11 +377,12 @@ def register_banking_routes(app, db, login_required, Auth, render_page,
                             <th>Description</th>
                             <th style="text-align:right;width:100px;">Out</th>
                             <th style="text-align:right;width:100px;">In</th>
+                            <th style="text-align:right;width:120px;">Balance</th>
                             <th style="width:180px;">Action</th>
                         </tr>
                     </thead>
                     <tbody>
-                        {auto_rows or "<tr><td colspan='5' style='text-align:center;padding:40px;color:var(--text-muted);'>🎉 No auto-matched transactions waiting for approval!</td></tr>"}
+                        {auto_rows or "<tr><td colspan='6' style='text-align:center;padding:40px;color:var(--text-muted);'>🎉 No auto-matched transactions waiting for approval!</td></tr>"}
                     </tbody>
                 </table>
             </div>
@@ -375,11 +402,12 @@ def register_banking_routes(app, db, login_required, Auth, render_page,
                             <th>Description</th>
                             <th style="text-align:right;width:100px;">Out</th>
                             <th style="text-align:right;width:100px;">In</th>
+                            <th style="text-align:right;width:120px;">Balance</th>
                             <th style="width:180px;">Action</th>
                         </tr>
                     </thead>
                     <tbody>
-                        {suggested_rows or "<tr><td colspan='5' style='text-align:center;padding:40px;color:var(--text-muted);'>No suggestions pending</td></tr>"}
+                        {suggested_rows or "<tr><td colspan='6' style='text-align:center;padding:40px;color:var(--text-muted);'>No suggestions pending</td></tr>"}
                     </tbody>
                 </table>
             </div>
@@ -399,11 +427,12 @@ def register_banking_routes(app, db, login_required, Auth, render_page,
                             <th>Description</th>
                             <th style="text-align:right;width:100px;">Out</th>
                             <th style="text-align:right;width:100px;">In</th>
+                            <th style="text-align:right;width:120px;">Balance</th>
                             <th style="width:180px;">Category</th>
                         </tr>
                     </thead>
                     <tbody>
-                        {needs_rows or "<tr><td colspan='5' style='text-align:center;padding:40px;color:var(--green);'>🎉 Nothing needs your attention!</td></tr>"}
+                        {needs_rows or "<tr><td colspan='6' style='text-align:center;padding:40px;color:var(--green);'>🎉 Nothing needs your attention!</td></tr>"}
                     </tbody>
                 </table>
             </div>
@@ -423,11 +452,12 @@ def register_banking_routes(app, db, login_required, Auth, render_page,
                             <th>Description</th>
                             <th style="text-align:right;width:100px;">Out</th>
                             <th style="text-align:right;width:100px;">In</th>
+                            <th style="text-align:right;width:120px;">Balance</th>
                             <th style="width:150px;">Category</th>
                         </tr>
                     </thead>
                     <tbody>
-                        {done_rows_html or "<tr><td colspan='5' style='text-align:center;padding:40px;color:var(--text-muted);'>No allocated transactions yet. Categorize transactions above and they will appear here.</td></tr>"}
+                        {done_rows_html or "<tr><td colspan='6' style='text-align:center;padding:40px;color:var(--text-muted);'>No allocated transactions yet. Categorize transactions above and they will appear here.</td></tr>"}
                     </tbody>
                 </table>
             </div>
@@ -1643,6 +1673,7 @@ Return ONLY the JSON array. No markdown, no explanation."""
                             desc_col = 1
                             debit_col = 2
                             credit_col = 3
+                            balance_col = 4
                             amount_col = None
                             
                             logger.info(f"[BANK IMPORT] AI extracted {len(data_rows)} total transactions from PDF")
@@ -1743,6 +1774,7 @@ Return ONLY the JSON array. No markdown, no explanation."""
                         desc_col = 1
                         debit_col = 2
                         credit_col = 3
+                        balance_col = 4
                         amount_col = None
                         
                         if not data_rows:
@@ -1778,7 +1810,7 @@ Return ONLY the JSON array. No markdown, no explanation."""
                 data_rows = [[cell_str(cell) for cell in row] for row in data_rows]
                 
                 # Find columns
-                date_col = desc_col = amount_col = debit_col = credit_col = None
+                date_col = desc_col = amount_col = debit_col = credit_col = balance_col = None
                 
                 for i, h in enumerate(headers):
                     if "date" in h:
@@ -1791,6 +1823,8 @@ Return ONLY the JSON array. No markdown, no explanation."""
                         debit_col = i
                     elif "credit" in h:
                         credit_col = i
+                    elif "balance" in h:
+                        balance_col = i
             
             # ═══════════════════════════════════════════════════════════════
             # GET DATA FOR SMART MATCHING
@@ -1995,6 +2029,16 @@ Return ONLY the JSON array. No markdown, no explanation."""
                         amount = credit - debit
                     else:
                         continue
+                    
+                    # Extract running balance if available (from PDF/AI scan or CSV with balance column)
+                    running_balance = None
+                    if balance_col is not None and balance_col < len(row):
+                        try:
+                            bal_str = str(row[balance_col]).replace(",", "").replace("R", "").replace(" ", "").strip()
+                            if bal_str and bal_str != "0" and bal_str != "0.0":
+                                running_balance = round(float(bal_str), 2)
+                        except (ValueError, TypeError):
+                            running_balance = None
                     
                     if not description:
                         continue
@@ -2304,6 +2348,7 @@ Return ONLY the JSON array. No markdown, no explanation."""
                         "amount": amount,
                         "debit": debit,
                         "credit": credit,
+                        "running_balance": running_balance,
                         "match_type": match_type,
                         "suggested_category": match_category,
                         "suggestion_confidence": match_confidence,
