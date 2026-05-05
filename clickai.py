@@ -53284,7 +53284,14 @@ def api_scan_save_bank_statement():
         skipped = 0
         errors = []
         
-        for txn in transactions:
+        # Anchor a base timestamp once, then give each txn created_at = base + idx microseconds.
+        # This guarantees the statement-reading order is preserved EXACTLY in created_at,
+        # so the Banking page sort can show transactions in statement order within a day.
+        # Tested 2026-05-05: balance field is unchanged by this — only created_at changes.
+        from datetime import timedelta as _td_seq
+        _seq_base = datetime.utcnow()
+        
+        for idx, txn in enumerate(transactions):
             description = str(txn.get("description", "")).strip()
             date = str(txn.get("date", "")).strip()
             
@@ -53327,7 +53334,7 @@ def api_scan_save_bank_statement():
                 "bank_name": bank_name,
                 "source": "scan",
                 "matched": False,
-                "created_at": now()
+                "created_at": (_seq_base + _td_seq(microseconds=idx)).isoformat() + 'Z'
             }
             
             success, result = db.save("bank_transactions", bank_txn)
