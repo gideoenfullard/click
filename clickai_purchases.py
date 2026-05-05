@@ -29,8 +29,7 @@ def register_purchases_routes(app, db, login_required, Auth, render_page,
                               has_reactor_hud, jarvis_hud_header, jarvis_techline,
                               RecordFactory, Email,
                               JARVIS_HUD_CSS, THEME_REACTOR_SKINS,
-                              calc_all_supplier_balances=None, calc_supplier_balance=None,
-                              build_linked_documents_panel=None):
+                              calc_all_supplier_balances=None, calc_supplier_balance=None):
     """Register all Supplier and Purchase routes with the Flask app."""
 
     # Import form helpers from clickai module level (defined in clickai.py)
@@ -1910,16 +1909,6 @@ def register_purchases_routes(app, db, login_required, Auth, render_page,
         sp_row = f'<tr><td style="padding:4px 0;color:#888;">Sales Person:</td><td style="padding:4px 0;">{sp_val}</td></tr>' if sp_val else ""
         ref_row = f'<tr><td style="padding:4px 0;color:#888;">Reference:</td><td style="padding:4px 0;">{ref_val}</td></tr>' if ref_val else ""
         
-        # Build "Linked Documents" panel — gives one-click access to GRVs, supplier invoices, supplier
-        linked_docs_html = ""
-        if build_linked_documents_panel:
-            try:
-                linked_docs_html = build_linked_documents_panel(db, biz_id, "purchase_order", po_id, po)
-                if linked_docs_html:
-                    linked_docs_html = '<div class="no-print">' + linked_docs_html + '</div>'
-            except Exception:
-                linked_docs_html = ""
-        
         content = f'''
         <div class="no-print" style="display:flex;justify-content:space-between;align-items:center;margin-bottom:20px;">
             <a href="/purchases" style="color:var(--text-muted);">← Back to Purchase Orders</a>
@@ -1928,8 +1917,6 @@ def register_purchases_routes(app, db, login_required, Auth, render_page,
                 {action_buttons}
             </div>
         </div>
-        
-        {linked_docs_html}
         
         <div class="card" id="poPrint" style="background:white;color:#333;padding:0;overflow:hidden;margin-bottom:20px;">
             <!-- TOP BAR -->
@@ -3428,14 +3415,6 @@ def register_purchases_routes(app, db, login_required, Auth, render_page,
             if _link:
                 _ref_display = _ref_display.replace(safe_string(_doc_num), f'<a href="{_link}" style="color:var(--primary);text-decoration:none;">{safe_string(_doc_num)}</a>')
         
-        # Build "Linked Documents" panel — gives one-click access to PO, GRV, supplier
-        linked_docs_html = ""
-        if build_linked_documents_panel:
-            try:
-                linked_docs_html = build_linked_documents_panel(db, biz_id, "supplier_invoice", invoice_id, invoice)
-            except Exception:
-                linked_docs_html = ""
-        
         content = f'''
         <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:20px;">
             <a href="{back_link}" style="color:var(--text-muted);">← Back</a>
@@ -3444,8 +3423,6 @@ def register_purchases_routes(app, db, login_required, Auth, render_page,
                 <span style="padding:6px 16px;border-radius:20px;font-size:13px;font-weight:700;color:white;background:{status_color};">{status.upper()}</span>
             </div>
         </div>
-        
-        {linked_docs_html}
         
         <div class="card">
             <div style="display:flex;justify-content:space-between;align-items:start;">
@@ -3554,6 +3531,7 @@ def register_purchases_routes(app, db, login_required, Auth, render_page,
     
 
 
+    @app.route("/api/supplier/gl-suggest", methods=["POST"])
     @login_required
     def api_supplier_gl_suggest():
         """GL account suggestion — sends full account list to AI for smart matching"""
