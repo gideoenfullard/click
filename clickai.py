@@ -53284,13 +53284,7 @@ def api_scan_save_bank_statement():
         skipped = 0
         errors = []
         
-        # Anchor a base timestamp once. Each txn gets base + idx microseconds so
-        # the statement-reading order is preserved EXACTLY in created_at, even on
-        # very fast machines where opportunistic now() calls could collide.
-        from datetime import timedelta as _td_seq
-        _seq_base = datetime.utcnow()
-        
-        for idx, txn in enumerate(transactions):
+        for txn in transactions:
             description = str(txn.get("description", "")).strip()
             date = str(txn.get("date", "")).strip()
             
@@ -53333,7 +53327,7 @@ def api_scan_save_bank_statement():
                 "bank_name": bank_name,
                 "source": "scan",
                 "matched": False,
-                "created_at": (_seq_base + _td_seq(microseconds=idx)).isoformat() + 'Z'
+                "created_at": now()
             }
             
             success, result = db.save("bank_transactions", bank_txn)
