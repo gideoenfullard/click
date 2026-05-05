@@ -141,6 +141,49 @@ def register_cashup_routes(app, db, login_required, Auth, generate_id, now, toda
         team_json = json.dumps([{"id": t.get("id", ""), "name": t.get("name", t.get("email", ""))} for t in team], default=str)
         _safe_user_name = (user_name or "").replace("'", "").replace('"', '').replace("&", "")
 
+        # ────────────────────────────────────────────────────────────────────
+        # MY SALES TODAY: build a per-sale list filtered to the logged-in user.
+        # Used by the "My Sales Today" tab so a cashier (Isaac, Piet, …) can
+        # see exactly what they rang up before doing a blind cash up.
+        # Match logic: cashier_id, salesman, or created_by == current user_id.
+        # ────────────────────────────────────────────────────────────────────
+        my_sales_list = []
+        my_cash = my_card = my_account = 0.0
+        for s in sales:
+            _sid = s.get("cashier_id") or s.get("salesman") or s.get("created_by") or ""
+            if user_id and str(_sid) == str(user_id):
+                _amt = float(s.get("total", 0) or 0)
+                _pm = (s.get("payment_method") or "cash").lower()
+                if _pm == "cash":
+                    my_cash += _amt
+                elif _pm == "card":
+                    my_card += _amt
+                elif _pm == "account":
+                    my_account += _amt
+                # Time of sale — strip date if present
+                _tm = str(s.get("time") or s.get("created_at") or "")
+                if "T" in _tm:
+                    _tm = _tm.split("T")[1][:5]
+                elif " " in _tm:
+                    _tm = _tm.split(" ")[-1][:5]
+                else:
+                    _tm = _tm[:5]
+                my_sales_list.append({
+                    "id": s.get("id", ""),
+                    "number": s.get("sale_number") or s.get("invoice_number") or s.get("number") or "-",
+                    "time": _tm,
+                    "total": _amt,
+                    "payment_method": _pm,
+                    "customer_name": s.get("customer_name") or s.get("customer") or "Walk-in",
+                })
+        # Sort by time so newest sale appears at the top
+        my_sales_list.sort(key=lambda x: x.get("time", ""), reverse=True)
+        my_total = my_cash + my_card + my_account
+        my_count = len(my_sales_list)
+        my_sales_json = json.dumps(my_sales_list, default=str)
+        # Pretty first-name version of current user for the tab header
+        _my_first = (user_name or "Me").split()[0] if user_name else "Me"
+
         is_manager = user_role in ("owner", "admin", "manager")
 
         _submitted_html = '<div style="text-align:center;padding:14px;color:var(--green);font-family:Orbitron,monospace;font-size:0.7rem;letter-spacing:2px;">✅ CASH UP SUBMITTED</div>'
@@ -769,13 +812,19 @@ select.form-input {{
 
     <!-- TAB SWITCHER -->
     <div class="tab-bar">
-        <button class="tab-btn active" onclick="switchTab('today')">Today</button>
+        <button class="tab-btn active" onclick="switchTab('mysales')">🛒 My Sales</button>
+        <button class="tab-btn" onclick="switchTab('today')">Today</button>
         {_sales_tab_btn}
         <button class="tab-btn" onclick="switchTab('weekly')">Weekly History</button>
     </div>
 
+    <!-- TAB: MY SALES TODAY (always visible, only shows logged-in user's sales) -->
+    <div class="tab-content active" id="tab-mysales">
+        <div id="mySalesContent"></div>
+    </div>
+
     <!-- TAB: TODAY'S HISTORY -->
-    <div class="tab-content active" id="tab-today">
+    <div class="tab-content" id="tab-today">
         <div id="historyList">
             <div class="empty-state" id="emptyHistory">
                 <div class="icon">🧾</div>
@@ -820,6 +869,15 @@ const USER_ALREADY_SUBMITTED = {'true' if user_already_submitted else 'false'};
 const CASHIER_SALES = {cashier_sales_json};
 const SALESMAN_SALES = {salesman_sales_json};
 
+// My Sales Today — totals + per-sale list for the logged-in user
+const MY_SALES = {my_sales_json};
+const MY_CASH = {my_cash:.2f};
+const MY_CARD = {my_card:.2f};
+const MY_ACCOUNT = {my_account:.2f};
+const MY_TOTAL = {my_total:.2f};
+const MY_COUNT = {my_count};
+const MY_FIRST_NAME = '{_my_first}';
+
 const DENOMINATIONS = [
     {{ label: 'R200', value: 200, type: 'note' }},
     {{ label: 'R100', value: 100, type: 'note' }},
@@ -841,6 +899,7 @@ document.addEventListener('DOMContentLoaded', () => {{
     renderHistory();
     buildXReadPerCashier();
     renderSalesmanBreakdown();
+    renderMySales();
     if (USER_ALREADY_SUBMITTED && !IS_MANAGER) {{
         // Already submitted — tabs handle showing history, nothing else needed
     }}
@@ -856,6 +915,98 @@ function buildDenomGrid() {{
                oninput="updateCashTotal()">
         <div class="denom-total" id="denomTotal_${{i}}">R0.00</div>
     `).join('');
+}}
+
+// Build the "My Sales Today" tab — totals + a list of every sale this user rang up.
+function renderMySales() {{
+    const container = document.getElementById('mySalesContent');
+    if (!container) return;
+
+    if (MY_COUNT === 0) {{
+        container.innerHTML = `
+            <div class="result-box" style="text-align:center;padding:30px;">
+                <div style="font-size:2rem;margin-bottom:8px;">🛒</div>
+                <div style="font-family:Orbitron,monospace;font-size:0.85rem;letter-spacing:2px;color:var(--text-dim);">
+                    NO SALES TODAY
+                </div>
+                <div style="margin-top:8px;color:var(--text-dim);font-size:0.85rem;">
+                    Hi ${{MY_FIRST_NAME}} — once you ring up a sale on POS it will appear here.
+                </div>
+            </div>`;
+        return;
+    }}
+
+    // Build the per-sale rows (most-recent first, matches the sort done server-side)
+    let rows = '';
+    MY_SALES.forEach(s => {{
+        let pmColor = 'var(--green)';
+        let pmLabel = 'Cash';
+        if (s.payment_method === 'card') {{ pmColor = 'var(--orange)'; pmLabel = 'Card'; }}
+        else if (s.payment_method === 'account') {{ pmColor = 'var(--accent)'; pmLabel = 'Account'; }}
+        rows += `
+        <tr>
+            <td style="padding:8px;color:var(--text-dim);font-family:monospace;">${{s.time || '—'}}</td>
+            <td style="padding:8px;font-weight:600;">${{s.number || '—'}}</td>
+            <td style="padding:8px;color:var(--text-dim);">${{s.customer_name || 'Walk-in'}}</td>
+            <td style="padding:8px;color:${{pmColor}};">${{pmLabel}}</td>
+            <td style="padding:8px;text-align:right;font-weight:700;">R${{(s.total || 0).toFixed(2)}}</td>
+        </tr>`;
+    }});
+
+    container.innerHTML = `
+        <!-- Header -->
+        <div style="text-align:center;margin-bottom:20px;">
+            <div style="font-family:Orbitron,monospace;font-size:0.75rem;letter-spacing:3px;color:var(--accent);">
+                ${{MY_FIRST_NAME.toUpperCase()}} • TODAY
+            </div>
+            <div style="color:var(--text-dim);font-size:0.85rem;margin-top:4px;">
+                ${{MY_COUNT}} sale${{MY_COUNT === 1 ? '' : 's'}} rung up today
+            </div>
+        </div>
+
+        <!-- Totals breakdown -->
+        <div class="result-box" style="margin-bottom:16px;">
+            <div class="detail-grid">
+                <div class="dl">💵 Cash</div>
+                <div class="dv" style="color:var(--green);font-weight:700;">R${{MY_CASH.toFixed(2)}}</div>
+                <div class="dl">💳 Card</div>
+                <div class="dv" style="color:var(--orange);font-weight:700;">R${{MY_CARD.toFixed(2)}}</div>
+                <div class="dl">📋 Account</div>
+                <div class="dv" style="color:var(--accent);font-weight:700;">R${{MY_ACCOUNT.toFixed(2)}}</div>
+            </div>
+            <div style="border-top:1px solid var(--border);margin-top:12px;padding-top:12px;display:flex;justify-content:space-between;align-items:center;">
+                <span style="font-family:Orbitron,monospace;font-size:0.9rem;letter-spacing:2px;color:var(--text);">TOTAL</span>
+                <span style="font-family:Orbitron,monospace;font-size:1.4rem;font-weight:900;color:var(--green);">R${{MY_TOTAL.toFixed(2)}}</span>
+            </div>
+        </div>
+
+        <!-- Slip list -->
+        <div class="result-box" style="padding:0;overflow:hidden;">
+            <div style="padding:12px 16px;background:var(--surface2);font-family:Orbitron,monospace;font-size:0.7rem;letter-spacing:2px;color:var(--text-dim);">
+                MY SALES — NEWEST FIRST
+            </div>
+            <div style="overflow-x:auto;">
+                <table style="width:100%;border-collapse:collapse;font-size:0.85rem;">
+                    <thead>
+                        <tr style="background:var(--surface);border-bottom:1px solid var(--border);">
+                            <th style="padding:8px;text-align:left;color:var(--text-dim);font-weight:500;">Time</th>
+                            <th style="padding:8px;text-align:left;color:var(--text-dim);font-weight:500;">Slip #</th>
+                            <th style="padding:8px;text-align:left;color:var(--text-dim);font-weight:500;">Customer</th>
+                            <th style="padding:8px;text-align:left;color:var(--text-dim);font-weight:500;">Method</th>
+                            <th style="padding:8px;text-align:right;color:var(--text-dim);font-weight:500;">Total</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        ${{rows}}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+
+        <!-- Helpful nudge for cashiers -->
+        <div style="text-align:center;margin-top:16px;color:var(--text-dim);font-size:0.8rem;">
+            💡 Compare these totals with your slips before doing your Blind Cash Up.
+        </div>`;
 }}
 
 // Build per-salesman sales breakdown
