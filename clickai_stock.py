@@ -60,7 +60,15 @@ _MARKUP_BY_CATEGORY = {
     "NUT": (1.00, "Bolts/Nuts/Pins"),
     "NUTS": (1.00, "Bolts/Nuts/Pins"),
     "BOLTS AND NUTS": (1.00, "Bolts/Nuts/Pins"),
+    "BOLT AND NUT": (1.00, "Bolts/Nuts/Pins"),
+    "BOLT AND NUTS": (1.00, "Bolts/Nuts/Pins"),
+    "BOLTS AND NUT": (1.00, "Bolts/Nuts/Pins"),
     "BOLTS & NUTS": (1.00, "Bolts/Nuts/Pins"),
+    "BOLT & NUT": (1.00, "Bolts/Nuts/Pins"),
+    "BOLT & NUTS": (1.00, "Bolts/Nuts/Pins"),
+    "BOLTS & NUT": (1.00, "Bolts/Nuts/Pins"),
+    "NUTS AND BOLTS": (1.00, "Bolts/Nuts/Pins"),
+    "NUT AND BOLT": (1.00, "Bolts/Nuts/Pins"),
     "FASTENER": (1.00, "Bolts/Nuts/Pins"),
     "FASTENERS": (1.00, "Bolts/Nuts/Pins"),
     "WASHER": (1.00, "Bolts/Nuts/Pins"),
@@ -89,7 +97,8 @@ _MARKUP_TABLE = [
 
 
 def _detect_markup_from_description(description):
-    """Return (markup_decimal, label) for a stock description or (None, None) if no rule matches."""
+    """Return (markup_decimal, label) for a stock description or (None, None) if no rule matches.
+    Note: returns the BASE markup. Admin fee is added by _detect_markup() at the top level."""
     if not description:
         return None, None
     desc_upper = str(description).upper()
@@ -99,24 +108,56 @@ def _detect_markup_from_description(description):
     return None, None
 
 
+# 2% admin fee added on top of EVERY base markup (Daphne's rule).
+# So Workwear base 45% becomes effective 47%, Bolts/Nuts base 100% becomes 102%, etc.
+_ADMIN_FEE = 0.02
+
+
+def _normalise_category(category):
+    """Normalise a category name so different typings of the same thing match.
+    Examples:
+      "BOLT _AND_ NUTS"     → "BOLT AND NUTS"
+      "BOLT-AND-NUT"        → "BOLT AND NUT"
+      "  bolts   and  nuts  " → "BOLTS AND NUTS"
+      "BOLT_AND_NUT"        → "BOLT AND NUT"
+    """
+    if not category:
+        return ""
+    s = str(category).upper().strip()
+    # Replace underscores and hyphens with spaces (keeps "&" alone, and keeps "/" for "BOLTS/NUTS")
+    s = re.sub(r'[_\-]+', ' ', s)
+    # Collapse multiple spaces into one
+    s = re.sub(r'\s+', ' ', s)
+    return s.strip()
+
+
 def _detect_markup(description="", category=""):
     """
     Resolve markup using the priority order:
-      1. Exact category-name match (case-insensitive, ignores 'General' / blank)
+      1. Exact category-name match (case-insensitive, normalised, ignores 'General' / blank)
       2. Description keyword fallback
     Returns (markup_decimal, label, source) where source is "category" or "description"
     so the caller can log which path was used.
+    The returned markup ALREADY INCLUDES the 2% admin fee (so 45% Workwear → 0.47).
     """
-    cat = (category or "").strip().upper()
-    # Skip placeholder categories that carry no meaning
+    cat = _normalise_category(category)
+    base_m = None
+    base_lbl = None
+    src = None
+    # Priority 1: exact category match
     if cat and cat not in ("GENERAL", "UNCATEGORIZED", "UNCATEGORISED", ""):
         if cat in _MARKUP_BY_CATEGORY:
-            m, lbl = _MARKUP_BY_CATEGORY[cat]
-            return m, lbl, "category"
-    m, lbl = _detect_markup_from_description(description)
-    if m is not None:
-        return m, lbl, "description"
-    return None, None, None
+            base_m, base_lbl = _MARKUP_BY_CATEGORY[cat]
+            src = "category"
+    # Priority 2: description keyword fallback
+    if base_m is None:
+        m, lbl = _detect_markup_from_description(description)
+        if m is not None:
+            base_m, base_lbl, src = m, lbl, "description"
+    if base_m is None:
+        return None, None, None
+    # Add admin fee on top of the base markup
+    return round(base_m + _ADMIN_FEE, 4), base_lbl, src
 
 
 # JavaScript version of the same logic — kept in sync with the Python helpers above.
@@ -150,7 +191,15 @@ const MARKUP_BY_CATEGORY = {
     "NUT": {markup:1.00, label:"Bolts/Nuts/Pins"},
     "NUTS": {markup:1.00, label:"Bolts/Nuts/Pins"},
     "BOLTS AND NUTS": {markup:1.00, label:"Bolts/Nuts/Pins"},
+    "BOLT AND NUT": {markup:1.00, label:"Bolts/Nuts/Pins"},
+    "BOLT AND NUTS": {markup:1.00, label:"Bolts/Nuts/Pins"},
+    "BOLTS AND NUT": {markup:1.00, label:"Bolts/Nuts/Pins"},
     "BOLTS & NUTS": {markup:1.00, label:"Bolts/Nuts/Pins"},
+    "BOLT & NUT": {markup:1.00, label:"Bolts/Nuts/Pins"},
+    "BOLT & NUTS": {markup:1.00, label:"Bolts/Nuts/Pins"},
+    "BOLTS & NUT": {markup:1.00, label:"Bolts/Nuts/Pins"},
+    "NUTS AND BOLTS": {markup:1.00, label:"Bolts/Nuts/Pins"},
+    "NUT AND BOLT": {markup:1.00, label:"Bolts/Nuts/Pins"},
     "FASTENER": {markup:1.00, label:"Bolts/Nuts/Pins"},
     "FASTENERS": {markup:1.00, label:"Bolts/Nuts/Pins"},
     "WASHER": {markup:1.00, label:"Bolts/Nuts/Pins"},
@@ -180,17 +229,36 @@ function detectMarkupFromDescription(desc) {
     }
     return {markup: null, label: null};
 }
+
+// 2% admin fee added on top of EVERY base markup
+const ADMIN_FEE = 0.02;
+
+// Normalise a category name so "BOLT _AND_ NUTS", "BOLT-AND-NUT", "  bolts and nuts  "
+// all match the same dictionary key. Keep this in sync with _normalise_category() in Python.
+function normaliseCategory(cat) {
+    if (!cat) return "";
+    let s = String(cat).toUpperCase().trim();
+    s = s.replace(/[_\-]+/g, ' ');   // underscores/hyphens → space
+    s = s.replace(/\s+/g, ' ');      // collapse multiple spaces
+    return s.trim();
+}
+
 function detectMarkup(desc, category) {
+    let baseM = null, baseLbl = null, src = null;
     // Priority 1: exact category match (Daphne always sets the category)
-    const cat = (category || "").trim().toUpperCase();
+    const cat = normaliseCategory(category);
     if (cat && cat !== "GENERAL" && cat !== "UNCATEGORIZED" && cat !== "UNCATEGORISED") {
         const hit = MARKUP_BY_CATEGORY[cat];
-        if (hit) return {markup: hit.markup, label: hit.label, source: "category"};
+        if (hit) { baseM = hit.markup; baseLbl = hit.label; src = "category"; }
     }
     // Priority 2: description keyword fallback
-    const dh = detectMarkupFromDescription(desc);
-    if (dh.markup !== null) return {markup: dh.markup, label: dh.label, source: "description"};
-    return {markup: null, label: null, source: null};
+    if (baseM === null) {
+        const dh = detectMarkupFromDescription(desc);
+        if (dh.markup !== null) { baseM = dh.markup; baseLbl = dh.label; src = "description"; }
+    }
+    if (baseM === null) return {markup: null, label: null, source: null};
+    // Add admin fee on top of the base markup
+    return {markup: Math.round((baseM + ADMIN_FEE) * 10000) / 10000, label: baseLbl, source: src};
 }
 """
 
