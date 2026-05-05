@@ -42,7 +42,12 @@ def register_banking_routes(app, db, login_required, Auth, render_page,
         
         # Get ALL transactions, not just unmatched
         all_transactions = db.get("bank_transactions", {"business_id": biz_id}) if biz_id else []
-        all_transactions = sorted(all_transactions, key=lambda x: x.get("date", ""), reverse=True)
+        # Two-pass stable sort:
+        #   1. Sort by created_at ASC (preserves the order AI read them from the statement)
+        #   2. Sort by date DESC (stable sort keeps insertion order within same day)
+        # Result: newest day on top, but within a day rows appear in statement order.
+        all_transactions.sort(key=lambda x: str(x.get("created_at", "")))
+        all_transactions.sort(key=lambda x: str(x.get("date", ""))[:10], reverse=True)
         
         # NOTE: InvoiceMatch.match_all_transactions removed from page load — was causing 6+ second delays
         # Matching now happens at IMPORT time (see api_banking_import) and on-demand via Zane
