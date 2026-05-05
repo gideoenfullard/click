@@ -174,7 +174,9 @@ def register_banking_routes(app, db, login_required, Auth, render_page,
                     combo_attrs = f' data-combo-invoices="{",".join(_combo_ids)}" data-combo-customer="{_combo_cust}"'
             
             # Running balance (from bank statement) — show in dim color so it doesn't compete with debit/credit
-            running_bal = txn.get("running_balance")
+            running_bal = txn.get("balance")
+            if running_bal is None:
+                running_bal = txn.get("running_balance")  # fallback for legacy field name
             if running_bal is not None:
                 try:
                     rb = float(running_bal)
@@ -253,7 +255,9 @@ def register_banking_routes(app, db, login_required, Auth, render_page,
                 inv_link_html = f'<a href="/invoices/{matched_invoice_id}" style="font-size:11px;color:var(--primary);text-decoration:none;margin-top:2px;display:inline-block;" title="View invoice">{matched_invoice_num} →</a>'
             
             # Running balance for done row
-            running_bal_done = t.get("running_balance")
+            running_bal_done = t.get("balance")
+            if running_bal_done is None:
+                running_bal_done = t.get("running_balance")  # fallback for legacy field name
             if running_bal_done is not None:
                 try:
                     rb_done = float(running_bal_done)
@@ -2348,7 +2352,7 @@ Return ONLY the JSON array. No markdown, no explanation."""
                         "amount": amount,
                         "debit": debit,
                         "credit": credit,
-                        "running_balance": running_balance,
+                        "balance": running_balance,
                         "match_type": match_type,
                         "suggested_category": match_category,
                         "suggestion_confidence": match_confidence,
