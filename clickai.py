@@ -49347,9 +49347,11 @@ If ANY number is not visible on the document, set it to 0. Python handles all ma
                         seen.add(key)
                         unique_txns.append(tx)
                 
-                # Sort by balance (since balance is running, this gives chronological order)
-                # Or sort by date
-                unique_txns.sort(key=lambda x: (x.get("date", ""), str(x.get("balance", 0))))
+                # Preserve the order the AI read the statement (page top → bottom).
+                # Previous code sorted by str(balance) which broke negative-number ordering.
+                # The AI returns transactions in statement order per page; the loop above
+                # extends them top-section first, then bottom-section, which IS statement order.
+                # No sort needed here.
                 
                 extracted = header_info
                 extracted["transactions"] = unique_txns
