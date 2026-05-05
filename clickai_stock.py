@@ -21,22 +21,72 @@ logger = logging.getLogger(__name__)
 
 # ==============================================================================
 # MARKUP TABLE — Fulltech category-based pricing rules (from Daphne's table)
-# Description keyword → markup decimal (cost × (1 + markup) = selling price excl VAT)
-# Order matters: more specific patterns first (e.g. OIL SEAL before any OIL match)
-# Returns (markup, label) when description matches, else (None, None) so the
-# user is asked to enter the selling price manually.
+# Two layers (in priority order):
+#   1. CATEGORY map: if the user picked a Category in the dropdown
+#      (e.g. "WORKWEAR", "BEARINGS"), match on the category name.
+#      This is the PRIMARY source of truth — Daphne sets the category
+#      explicitly per item, so it's the most reliable signal.
+#   2. DESCRIPTION patterns: a fallback used when no category was picked
+#      (or category is "General"), it scans the description for keywords.
+# Returns (markup, label) when something matches, else (None, None).
 # ==============================================================================
+
+# Category-name → (markup, label). Matches are case-insensitive.
+# Both singular and plural forms included so e.g. either "Bolt" or "Bolts" matches.
+_MARKUP_BY_CATEGORY = {
+    "OIL SEAL": (1.00, "Oil Seals"),
+    "OIL SEALS": (1.00, "Oil Seals"),
+    "TAPER ROLL": (0.65, "Taper Roll"),
+    "TAPER ROLLS": (0.65, "Taper Roll"),
+    "TAPER ROLLER": (0.65, "Taper Roll"),
+    "BEARING": (0.65, "Bearings"),
+    "BEARINGS": (0.65, "Bearings"),
+    "V-BELT": (0.65, "V-Belts"),
+    "V-BELTS": (0.65, "V-Belts"),
+    "VBELT": (0.65, "V-Belts"),
+    "VBELTS": (0.65, "V-Belts"),
+    "WORKWEAR": (0.45, "Workwear"),
+    "OVERALL": (0.45, "Workwear"),
+    "OVERALLS": (0.45, "Workwear"),
+    "FOOTWEAR": (0.40, "Footwear"),
+    "BOOT": (0.40, "Footwear"),
+    "BOOTS": (0.40, "Footwear"),
+    "SAFETY SHOE": (0.40, "Footwear"),
+    "SAFETY SHOES": (0.40, "Footwear"),
+    "FUCHS": (0.40, "Fuchs Oil"),
+    "FUCHS OIL": (0.40, "Fuchs Oil"),
+    "BOLT": (1.00, "Bolts/Nuts/Pins"),
+    "BOLTS": (1.00, "Bolts/Nuts/Pins"),
+    "NUT": (1.00, "Bolts/Nuts/Pins"),
+    "NUTS": (1.00, "Bolts/Nuts/Pins"),
+    "BOLTS AND NUTS": (1.00, "Bolts/Nuts/Pins"),
+    "BOLTS & NUTS": (1.00, "Bolts/Nuts/Pins"),
+    "FASTENER": (1.00, "Bolts/Nuts/Pins"),
+    "FASTENERS": (1.00, "Bolts/Nuts/Pins"),
+    "WASHER": (1.00, "Bolts/Nuts/Pins"),
+    "WASHERS": (1.00, "Bolts/Nuts/Pins"),
+    "PIN": (1.00, "Bolts/Nuts/Pins"),
+    "PINS": (1.00, "Bolts/Nuts/Pins"),
+    "SPLIT PIN": (1.00, "Bolts/Nuts/Pins"),
+    "SPLIT PINS": (1.00, "Bolts/Nuts/Pins"),
+    "C-LOCK PIN": (1.00, "Bolts/Nuts/Pins"),
+    "C-LOCK PINS": (1.00, "Bolts/Nuts/Pins"),
+}
+
+# Description keyword fallback (only used if the category is empty/"General").
+# Order matters: more specific patterns first (e.g. OIL SEAL before any OIL match).
 _MARKUP_TABLE = [
     (r'\bOIL\s*SEAL', 1.00, "Oil Seals"),                                       # x2 = 100%
     (r'\bTAPER\s*ROLL', 0.65, "Taper Roll"),                                    # 65%
     (r'\bBEARING', 0.65, "Bearings"),                                           # 65%
     (r'\bV[\s-]*BELT|VBELT', 0.65, "V-Belts"),                                  # 65%
-    (r'\bWORKWEAR|OVERALL', 0.40, "Workwear"),                                  # 40%
+    (r'\bWORKWEAR|OVERALL', 0.45, "Workwear"),                                  # 45%
     (r'\bFOOTWEAR|\bBOOT|SAFETY\s*SHOE', 0.40, "Footwear"),                     # 40%
     (r'\bFUCHS', 0.40, "Fuchs Oil"),                                            # 40%
     (r'\bBOLT|\bNUT\b|\bSCREW|\bWASHER|C[\s-]*LOCK\s*PIN|SPLIT\s*PIN|R[\s-]*CLIP|COTTER\s*PIN',
         1.00, "Bolts/Nuts/Pins"),                                               # 100%
 ]
+
 
 def _detect_markup_from_description(description):
     """Return (markup_decimal, label) for a stock description or (None, None) if no rule matches."""
@@ -49,16 +99,75 @@ def _detect_markup_from_description(description):
     return None, None
 
 
-# JavaScript version of the same table — kept in sync with _MARKUP_TABLE above.
+def _detect_markup(description="", category=""):
+    """
+    Resolve markup using the priority order:
+      1. Exact category-name match (case-insensitive, ignores 'General' / blank)
+      2. Description keyword fallback
+    Returns (markup_decimal, label, source) where source is "category" or "description"
+    so the caller can log which path was used.
+    """
+    cat = (category or "").strip().upper()
+    # Skip placeholder categories that carry no meaning
+    if cat and cat not in ("GENERAL", "UNCATEGORIZED", "UNCATEGORISED", ""):
+        if cat in _MARKUP_BY_CATEGORY:
+            m, lbl = _MARKUP_BY_CATEGORY[cat]
+            return m, lbl, "category"
+    m, lbl = _detect_markup_from_description(description)
+    if m is not None:
+        return m, lbl, "description"
+    return None, None, None
+
+
+# JavaScript version of the same logic — kept in sync with the Python helpers above.
 # Injected into Add/Edit stock pages so the selling price recalculates live as
-# the user types description or cost.
+# the user types description, picks a category, or enters cost.
 _MARKUP_JS = r"""
+const MARKUP_BY_CATEGORY = {
+    "OIL SEAL": {markup:1.00, label:"Oil Seals"},
+    "OIL SEALS": {markup:1.00, label:"Oil Seals"},
+    "TAPER ROLL": {markup:0.65, label:"Taper Roll"},
+    "TAPER ROLLS": {markup:0.65, label:"Taper Roll"},
+    "TAPER ROLLER": {markup:0.65, label:"Taper Roll"},
+    "BEARING": {markup:0.65, label:"Bearings"},
+    "BEARINGS": {markup:0.65, label:"Bearings"},
+    "V-BELT": {markup:0.65, label:"V-Belts"},
+    "V-BELTS": {markup:0.65, label:"V-Belts"},
+    "VBELT": {markup:0.65, label:"V-Belts"},
+    "VBELTS": {markup:0.65, label:"V-Belts"},
+    "WORKWEAR": {markup:0.45, label:"Workwear"},
+    "OVERALL": {markup:0.45, label:"Workwear"},
+    "OVERALLS": {markup:0.45, label:"Workwear"},
+    "FOOTWEAR": {markup:0.40, label:"Footwear"},
+    "BOOT": {markup:0.40, label:"Footwear"},
+    "BOOTS": {markup:0.40, label:"Footwear"},
+    "SAFETY SHOE": {markup:0.40, label:"Footwear"},
+    "SAFETY SHOES": {markup:0.40, label:"Footwear"},
+    "FUCHS": {markup:0.40, label:"Fuchs Oil"},
+    "FUCHS OIL": {markup:0.40, label:"Fuchs Oil"},
+    "BOLT": {markup:1.00, label:"Bolts/Nuts/Pins"},
+    "BOLTS": {markup:1.00, label:"Bolts/Nuts/Pins"},
+    "NUT": {markup:1.00, label:"Bolts/Nuts/Pins"},
+    "NUTS": {markup:1.00, label:"Bolts/Nuts/Pins"},
+    "BOLTS AND NUTS": {markup:1.00, label:"Bolts/Nuts/Pins"},
+    "BOLTS & NUTS": {markup:1.00, label:"Bolts/Nuts/Pins"},
+    "FASTENER": {markup:1.00, label:"Bolts/Nuts/Pins"},
+    "FASTENERS": {markup:1.00, label:"Bolts/Nuts/Pins"},
+    "WASHER": {markup:1.00, label:"Bolts/Nuts/Pins"},
+    "WASHERS": {markup:1.00, label:"Bolts/Nuts/Pins"},
+    "PIN": {markup:1.00, label:"Bolts/Nuts/Pins"},
+    "PINS": {markup:1.00, label:"Bolts/Nuts/Pins"},
+    "SPLIT PIN": {markup:1.00, label:"Bolts/Nuts/Pins"},
+    "SPLIT PINS": {markup:1.00, label:"Bolts/Nuts/Pins"},
+    "C-LOCK PIN": {markup:1.00, label:"Bolts/Nuts/Pins"},
+    "C-LOCK PINS": {markup:1.00, label:"Bolts/Nuts/Pins"}
+};
 const MARKUP_RULES = [
     {pattern: /\bOIL\s*SEAL/i,                                      markup: 1.00, label: "Oil Seals"},
     {pattern: /\bTAPER\s*ROLL/i,                                    markup: 0.65, label: "Taper Roll"},
     {pattern: /\bBEARING/i,                                         markup: 0.65, label: "Bearings"},
     {pattern: /\bV[\s-]*BELT|VBELT/i,                               markup: 0.65, label: "V-Belts"},
-    {pattern: /\bWORKWEAR|OVERALL/i,                                markup: 0.40, label: "Workwear"},
+    {pattern: /\bWORKWEAR|OVERALL/i,                                markup: 0.45, label: "Workwear"},
     {pattern: /\bFOOTWEAR|\bBOOT|SAFETY\s*SHOE/i,                   markup: 0.40, label: "Footwear"},
     {pattern: /\bFUCHS/i,                                           markup: 0.40, label: "Fuchs Oil"},
     {pattern: /\bBOLT|\bNUT\b|\bSCREW|\bWASHER|C[\s-]*LOCK\s*PIN|SPLIT\s*PIN|R[\s-]*CLIP|COTTER\s*PIN/i,
@@ -70,6 +179,18 @@ function detectMarkupFromDescription(desc) {
         if (r.pattern.test(desc)) return {markup: r.markup, label: r.label};
     }
     return {markup: null, label: null};
+}
+function detectMarkup(desc, category) {
+    // Priority 1: exact category match (Daphne always sets the category)
+    const cat = (category || "").trim().toUpperCase();
+    if (cat && cat !== "GENERAL" && cat !== "UNCATEGORIZED" && cat !== "UNCATEGORISED") {
+        const hit = MARKUP_BY_CATEGORY[cat];
+        if (hit) return {markup: hit.markup, label: hit.label, source: "category"};
+    }
+    // Priority 2: description keyword fallback
+    const dh = detectMarkupFromDescription(desc);
+    if (dh.markup !== null) return {markup: dh.markup, label: dh.label, source: "description"};
+    return {markup: null, label: null, source: null};
 }
 """
 
@@ -1243,14 +1364,14 @@ def register_stock_routes(app, db, login_required, Auth, render_page,
             except:
                 cost_price, selling_price, quantity = 0, 0, 0
             
-            # Server-side fallback: if selling price is blank/zero and the description
-            # matches a markup rule, auto-fill from cost × (1 + markup).
+            # Server-side fallback: if selling price is blank/zero, auto-fill from
+            # cost × (1 + markup) using the category-first lookup.
             # This catches cases where JS didn't run (browser disabled, paste-only, etc).
-            if cost_price > 0 and selling_price <= 0 and description:
-                _markup, _label = _detect_markup_from_description(description)
+            if cost_price > 0 and selling_price <= 0 and (description or category):
+                _markup, _label, _src = _detect_markup(description=description, category=category)
                 if _markup is not None:
                     selling_price = round(cost_price * (1 + _markup), 2)
-                    logger.info(f"[STOCK NEW] Auto-priced '{description}' as {_label} ({int(_markup*100)}%): cost {cost_price} → sell {selling_price}")
+                    logger.info(f"[STOCK NEW] Auto-priced '{description}' (cat='{category}') as {_label} ({int(_markup*100)}%) via {_src}: cost {cost_price} → sell {selling_price}")
             
             if not description:
                 flash("Description is required", "error")
@@ -1429,16 +1550,19 @@ def register_stock_routes(app, db, login_required, Auth, render_page,
         
         function recalcSelling() {{
             const desc = descInput ? descInput.value : '';
+            const catSel = document.getElementById('categorySelect');
+            const cat = catSel ? catSel.value : '';
             const cost = parseMoney(costInput ? costInput.value : '');
-            const rule = detectMarkupFromDescription(desc);
+            const rule = detectMarkup(desc, cat);
             
             // Update hint under description
             if (hintDiv) {{
                 if (rule.markup !== null) {{
                     const pct = Math.round(rule.markup * 100);
-                    hintDiv.innerHTML = '🤖 Auto: <strong>' + rule.label + '</strong> — markup ' + pct + '%';
+                    const via = rule.source === "category" ? 'category' : 'description';
+                    hintDiv.innerHTML = '🤖 Auto: <strong>' + rule.label + '</strong> — markup ' + pct + '% <span style="color:var(--text-muted);">(via ' + via + ')</span>';
                     hintDiv.style.color = 'var(--green)';
-                }} else if (desc && desc.trim().length >= 2) {{
+                }} else if ((desc && desc.trim().length >= 2) || cat) {{
                     hintDiv.innerHTML = '⚠️ No category match — enter selling price manually';
                     hintDiv.style.color = 'var(--orange)';
                 }} else {{
@@ -1469,6 +1593,9 @@ def register_stock_routes(app, db, login_required, Auth, render_page,
         
         if (descInput) descInput.addEventListener('input', recalcSelling);
         if (costInput) costInput.addEventListener('input', recalcSelling);
+        // Re-run when the category dropdown changes (also chained from checkNewCategory below)
+        var _catSel = document.getElementById('categorySelect');
+        if (_catSel) _catSel.addEventListener('change', recalcSelling);
         if (sellInput) {{
             sellInput.addEventListener('focus', function() {{ sellManuallyEdited = true; }});
             sellInput.addEventListener('input', updateMarginPreview);
@@ -2229,11 +2356,11 @@ def register_stock_routes(app, db, login_required, Auth, render_page,
             sell_changed = abs(selling_price - old_sell) > 0.001
             
             if cost_changed and not sell_changed and cost_price > 0:
-                # Priority 1: description-based markup rule (Daphne's category table)
-                _markup, _label = _detect_markup_from_description(description)
+                # Priority 1: category-first lookup (Daphne's category table) — falls back to description
+                _markup, _label, _src = _detect_markup(description=description, category=category)
                 if _markup is not None:
                     selling_price = round(cost_price * (1 + _markup), 2)
-                    logger.info(f"[STOCK EDIT] Auto-priced '{description}' as {_label} ({int(_markup*100)}%): cost {old_cost}→{cost_price}, sell {old_sell}→{selling_price}")
+                    logger.info(f"[STOCK EDIT] Auto-priced '{description}' (cat='{category}') as {_label} ({int(_markup*100)}%) via {_src}: cost {old_cost}→{cost_price}, sell {old_sell}→{selling_price}")
                 # Priority 2: keep the existing markup ratio if both old prices are known
                 elif old_cost > 0 and old_sell > 0:
                     markup_ratio = old_sell / old_cost
@@ -2410,16 +2537,19 @@ def register_stock_routes(app, db, login_required, Auth, render_page,
         
         function recalcSelling() {{
             var desc = descInput ? descInput.value : '';
+            var catSelEl = document.getElementById('categorySelect');
+            var cat = catSelEl ? catSelEl.value : '';
             var cost = _parseMoneyEdit(costInput ? costInput.value : '');
-            var rule = detectMarkupFromDescription(desc);
+            var rule = detectMarkup(desc, cat);
             
             // Hint under description
             if (hintDiv) {{
                 if (rule.markup !== null) {{
                     var pct = Math.round(rule.markup * 100);
-                    hintDiv.innerHTML = '🤖 Auto: <strong>' + rule.label + '</strong> — markup ' + pct + '%';
+                    var via = rule.source === "category" ? 'category' : 'description';
+                    hintDiv.innerHTML = '🤖 Auto: <strong>' + rule.label + '</strong> — markup ' + pct + '% <span style="color:var(--text-muted);">(via ' + via + ')</span>';
                     hintDiv.style.color = 'var(--green)';
-                }} else if (desc && desc.trim().length >= 2) {{
+                }} else if ((desc && desc.trim().length >= 2) || cat) {{
                     hintDiv.innerHTML = '⚠️ No category match — keeping existing markup ratio';
                     hintDiv.style.color = 'var(--orange)';
                 }} else {{
@@ -2456,6 +2586,9 @@ def register_stock_routes(app, db, login_required, Auth, render_page,
         
         if (descInput) descInput.addEventListener('input', recalcSelling);
         if (costInput) costInput.addEventListener('input', recalcSelling);
+        // Re-run when the category dropdown changes
+        var _catSelEdit = document.getElementById('categorySelect');
+        if (_catSelEdit) _catSelEdit.addEventListener('change', recalcSelling);
         if (sellInput) {{
             sellInput.addEventListener('focus', function() {{ _sellManuallyEdited = true; }});
             sellInput.addEventListener('input', updateMarginPreview);
