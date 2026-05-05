@@ -9,6 +9,7 @@
 # ==============================================================================
 
 import json
+import re
 import time
 import logging
 from datetime import datetime, timedelta
@@ -16,6 +17,61 @@ from decimal import Decimal
 from flask import request, jsonify, session, redirect, flash
 
 logger = logging.getLogger(__name__)
+
+
+# ==============================================================================
+# MARKUP TABLE — Fulltech category-based pricing rules (from Daphne's table)
+# Description keyword → markup decimal (cost × (1 + markup) = selling price excl VAT)
+# Order matters: more specific patterns first (e.g. OIL SEAL before any OIL match)
+# Returns (markup, label) when description matches, else (None, None) so the
+# user is asked to enter the selling price manually.
+# ==============================================================================
+_MARKUP_TABLE = [
+    (r'\bOIL\s*SEAL', 1.00, "Oil Seals"),                                       # x2 = 100%
+    (r'\bTAPER\s*ROLL', 0.65, "Taper Roll"),                                    # 65%
+    (r'\bBEARING', 0.65, "Bearings"),                                           # 65%
+    (r'\bV[\s-]*BELT|VBELT', 0.65, "V-Belts"),                                  # 65%
+    (r'\bWORKWEAR|OVERALL', 0.40, "Workwear"),                                  # 40%
+    (r'\bFOOTWEAR|\bBOOT|SAFETY\s*SHOE', 0.40, "Footwear"),                     # 40%
+    (r'\bFUCHS', 0.40, "Fuchs Oil"),                                            # 40%
+    (r'\bBOLT|\bNUT\b|\bSCREW|\bWASHER|C[\s-]*LOCK\s*PIN|SPLIT\s*PIN|R[\s-]*CLIP|COTTER\s*PIN',
+        1.00, "Bolts/Nuts/Pins"),                                               # 100%
+]
+
+def _detect_markup_from_description(description):
+    """Return (markup_decimal, label) for a stock description or (None, None) if no rule matches."""
+    if not description:
+        return None, None
+    desc_upper = str(description).upper()
+    for pattern, markup, label in _MARKUP_TABLE:
+        if re.search(pattern, desc_upper):
+            return markup, label
+    return None, None
+
+
+# JavaScript version of the same table — kept in sync with _MARKUP_TABLE above.
+# Injected into Add/Edit stock pages so the selling price recalculates live as
+# the user types description or cost.
+_MARKUP_JS = r"""
+const MARKUP_RULES = [
+    {pattern: /\bOIL\s*SEAL/i,                                      markup: 1.00, label: "Oil Seals"},
+    {pattern: /\bTAPER\s*ROLL/i,                                    markup: 0.65, label: "Taper Roll"},
+    {pattern: /\bBEARING/i,                                         markup: 0.65, label: "Bearings"},
+    {pattern: /\bV[\s-]*BELT|VBELT/i,                               markup: 0.65, label: "V-Belts"},
+    {pattern: /\bWORKWEAR|OVERALL/i,                                markup: 0.40, label: "Workwear"},
+    {pattern: /\bFOOTWEAR|\bBOOT|SAFETY\s*SHOE/i,                   markup: 0.40, label: "Footwear"},
+    {pattern: /\bFUCHS/i,                                           markup: 0.40, label: "Fuchs Oil"},
+    {pattern: /\bBOLT|\bNUT\b|\bSCREW|\bWASHER|C[\s-]*LOCK\s*PIN|SPLIT\s*PIN|R[\s-]*CLIP|COTTER\s*PIN/i,
+        markup: 1.00, label: "Bolts/Nuts/Pins"}
+];
+function detectMarkupFromDescription(desc) {
+    if (!desc) return {markup: null, label: null};
+    for (const r of MARKUP_RULES) {
+        if (r.pattern.test(desc)) return {markup: r.markup, label: r.label};
+    }
+    return {markup: null, label: null};
+}
+"""
 
 
 def register_stock_routes(app, db, login_required, Auth, render_page,
@@ -1187,6 +1243,15 @@ def register_stock_routes(app, db, login_required, Auth, render_page,
             except:
                 cost_price, selling_price, quantity = 0, 0, 0
             
+            # Server-side fallback: if selling price is blank/zero and the description
+            # matches a markup rule, auto-fill from cost × (1 + markup).
+            # This catches cases where JS didn't run (browser disabled, paste-only, etc).
+            if cost_price > 0 and selling_price <= 0 and description:
+                _markup, _label = _detect_markup_from_description(description)
+                if _markup is not None:
+                    selling_price = round(cost_price * (1 + _markup), 2)
+                    logger.info(f"[STOCK NEW] Auto-priced '{description}' as {_label} ({int(_markup*100)}%): cost {cost_price} → sell {selling_price}")
+            
             if not description:
                 flash("Description is required", "error")
             elif request.form.get("force_save") != "1":
@@ -1320,16 +1385,18 @@ def register_stock_routes(app, db, login_required, Auth, render_page,
                 </div>
                 <div style="margin-bottom: 15px;">
                     <label style="display:block;margin-bottom:5px;font-weight:500;">Description *</label>
-                    <input type="text" name="description" required placeholder="e.g., HEX BOLT 16 X 50" style="width:100%;padding:10px;border-radius:6px;border:1px solid var(--border);background:var(--card);color:var(--text);">
+                    <input type="text" name="description" id="descInput" required placeholder="e.g., HEX BOLT 16 X 50" style="width:100%;padding:10px;border-radius:6px;border:1px solid var(--border);background:var(--card);color:var(--text);">
+                    <div id="markupHint" style="font-size:12px;margin-top:4px;color:var(--green);font-weight:500;"></div>
                 </div>
                 <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:15px;margin-bottom:20px;">
                     <div>
                         <label style="display:block;margin-bottom:5px;font-weight:500;">Cost Price</label>
-                        <input type="text" name="cost_price" placeholder="0.00" style="width:100%;padding:10px;border-radius:6px;border:1px solid var(--border);background:var(--card);color:var(--text);">
+                        <input type="text" name="cost_price" id="costInput" placeholder="0.00" style="width:100%;padding:10px;border-radius:6px;border:1px solid var(--border);background:var(--card);color:var(--text);">
                     </div>
                     <div>
                         <label style="display:block;margin-bottom:5px;font-weight:500;">Selling Price</label>
-                        <input type="text" name="selling_price" placeholder="0.00" style="width:100%;padding:10px;border-radius:6px;border:1px solid var(--border);background:var(--card);color:var(--text);">
+                        <input type="text" name="selling_price" id="sellInput" placeholder="0.00" style="width:100%;padding:10px;border-radius:6px;border:1px solid var(--border);background:var(--card);color:var(--text);">
+                        <div id="marginPreview" style="font-size:12px;margin-top:4px;font-weight:500;"></div>
                     </div>
                     <div>
                         <label style="display:block;margin-bottom:5px;font-weight:500;">Quantity</label>
@@ -1344,6 +1411,69 @@ def register_stock_routes(app, db, login_required, Auth, render_page,
         </div>
         
         <script>
+        {_MARKUP_JS}
+        
+        // Auto-calculate selling price from cost + description-based markup.
+        // User can always overwrite manually — once they edit the selling price,
+        // we stop auto-calculating for that field.
+        var descInput = document.getElementById('descInput');
+        var costInput = document.getElementById('costInput');
+        var sellInput = document.getElementById('sellInput');
+        var hintDiv  = document.getElementById('markupHint');
+        var marginDiv = document.getElementById('marginPreview');
+        var sellManuallyEdited = false;
+        
+        function parseMoney(v) {{
+            return parseFloat(String(v || '').replace(/,/g,'').replace('R','').trim()) || 0;
+        }}
+        
+        function recalcSelling() {{
+            const desc = descInput ? descInput.value : '';
+            const cost = parseMoney(costInput ? costInput.value : '');
+            const rule = detectMarkupFromDescription(desc);
+            
+            // Update hint under description
+            if (hintDiv) {{
+                if (rule.markup !== null) {{
+                    const pct = Math.round(rule.markup * 100);
+                    hintDiv.innerHTML = '🤖 Auto: <strong>' + rule.label + '</strong> — markup ' + pct + '%';
+                    hintDiv.style.color = 'var(--green)';
+                }} else if (desc && desc.trim().length >= 2) {{
+                    hintDiv.innerHTML = '⚠️ No category match — enter selling price manually';
+                    hintDiv.style.color = 'var(--orange)';
+                }} else {{
+                    hintDiv.innerHTML = '';
+                }}
+            }}
+            
+            // Auto-fill selling only if rule matched, cost is set, and user hasn't taken control
+            if (rule.markup !== null && cost > 0 && !sellManuallyEdited && sellInput) {{
+                sellInput.value = (cost * (1 + rule.markup)).toFixed(2);
+            }}
+            updateMarginPreview();
+        }}
+        
+        function updateMarginPreview() {{
+            if (!marginDiv) return;
+            const c = parseMoney(costInput ? costInput.value : '');
+            const s = parseMoney(sellInput ? sellInput.value : '');
+            if (s > 0 && c > 0) {{
+                const margin = ((s - c) / s * 100).toFixed(1);
+                const markup = ((s / c - 1) * 100).toFixed(1);
+                marginDiv.innerHTML = 'Margin: ' + margin + '% &nbsp;|&nbsp; Markup: ' + markup + '%';
+                marginDiv.style.color = (parseFloat(margin) > 0) ? '#10b981' : '#ef4444';
+            }} else {{
+                marginDiv.innerHTML = '';
+            }}
+        }}
+        
+        if (descInput) descInput.addEventListener('input', recalcSelling);
+        if (costInput) costInput.addEventListener('input', recalcSelling);
+        if (sellInput) {{
+            sellInput.addEventListener('focus', function() {{ sellManuallyEdited = true; }});
+            sellInput.addEventListener('input', updateMarginPreview);
+        }}
+        
         function checkNewCategory() {{
             const sel = document.getElementById('categorySelect');
             if (sel.value === '__new__') {{
@@ -2099,12 +2229,20 @@ def register_stock_routes(app, db, login_required, Auth, render_page,
             sell_changed = abs(selling_price - old_sell) > 0.001
             
             if cost_changed and not sell_changed and cost_price > 0:
-                if old_cost > 0 and old_sell > 0:
+                # Priority 1: description-based markup rule (Daphne's category table)
+                _markup, _label = _detect_markup_from_description(description)
+                if _markup is not None:
+                    selling_price = round(cost_price * (1 + _markup), 2)
+                    logger.info(f"[STOCK EDIT] Auto-priced '{description}' as {_label} ({int(_markup*100)}%): cost {old_cost}→{cost_price}, sell {old_sell}→{selling_price}")
+                # Priority 2: keep the existing markup ratio if both old prices are known
+                elif old_cost > 0 and old_sell > 0:
                     markup_ratio = old_sell / old_cost
                     selling_price = round(cost_price * markup_ratio, 2)
+                    logger.info(f"[STOCK EDIT] Auto-recalc selling: cost {old_cost}->{cost_price}, sell {old_sell}->{selling_price}")
+                # Priority 3: last-resort 30% fallback
                 else:
                     selling_price = round(cost_price * 1.3, 2)
-                logger.info(f"[STOCK EDIT] Auto-recalc selling: cost {old_cost}->{cost_price}, sell {old_sell}->{selling_price}")
+                    logger.info(f"[STOCK EDIT] Auto-recalc selling (default 30%): cost {old_cost}->{cost_price}, sell {old_sell}->{selling_price}")
             
             # === Direct PATCH to Supabase with column-stripping retry ===
             fields = {
@@ -2210,7 +2348,8 @@ def register_stock_routes(app, db, login_required, Auth, render_page,
                 </div>
                 <div style="margin-bottom: 15px;">
                     <label style="display:block;margin-bottom:5px;font-weight:500;">Description *</label>
-                    <input type="text" name="description" required value="{desc}" style="width:100%;padding:10px;border-radius:6px;border:1px solid var(--border);background:var(--card);color:var(--text);">
+                    <input type="text" name="description" id="descInput" required value="{desc}" style="width:100%;padding:10px;border-radius:6px;border:1px solid var(--border);background:var(--card);color:var(--text);">
+                    <div id="markupHint" style="font-size:12px;margin-top:4px;font-weight:500;"></div>
                 </div>
                 <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:15px;margin-bottom:15px;">
                     <div>
@@ -2246,48 +2385,88 @@ def register_stock_routes(app, db, login_required, Auth, render_page,
         </div>
         
         <script>
-        // === Auto-recalc selling price when cost changes ===
+        {_MARKUP_JS}
+        
+        // === Auto-recalc selling price when description or cost changes ===
+        // Priority for the markup used:
+        //   1. If description matches a category rule (Daphne's table) → use that markup
+        //   2. Otherwise keep the existing item's old cost/sell ratio
+        //   3. Otherwise default 30%
+        // User can always override by manually typing in the selling price.
         var _origCost = {cost:.2f};
         var _origSell = {price:.2f};
-        var _markupRatio = (_origCost > 0 && _origSell > 0) ? (_origSell / _origCost) : 1.3;
+        var _fallbackRatio = (_origCost > 0 && _origSell > 0) ? (_origSell / _origCost) : 1.3;
         var _sellManuallyEdited = false;
         
+        var descInput = document.getElementById('descInput');
         var costInput = document.querySelector('input[name="cost_price"]');
         var sellInput = document.querySelector('input[name="selling_price"]');
+        var hintDiv   = document.getElementById('markupHint');
         var marginDiv = document.getElementById('marginPreview');
         
-        if (costInput) costInput.addEventListener('input', function() {{
-            if (_sellManuallyEdited) return;  // User took control of selling price
-            var newCost = parseFloat(this.value.replace(/,/g,'').replace('R','')) || 0;
-            if (newCost > 0) {{
-                var newSell = Math.round(newCost * _markupRatio * 100) / 100;
-                sellInput.value = newSell.toFixed(2);
-                updateMarginPreview(newCost, newSell);
-            }}
-        }});
+        function _parseMoneyEdit(v) {{
+            return parseFloat(String(v || '').replace(/,/g,'').replace('R','').trim()) || 0;
+        }}
         
+        function recalcSelling() {{
+            var desc = descInput ? descInput.value : '';
+            var cost = _parseMoneyEdit(costInput ? costInput.value : '');
+            var rule = detectMarkupFromDescription(desc);
+            
+            // Hint under description
+            if (hintDiv) {{
+                if (rule.markup !== null) {{
+                    var pct = Math.round(rule.markup * 100);
+                    hintDiv.innerHTML = '🤖 Auto: <strong>' + rule.label + '</strong> — markup ' + pct + '%';
+                    hintDiv.style.color = 'var(--green)';
+                }} else if (desc && desc.trim().length >= 2) {{
+                    hintDiv.innerHTML = '⚠️ No category match — keeping existing markup ratio';
+                    hintDiv.style.color = 'var(--orange)';
+                }} else {{
+                    hintDiv.innerHTML = '';
+                }}
+            }}
+            
+            // Auto-fill selling price ONLY if user hasn't taken control of it
+            if (cost > 0 && !_sellManuallyEdited && sellInput) {{
+                var newSell;
+                if (rule.markup !== null) {{
+                    newSell = cost * (1 + rule.markup);
+                }} else {{
+                    newSell = cost * _fallbackRatio;
+                }}
+                sellInput.value = (Math.round(newSell * 100) / 100).toFixed(2);
+            }}
+            updateMarginPreview();
+        }}
+        
+        function updateMarginPreview() {{
+            if (!marginDiv) return;
+            var c = _parseMoneyEdit(costInput ? costInput.value : '');
+            var s = _parseMoneyEdit(sellInput ? sellInput.value : '');
+            if (s > 0 && c > 0) {{
+                var margin = ((s - c) / s * 100).toFixed(1);
+                var markup = ((s / c - 1) * 100).toFixed(1);
+                marginDiv.innerHTML = 'Margin: ' + margin + '% &nbsp;|&nbsp; Markup: ' + markup + '%';
+                marginDiv.style.color = (parseFloat(margin) > 0) ? '#10b981' : '#ef4444';
+            }} else {{
+                marginDiv.innerHTML = '';
+            }}
+        }}
+        
+        if (descInput) descInput.addEventListener('input', recalcSelling);
+        if (costInput) costInput.addEventListener('input', recalcSelling);
         if (sellInput) {{
             sellInput.addEventListener('focus', function() {{ _sellManuallyEdited = true; }});
-            sellInput.addEventListener('input', function() {{
-                var c = parseFloat(costInput.value.replace(/,/g,'').replace('R','')) || 0;
-                var s = parseFloat(this.value.replace(/,/g,'').replace('R','')) || 0;
-                updateMarginPreview(c, s);
-            }});
+            sellInput.addEventListener('input', updateMarginPreview);
         }}
-        
-        function updateMarginPreview(cost, sell) {{
-            var div = document.getElementById('marginPreview');
-            if (!div) return;
-            if (sell > 0 && cost > 0) {{
-                var margin = ((sell - cost) / sell * 100).toFixed(1);
-                var markup = ((sell / cost - 1) * 100).toFixed(1);
-                div.innerHTML = 'Margin: ' + margin + '% &nbsp;|&nbsp; Markup: ' + markup + '%';
-                div.style.color = margin > 0 ? '#10b981' : '#ef4444';
-            }} else {{
-                div.innerHTML = '';
-            }}
-        }}
-        updateMarginPreview(_origCost, _origSell);
+        // Show the hint on page load (so user sees current category, if any)
+        recalcSelling();
+        // But don't have the load-time recalc overwrite the existing selling price:
+        _sellManuallyEdited = true;  // becomes false again only if cost is changed manually after this point... no, leave it true so the user-saved price stays.
+        // Actually we want the auto-calc to fire if they EDIT cost. So restore _sellManuallyEdited from whether the user has touched the field — start FALSE.
+        _sellManuallyEdited = false;
+        updateMarginPreview();
         
         function checkNewCategory() {{
             const sel = document.getElementById('categorySelect');
