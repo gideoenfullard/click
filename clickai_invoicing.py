@@ -1125,8 +1125,9 @@ def register_invoicing_routes(app, db, login_required, Auth, render_page,
         
         async function sendInvoiceEmail() {{
             const emailField = document.getElementById('emailTo').value.trim();
-            // Support multiple comma-separated emails
-            const emails = emailField.split(',').map(e => e.trim()).filter(e => e.length > 0);
+            // Support multiple emails separated by comma, semicolon, newline, or whitespace
+            // (people often paste from Outlook which uses semicolons)
+            const emails = emailField.split(/[,;\\s\\n]+/).map(e => e.trim()).filter(e => e.length > 0);
             if (emails.length === 0) {{
                 alert('Please enter at least one valid email address');
                 return;
@@ -1438,7 +1439,9 @@ def register_invoicing_routes(app, db, login_required, Auth, render_page,
             import re as _re_email
             _email_pattern = _re_email.compile(r'^[A-Za-z0-9._%+\-]+@[A-Za-z0-9.\-]+\.[A-Za-z]{2,}$')
             
-            raw_emails = [e.strip() for e in to_email.split(",") if e.strip()]
+            # Split on comma, semicolon, newline, or whitespace
+            # (defensive: even if frontend missed something, server still parses correctly)
+            raw_emails = [e.strip() for e in _re_email.split(r'[,;\s\n]+', to_email) if e.strip()]
             valid_emails = []
             invalid_emails = []
             seen = set()
