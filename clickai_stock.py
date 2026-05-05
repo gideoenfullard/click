@@ -2396,27 +2396,59 @@ def register_stock_routes(app, db, login_required, Auth, render_page,
     @app.route("/api/stock/lookup")
     @login_required
     def api_stock_lookup():
-        """Lightweight JSON stock search for invoice/quote typeahead."""
+        """Lightweight JSON stock search for invoice/quote typeahead.
+        Uses the SAME filter logic as the Stock page (multi-term, x-fuzzy):
+          - "bolt m10" matches items containing BOTH "bolt" AND "m10"
+          - "10 x 12" is normalised to "10x12" so it matches "10x12 bolt"
+        Code matches are returned before description-only matches.
+        Limit raised to 100 matches.
+        """
+        import re as _re
         business = Auth.get_current_business()
         biz_id = business.get("id") if business else None
         if not biz_id:
             return jsonify([])
-        query = request.args.get("q", "").strip().lower()
-        if len(query) < 2:
+        raw = request.args.get("q", "").strip().lower()
+        if len(raw) < 2:
+            return jsonify([])
+        # Same normalisation as Stock page filterStock(): collapse "10 x 12" → "10x12"
+        normalised = _re.sub(r'\s*[xX]\s*', 'x', raw)
+        terms = [t for t in normalised.split() if t]
+        if not terms:
             return jsonify([])
         all_stock = db.get_all_stock(biz_id)
-        results = []
+        code_hits = []
+        desc_hits = []
         for s in all_stock:
-            c = str(s.get("code", "")).lower()
-            d = str(s.get("description", "")).lower()
-            if query in c or query in d:
-                price = float(s.get("price") or s.get("selling_price") or 0)
-                cs = s.get("code", "")
-                ds = s.get("description", "")
-                results.append({"id": s.get("id", ""), "label": (f"{cs} - {ds}" if cs else ds), "desc": ds, "code": cs, "price": price, "unit": s.get("unit", ""), "qty": float(s.get("qty") or s.get("quantity") or 0)})
-                if len(results) >= 25:
-                    break
-        return jsonify(results)
+            c_raw = str(s.get("code", "")).lower()
+            d_raw = str(s.get("description", "")).lower()
+            # Apply same x-normalisation to the searchable fields
+            c = _re.sub(r'\s*[xX]\s*', 'x', c_raw)
+            d = _re.sub(r'\s*[xX]\s*', 'x', d_raw)
+            haystack = c + " " + d
+            # Multi-term: every term must appear somewhere in code OR description
+            if not all(t in haystack for t in terms):
+                continue
+            price = float(s.get("price") or s.get("selling_price") or 0)
+            cs = s.get("code", "")
+            ds = s.get("description", "")
+            entry = {
+                "id": s.get("id", ""),
+                "label": (f"{cs} - {ds}" if cs else ds),
+                "desc": ds,
+                "code": cs,
+                "price": price,
+                "unit": s.get("unit", ""),
+                "qty": float(s.get("qty") or s.get("quantity") or 0),
+            }
+            # Prioritise: any term matching the code goes to the top
+            if any(t in c for t in terms):
+                code_hits.append(entry)
+            else:
+                desc_hits.append(entry)
+            if len(code_hits) + len(desc_hits) >= 100:
+                break
+        return jsonify(code_hits + desc_hits)
     
     
     # Store pending edits temporarily
