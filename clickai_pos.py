@@ -6284,12 +6284,36 @@ def register_pos_routes(app, db, login_required, Auth, render_page,
             items = data.get("items", [])
             customer_id = data.get("customer_id", "")
             payment_method = data.get("payment_method", "cash")
-            # Build sale label: "Countersale Cash - Piet" or "Countersale Card - Isaac"
+            # Build sale label: "Counter Sale Cash - Piet" or "Counter Sale Card - Isaac"
             method_label = {"cash": "Cash", "card": "Card", "account": "Account"}.get(payment_method, "Sale")
             cashier_display = data.get("cashier_name", "")
-            default_name = f"Countersale {method_label} - {cashier_display}" if cashier_display else f"Countersale {method_label}"
+            default_name = f"Counter Sale {method_label} - {cashier_display}" if cashier_display else f"Counter Sale {method_label}"
             customer_name = data.get("customer_name") or default_name
             cashier_id = data.get("cashier_id") or (user.get("id") if user else None)
+            
+            # ═══════════════════════════════════════════════════════════════
+            # COUNTER SALE AUTO-LINK (Deon's request 2026-05-06):
+            # If no customer was selected (counter sale), look up the
+            # business's existing "Counter Sale" customer record and link
+            # this sale to it, so the customer's statement/ledger picks up
+            # all counter sales. Also accepts "Countersale" (one word) for
+            # backward compatibility. NEVER auto-creates the record — if
+            # the business hasn't created a "Counter Sale" customer, the
+            # sale stays unlinked (legacy behaviour, no surprise records).
+            # ═══════════════════════════════════════════════════════════════
+            if not customer_id and biz_id:
+                try:
+                    _all_custs = db.get("customers", {"business_id": biz_id}) or []
+                    for _c in _all_custs:
+                        _cn = (_c.get("name") or "").strip().lower()
+                        if _cn in ("counter sale", "countersale", "counter-sale", "counter sales", "countersales"):
+                            customer_id = _c.get("id", "")
+                            customer_name = _c.get("name", customer_name)
+                            logger.info(f"[POS] Counter sale auto-linked to customer '{_c.get('name')}' (id={customer_id})")
+                            break
+                except Exception as _link_err:
+                    logger.warning(f"[POS] Counter sale lookup failed: {_link_err}")
+            
             logger.info(f"[POS] Sale by cashier_id={cashier_id}, cashier_name={cashier_display}, logged_in_user={user.get('id') if user else 'none'}")
             
             if not items:
