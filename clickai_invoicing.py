@@ -69,6 +69,7 @@ def register_invoicing_routes(app, db, login_required, Auth, render_page,
                     <a href="/recurring-invoices" class="btn btn-secondary">🔄 Recurring</a>
                     <a href="/rentals" class="btn btn-secondary">🏠 Rentals</a>
                     <a href="/subscriptions" class="btn btn-secondary">📦 Subscriptions</a>
+                    <a href="/invoice/new?mode=freetext" class="btn btn-secondary">+ New Invoice (Free Text)</a>
                     <a href="/invoice/new" class="btn btn-primary">+ New Invoice</a>
                 </div>
             </div>
@@ -301,11 +302,92 @@ def register_invoicing_routes(app, db, login_required, Auth, render_page,
         
         _dd_css = '<style>.stock-dropdown{position:absolute;top:100%;left:0;right:0;background:var(--card);border:1px solid var(--border);border-radius:6px;max-height:220px;overflow-y:auto;z-index:999;box-shadow:0 4px 12px rgba(0,0,0,0.3);}.stock-dd-item{padding:8px 10px;cursor:pointer;font-size:13px;border-bottom:1px solid var(--border);}.stock-dd-item:hover{background:var(--primary);color:white;}</style>'
         
+        # ═══════════════════════════════════════════════════════════════
+        # FREE TEXT MODE
+        # When ?mode=freetext, render the line items WITHOUT stock search:
+        #   - Description = multi-line textarea (free typing)
+        #   - Unit = dropdown of common units (ea, kg, m, mm, m2, length, ton, hour, etc.)
+        #   - Qty, Price, Total work exactly the same as normal mode
+        # All other fields (customer, salesman, payment, date, ref, delivery note,
+        # VAT calc, totals, POST handler) remain identical.
+        # ═══════════════════════════════════════════════════════════════
+        is_freetext = request.args.get("mode", "").lower() == "freetext"
+        
+        # Common units used in hardware/steel industry (and general)
+        _unit_options_html = (
+            '<option value="ea">ea</option>'
+            '<option value="kg">kg</option>'
+            '<option value="ton">ton</option>'
+            '<option value="m">m</option>'
+            '<option value="mm">mm</option>'
+            '<option value="m2">m²</option>'
+            '<option value="m3">m³</option>'
+            '<option value="length">length</option>'
+            '<option value="sheet">sheet</option>'
+            '<option value="roll">roll</option>'
+            '<option value="box">box</option>'
+            '<option value="pack">pack</option>'
+            '<option value="set">set</option>'
+            '<option value="hour">hour</option>'
+            '<option value="day">day</option>'
+            '<option value="job">job</option>'
+            '<option value="lot">lot</option>'
+        )
+        
+        if is_freetext:
+            _heading_html = '<h3 style="margin:0 0 6px 0;">New Invoice (Free Text)</h3><div style="color:var(--text-muted);font-size:13px;margin-bottom:20px;">Type descriptions freely — no stock search. Use Unit dropdown to choose measurement.</div>'
+            _first_row_html = (
+                '<tr>'
+                '<td><textarea name="item_desc[]" rows="2" placeholder="Type description (multiple lines allowed)..." style="width:100%;padding:8px;border:1px solid var(--border);border-radius:4px;background:var(--bg);color:var(--text);font-family:inherit;resize:vertical;min-height:42px;"></textarea></td>'
+                f'<td><select name="item_unit[]" style="width:100%;padding:8px;border:1px solid var(--border);border-radius:4px;background:var(--bg);color:var(--text);">{_unit_options_html}</select></td>'
+                '<td><input type="number" name="item_qty[]" value="1" min="0.01" step="any" onchange="calcRow(this)" style="width:100%;padding:8px;border:1px solid var(--border);border-radius:4px;background:var(--bg);color:var(--text);"></td>'
+                '<td><input type="number" name="item_price[]" step="0.01" onchange="calcRow(this)" style="width:100%;padding:8px;border:1px solid var(--border);border-radius:4px;background:var(--bg);color:var(--text);"></td>'
+                '<td class="row-total">R0.00</td>'
+                '<td><button type="button" onclick="deleteRow(this)" style="background:var(--red);color:white;border:none;border-radius:4px;padding:6px 10px;cursor:pointer;">✕</button></td>'
+                '</tr>'
+            )
+            _add_row_inner = (
+                '<td><textarea name="item_desc[]" rows="2" placeholder="Type description (multiple lines allowed)..." style="width:100%;padding:8px;border:1px solid var(--border);border-radius:4px;background:var(--bg);color:var(--text);font-family:inherit;resize:vertical;min-height:42px;"></textarea></td>'
+                f'<td><select name="item_unit[]" style="width:100%;padding:8px;border:1px solid var(--border);border-radius:4px;background:var(--bg);color:var(--text);">{_unit_options_html}</select></td>'
+                '<td><input type="number" name="item_qty[]" value="1" min="0.01" step="any" onchange="calcRow(this)" style="width:100%;padding:8px;border:1px solid var(--border);border-radius:4px;background:var(--bg);color:var(--text);"></td>'
+                '<td><input type="number" name="item_price[]" step="0.01" onchange="calcRow(this)" style="width:100%;padding:8px;border:1px solid var(--border);border-radius:4px;background:var(--bg);color:var(--text);"></td>'
+                '<td class="row-total">R0.00</td>'
+                '<td><button type="button" onclick="deleteRow(this)" style="background:var(--red);color:white;border:none;border-radius:4px;padding:6px 10px;cursor:pointer;">\\u2715</button></td>'
+            )
+        else:
+            _heading_html = '<h3 style="margin:0 0 20px 0;">New Invoice</h3>'
+            _first_row_html = (
+                '<tr>'
+                '<td style="position:relative;">'
+                '<input type="text" name="item_desc[]" autocomplete="off" oninput="stockSearch(this)" onfocus="stockSearch(this)" placeholder="Type 2+ chars to search stock..." style="width:100%;padding:8px;border:1px solid var(--border);border-radius:4px;background:var(--bg);color:var(--text);">'
+                '<input type="hidden" name="item_stock_id[]" value="">'
+                '<div class="stock-dropdown" style="display:none;"></div>'
+                '</td>'
+                '<td><input type="text" name="item_unit[]" placeholder="ea" style="width:100%;padding:8px;border:1px solid var(--border);border-radius:4px;background:var(--bg);color:var(--text);text-align:center;"></td>'
+                '<td><input type="number" name="item_qty[]" value="1" min="0.01" step="any" onchange="calcRow(this)" style="width:100%;padding:8px;border:1px solid var(--border);border-radius:4px;background:var(--bg);color:var(--text);"></td>'
+                '<td><input type="number" name="item_price[]" step="0.01" onchange="calcRow(this)" style="width:100%;padding:8px;border:1px solid var(--border);border-radius:4px;background:var(--bg);color:var(--text);"></td>'
+                '<td class="row-total">R0.00</td>'
+                '<td><button type="button" onclick="deleteRow(this)" style="background:var(--red);color:white;border:none;border-radius:4px;padding:6px 10px;cursor:pointer;">✕</button></td>'
+                '</tr>'
+            )
+            _add_row_inner = (
+                '<td style="position:relative;">'
+                '<input type="text" name="item_desc[]" autocomplete="off" oninput="stockSearch(this)" onfocus="stockSearch(this)" placeholder="Type 2+ chars to search stock..." style="width:100%;padding:8px;border:1px solid var(--border);border-radius:4px;background:var(--bg);color:var(--text);">'
+                '<input type="hidden" name="item_stock_id[]" value="">'
+                '<div class="stock-dropdown" style="display:none;"></div>'
+                '</td>'
+                '<td><input type="text" name="item_unit[]" placeholder="ea" style="width:100%;padding:8px;border:1px solid var(--border);border-radius:4px;background:var(--bg);color:var(--text);text-align:center;"></td>'
+                '<td><input type="number" name="item_qty[]" value="1" min="0.01" step="any" onchange="calcRow(this)" style="width:100%;padding:8px;border:1px solid var(--border);border-radius:4px;background:var(--bg);color:var(--text);"></td>'
+                '<td><input type="number" name="item_price[]" step="0.01" onchange="calcRow(this)" style="width:100%;padding:8px;border:1px solid var(--border);border-radius:4px;background:var(--bg);color:var(--text);"></td>'
+                '<td class="row-total">R0.00</td>'
+                '<td><button type="button" onclick="deleteRow(this)" style="background:var(--red);color:white;border:none;border-radius:4px;padding:6px 10px;cursor:pointer;">\\u2715</button></td>'
+            )
+        
         content = f'''
         {_dd_css}
         {error_html}
         <div class="card">
-            <h3 style="margin:0 0 20px 0;">New Invoice</h3>
+            {_heading_html}
             
             <form method="POST" id="invoiceForm">
                 <div style="display:grid;grid-template-columns:1fr 1fr 1fr 1fr;gap:20px;margin-bottom:20px;">
@@ -362,18 +444,7 @@ def register_invoicing_routes(app, db, login_required, Auth, render_page,
                         </tr>
                     </thead>
                     <tbody id="itemRows">
-                        <tr>
-                            <td style="position:relative;">
-                                <input type="text" name="item_desc[]" autocomplete="off" oninput="stockSearch(this)" onfocus="stockSearch(this)" placeholder="Type 2+ chars to search stock..." style="width:100%;padding:8px;border:1px solid var(--border);border-radius:4px;background:var(--bg);color:var(--text);">
-                                <input type="hidden" name="item_stock_id[]" value="">
-                                <div class="stock-dropdown" style="display:none;"></div>
-                            </td>
-                            <td><input type="text" name="item_unit[]" placeholder="ea" style="width:100%;padding:8px;border:1px solid var(--border);border-radius:4px;background:var(--bg);color:var(--text);text-align:center;"></td>
-                            <td><input type="number" name="item_qty[]" value="1" min="0.01" step="any" onchange="calcRow(this)" style="width:100%;padding:8px;border:1px solid var(--border);border-radius:4px;background:var(--bg);color:var(--text);"></td>
-                            <td><input type="number" name="item_price[]" step="0.01" onchange="calcRow(this)" style="width:100%;padding:8px;border:1px solid var(--border);border-radius:4px;background:var(--bg);color:var(--text);"></td>
-                            <td class="row-total">R0.00</td>
-                            <td><button type="button" onclick="deleteRow(this)" style="background:var(--red);color:white;border:none;border-radius:4px;padding:6px 10px;cursor:pointer;">✕</button></td>
-                        </tr>
+                        {_first_row_html}
                     </tbody>
                 </table>
                 
@@ -491,18 +562,7 @@ def register_invoicing_routes(app, db, login_required, Auth, render_page,
         function addRow() {{
             const tbody = document.getElementById('itemRows');
             const row = document.createElement('tr');
-            row.innerHTML = `
-                <td style="position:relative;">
-                    <input type="text" name="item_desc[]" autocomplete="off" oninput="stockSearch(this)" onfocus="stockSearch(this)" placeholder="Type 2+ chars to search stock..." style="width:100%;padding:8px;border:1px solid var(--border);border-radius:4px;background:var(--bg);color:var(--text);">
-                    <input type="hidden" name="item_stock_id[]" value="">
-                    <div class="stock-dropdown" style="display:none;"></div>
-                </td>
-                <td><input type="text" name="item_unit[]" placeholder="ea" style="width:100%;padding:8px;border:1px solid var(--border);border-radius:4px;background:var(--bg);color:var(--text);text-align:center;"></td>
-                <td><input type="number" name="item_qty[]" value="1" min="0.01" step="any" onchange="calcRow(this)" style="width:100%;padding:8px;border:1px solid var(--border);border-radius:4px;background:var(--bg);color:var(--text);"></td>
-                <td><input type="number" name="item_price[]" step="0.01" onchange="calcRow(this)" style="width:100%;padding:8px;border:1px solid var(--border);border-radius:4px;background:var(--bg);color:var(--text);"></td>
-                <td class="row-total">R0.00</td>
-                <td><button type="button" onclick="deleteRow(this)" style="background:var(--red);color:white;border:none;border-radius:4px;padding:6px 10px;cursor:pointer;">\u2715</button></td>
-            `;
+            row.innerHTML = `{_add_row_inner}`;
             tbody.appendChild(row);
         }}
         
