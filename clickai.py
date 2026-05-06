@@ -30817,6 +30817,104 @@ def journals_page():
     
     return render_page("Journals", content, user, "journals")
 
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# CASH ON HAND → PETTY CASH MOVE
+# Daily transfer of POS cash from drawer (1050) to petty cash (1100), keeping
+# a float in the drawer. Triggered from the Cashup page.
+# ═══════════════════════════════════════════════════════════════════════════════
+@app.route("/api/cashup/move-to-petty", methods=["POST"])
+@login_required
+def api_cashup_move_to_petty():
+    """Create a journal that moves cash from Cash On Hand (1050) to Petty Cash (1100).
+    Body: {amount, float_kept, notes, date}. The amount is the bedrag that moves
+    OUT of the drawer INTO the petty cash tin. float_kept is purely informational
+    for the audit trail."""
+    user = Auth.get_current_user()
+    business = Auth.get_current_business()
+    biz_id = business.get("id") if business else None
+    
+    if not biz_id:
+        return jsonify({"success": False, "error": "No business selected"})
+    
+    try:
+        data = request.get_json() or {}
+        try:
+            amount = float(data.get("amount", 0) or 0)
+        except (TypeError, ValueError):
+            return jsonify({"success": False, "error": "Invalid amount"})
+        try:
+            float_kept = float(data.get("float_kept", 0) or 0)
+        except (TypeError, ValueError):
+            float_kept = 0
+        notes = (data.get("notes", "") or "").strip()
+        move_date = (data.get("date") or today())[:10]
+        
+        if amount <= 0:
+            return jsonify({"success": False, "error": "Amount must be greater than zero"})
+        if amount > 1_000_000:
+            return jsonify({"success": False, "error": "Amount looks too large — please verify"})
+        
+        # Prevent double-post for the same day (sanity check)
+        try:
+            existing_logs = db.get("allocation_log", {"business_id": biz_id}) or []
+            already_posted = [
+                l for l in existing_logs
+                if l.get("allocation_type") == "cash_to_petty"
+                and (str(l.get("transaction_date") or "")[:10] == move_date
+                     or str(l.get("date") or "")[:10] == move_date)
+            ]
+            if already_posted:
+                return jsonify({
+                    "success": False,
+                    "error": f"A Cash → Petty Cash move was already posted for {move_date}. Reverse it first if you need to redo."
+                })
+        except Exception as _check_err:
+            logger.warning(f"[CASH→PETTY] Duplicate check failed (continuing): {_check_err}")
+        
+        # Build journal: DR Petty Cash (1100), CR Cash On Hand (1050)
+        ref = f"C2P-{int(time.time()) % 1000000:06d}"
+        desc = f"Cash drawer → Petty Cash{' — ' + notes if notes else ''} (float kept R{float_kept:.2f})"
+        
+        gl_entries = [
+            {"account_code": "1100", "debit": round(amount, 2), "credit": 0},
+            {"account_code": "1050", "debit": 0, "credit": round(amount, 2)},
+        ]
+        
+        try:
+            create_journal_entry(biz_id, move_date, desc, ref, gl_entries)
+        except Exception as _je_err:
+            logger.error(f"[CASH→PETTY] Journal entry failed: {_je_err}")
+            return jsonify({"success": False, "error": f"Failed to post journal: {str(_je_err)[:200]}"})
+        
+        # Log to allocation_log for audit trail (best-effort, non-fatal)
+        try:
+            if log_allocation:
+                log_allocation(
+                    business_id=biz_id, allocation_type="cash_to_petty",
+                    source_table="cash_ups", source_id=ref,
+                    description=desc,
+                    amount=round(amount, 2), gl_entries=gl_entries,
+                    reference=ref, transaction_date=move_date,
+                    created_by=user.get("id") if user else "",
+                    created_by_name=user.get("name", "") if user else ""
+                )
+        except Exception as _log_err:
+            logger.warning(f"[CASH→PETTY] allocation_log write failed (non-fatal): {_log_err}")
+        
+        logger.info(f"[CASH→PETTY] Posted R{amount:.2f} biz={biz_id[:8]} ref={ref} float_kept={float_kept:.2f}")
+        return jsonify({
+            "success": True,
+            "message": f"Moved R{amount:,.2f} to Petty Cash. Float of R{float_kept:,.2f} kept in drawer.",
+            "reference": ref,
+            "amount": round(amount, 2)
+        })
+        
+    except Exception as e:
+        logger.error(f"[CASH→PETTY] Error: {e}")
+        return jsonify({"success": False, "error": str(e)})
+
+
 # ═══════════════════════════════════════════════════════════════════════════════
 # TAX SAVER - Help businesses pay ONLY what they legally must
 # ═══════════════════════════════════════════════════════════════════════════════

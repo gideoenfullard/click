@@ -810,6 +810,48 @@ select.form-input {{
         </div>
     </div>
 
+    <!-- ═══════════════════════════════════════════════════════════ -->
+    <!-- CASH DRAWER → PETTY CASH (daily move)                       -->
+    <!-- ═══════════════════════════════════════════════════════════ -->
+    <div class="card" style="margin-top:20px; padding:20px; border-radius:12px; background:var(--card); border:1px solid var(--border);">
+        <h3 style="margin:0 0 4px 0; font-size:18px;">💼 Cash Drawer → Petty Cash</h3>
+        <p style="margin:0 0 16px 0; color:var(--text-muted); font-size:13px;">
+            End of day: keep a float in the drawer, move the rest to Petty Cash. Creates a journal: DR 1100 / CR 1050.
+        </p>
+        <div style="display:grid; grid-template-columns: 1fr 1fr 1fr; gap:12px; margin-bottom:14px;">
+            <div>
+                <label style="font-size:11px; color:var(--text-muted); display:block; margin-bottom:4px; text-transform:uppercase; letter-spacing:0.5px;">Today's POS Cash Sales</label>
+                <input type="text" id="c2pTodayCash" value="R{total_cash:,.2f}" readonly
+                       style="width:100%; padding:10px; border-radius:8px; border:1px solid var(--border); background:var(--bg); color:var(--text); font-size:15px; font-weight:600;">
+            </div>
+            <div>
+                <label style="font-size:11px; color:var(--text-muted); display:block; margin-bottom:4px; text-transform:uppercase; letter-spacing:0.5px;">Float to keep in drawer</label>
+                <input type="number" id="c2pFloat" value="500" min="0" step="0.01" oninput="c2pRecalc()"
+                       style="width:100%; padding:10px; border-radius:8px; border:1px solid var(--border); background:var(--bg); color:var(--text); font-size:15px;">
+            </div>
+            <div>
+                <label style="font-size:11px; color:var(--text-muted); display:block; margin-bottom:4px; text-transform:uppercase; letter-spacing:0.5px;">Will move to Petty Cash</label>
+                <input type="text" id="c2pMoveAmount" value="R{(total_cash - 500) if total_cash > 500 else 0:,.2f}" readonly
+                       style="width:100%; padding:10px; border-radius:8px; border:1px solid var(--border); background:var(--bg); color:var(--green); font-size:15px; font-weight:700;">
+            </div>
+        </div>
+        <div style="margin-bottom:14px;">
+            <label style="font-size:11px; color:var(--text-muted); display:block; margin-bottom:4px; text-transform:uppercase; letter-spacing:0.5px;">Notes (optional)</label>
+            <input type="text" id="c2pNotes" placeholder="e.g. End of day - Daphne"
+                   style="width:100%; padding:10px; border-radius:8px; border:1px solid var(--border); background:var(--bg); color:var(--text); font-size:14px;">
+        </div>
+        <div style="display:flex; gap:10px; align-items:center;">
+            <button id="c2pPostBtn" onclick="c2pPostToPetty()"
+                    style="background:#10b981; color:white; border:none; padding:12px 22px; border-radius:8px; font-size:15px; font-weight:600; cursor:pointer;">
+                ✓ Post to Petty Cash
+            </button>
+            <span id="c2pStatus" style="font-size:13px; color:var(--text-muted);"></span>
+        </div>
+        <div id="c2pHint" style="margin-top:12px; padding:10px 12px; background:var(--bg); border-radius:6px; font-size:12px; color:var(--text-muted);">
+            ℹ️ Posts a journal entry: <strong>DR 1100 Petty Cash / CR 1050 Cash On Hand</strong>. Only one move per day allowed.
+        </div>
+    </div>
+
     <!-- TAB SWITCHER -->
     <div class="tab-bar">
         <button class="tab-btn active" onclick="switchTab('mysales')">🛒 My Sales</button>
@@ -1538,6 +1580,87 @@ function shiftWeek(dir) {{
     weekOffset += dir;
     if (weekOffset > 0) {{ weekOffset = 0; return; }}
     loadWeeklyHistory();
+}}
+
+// ═══════════════════════════════════════════════════════════════
+// CASH DRAWER → PETTY CASH (daily move)
+// ═══════════════════════════════════════════════════════════════
+function _c2pParseR(str) {{
+    // Parse "R1,234.56" or "1234.56" → 1234.56
+    return parseFloat(String(str || '0').replace(/[^0-9.\\-]/g, '')) || 0;
+}}
+
+function c2pRecalc() {{
+    var todayCash = _c2pParseR(document.getElementById('c2pTodayCash').value);
+    var floatKept = parseFloat(document.getElementById('c2pFloat').value) || 0;
+    var move = todayCash - floatKept;
+    if (move < 0) move = 0;
+    document.getElementById('c2pMoveAmount').value = 'R' + move.toLocaleString('en-ZA', {{minimumFractionDigits: 2, maximumFractionDigits: 2}});
+}}
+
+async function c2pPostToPetty() {{
+    var todayCash = _c2pParseR(document.getElementById('c2pTodayCash').value);
+    var floatKept = parseFloat(document.getElementById('c2pFloat').value) || 0;
+    var moveAmount = todayCash - floatKept;
+    var notes = document.getElementById('c2pNotes').value.trim();
+    var btn = document.getElementById('c2pPostBtn');
+    var status = document.getElementById('c2pStatus');
+    
+    if (todayCash <= 0) {{
+        alert('No POS cash sales today — nothing to move.');
+        return;
+    }}
+    if (moveAmount <= 0) {{
+        alert('Move amount is zero. Float (R' + floatKept.toFixed(2) + ') is >= today\\'s cash (R' + todayCash.toFixed(2) + ').');
+        return;
+    }}
+    if (floatKept < 0) {{
+        alert('Float cannot be negative.');
+        return;
+    }}
+    if (!confirm('Post R' + moveAmount.toFixed(2) + ' from Cash On Hand to Petty Cash?\\n\\nFloat kept in drawer: R' + floatKept.toFixed(2) + '\\n\\nThis creates a journal: DR 1100 / CR 1050.\\nOnly one move per day allowed.')) {{
+        return;
+    }}
+    
+    btn.disabled = true;
+    btn.textContent = 'Posting...';
+    status.textContent = '';
+    status.style.color = 'var(--text-muted)';
+    
+    try {{
+        var resp = await fetch('/api/cashup/move-to-petty', {{
+            method: 'POST',
+            headers: {{'Content-Type': 'application/json'}},
+            body: JSON.stringify({{
+                amount: moveAmount,
+                float_kept: floatKept,
+                notes: notes
+            }})
+        }});
+        var raw = await resp.text();
+        var result;
+        try {{ result = raw ? JSON.parse(raw) : {{success:false, error:'Empty response'}}; }}
+        catch (e) {{ result = {{success:false, error:'Bad response: ' + raw.substring(0,120)}}; }}
+        
+        if (result.success) {{
+            status.textContent = '✓ ' + (result.message || 'Posted');
+            status.style.color = '#10b981';
+            btn.textContent = '✓ Posted';
+            btn.style.background = '#6b7280';
+            btn.disabled = true;
+            document.getElementById('c2pHint').innerHTML = '✅ <strong>Posted</strong> — Reference: ' + (result.reference || '-');
+        }} else {{
+            status.textContent = '✗ ' + (result.error || 'Failed');
+            status.style.color = '#ef4444';
+            btn.disabled = false;
+            btn.textContent = '✓ Post to Petty Cash';
+        }}
+    }} catch (err) {{
+        status.textContent = '✗ Network error: ' + err.message;
+        status.style.color = '#ef4444';
+        btn.disabled = false;
+        btn.textContent = '✓ Post to Petty Cash';
+    }}
 }}
 </script>
 
