@@ -2463,10 +2463,54 @@ class Email:
             return False
         
         try:
+            # ═══════════════════════════════════════════════════════════════
+            # PARSE to_email into a list of individual addresses.
+            # Callers may pass:
+            #   - a single string "alice@x.com"
+            #   - a comma/semicolon/space/newline separated string "alice@x.com, bob@y.com"
+            #   - already a list/tuple
+            # smtplib.sendmail() requires a LIST of addresses, NOT a comma-joined string.
+            # If passed a string with commas, Gmail will reject the whole thing
+            # with a 553 "not a valid RFC 5321 address" error (which is what was happening).
+            # ═══════════════════════════════════════════════════════════════
+            import re as _email_re
+            if isinstance(to_email, (list, tuple)):
+                _raw_recipients = list(to_email)
+            else:
+                _raw_recipients = _email_re.split(r'[,;\s\n]+', str(to_email or ""))
+            
+            # Clean, dedupe (case-insensitive), and basic-validate
+            _seen = set()
+            _recipients = []
+            _invalid = []
+            _email_pat = _email_re.compile(r'^[A-Za-z0-9._%+\-]+@[A-Za-z0-9.\-]+\.[A-Za-z]{2,}$')
+            for _r in _raw_recipients:
+                _r = (_r or "").strip().strip('<>').strip()
+                if not _r:
+                    continue
+                _key = _r.lower()
+                if _key in _seen:
+                    continue
+                _seen.add(_key)
+                if _email_pat.match(_r):
+                    _recipients.append(_r)
+                else:
+                    _invalid.append(_r)
+            
+            if not _recipients:
+                logger.error(f"[EMAIL] No valid recipient addresses in: {to_email!r} (invalid: {_invalid})")
+                return False
+            
+            if _invalid:
+                logger.warning(f"[EMAIL] Skipping invalid addresses: {_invalid}")
+            
+            # Header: comma-separated string of valid recipients (RFC 5322 format)
+            _to_header = ", ".join(_recipients)
+            
             msg = MIMEMultipart('mixed')
             msg['Subject'] = subject
             msg['From'] = from_email
-            msg['To'] = to_email
+            msg['To'] = _to_header
             
             body_part = MIMEMultipart('alternative')
             if body_text:
@@ -2503,18 +2547,20 @@ class Email:
                     part.add_header('Content-Type', f'{maintype}/{subtype}', name=filename)
                     msg.attach(part)
             
-            # Send
-            logger.info(f"[EMAIL] Attempting to send via {smtp_host}:{smtp_port} as {smtp_user}")
+            # Send — pass _recipients as a LIST (not a comma-joined string).
+            # This is the critical fix: smtplib.sendmail with a string
+            # containing commas tells SMTP "this is one address" → 553 reject.
+            logger.info(f"[EMAIL] Attempting to send via {smtp_host}:{smtp_port} as {smtp_user} to {len(_recipients)} recipient(s)")
             with smtplib.SMTP(smtp_host, smtp_port, timeout=10) as server:
                 server.starttls()
                 server.login(smtp_user, smtp_pass)
-                server.sendmail(from_email, to_email, msg.as_string())
+                server.sendmail(from_email, _recipients, msg.as_string())
             
-            logger.info(f"[EMAIL] Sent to {to_email}: {subject}")
+            logger.info(f"[EMAIL] Sent to {_to_header}: {subject}")
             return True
             
         except Exception as e:
-            logger.error(f"[EMAIL] Failed to send to {to_email}: {e}")
+            logger.error(f"[EMAIL] Failed to send to {to_email!r}: {e}")
             return False
     
     @staticmethod
@@ -26099,7 +26145,6 @@ def customer_view(customer_id):
             <a href="/statement/{customer_id}?email=1" class="btn btn-secondary">Email Statement</a>
             <a href="/ledger?q={_cust_name_for_link}" class="btn btn-secondary" style="font-size:12px;">GL Trail</a>
             <button onclick="showEmailModal()" class="btn btn-secondary">📨 Email Group</button>
-            <a href="/invoice/new?customer_id={customer_id}&mode=freetext" class="btn btn-secondary">➕ Free Text Invoice</a>
             <a href="/invoice/new?customer_id={customer_id}" class="btn btn-primary">➕ New Invoice</a>
         </div>
     </div>
