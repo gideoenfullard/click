@@ -1777,7 +1777,15 @@ Return ONLY the JSON array. No markdown, no explanation."""
                         
                         data_rows = []
                         for tx in transactions:
-                            data_rows.append([tx["date"], tx["description"], tx["debit"], tx["credit"], tx["balance"]])
+                            # Stringify all fields so the downstream loop can safely call .replace()
+                            # without crashing on float values (consistent with AI-path)
+                            data_rows.append([
+                                str(tx["date"]),
+                                str(tx["description"]),
+                                str(tx["debit"]),
+                                str(tx["credit"]),
+                                str(tx["balance"])
+                            ])
                         
                         date_col = 0
                         desc_col = 1
@@ -2017,27 +2025,43 @@ Return ONLY the JSON array. No markdown, no explanation."""
                     txn_date = row[date_col] if date_col is not None else today()
                     description = row[desc_col] if desc_col is not None else ""
                     
-                    # Validate date — skip invalid dates like Feb 29 in non-leap years
-                    try:
-                        datetime.strptime(str(txn_date)[:10], "%Y-%m-%d")
-                    except (ValueError, TypeError):
-                        continue
+                    # ═══ FLEXIBLE DATE PARSING ═══
+                    # Bank statements come in many formats: 2026-04-30, 30/04/2026,
+                    # 30-04-2026, 30 Apr 2026, 30 April 2026, 20260430, etc.
+                    # Try direct parse first, then slice fallbacks for time-suffixed values.
+                    _raw_date = str(txn_date).strip()
+                    _parsed_date = None
+                    if _raw_date:
+                        # Direct parse — handles full strings without trailing data
+                        for _fmt in ("%Y-%m-%d", "%Y/%m/%d", "%d/%m/%Y", "%d-%m-%Y",
+                                     "%d.%m.%Y", "%d %b %Y", "%d %B %Y", "%Y%m%d",
+                                     "%d/%m/%y", "%d-%m-%y"):
+                            try:
+                                _parsed_date = datetime.strptime(_raw_date, _fmt)
+                                break
+                            except (ValueError, TypeError):
+                                continue
+                        # Slice fallback for ISO with time appended (e.g. "2026-04-30 00:00:00")
+                        if _parsed_date is None:
+                            try:
+                                _parsed_date = datetime.strptime(_raw_date[:10], "%Y-%m-%d")
+                            except (ValueError, TypeError):
+                                pass
                     
-                    # Validate date before saving — fix invalid dates (e.g. Feb 29 non-leap year)
-                    try:
-                        datetime.strptime(str(txn_date)[:10], "%Y-%m-%d")
-                    except (ValueError, TypeError):
-                        logger.warning(f"[BANK IMPORT] Invalid date '{txn_date}', using today")
+                    if _parsed_date is None:
+                        logger.warning(f"[BANK IMPORT] Unparseable date '{_raw_date}', defaulting to today")
                         txn_date = today()
+                    else:
+                        txn_date = _parsed_date.strftime("%Y-%m-%d")
                     
                     if amount_col is not None:
-                        amt_str = row[amount_col].replace(",", "").replace("R", "").replace(" ", "").strip()
+                        amt_str = str(row[amount_col] or "").replace(",", "").replace("R", "").replace(" ", "").strip()
                         amount = float(amt_str or 0)
                         debit = abs(amount) if amount < 0 else 0
                         credit = amount if amount > 0 else 0
                     elif debit_col is not None and credit_col is not None:
-                        deb_str = row[debit_col].replace(",", "").replace("R", "").replace(" ", "").strip()
-                        cred_str = row[credit_col].replace(",", "").replace("R", "").replace(" ", "").strip()
+                        deb_str = str(row[debit_col] or "").replace(",", "").replace("R", "").replace(" ", "").strip()
+                        cred_str = str(row[credit_col] or "").replace(",", "").replace("R", "").replace(" ", "").strip()
                         debit = float(deb_str or 0)
                         credit = float(cred_str or 0)
                         amount = credit - debit
