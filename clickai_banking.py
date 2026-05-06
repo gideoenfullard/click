@@ -52,9 +52,16 @@ def register_banking_routes(app, db, login_required, Auth, render_page,
         # NOTE: InvoiceMatch.match_all_transactions removed from page load — was causing 6+ second delays
         # Matching now happens at IMPORT time (see api_banking_import) and on-demand via Zane
         
+        # ═══════════════════════════════════════════════════════════════
+        # AUTO-ALLOCATE DISABLED (Deon's request 2026-05-06):
+        # Auto-Matched tab keeps showing legacy transactions imported BEFORE
+        # this change (they have auto_matched=True). New imports never set
+        # auto_matched=True, so they all flow into "Suggested" or "Needs You".
+        # ═══════════════════════════════════════════════════════════════
         auto_matched = [t for t in all_transactions if (t.get("auto_matched") or t.get("invoice_matched")) and not t.get("matched")]
-        suggested = [t for t in all_transactions if t.get("suggested_category") and not t.get("matched") and t.get("suggestion_confidence", 0) < 0.85]
-        needs_attention = [t for t in all_transactions if not t.get("matched") and not t.get("suggested_category")]
+        # Suggested = has a category suggestion AND not yet matched AND not in legacy auto_matched bucket
+        suggested = [t for t in all_transactions if t.get("suggested_category") and not t.get("matched") and not t.get("auto_matched") and not t.get("invoice_matched")]
+        needs_attention = [t for t in all_transactions if not t.get("matched") and not t.get("suggested_category") and not t.get("auto_matched") and not t.get("invoice_matched")]
         already_done = [t for t in all_transactions if t.get("matched")]
         
         # Get expense categories
@@ -2504,8 +2511,16 @@ Return ONLY the JSON array. No markdown, no explanation."""
                         "suggested_category": match_category,
                         "suggestion_confidence": match_confidence,
                         "match_reference": match_reference,
-                        "matched": match_confidence >= 0.85,  # Auto-approve high confidence
-                        "auto_matched": match_confidence >= 0.85,
+                        # ═══════════════════════════════════════════════════════════
+                        # AUTO-ALLOCATE DISABLED — Deon's request 2026-05-06
+                        # Smart match still produces suggestions (visible in UI),
+                        # but NOTHING posts to GL until the user clicks Approve.
+                        # Previously: matched/auto_matched = True at >= 0.85 confidence
+                        # Now: ALL transactions go to "Suggested" (>= 0.85) or
+                        # "Needs You" (< 0.85). User must approve every one.
+                        # ═══════════════════════════════════════════════════════════
+                        "matched": False,
+                        "auto_matched": False,
                         "created_at": (_seq_base + _td_seq(microseconds=idx)).isoformat() + 'Z'
                     }
                     # Persist combo-match invoice IDs so UI can pre-select them on confirm
