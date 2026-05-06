@@ -2481,12 +2481,26 @@ class Email:
                     content = att.get('content', b'')
                     if isinstance(content, str):
                         content = content.encode('utf-8')
-                    ct = att.get('content_type', 'application/octet-stream')
-                    maintype, subtype = ct.split('/', 1) if '/' in ct else ('application', 'octet-stream')
+                    ct = (att.get('content_type') or 'application/octet-stream').lower()
+                    filename = att.get('filename', 'document')
+                    
+                    # Force HTML attachments to be sent as octet-stream so Gmail/Outlook
+                    # don't block them as a security risk and recipients CAN download them.
+                    # Without this, HTML attachments get silently stripped or appear as 0 bytes.
+                    if ct.startswith('text/html') or filename.lower().endswith('.html') or filename.lower().endswith('.htm'):
+                        maintype, subtype = 'application', 'octet-stream'
+                    elif '/' in ct:
+                        maintype, subtype = ct.split('/', 1)
+                    else:
+                        maintype, subtype = 'application', 'octet-stream'
+                    
                     part = MIMEBase(maintype, subtype)
                     part.set_payload(content)
                     encoders.encode_base64(part)
-                    part.add_header('Content-Disposition', 'attachment', filename=att.get('filename', 'document'))
+                    # Use both filename and filename* for max client compatibility
+                    # (Gmail, Outlook, Apple Mail, mobile clients all handle different headers)
+                    part.add_header('Content-Disposition', 'attachment', filename=filename)
+                    part.add_header('Content-Type', f'{maintype}/{subtype}', name=filename)
                     msg.attach(part)
             
             # Send
