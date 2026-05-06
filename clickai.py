@@ -2408,9 +2408,10 @@ class Email:
     """Email sending functionality"""
     
     @staticmethod
-    def send(to_email: str, subject: str, body_html: str, body_text: str = None, business: dict = None, attachments: list = None) -> bool:
+    def send(to_email: str, subject: str, body_html: str, body_text: str = None, business: dict = None, attachments: list = None, cc=None) -> bool:
         """
         Send an email. attachments: list of dicts with 'filename', 'content' (bytes or str), 'content_type'
+        cc: optional list/tuple/string of CC addresses (same parsing as to_email).
         """
         
         # Start with global settings
@@ -2507,10 +2508,35 @@ class Email:
             # Header: comma-separated string of valid recipients (RFC 5322 format)
             _to_header = ", ".join(_recipients)
             
+            # ═══════════════════════════════════════════════════════════════
+            # PARSE cc the same way (optional). Skip any address already in To.
+            # ═══════════════════════════════════════════════════════════════
+            _cc_recipients = []
+            if cc:
+                if isinstance(cc, (list, tuple)):
+                    _raw_cc = list(cc)
+                else:
+                    _raw_cc = _email_re.split(r'[,;\s\n]+', str(cc or ""))
+                for _c in _raw_cc:
+                    _c = (_c or "").strip().strip('<>').strip()
+                    if not _c:
+                        continue
+                    _ckey = _c.lower()
+                    if _ckey in _seen:
+                        continue
+                    _seen.add(_ckey)
+                    if _email_pat.match(_c):
+                        _cc_recipients.append(_c)
+                    else:
+                        logger.warning(f"[EMAIL] Skipping invalid CC: {_c}")
+            _cc_header = ", ".join(_cc_recipients) if _cc_recipients else ""
+            
             msg = MIMEMultipart('mixed')
             msg['Subject'] = subject
             msg['From'] = from_email
             msg['To'] = _to_header
+            if _cc_header:
+                msg['Cc'] = _cc_header
             
             body_part = MIMEMultipart('alternative')
             if body_text:
@@ -2547,16 +2573,19 @@ class Email:
                     part.add_header('Content-Type', f'{maintype}/{subtype}', name=filename)
                     msg.attach(part)
             
-            # Send — pass _recipients as a LIST (not a comma-joined string).
+            # Send — pass _recipients + _cc_recipients as a LIST (not a comma-joined string).
             # This is the critical fix: smtplib.sendmail with a string
             # containing commas tells SMTP "this is one address" → 553 reject.
-            logger.info(f"[EMAIL] Attempting to send via {smtp_host}:{smtp_port} as {smtp_user} to {len(_recipients)} recipient(s)")
+            # CC recipients must be in the sendmail() list too, OR they won't get the email
+            # (the Cc: header alone is just for display — SMTP envelope determines delivery).
+            _all_envelope = _recipients + _cc_recipients
+            logger.info(f"[EMAIL] Attempting to send via {smtp_host}:{smtp_port} as {smtp_user} to {len(_recipients)} recipient(s){f', {len(_cc_recipients)} CC' if _cc_recipients else ''}")
             with smtplib.SMTP(smtp_host, smtp_port, timeout=10) as server:
                 server.starttls()
                 server.login(smtp_user, smtp_pass)
-                server.sendmail(from_email, _recipients, msg.as_string())
+                server.sendmail(from_email, _all_envelope, msg.as_string())
             
-            logger.info(f"[EMAIL] Sent to {_to_header}: {subject}")
+            logger.info(f"[EMAIL] Sent to {_to_header}{f' (cc: {_cc_header})' if _cc_header else ''}: {subject}")
             return True
             
         except Exception as e:
@@ -26186,7 +26215,7 @@ def customer_view(customer_id):
             </div>
             <div>
                 <span style="color:var(--text-muted);font-size:11px;display:block;">CC EMAILS</span>
-                <span style="font-size:14px;">{safe_string(customer.get("email_cc", "-")) or "-"}</span>
+                <span style="font-size:14px;">{safe_string(customer.get("cc_emails") or customer.get("email_cc") or "-")}</span>
             </div>
             <div>
                 <span style="color:var(--text-muted);font-size:11px;display:block;">FAX</span>
@@ -26420,7 +26449,7 @@ def customer_view(customer_id):
                 <div style="font-size:12px;color:var(--text-muted);margin-bottom:5px;">RECIPIENTS:</div>
                 <div id="recipientList" style="font-size:13px;">
                     {f'<span style="background:var(--primary);color:white;padding:2px 8px;border-radius:12px;font-size:12px;margin:2px;display:inline-block;">{safe_string(customer.get("email", ""))}</span>' if customer.get("email") else '<span style="color:var(--red);">No primary email set</span>'}
-                    {''.join(f'<span style="background:#6366f1;color:white;padding:2px 8px;border-radius:12px;font-size:12px;margin:2px;display:inline-block;">{e.strip()}</span>' for e in (customer.get("email_cc", "") or "").split(",") if e.strip())}
+                    {''.join(f'<span style="background:#6366f1;color:white;padding:2px 8px;border-radius:12px;font-size:12px;margin:2px;display:inline-block;">{e.strip()}</span>' for e in (customer.get("cc_emails") or customer.get("email_cc") or "").split(",") if e.strip())}
                 </div>
             </div>
             
@@ -31336,7 +31365,7 @@ def api_customer_email_group():
         if primary_email:
             recipients.append(primary_email)
         
-        cc_emails = (customer.get("email_cc") or "").strip()
+        cc_emails = (customer.get("cc_emails") or customer.get("email_cc") or "").strip()
         if cc_emails:
             for email in cc_emails.split(","):
                 email = email.strip()

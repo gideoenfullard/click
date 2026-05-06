@@ -792,6 +792,50 @@ def register_invoicing_routes(app, db, login_required, Auth, render_page,
         cust_address = safe_string(customer.get("address", "")).replace("\n", "<br>") if customer else ""
         cust_vat = customer.get("vat_number", "") if customer else ""
         
+        # ═══════════════════════════════════════════════════════════════
+        # BUILD CC OPTIONS for the email modal.
+        # Pull all known emails from the customer record into labeled groups
+        # so Daphne can pick which CCs to include without retyping.
+        # ═══════════════════════════════════════════════════════════════
+        _cc_options = []
+        _cc_seen = set()
+        def _add_cc(_label, _addr):
+            _addr = (_addr or "").strip()
+            if not _addr:
+                return
+            _key = _addr.lower()
+            if _key in _cc_seen:
+                return
+            # Don't offer the same address as the primary "To" recipient
+            if _key == (cust_email or "").lower():
+                return
+            _cc_seen.add(_key)
+            _cc_options.append({"label": _label, "email": _addr})
+        
+        if customer:
+            # Saved CC list (canonical: cc_emails, fallback: email_cc)
+            _saved_ccs = (customer.get("cc_emails") or customer.get("email_cc") or "")
+            for _e in str(_saved_ccs).split(","):
+                _add_cc("CC List", _e)
+            _add_cc("Accounts Dept", customer.get("accounts_contact_email", ""))
+            _add_cc("Sales Dept", customer.get("sales_contact_email", ""))
+        
+        import json as _json
+        _cc_options_json = _json.dumps(_cc_options).replace("'", "&#39;")
+        # Build checkbox HTML on the server side so we don't need extra JS to render it
+        _cc_checkboxes_html = ""
+        if _cc_options:
+            for _i, _opt in enumerate(_cc_options):
+                _cc_checkboxes_html += (
+                    f'<label style="display:flex;align-items:center;gap:8px;padding:6px 0;cursor:pointer;font-size:13px;border-bottom:1px solid var(--border);">'
+                    f'<input type="checkbox" class="cc-pick" data-email="{safe_string(_opt["email"])}" style="cursor:pointer;">'
+                    f'<span style="color:var(--text-muted);font-size:11px;min-width:90px;">{_opt["label"]}</span>'
+                    f'<span style="font-size:13px;">{safe_string(_opt["email"])}</span>'
+                    f'</label>'
+                )
+        else:
+            _cc_checkboxes_html = '<div style="color:var(--text-muted);font-size:12px;padding:6px 0;">No saved CC addresses for this customer. Add them in customer edit, or type custom CCs below.</div>'
+        
         # Use cell if no phone
         cust_tel = cust_phone or cust_cell
         
@@ -970,13 +1014,30 @@ def register_invoicing_routes(app, db, login_required, Auth, render_page,
         
         <!-- EMAIL MODAL -->
         <div id="emailModal" style="display:none;position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.7);z-index:9999;align-items:center;justify-content:center;">
-            <div style="background:var(--card);padding:30px;border-radius:12px;width:90%;max-width:450px;">
+            <div style="background:var(--card);padding:30px;border-radius:12px;width:90%;max-width:500px;max-height:90vh;overflow-y:auto;">
                 <h3 style="margin-top:0;">Email Invoice</h3>
                 <p style="color:var(--text-muted);margin-bottom:20px;">Send invoice <strong>{invoice.get("invoice_number", "")}</strong> to:</p>
                 
+                <label style="font-size:12px;color:var(--text-muted);display:block;margin-bottom:4px;">To</label>
                 <input type="text" id="emailTo" value="{cust_email}" placeholder="customer@email.com" 
-                       style="width:100%;padding:12px;border-radius:8px;border:1px solid var(--border);background:var(--bg);color:var(--text);font-size:16px;margin-bottom:10px;">
+                       style="width:100%;padding:12px;border-radius:8px;border:1px solid var(--border);background:var(--bg);color:var(--text);font-size:16px;margin-bottom:6px;">
                 <small style="color:var(--text-muted);display:block;margin-bottom:15px;">Multiple emails: separate with comma (e.g. john@co.za, admin@co.za)</small>
+                
+                <!-- CC TOGGLE -->
+                <div style="margin-bottom:10px;">
+                    <button type="button" onclick="toggleCcSection()" id="ccToggleBtn" class="btn btn-secondary" style="font-size:13px;padding:6px 12px;">+ CC</button>
+                </div>
+                
+                <!-- CC SECTION (collapsed by default) -->
+                <div id="ccSection" style="display:none;background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:12px;margin-bottom:15px;">
+                    <div style="font-size:12px;color:var(--text-muted);margin-bottom:8px;text-transform:uppercase;letter-spacing:0.5px;">Pick saved CC addresses</div>
+                    <div style="max-height:200px;overflow-y:auto;margin-bottom:10px;">
+                        {_cc_checkboxes_html}
+                    </div>
+                    <label style="font-size:12px;color:var(--text-muted);display:block;margin-bottom:4px;">Custom CCs (optional)</label>
+                    <input type="text" id="ccCustom" placeholder="extra@email.com, another@email.com"
+                           style="width:100%;padding:8px;border-radius:6px;border:1px solid var(--border);background:var(--card);color:var(--text);font-size:13px;">
+                </div>
                 
                 <div style="display:flex;gap:10px;justify-content:flex-end;">
                     <button onclick="closeEmailModal()" class="btn btn-secondary">Cancel</button>
@@ -1183,6 +1244,41 @@ def register_invoicing_routes(app, db, login_required, Auth, render_page,
             document.getElementById('emailModal').style.display = 'none';
         }}
         
+        function toggleCcSection() {{
+            const sec = document.getElementById('ccSection');
+            const btn = document.getElementById('ccToggleBtn');
+            if (sec.style.display === 'none') {{
+                sec.style.display = 'block';
+                btn.textContent = '− Hide CC';
+            }} else {{
+                sec.style.display = 'none';
+                btn.textContent = '+ CC';
+            }}
+        }}
+        
+        function _collectCcAddresses() {{
+            const picked = [];
+            document.querySelectorAll('#ccSection input.cc-pick:checked').forEach(cb => {{
+                const e = (cb.dataset.email || '').trim();
+                if (e) picked.push(e);
+            }});
+            const customField = document.getElementById('ccCustom');
+            if (customField && customField.value.trim()) {{
+                customField.value.split(/[,;\\s\\n]+/).forEach(e => {{
+                    e = e.trim();
+                    if (e) picked.push(e);
+                }});
+            }}
+            // Dedupe (case-insensitive)
+            const seen = new Set();
+            const out = [];
+            picked.forEach(e => {{
+                const k = e.toLowerCase();
+                if (!seen.has(k)) {{ seen.add(k); out.push(e); }}
+            }});
+            return out;
+        }}
+        
         async function sendInvoiceEmail() {{
             const emailField = document.getElementById('emailTo').value.trim();
             // Support multiple emails separated by comma, semicolon, newline, or whitespace
@@ -1193,9 +1289,12 @@ def register_invoicing_routes(app, db, login_required, Auth, render_page,
                 return;
             }}
             
+            // Collect CC addresses (saved checkboxes + custom typed)
+            const ccList = _collectCcAddresses();
+            
             // Basic client-side validation — catch obvious problems before sending
             const emailPattern = /^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\\.[A-Za-z]{{2,}}$/;
-            const invalid = emails.filter(e => !emailPattern.test(e));
+            const invalid = emails.concat(ccList).filter(e => !emailPattern.test(e));
             if (invalid.length > 0) {{
                 if (!confirm('These look invalid:\\n\\n' + invalid.join('\\n') + '\\n\\nSend anyway? (Invalid ones will be skipped)')) {{
                     return;
@@ -1210,7 +1309,7 @@ def register_invoicing_routes(app, db, login_required, Auth, render_page,
                 const response = await fetch('/api/invoice/{invoice_id}/email', {{
                     method: 'POST',
                     headers: {{'Content-Type': 'application/json'}},
-                    body: JSON.stringify({{to_email: emails.join(',')}})
+                    body: JSON.stringify({{to_email: emails.join(','), cc: ccList.join(',')}})
                 }});
                 
                 // Read raw text first so we can give a useful error if response is empty
@@ -1223,7 +1322,8 @@ def register_invoicing_routes(app, db, login_required, Auth, render_page,
                 }}
                 
                 if (result.success) {{
-                    alert('✅ ' + (result.message || 'Invoice emailed to ' + emails.join(', ')));
+                    const ccMsg = ccList.length > 0 ? ' (CC: ' + ccList.join(', ') + ')' : '';
+                    alert('✅ ' + (result.message || 'Invoice emailed to ' + emails.join(', ') + ccMsg));
                     closeEmailModal();
                 }} else {{
                     alert('❌ ' + (result.error || 'Failed to send email'));
@@ -1486,10 +1586,11 @@ def register_invoicing_routes(app, db, login_required, Auth, render_page,
     @app.route("/api/invoice/<invoice_id>/email", methods=["POST"])
     @login_required
     def api_invoice_email(invoice_id):
-        """Send invoice via email — supports multiple comma-separated addresses"""
+        """Send invoice via email — supports multiple comma-separated addresses + CC"""
         try:
             data = request.get_json()
             to_email = data.get("to_email", "").strip()
+            cc_raw = data.get("cc", "")
             
             # Support multiple comma-separated emails — validate EACH one
             if not to_email:
@@ -1513,6 +1614,18 @@ def register_invoicing_routes(app, db, login_required, Auth, render_page,
                     valid_emails.append(e)
                 else:
                     invalid_emails.append(e)
+            
+            # Parse CC the same way (any address already in To is skipped)
+            cc_emails_list = []
+            if cc_raw:
+                cc_raw_str = cc_raw if isinstance(cc_raw, str) else ",".join(cc_raw or [])
+                for c in _re_email.split(r'[,;\s\n]+', cc_raw_str):
+                    c = c.strip()
+                    if not c or c.lower() in seen:
+                        continue
+                    seen.add(c.lower())
+                    if _email_pattern.match(c):
+                        cc_emails_list.append(c)
             
             if not valid_emails:
                 return jsonify({
@@ -1638,15 +1751,20 @@ def register_invoicing_routes(app, db, login_required, Auth, render_page,
                 'content_type': 'text/html'
             }
             
-            # Send to each recipient INDIVIDUALLY so one bad address doesn't block the others
+            # Send to each recipient INDIVIDUALLY so one bad address doesn't block the others.
+            # CCs are attached ONLY to the first email so CC recipients get one copy, not N.
             sent_to = []
             failed_to = []
-            for recipient in valid_emails:
+            cc_used = []
+            for _idx, recipient in enumerate(valid_emails):
                 try:
-                    success = Email.send(recipient, subject, body_html, body_text, business=business, attachments=[inv_attachment])
+                    _cc_for_this = cc_emails_list if _idx == 0 else None
+                    success = Email.send(recipient, subject, body_html, body_text, business=business, attachments=[inv_attachment], cc=_cc_for_this)
                     if success:
                         sent_to.append(recipient)
-                        logger.info(f"[EMAIL] Invoice {inv_no} sent to {recipient}")
+                        if _idx == 0 and cc_emails_list:
+                            cc_used = list(cc_emails_list)
+                        logger.info(f"[EMAIL] Invoice {inv_no} sent to {recipient}{' (cc: '+','.join(cc_emails_list)+')' if _idx==0 and cc_emails_list else ''}")
                     else:
                         failed_to.append(recipient)
                         logger.warning(f"[EMAIL] Email.send returned False for {recipient}")
@@ -1655,11 +1773,14 @@ def register_invoicing_routes(app, db, login_required, Auth, render_page,
                     logger.error(f"[EMAIL] Exception sending to {recipient}: {send_err}")
             
             # Build response — succeed if at least one went through
+            _cc_suffix = f" | CC: {', '.join(cc_used)}" if cc_used else ""
             if sent_to and not failed_to and not invalid_emails:
-                return jsonify({"success": True, "message": f"Invoice sent to {', '.join(sent_to)}"})
+                return jsonify({"success": True, "message": f"Invoice sent to {', '.join(sent_to)}{_cc_suffix}"})
             elif sent_to:
                 # Partial success
                 msg_parts = [f"Sent to: {', '.join(sent_to)}"]
+                if cc_used:
+                    msg_parts.append(f"CC: {', '.join(cc_used)}")
                 if failed_to:
                     msg_parts.append(f"Failed: {', '.join(failed_to)}")
                 if invalid_emails:
