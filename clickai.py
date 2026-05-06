@@ -26174,6 +26174,7 @@ def customer_view(customer_id):
             <a href="/statement/{customer_id}?email=1" class="btn btn-secondary">Email Statement</a>
             <a href="/ledger?q={_cust_name_for_link}" class="btn btn-secondary" style="font-size:12px;">GL Trail</a>
             <button onclick="showEmailModal()" class="btn btn-secondary">📨 Email Group</button>
+            <a href="/invoice/new?customer_id={customer_id}&mode=freetext" class="btn btn-secondary">➕ Free Text Invoice</a>
             <a href="/invoice/new?customer_id={customer_id}" class="btn btn-primary">➕ New Invoice</a>
         </div>
     </div>
