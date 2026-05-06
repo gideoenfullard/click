@@ -1810,8 +1810,111 @@ Return ONLY the JSON array. No markdown, no explanation."""
                 if len(rows) < 2:
                     return jsonify({"success": False, "error": "File is empty"})
                 
-                headers = [str(h).lower() if not isinstance(h, list) else str(h[0]).lower() for h in rows[0]]
-                data_rows = rows[1:]
+                # ═══════════════════════════════════════════════════════════════
+                # STANDARD BANK "PROV" / MAGTAPE CSV FORMAT
+                # No headers, ~8 cols, col 0 = "ALL"/"PROV", col 1 = date code
+                # (000DDMMx), col 2 = type (PAY/EFTPOS/FEE/ACB/SF/OPEN/CLOSE),
+                # col 3 = signed amount with leading zeros, cols 4+5 = description.
+                # ═══════════════════════════════════════════════════════════════
+                def _is_sb_prov(_rows):
+                    if not _rows:
+                        return False
+                    sample = _rows[0] if len(_rows[0]) >= 6 else (_rows[1] if len(_rows) > 1 and len(_rows[1]) >= 6 else None)
+                    if not sample or len(sample) < 6:
+                        return False
+                    c0 = str(sample[0]).strip().upper()
+                    if c0 not in ("ALL", "PROV"):
+                        return False
+                    c3 = str(sample[3]).strip()
+                    if not (c3.startswith("+") or c3.startswith("-") or c3.lstrip().startswith("0")):
+                        return False
+                    return True
+                
+                def _parse_sb_prov_date(_field):
+                    """Decode '000DDMMx' format -> YYYY-MM-DD using current year + rollover guard."""
+                    raw = str(_field).strip()
+                    if len(raw) != 7 or not raw.isdigit():
+                        return None
+                    ddmm = raw[3:7]
+                    try:
+                        day = int(ddmm[:2])
+                        month = int(ddmm[2:4])
+                        if not (1 <= day <= 31 and 1 <= month <= 12):
+                            return None
+                        year = datetime.now().year
+                        try:
+                            dt = datetime(year, month, day)
+                        except ValueError:
+                            return None
+                        # Rollover guard: if parsed date is more than 30 days in the future,
+                        # the statement is for the previous calendar year
+                        if dt > datetime.now() + timedelta(days=30):
+                            try:
+                                dt = datetime(year - 1, month, day)
+                            except ValueError:
+                                return None
+                        return dt.strftime("%Y-%m-%d")
+                    except (ValueError, IndexError):
+                        return None
+                
+                def _parse_sb_prov_amount(_field):
+                    """Parse signed leading-zero amount. Returns (debit, credit)."""
+                    raw = str(_field).strip()
+                    sign = 1
+                    if raw.startswith('-'):
+                        sign = -1
+                        raw = raw[1:]
+                    elif raw.startswith('+'):
+                        raw = raw[1:]
+                    raw = raw.lstrip('0') or '0'
+                    try:
+                        val = float(raw) * sign
+                    except ValueError:
+                        return (0.0, 0.0)
+                    if val < 0:
+                        return (round(abs(val), 2), 0.0)
+                    return (0.0, round(val, 2))
+                
+                if _is_sb_prov(rows):
+                    logger.info(f"[BANK IMPORT] Detected Standard Bank PROV/magtape format")
+                    _prov_data = []
+                    _prov_meta_skipped = 0
+                    _prov_unparseable = 0
+                    for _r in rows:
+                        if len(_r) < 6:
+                            continue
+                        _type = str(_r[2]).strip().upper()
+                        # Skip non-transaction rows: header rows + opening/closing balance rows
+                        # (opening balance import is a separate feature — see Deon's request)
+                        if _type in ("BRANCH", "ACC NO", "ACCNO", "OPEN", "CLOSE"):
+                            _prov_meta_skipped += 1
+                            continue
+                        _d = _parse_sb_prov_date(_r[1])
+                        if not _d:
+                            _prov_unparseable += 1
+                            continue
+                        _deb, _cre = _parse_sb_prov_amount(_r[3])
+                        _desc1 = str(_r[4]).strip() if len(_r) > 4 else ""
+                        _desc2 = str(_r[5]).strip() if len(_r) > 5 else ""
+                        _description = f"{_desc1} {_desc2}".strip() if _desc1 else _desc2
+                        if not _description and _type:
+                            _description = _type
+                        _prov_data.append([_d, _description, str(_deb), str(_cre), "0"])
+                    
+                    logger.info(f"[BANK IMPORT] PROV: {len(_prov_data)} txns parsed, {_prov_meta_skipped} meta rows skipped, {_prov_unparseable} unparseable")
+                    
+                    if not _prov_data:
+                        return jsonify({"success": False, "error": "Standard Bank PROV format detected but no transactions could be parsed."})
+                    
+                    # Set up data_rows in standard format and predefine column indices
+                    # so the downstream loop can process them like any other CSV.
+                    data_rows = _prov_data
+                    headers = []  # bypass header-based column detection
+                    _sb_prov_active = True
+                else:
+                    headers = [str(h).lower() if not isinstance(h, list) else str(h[0]).lower() for h in rows[0]]
+                    data_rows = rows[1:]
+                    _sb_prov_active = False
             
             def cell_str(cell):
                 if cell is None:
@@ -1826,22 +1929,32 @@ Return ONLY the JSON array. No markdown, no explanation."""
             if not filename.endswith('.pdf'):
                 data_rows = [[cell_str(cell) for cell in row] for row in data_rows]
                 
-                # Find columns
-                date_col = desc_col = amount_col = debit_col = credit_col = balance_col = None
-                
-                for i, h in enumerate(headers):
-                    if "date" in h:
-                        date_col = i
-                    elif "desc" in h or "narr" in h or "particular" in h:
-                        desc_col = i
-                    elif "amount" in h:
-                        amount_col = i
-                    elif "debit" in h:
-                        debit_col = i
-                    elif "credit" in h:
-                        credit_col = i
-                    elif "balance" in h:
-                        balance_col = i
+                # SB PROV format already pre-built data_rows in [date, desc, debit, credit, balance]
+                # order with explicit column indices. Skip header-based column detection.
+                if locals().get('_sb_prov_active'):
+                    date_col = 0
+                    desc_col = 1
+                    debit_col = 2
+                    credit_col = 3
+                    balance_col = 4
+                    amount_col = None
+                else:
+                    # Find columns
+                    date_col = desc_col = amount_col = debit_col = credit_col = balance_col = None
+                    
+                    for i, h in enumerate(headers):
+                        if "date" in h:
+                            date_col = i
+                        elif "desc" in h or "narr" in h or "particular" in h:
+                            desc_col = i
+                        elif "amount" in h:
+                            amount_col = i
+                        elif "debit" in h:
+                            debit_col = i
+                        elif "credit" in h:
+                            credit_col = i
+                        elif "balance" in h:
+                            balance_col = i
             
             # ═══════════════════════════════════════════════════════════════
             # GET DATA FOR SMART MATCHING
