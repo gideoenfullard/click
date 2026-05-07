@@ -26592,7 +26592,7 @@ def _acct_opts(sel=""):
     return "".join(f'<option value="{v}" {"selected" if v==sel else ""}>{l}</option>' for v,l in types)
 
 def _pt_opts(sel="", default="COD"):
-    terms = ["COD","7 Days","14 Days","30 Days","60 Days","90 Days","EOM","Prepaid"]
+    terms = ["COD","7 Days","14 Days","30 Days","60 Days","90 Days","EOM","Prepaid","Debit Order"]
     s = sel or default
     return "".join(f'<option value="{t}" {"selected" if t==s else ""}>{t}</option>' for t in terms)
 
