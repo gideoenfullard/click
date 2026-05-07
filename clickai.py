@@ -26819,30 +26819,26 @@ def customer_view(customer_id):
     
     // Refund a POS sale — cash back from till (or bank for card/EFT)
     function refundPosSale(saleId, saleNumber, amount, method) {{
-        console.log('[REFUND] Button clicked', {{saleId, saleNumber, amount, method}});
         var pretty = (amount || 0).toLocaleString('en-ZA', {{minimumFractionDigits: 2, maximumFractionDigits: 2}});
         var methodUpper = (method || 'cash').toUpperCase();
         var moneySource = (method === 'cash') ? 'till (Cash On Hand)' : (method === 'account' ? 'customer account (Debtors)' : 'bank (' + methodUpper + ')');
         var reason = prompt('Refund sale ' + (saleNumber || '') + ' (R' + pretty + ' ' + methodUpper + ')?\\n\\nMoney comes back from: ' + moneySource + '.\\nStock items will be returned to inventory.\\nOriginal sale stays in audit trail but is marked refunded.\\n\\nReason (required):');
-        if (reason === null) {{ console.log('[REFUND] Cancelled at prompt'); return; }}
+        if (reason === null) return;
         reason = (reason || '').trim();
         if (!reason) {{
             alert('Reason is required for an audit-trail refund.');
             return;
         }}
         if (!confirm('Confirm refund?\\n\\nSale: ' + (saleNumber || '') + '\\nAmount: R' + pretty + ' ' + methodUpper + '\\nReason: ' + reason)) {{
-            console.log('[REFUND] Cancelled at confirm');
             return;
         }}
-        console.log('[REFUND] Sending fetch to /api/pos-sale/' + saleId + '/refund');
         fetch('/api/pos-sale/' + encodeURIComponent(saleId) + '/refund', {{
             method: 'POST',
             headers: {{'Content-Type': 'application/json'}},
             body: JSON.stringify({{reason: reason}})
         }})
-        .then(r => {{ console.log('[REFUND] HTTP status:', r.status); return r.json(); }})
+        .then(r => r.json())
         .then(j => {{
-            console.log('[REFUND] Response:', j);
             if (j && j.success) {{
                 alert(j.message || 'Sale refunded.');
                 window.location.reload();
@@ -26850,7 +26846,7 @@ def customer_view(customer_id):
                 alert('Refund failed: ' + ((j && j.error) || 'Unknown error'));
             }}
         }})
-        .catch(err => {{ console.error('[REFUND] Network error:', err); alert('Network error: ' + err); }});
+        .catch(err => alert('Network error: ' + err));
     }}
     
     // Search/filter any table by text
@@ -48598,18 +48594,32 @@ def api_reverse_customer_invoice(invoice_id):
         
         # Mark invoice as reversed (DO NOT DELETE — audit trail)
         try:
-            db.save("invoices", {
+            ok, _err = db.save("invoices", {"id": invoice_id, "status": "reversed"})
+        except Exception as upd_err:
+            logger.error(f"[REVERSE INV] Status update failed (journal already posted): {upd_err}")
+            # Journal is already posted, log this serious issue
+        # Best-effort metadata write — auto-adds columns if possible, ignores failures
+        try:
+            _meta = {
                 "id": invoice_id,
-                "status": "reversed",
                 "reversed_at": now(),
                 "reversed_by": user.get("id") if user else "",
                 "reversed_by_name": user.get("name") if user else "",
                 "reversal_reason": reason[:500],
                 "reversal_reference": ref,
-            })
-        except Exception as upd_err:
-            logger.error(f"[REVERSE INV] Status update failed (journal already posted): {upd_err}")
-            # Journal is already posted, log this serious issue
+            }
+            try:
+                if hasattr(db, "add_column"):
+                    db.add_column("invoices", "reversed_at", "timestamp")
+                    db.add_column("invoices", "reversed_by", "text")
+                    db.add_column("invoices", "reversed_by_name", "text")
+                    db.add_column("invoices", "reversal_reason", "text")
+                    db.add_column("invoices", "reversal_reference", "text")
+            except Exception:
+                pass
+            db.save("invoices", _meta)
+        except Exception as meta_err:
+            logger.info(f"[REVERSE INV] Metadata write skipped (columns missing): {str(meta_err)[:120]}")
         
         # Audit trail
         try:
@@ -48761,18 +48771,38 @@ def api_refund_pos_sale(sale_id):
             logger.warning(f"[REFUND POS] Stock/COGS reversal block failed: {items_err}")
         
         # Mark sale as refunded (DO NOT DELETE — audit trail)
+        # Two-step write: status first (guaranteed to work — column exists),
+        # then metadata (best-effort — falls back gracefully if columns missing).
+        # This works on fresh installs without manual DB migrations.
+        _status_saved = False
         try:
-            db.save("sales", {
+            ok, _err = db.save("sales", {"id": sale_id, "status": "refunded"})
+            _status_saved = bool(ok)
+        except Exception as upd_err:
+            logger.error(f"[REFUND POS] Status update failed (journal already posted): {upd_err}")
+        # Best-effort metadata write — auto-adds columns if possible, ignores failures
+        try:
+            _meta = {
                 "id": sale_id,
-                "status": "refunded",
                 "refunded_at": now(),
                 "refunded_by": user.get("id") if user else "",
                 "refunded_by_name": user.get("name") if user else "",
                 "refund_reason": reason[:500],
                 "refund_reference": ref,
-            })
-        except Exception as upd_err:
-            logger.error(f"[REFUND POS] Status update failed (journal already posted): {upd_err}")
+            }
+            # Try to add the columns (silent if already exist or RPC unavailable)
+            try:
+                if hasattr(db, "add_column"):
+                    db.add_column("sales", "refunded_at", "timestamp")
+                    db.add_column("sales", "refunded_by", "text")
+                    db.add_column("sales", "refunded_by_name", "text")
+                    db.add_column("sales", "refund_reason", "text")
+                    db.add_column("sales", "refund_reference", "text")
+            except Exception:
+                pass
+            db.save("sales", _meta)
+        except Exception as meta_err:
+            logger.info(f"[REFUND POS] Metadata write skipped (columns missing): {str(meta_err)[:120]}")
         
         # Audit trail
         try:
