@@ -2177,8 +2177,6 @@ def calc_all_customer_balances(biz_id: str) -> dict:
         all_customers = db.get("customers", {"business_id": biz_id}) or []
 
         # ── Derive reversed invoice IDs and refunded sale IDs from allocation_log ──
-        # These don't have schema columns on sales/invoices tables, so we infer
-        # from the audit log (works on any Supabase install without migrations).
         _reversed_invoice_ids = set()
         _refunded_sale_ids = set()
         try:
@@ -26608,6 +26606,7 @@ def customer_view(customer_id):
             <button onclick="showEmailModal()" class="btn btn-secondary">📨 Email Group</button>
             <a href="/invoice/new?customer_id={customer_id}&mode=freetext" class="btn btn-secondary">➕ Free Text Invoice</a>
             <a href="/invoice/new?customer_id={customer_id}" class="btn btn-primary">➕ New Invoice</a>
+            {f'<button onclick="document.getElementById(' + chr(39) + 'paymentModal' + chr(39) + ').style.display=' + chr(39) + 'flex' + chr(39) + '" class="btn btn-primary" style="background:#16a34a;">💰 Record Payment</button>' if can_see_balances else ''}
         </div>
     </div>
     
@@ -27050,7 +27049,115 @@ def customer_view(customer_id):
             alert('Error sending email: ' + e.message);
         }}
     }}
+    
+    // ──────────────────────────────────────────────────────────
+    // RECORD PAYMENT — receive money from customer
+    // ──────────────────────────────────────────────────────────
+    function submitCustomerPayment() {{
+        const btn = document.getElementById('cpBtn');
+        btn.disabled = true;
+        btn.textContent = 'Processing...';
+        const msg = document.getElementById('cpMsg');
+        
+        const amount = parseFloat(document.getElementById('cpAmount').value) || 0;
+        if (!amount) {{
+            msg.style.display = 'block';
+            msg.style.color = 'var(--red)';
+            msg.textContent = 'Please enter an amount';
+            btn.disabled = false;
+            btn.textContent = 'Receive Now';
+            return;
+        }}
+        
+        const data = {{
+            customer_id: '{customer_id}',
+            customer_name: {json.dumps(customer.get("name", ""))},
+            amount: amount,
+            method: document.getElementById('cpMethod').value,
+            date: document.getElementById('cpDate').value,
+            reference: document.getElementById('cpRef').value.trim()
+        }};
+        
+        fetch('/api/customer/record-payment', {{
+            method: 'POST',
+            headers: {{'Content-Type': 'application/json'}},
+            body: JSON.stringify(data)
+        }})
+        .then(r => r.json())
+        .then(result => {{
+            if (result.success) {{
+                msg.style.display = 'block';
+                msg.style.color = 'var(--green)';
+                msg.textContent = '✓ ' + result.message;
+                setTimeout(() => location.reload(), 1500);
+            }} else {{
+                msg.style.display = 'block';
+                msg.style.color = 'var(--red)';
+                msg.textContent = result.error || 'Failed';
+                btn.disabled = false;
+                btn.textContent = 'Receive Now';
+            }}
+        }})
+        .catch(e => {{
+            msg.style.display = 'block';
+            msg.style.color = 'var(--red)';
+            msg.textContent = 'Error: ' + e.message;
+            btn.disabled = false;
+            btn.textContent = 'Receive Now';
+        }});
+    }}
+    
+    // Set today's date when page loads (if modal exists)
+    if (document.getElementById('cpDate')) {{
+        document.getElementById('cpDate').value = new Date().toISOString().split('T')[0];
+    }}
+    if (document.getElementById('paymentModal')) {{
+        document.getElementById('paymentModal').addEventListener('click', function(e) {{
+            if (e.target === this) this.style.display = 'none';
+        }});
+    }}
     </script>
+    
+    <!-- Record Payment Modal (customer) -->
+    <div id="paymentModal" style="display:none;position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.7);z-index:9999;justify-content:center;align-items:center;">
+        <div style="background:var(--card);border-radius:12px;padding:30px;width:90%;max-width:500px;border:1px solid var(--border);">
+            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:20px;">
+                <h2 style="margin:0;">💰 Record Payment</h2>
+                <button onclick="document.getElementById('paymentModal').style.display='none'" style="background:none;border:none;color:var(--text-muted);font-size:24px;cursor:pointer;">&times;</button>
+            </div>
+            <p style="color:var(--text-muted);margin-bottom:16px;font-size:13px;">Receive payment from <strong>{safe_string(customer.get("name", ""))}</strong> — balance: <strong style="color:var(--orange);">{money(balance) if can_see_balances else "---"}</strong></p>
+            
+            <div style="display:flex;flex-direction:column;gap:14px;">
+                <div>
+                    <label style="display:block;margin-bottom:4px;font-weight:600;font-size:13px;">Amount</label>
+                    <input type="number" id="cpAmount" placeholder="0.00" step="0.01" min="0.01" style="width:100%;padding:12px;border:1px solid var(--border);border-radius:6px;background:var(--bg);color:var(--text);font-size:20px;font-weight:700;">
+                </div>
+                <div>
+                    <label style="display:block;margin-bottom:4px;font-weight:600;font-size:13px;">Payment Method</label>
+                    <select id="cpMethod" style="width:100%;padding:10px;border:1px solid var(--border);border-radius:6px;background:var(--bg);color:var(--text);">
+                        <option value="eft" selected>EFT / Bank Transfer</option>
+                        <option value="cash">Cash</option>
+                        <option value="card">Card</option>
+                        <option value="cheque">Cheque</option>
+                    </select>
+                </div>
+                <div>
+                    <label style="display:block;margin-bottom:4px;font-weight:600;font-size:13px;">Date</label>
+                    <input type="date" id="cpDate" style="width:100%;padding:10px;border:1px solid var(--border);border-radius:6px;background:var(--bg);color:var(--text);">
+                </div>
+                <div>
+                    <label style="display:block;margin-bottom:4px;font-weight:600;font-size:13px;">Reference / Note</label>
+                    <input type="text" id="cpRef" placeholder="e.g. INV-001, POP ref, etc." style="width:100%;padding:10px;border:1px solid var(--border);border-radius:6px;background:var(--bg);color:var(--text);">
+                </div>
+            </div>
+            
+            <div style="display:flex;gap:10px;margin-top:20px;">
+                <button onclick="submitCustomerPayment()" id="cpBtn" style="flex:1;padding:12px;background:var(--green);color:white;border:none;border-radius:8px;cursor:pointer;font-weight:700;font-size:15px;">Receive Now</button>
+                <button onclick="document.getElementById('paymentModal').style.display='none'" style="padding:12px 16px;background:var(--card);color:var(--text-muted);border:1px solid var(--border);border-radius:8px;cursor:pointer;">Cancel</button>
+            </div>
+            <div id="cpMsg" style="margin-top:12px;text-align:center;display:none;"></div>
+        </div>
+    </div>
     
     '''
     
@@ -48993,6 +49100,99 @@ def api_refund_pos_sale(sale_id):
         })
     except Exception as e:
         logger.error(f"[REFUND POS] Error: {e}")
+        return jsonify({"success": False, "error": str(e)[:300]}), 500
+
+
+@app.route("/api/customer/record-payment", methods=["POST"])
+@login_required
+def api_customer_record_payment():
+    """Record a payment from a customer — reduces balance, creates GL journal.
+    Mirrors the supplier record-payment endpoint pattern.
+    """
+    try:
+        user = Auth.get_current_user()
+        business = Auth.get_current_business()
+        biz_id = business.get("id") if business else None
+        if not biz_id:
+            return jsonify({"success": False, "error": "No business"})
+        
+        data = request.get_json() or {}
+        customer_id = data.get("customer_id", "")
+        customer_name = data.get("customer_name", "Unknown")
+        amount = float(data.get("amount", 0))
+        method = (data.get("method", "eft") or "eft").lower()
+        pay_date = data.get("date", today())
+        reference = (data.get("reference", "") or "").strip()
+        
+        if amount <= 0:
+            return jsonify({"success": False, "error": "Amount must be greater than zero"})
+        
+        # Save receipt record
+        receipt_id = generate_id()
+        receipt = {
+            "id": receipt_id,
+            "business_id": biz_id,
+            "customer_id": customer_id,
+            "customer_name": customer_name,
+            "amount": round(amount, 2),
+            "date": pay_date,
+            "method": method,
+            "payment_method": method,
+            "reference": reference,
+            "source": "manual",
+            "created_at": now()
+        }
+        
+        success, err = db.save("receipts", receipt)
+        if not success:
+            return jsonify({"success": False, "error": f"Failed to save payment: {err}"})
+        
+        # GL journal: Credit Debtors, Debit Bank/Cash
+        # (opposite of an invoice posting — money in, debt down)
+        rounded = round(amount, 2)
+        ref_label = reference or f"REC-{receipt_id[:8]}"
+        
+        # Choose bank account based on method
+        if method == "cash":
+            bank_code = gl(biz_id, "cash")
+        else:
+            bank_code = gl(biz_id, "bank")
+        
+        gl_entries = [
+            {"account_code": bank_code,             "debit": rounded, "credit": 0},
+            {"account_code": gl(biz_id, "debtors"), "debit": 0,       "credit": rounded},
+        ]
+        try:
+            create_journal_entry(biz_id, pay_date,
+                                 f"Payment from {customer_name}",
+                                 ref_label, gl_entries)
+            logger.info(f"[CUST PAY] GL: Bank DR:{rounded}, Debtors CR:{rounded} for {customer_name}")
+        except Exception as je_err:
+            logger.error(f"[CUST PAY] GL entry error (payment still saved): {je_err}")
+        
+        # Audit trail
+        try:
+            if log_allocation:
+                log_allocation(
+                    business_id=biz_id, allocation_type="payment", source_table="receipts", source_id=receipt_id,
+                    description=f"Payment from {customer_name}",
+                    amount=rounded,
+                    gl_entries=gl_entries,
+                    category="Customer Payment", category_code=gl(biz_id, "debtors"),
+                    customer_name=customer_name, payment_method=method,
+                    reference=reference or ref_label, transaction_date=pay_date,
+                    created_by=user.get("id", "") if user else "",
+                    created_by_name=user.get("name", "") if user else ""
+                )
+        except Exception:
+            pass
+        
+        return jsonify({
+            "success": True,
+            "message": f"Payment of R{amount:,.2f} from {customer_name} recorded ({method.upper()})"
+        })
+    except Exception as e:
+        logger.error(f"[CUST PAY] Error: {e}")
         return jsonify({"success": False, "error": str(e)[:300]}), 500
 
 
