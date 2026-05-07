@@ -26082,7 +26082,7 @@ def customer_view(customer_id):
             filters.update(extra_filters)
         return db.get(table, filters) if biz_id else []
     
-    with ThreadPoolExecutor(max_workers=8) as executor:
+    with ThreadPoolExecutor(max_workers=9) as executor:
         fut_invoices = executor.submit(_fetch, "invoices")
         fut_quotes = executor.submit(_fetch, "quotes")
         fut_credit_notes = executor.submit(_fetch, "credit_notes")
@@ -26093,6 +26093,9 @@ def customer_view(customer_id):
         fut_sales = executor.submit(_fetch, "sales")
         # Also fetch receipts with empty customer_id to match by name (banking allocations)
         fut_receipts_all = executor.submit(lambda: db.get("receipts", {"business_id": biz_id}) if biz_id else [])
+        # Allocation log entries — used to derive refunded/reversed status without
+        # needing schema columns on sales/invoices (works on any Supabase install)
+        fut_alloc_log = executor.submit(lambda: db.get("allocation_log", {"business_id": biz_id}) if biz_id else [])
     
     invoices = sorted(fut_invoices.result(), key=lambda x: x.get("date", ""), reverse=True)
     quotes = sorted(fut_quotes.result(), key=lambda x: x.get("date", ""), reverse=True)
@@ -26110,6 +26113,59 @@ def customer_view(customer_id):
                          and r.get("id") not in _receipts_by_id_set]
     receipts = sorted(_receipts_by_id + _receipts_by_name, key=lambda x: x.get("date", ""), reverse=True)
     sales = sorted(fut_sales.result(), key=lambda x: x.get("date", ""), reverse=True)
+    
+    # ── DERIVE refund / reversal sets from allocation_log ──
+    # Two sets: sale_ids that were refunded, invoice_ids that were reversed.
+    # Built from extra.action == "pos_refund" / "invoice_reverse" entries.
+    _refunded_sale_ids = set()
+    _reversed_invoice_ids = set()
+    _refund_metadata = {}   # sale_id -> {date, who, reason, ref, amount}
+    _reversal_metadata = {} # invoice_id -> {date, who, reason, ref, amount}
+    try:
+        for _al in fut_alloc_log.result() or []:
+            _src_id = _al.get("source_id", "")
+            if not _src_id:
+                continue
+            _extra_raw = _al.get("extra", "{}")
+            if isinstance(_extra_raw, str):
+                try:
+                    _extra = json.loads(_extra_raw) if _extra_raw else {}
+                except Exception:
+                    _extra = {}
+            elif isinstance(_extra_raw, dict):
+                _extra = _extra_raw
+            else:
+                _extra = {}
+            _action = _extra.get("action", "")
+            if _action == "pos_refund" and _al.get("source_table") == "sales":
+                _refunded_sale_ids.add(_src_id)
+                _refund_metadata[_src_id] = {
+                    "date": (_al.get("created_at") or "")[:10],
+                    "who": _al.get("created_by_name", ""),
+                    "reason": _extra.get("reason", ""),
+                    "ref": _al.get("reference", ""),
+                    "amount": float(_al.get("amount", 0) or 0),
+                }
+            elif _action == "invoice_reverse" and _al.get("source_table") == "invoices":
+                _reversed_invoice_ids.add(_src_id)
+                _reversal_metadata[_src_id] = {
+                    "date": (_al.get("created_at") or "")[:10],
+                    "who": _al.get("created_by_name", ""),
+                    "reason": _extra.get("reason", ""),
+                    "ref": _al.get("reference", ""),
+                    "amount": float(_al.get("amount", 0) or 0),
+                }
+    except Exception as _al_err:
+        logger.warning(f"[CUSTOMER VIEW] allocation_log derive failed: {_al_err}")
+    
+    # Apply derived status: stamp invoices & sales records IN MEMORY only
+    # (no DB write — display-only enrichment, like the FIFO PAID/UNPAID fix)
+    for _inv in invoices:
+        if _inv.get("id") in _reversed_invoice_ids and (_inv.get("status") or "").lower() not in ("credited", "reversed"):
+            _inv["status"] = "reversed"
+    for _s in sales:
+        if _s.get("id") in _refunded_sale_ids and (_s.get("status") or "").lower() not in ("refunded", "reversed"):
+            _s["status"] = "refunded"
     
     # Calculate balance from source documents (invoices + account sales - receipts - credit notes)
     _inv_total = sum(float(i.get("total", 0)) for i in invoices if i.get("status") not in ("credited", "reversed"))
@@ -48592,36 +48648,12 @@ def api_reverse_customer_invoice(invoice_id):
             logger.error(f"[REVERSE INV] Journal create failed: {je_err}")
             return jsonify({"success": False, "error": f"Journal creation failed: {str(je_err)[:200]}"}), 500
         
-        # Mark invoice as reversed (DO NOT DELETE — audit trail)
-        try:
-            ok, _err = db.save("invoices", {"id": invoice_id, "status": "reversed"})
-        except Exception as upd_err:
-            logger.error(f"[REVERSE INV] Status update failed (journal already posted): {upd_err}")
-            # Journal is already posted, log this serious issue
-        # Best-effort metadata write — auto-adds columns if possible, ignores failures
-        try:
-            _meta = {
-                "id": invoice_id,
-                "reversed_at": now(),
-                "reversed_by": user.get("id") if user else "",
-                "reversed_by_name": user.get("name") if user else "",
-                "reversal_reason": reason[:500],
-                "reversal_reference": ref,
-            }
-            try:
-                if hasattr(db, "add_column"):
-                    db.add_column("invoices", "reversed_at", "timestamp")
-                    db.add_column("invoices", "reversed_by", "text")
-                    db.add_column("invoices", "reversed_by_name", "text")
-                    db.add_column("invoices", "reversal_reason", "text")
-                    db.add_column("invoices", "reversal_reference", "text")
-            except Exception:
-                pass
-            db.save("invoices", _meta)
-        except Exception as meta_err:
-            logger.info(f"[REVERSE INV] Metadata write skipped (columns missing): {str(meta_err)[:120]}")
+        # NOTE: We DO NOT write back to the invoices table. The 'invoices'
+        # schema varies across customer Supabase instances. Reversed status
+        # is derived purely from the allocation_log audit entry below —
+        # works on any install without manual SQL migrations.
         
-        # Audit trail
+        # Audit trail (THIS is the canonical "reversed" record)
         try:
             if log_allocation:
                 log_allocation(
@@ -48770,41 +48802,13 @@ def api_refund_pos_sale(sale_id):
         except Exception as items_err:
             logger.warning(f"[REFUND POS] Stock/COGS reversal block failed: {items_err}")
         
-        # Mark sale as refunded (DO NOT DELETE — audit trail)
-        # Two-step write: status first (guaranteed to work — column exists),
-        # then metadata (best-effort — falls back gracefully if columns missing).
-        # This works on fresh installs without manual DB migrations.
-        _status_saved = False
-        try:
-            ok, _err = db.save("sales", {"id": sale_id, "status": "refunded"})
-            _status_saved = bool(ok)
-        except Exception as upd_err:
-            logger.error(f"[REFUND POS] Status update failed (journal already posted): {upd_err}")
-        # Best-effort metadata write — auto-adds columns if possible, ignores failures
-        try:
-            _meta = {
-                "id": sale_id,
-                "refunded_at": now(),
-                "refunded_by": user.get("id") if user else "",
-                "refunded_by_name": user.get("name") if user else "",
-                "refund_reason": reason[:500],
-                "refund_reference": ref,
-            }
-            # Try to add the columns (silent if already exist or RPC unavailable)
-            try:
-                if hasattr(db, "add_column"):
-                    db.add_column("sales", "refunded_at", "timestamp")
-                    db.add_column("sales", "refunded_by", "text")
-                    db.add_column("sales", "refunded_by_name", "text")
-                    db.add_column("sales", "refund_reason", "text")
-                    db.add_column("sales", "refund_reference", "text")
-            except Exception:
-                pass
-            db.save("sales", _meta)
-        except Exception as meta_err:
-            logger.info(f"[REFUND POS] Metadata write skipped (columns missing): {str(meta_err)[:120]}")
+        # NOTE: We DO NOT write back to the sales table. The 'sales' table
+        # schema varies across customer Supabase instances (some don't have
+        # a 'status' column at all). Refunded status is derived purely from
+        # the allocation_log audit entry below — works on any install without
+        # manual SQL migrations.
         
-        # Audit trail
+        # Audit trail (THIS is the canonical "refunded" record)
         try:
             if log_allocation:
                 log_allocation(
