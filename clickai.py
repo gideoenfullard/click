@@ -2167,6 +2167,7 @@ def calc_supplier_balance(biz_id: str, supplier_id: str) -> float:
 def calc_all_customer_balances(biz_id: str) -> dict:
     """Calculate balances for ALL customers in one batch. Returns {customer_id: balance}.
     Much more efficient than calling calc_customer_balance() per customer.
+    Excludes reversed invoices and refunded sales (derived from allocation_log).
     """
     try:
         all_invoices = db.get("invoices", {"business_id": biz_id}) or []
@@ -2174,6 +2175,35 @@ def calc_all_customer_balances(biz_id: str) -> dict:
         all_receipts = db.get("receipts", {"business_id": biz_id}) or []
         all_credit_notes = db.get("credit_notes", {"business_id": biz_id}) or []
         all_customers = db.get("customers", {"business_id": biz_id}) or []
+
+        # ── Derive reversed invoice IDs and refunded sale IDs from allocation_log ──
+        # These don't have schema columns on sales/invoices tables, so we infer
+        # from the audit log (works on any Supabase install without migrations).
+        _reversed_invoice_ids = set()
+        _refunded_sale_ids = set()
+        try:
+            _alloc_log = db.get("allocation_log", {"business_id": biz_id}) or []
+            for _al in _alloc_log:
+                _src_id = _al.get("source_id", "")
+                if not _src_id:
+                    continue
+                _extra_raw = _al.get("extra", "{}")
+                if isinstance(_extra_raw, str):
+                    try:
+                        _extra = json.loads(_extra_raw) if _extra_raw else {}
+                    except Exception:
+                        _extra = {}
+                elif isinstance(_extra_raw, dict):
+                    _extra = _extra_raw
+                else:
+                    _extra = {}
+                _action = _extra.get("action", "")
+                if _action == "invoice_reverse" and _al.get("source_table") == "invoices":
+                    _reversed_invoice_ids.add(_src_id)
+                elif _action == "pos_refund" and _al.get("source_table") == "sales":
+                    _refunded_sale_ids.add(_src_id)
+        except Exception as _al_err:
+            logger.warning(f"[CALC BATCH] allocation_log derive failed: {_al_err}")
 
         # Build name→id map for unlinked receipt matching
         _name_to_id = {}
@@ -2184,15 +2214,15 @@ def calc_all_customer_balances(biz_id: str) -> dict:
 
         balances = {}
 
-        # Debits: invoices (excluding credited)
+        # Debits: invoices (excluding credited and reversed)
         for inv in all_invoices:
             cid = inv.get("customer_id", "")
-            if cid and inv.get("status") != "credited":
+            if cid and inv.get("status") not in ("credited", "reversed") and inv.get("id") not in _reversed_invoice_ids:
                 balances[cid] = balances.get(cid, 0) + float(inv.get("total", 0))
 
-        # Debits: account sales
+        # Debits: account sales (excluding refunded)
         for s in all_sales:
-            if s.get("payment_method") == "account":
+            if s.get("payment_method") == "account" and (s.get("status") or "").lower() not in ("refunded", "reversed") and s.get("id") not in _refunded_sale_ids:
                 cid = s.get("customer_id", "")
                 if cid:
                     balances[cid] = balances.get(cid, 0) + float(s.get("total", 0))
