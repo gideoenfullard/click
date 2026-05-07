@@ -48748,6 +48748,36 @@ def create_credit_note(invoice_id):
         </tr>
         '''
     
+    # ── SMART VAT DETECTION FOR FORM DISPLAY ──
+    # Same logic as the POST handler: compare line-sum vs invoice's stored
+    # total/subtotal to determine if line items are VAT-INCL (Sage style)
+    # or VAT-EXCL (ClickAI native style).
+    _line_sum_form = float(inv_subtotal)
+    _inv_total_db = float(invoice.get("total", 0) or 0)
+    _inv_subtotal_db = float(invoice.get("subtotal", 0) or 0)
+    _form_vat_inclusive = False
+    if _inv_total_db > 0 and _line_sum_form > 0:
+        _d_total = abs(_line_sum_form - _inv_total_db)
+        _d_sub = abs(_line_sum_form - _inv_subtotal_db) if _inv_subtotal_db > 0 else float('inf')
+        if _d_total < _d_sub and _d_total < (_inv_total_db * 0.01 + 0.10):
+            _form_vat_inclusive = True
+    if _inv_subtotal_db <= 0 and _inv_total_db > 0 and abs(_line_sum_form - _inv_total_db) < 1.0:
+        _form_vat_inclusive = True
+    
+    if _form_vat_inclusive:
+        # Line items already INCLUDE VAT — back-extract the VAT-excl portion
+        _cn_form_total = round(_line_sum_form, 2)
+        _cn_form_subtotal_excl = round(_line_sum_form / 1.15, 2)
+        _cn_form_vat = round(_cn_form_total - _cn_form_subtotal_excl, 2)
+    else:
+        # Line items are VAT-excl — add VAT on top
+        _cn_form_subtotal_excl = round(_line_sum_form, 2)
+        _cn_form_vat = round(_line_sum_form * 0.15, 2)
+        _cn_form_total = round(_line_sum_form + _cn_form_vat, 2)
+    
+    # Pass detection flag to JS for live updates as user changes line selections
+    _form_vat_inclusive_js = "true" if _form_vat_inclusive else "false"
+    
     error_msg = request.args.get("error", "")
     error_html = f'<div style="background:var(--red);color:white;padding:10px;border-radius:8px;margin-bottom:15px;">{error_msg}</div>' if error_msg else ""
     
@@ -48804,9 +48834,9 @@ def create_credit_note(invoice_id):
             
             <!-- Credit Total Display -->
             <div style="text-align:right;margin-bottom:20px;padding:15px;background:rgba(239,68,68,0.05);border-radius:8px;border:1px solid rgba(239,68,68,0.2);">
-                <div style="margin-bottom:5px;">Subtotal: <strong id="cnSubtotal">{money(inv_subtotal)}</strong></div>
-                <div style="margin-bottom:5px;">VAT (15%): <strong id="cnVat">{money(float(inv_subtotal) * 0.15)}</strong></div>
-                <div style="font-size:20px;color:var(--red);">Credit Amount: <strong id="cnTotal">{money(float(inv_subtotal) * 1.15)}</strong></div>
+                <div style="margin-bottom:5px;">Subtotal: <strong id="cnSubtotal">{money(_cn_form_subtotal_excl)}</strong></div>
+                <div style="margin-bottom:5px;">VAT (15%): <strong id="cnVat">{money(_cn_form_vat)}</strong></div>
+                <div style="font-size:20px;color:var(--red);">Credit Amount: <strong id="cnTotal">{money(_cn_form_total)}</strong></div>
             </div>
             
             <div style="margin-bottom:20px;">
@@ -48863,11 +48893,24 @@ def create_credit_note(invoice_id):
             subtotal = {float(inv_subtotal)};
         }}
         
-        const vat = subtotal * 0.15;
-        const total = subtotal + vat;
-        document.getElementById('cnSubtotal').textContent = 'R' + subtotal.toFixed(2);
-        document.getElementById('cnVat').textContent = 'R' + vat.toFixed(2);
-        document.getElementById('cnTotal').textContent = 'R' + total.toFixed(2);
+        // Smart VAT calculation — match the same logic as backend
+        // 'subtotal' here = sum of selected line totals
+        const _vatIncl = {_form_vat_inclusive_js};
+        let displaySubtotal, displayVat, displayTotal;
+        if (_vatIncl) {{
+            // Line totals are already VAT-INCL → back-extract VAT
+            displayTotal = subtotal;
+            displaySubtotal = subtotal / 1.15;
+            displayVat = displayTotal - displaySubtotal;
+        }} else {{
+            // Line totals are VAT-EXCL → add VAT on top
+            displaySubtotal = subtotal;
+            displayVat = subtotal * 0.15;
+            displayTotal = subtotal + displayVat;
+        }}
+        document.getElementById('cnSubtotal').textContent = 'R' + displaySubtotal.toFixed(2);
+        document.getElementById('cnVat').textContent = 'R' + displayVat.toFixed(2);
+        document.getElementById('cnTotal').textContent = 'R' + displayTotal.toFixed(2);
     }}
     </script>
     '''
