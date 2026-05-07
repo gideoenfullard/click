@@ -49128,6 +49128,9 @@ def api_customer_record_payment():
             return jsonify({"success": False, "error": "Amount must be greater than zero"})
         
         # Save receipt record
+        # NOTE: receipts schema uses 'method' not 'payment_method'.
+        # Adding both causes Supabase to reject the whole record on installs
+        # where 'payment_method' column doesn't exist.
         receipt_id = generate_id()
         receipt = {
             "id": receipt_id,
@@ -49137,7 +49140,6 @@ def api_customer_record_payment():
             "amount": round(amount, 2),
             "date": pay_date,
             "method": method,
-            "payment_method": method,
             "reference": reference,
             "source": "manual",
             "created_at": now()
