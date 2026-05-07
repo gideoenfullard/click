@@ -26233,7 +26233,7 @@ def customer_view(customer_id):
                 "link": f"/invoice/{inv.get('id', '')}"
             })
     for s in sales:
-        if s.get("payment_method") == "account":
+        if s.get("payment_method") == "account" and (s.get("status") or "").lower() not in ("refunded", "reversed"):
             _ledger_items.append({
                 "date": s.get("date", ""),
                 "type": "POS Sale",
@@ -26272,6 +26272,41 @@ def customer_view(customer_id):
             "credit": float(cn.get("total", 0)),
             "link": f"/credit-note/{cn.get('id', '')}"
         })
+    # ── Add REVERSAL entries for invoices that were reversed ──
+    # These cancel out the original invoice (which is excluded above) — net zero
+    # for account-impacting reversals, but visible on statement so the customer
+    # can see the audit trail.
+    for inv in invoices:
+        if (inv.get("status") or "").lower() == "reversed":
+            _inv_id = inv.get("id", "")
+            _meta = _reversal_metadata.get(_inv_id, {})
+            _ledger_items.append({
+                "date": _meta.get("date") or inv.get("date", ""),
+                "type": "Invoice REVERSED",
+                "reference": _meta.get("ref") or f"REV-{inv.get('invoice_number', '')}",
+                "debit": 0,
+                "credit": 0,  # Net zero — original invoice was excluded above
+                "link": f"/invoice/{_inv_id}",
+                "note": _meta.get("reason", "")[:60]
+            })
+    
+    # ── Add REFUND entries for POS account sales that were refunded ──
+    # The original account sale was excluded above (it never created a true
+    # receivable since refunded), so net zero impact. But visible on statement.
+    for s in sales:
+        if (s.get("status") or "").lower() == "refunded" and s.get("payment_method") == "account":
+            _sale_id = s.get("id", "")
+            _meta = _refund_metadata.get(_sale_id, {})
+            _ledger_items.append({
+                "date": _meta.get("date") or s.get("date", ""),
+                "type": "POS Sale REFUNDED",
+                "reference": _meta.get("ref") or f"REF-{s.get('sale_number', '')}",
+                "debit": 0,
+                "credit": 0,  # Net zero — original sale was excluded above
+                "link": f"/sale/{_sale_id}",
+                "note": _meta.get("reason", "")[:60]
+            })
+    
     _ledger_items.sort(key=lambda x: x.get("date", ""))
     _running_bal = 0
     _ledger_html = ""
@@ -26279,10 +26314,14 @@ def customer_view(customer_id):
         _running_bal += _li["debit"] - _li["credit"]
         _ref_html = f'<a href="{_li["link"]}" style="color:var(--primary);text-decoration:none;">{safe_string(_li["reference"])}</a>' if _li.get("link") else safe_string(_li["reference"])
         _src = f' <span style="font-size:10px;color:var(--text-muted);">({_li.get("source","")})</span>' if _li.get("source") else ""
+        _note = f' <span style="font-size:10px;color:var(--text-muted);">({safe_string(_li.get("note",""))})</span>' if _li.get("note") else ""
+        # Reversal/refund rows render in muted grey to distinguish them
+        _is_void = _li.get("type", "").endswith("REVERSED") or _li.get("type", "").endswith("REFUNDED")
+        _row_style = ' style="color:#9ca3af;"' if _is_void else ''
         _bal_color = "color:var(--red);" if _running_bal > 0.01 else "color:var(--green);" if _running_bal < -0.01 else ""
-        _ledger_html += f'''<tr>
+        _ledger_html += f'''<tr{_row_style}>
             <td style="font-size:12px;">{_li["date"]}</td>
-            <td style="font-size:12px;">{_li["type"]}{_src}</td>
+            <td style="font-size:12px;">{_li["type"]}{_src}{_note}</td>
             <td style="font-size:12px;">{_ref_html}</td>
             <td style="text-align:right;font-size:12px;">{money(_li["debit"]) if _li["debit"] else "-"}</td>
             <td style="text-align:right;font-size:12px;color:var(--green);">{money(_li["credit"]) if _li["credit"] else "-"}</td>
@@ -30659,10 +30698,75 @@ def customer_statement(customer_id):
     credit_notes = db.get("credit_notes", {"business_id": biz_id, "customer_id": customer_id}) if biz_id else []
     sales = db.get("sales", {"business_id": biz_id, "customer_id": customer_id}) if biz_id else []
     
+    # ── Derive refund/reversal sets from allocation_log (same as customer detail) ──
+    # CRITICAL: This statement is what customers RECEIVE. It MUST exclude reversed
+    # invoices and refunded sales, otherwise the customer will see an outstanding
+    # balance for transactions that have been cancelled.
+    _refunded_sale_ids = set()
+    _reversed_invoice_ids = set()
+    _refund_metadata = {}
+    _reversal_metadata = {}
+    try:
+        _alloc_log = db.get("allocation_log", {"business_id": biz_id}) if biz_id else []
+        for _al in _alloc_log or []:
+            _src_id = _al.get("source_id", "")
+            if not _src_id:
+                continue
+            _extra_raw = _al.get("extra", "{}")
+            if isinstance(_extra_raw, str):
+                try:
+                    _extra = json.loads(_extra_raw) if _extra_raw else {}
+                except Exception:
+                    _extra = {}
+            elif isinstance(_extra_raw, dict):
+                _extra = _extra_raw
+            else:
+                _extra = {}
+            _action = _extra.get("action", "")
+            if _action == "pos_refund" and _al.get("source_table") == "sales":
+                _refunded_sale_ids.add(_src_id)
+                _refund_metadata[_src_id] = {
+                    "date": (_al.get("created_at") or "")[:10],
+                    "ref": _al.get("reference", ""),
+                    "reason": _extra.get("reason", ""),
+                }
+            elif _action == "invoice_reverse" and _al.get("source_table") == "invoices":
+                _reversed_invoice_ids.add(_src_id)
+                _reversal_metadata[_src_id] = {
+                    "date": (_al.get("created_at") or "")[:10],
+                    "ref": _al.get("reference", ""),
+                    "reason": _extra.get("reason", ""),
+                }
+    except Exception as _stmt_al_err:
+        logger.warning(f"[STATEMENT] allocation_log derive failed: {_stmt_al_err}")
+    
+    # Stamp status in-memory
+    for _inv in cust_invoices:
+        if _inv.get("id") in _reversed_invoice_ids and (_inv.get("status") or "").lower() not in ("credited", "reversed"):
+            _inv["status"] = "reversed"
+    for _s in sales:
+        if _s.get("id") in _refunded_sale_ids and (_s.get("status") or "").lower() not in ("refunded", "reversed"):
+            _s["status"] = "refunded"
+    
     # Combine and sort by date — show EVERYTHING for full audit trail
     # Credited invoices + their CNs both appear (they cancel each other in the running balance)
+    # Reversed invoices and refunded sales are EXCLUDED so customer doesn't see phantom balance
     transactions = []
     for inv in cust_invoices:
+        if (inv.get("status") or "").lower() in ("reversed",):
+            # Show as muted void entry for audit but with 0 impact on balance
+            _meta = _reversal_metadata.get(inv.get("id"), {})
+            transactions.append({
+                "date": _meta.get("date") or inv.get("date"),
+                "type": "Invoice REVERSED",
+                "reference": _meta.get("ref") or f"REV-{inv.get('invoice_number', '')}",
+                "debit": 0,
+                "credit": 0,
+                "link": f"/invoice/{inv.get('id', '')}",
+                "void": True,
+                "note": _meta.get("reason", "")[:60]
+            })
+            continue
         transactions.append({
             "date": inv.get("date"),
             "type": "Invoice",
@@ -30673,15 +30777,29 @@ def customer_statement(customer_id):
         })
     
     for s in sales:
-        if s.get("payment_method") == "account":
+        if s.get("payment_method") != "account":
+            continue
+        if (s.get("status") or "").lower() == "refunded":
+            _meta = _refund_metadata.get(s.get("id"), {})
             transactions.append({
-                "date": s.get("date"),
-                "type": "POS Sale",
-                "reference": s.get("sale_number", "-"),
-                "debit": float(s.get("total", 0)),
+                "date": _meta.get("date") or s.get("date"),
+                "type": "POS Sale REFUNDED",
+                "reference": _meta.get("ref") or f"REF-{s.get('sale_number', '')}",
+                "debit": 0,
                 "credit": 0,
-                "link": f"/sale/{s.get('id', '')}"
+                "link": f"/sale/{s.get('id', '')}",
+                "void": True,
+                "note": _meta.get("reason", "")[:60]
             })
+            continue
+        transactions.append({
+            "date": s.get("date"),
+            "type": "POS Sale",
+            "reference": s.get("sale_number", "-"),
+            "debit": float(s.get("total", 0)),
+            "credit": 0,
+            "link": f"/sale/{s.get('id', '')}"
+        })
     
     for r in cust_receipts:
         transactions.append({
@@ -30715,10 +30833,13 @@ def customer_statement(customer_id):
             _ref_html = f'<a href="{t["link"]}" style="color:#4f46e5;text-decoration:none;font-weight:600;" class="stmt-link">{_ref_display}</a>'
         else:
             _ref_html = _ref_display
+        # Reversed/refunded rows render in muted grey so customer sees they were cancelled
+        _row_style = ' style="color:#9ca3af;"' if t.get("void") else ''
+        _note_html = f' <span style="font-size:10px;color:#9ca3af;">({safe_string(t.get("note",""))})</span>' if t.get("note") else ""
         rows += f'''
-        <tr>
+        <tr{_row_style}>
             <td>{t["date"]}</td>
-            <td>{t["type"]}</td>
+            <td>{t["type"]}{_note_html}</td>
             <td>{_ref_html}</td>
             <td style="text-align:right;">{money(t["debit"]) if t["debit"] else "-"}</td>
             <td style="text-align:right;color:var(--green);">{money(t["credit"]) if t["credit"] else "-"}</td>
