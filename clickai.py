@@ -26113,7 +26113,7 @@ def customer_view(customer_id):
     
     # Calculate balance from source documents (invoices + account sales - receipts - credit notes)
     _inv_total = sum(float(i.get("total", 0)) for i in invoices if i.get("status") not in ("credited", "reversed"))
-    _acc_sales = sum(float(s.get("total", 0)) for s in sales if s.get("payment_method") == "account")
+    _acc_sales = sum(float(s.get("total", 0)) for s in sales if s.get("payment_method") == "account" and (s.get("status") or "").lower() not in ("refunded", "reversed"))
     _rec_total = sum(float(r.get("amount", 0)) for r in receipts)
     # Exclude credit notes whose linked invoice is fully credited (both cancel out)
     _credited_inv_nums = {i.get("invoice_number") for i in invoices if i.get("status") == "credited"}
@@ -26125,7 +26125,7 @@ def customer_view(customer_id):
     # Stats — exclude credited invoices (they are cancelled by their credit notes)
     total_invoiced = sum(float(inv.get("total", 0)) for inv in invoices if inv.get("status") not in ("credited", "reversed"))
     total_paid = sum(float(r.get("amount", 0)) for r in receipts)
-    total_sales = sum(float(s.get("total", 0)) for s in sales)
+    total_sales = sum(float(s.get("total", 0)) for s in sales if (s.get("status") or "").lower() not in ("refunded", "reversed"))
     
     # YTD Stats - current financial year
     import datetime
@@ -26238,12 +26238,28 @@ def customer_view(customer_id):
     for s in sales[:200]:
         method = s.get("payment_method", "cash")
         method_color = {"cash": "#10b981", "card": "#3b82f6", "account": "#f59e0b"}.get(method, "#888")
+        # Actions: Refund button (hidden for already-refunded sales)
+        _sale_status = (s.get("status") or "").lower()
+        _sale_id_safe = s.get("id", "")
+        _sale_num_safe = (s.get("sale_number") or "").replace("'", "")
+        _sale_total_val = float(s.get("total", 0) or 0)
+        _sale_method = (method or "cash").upper()
+        if _sale_status in ("refunded", "reversed"):
+            _sale_actions = '<span style="font-size:10px;color:var(--text-muted);">(refunded)</span>'
+            _method_display = f'<span style="color:#888;text-decoration:line-through;">{_sale_method}</span>'
+        else:
+            _sale_actions = (
+                f'<button onclick="event.stopPropagation();refundPosSale(\'{_sale_id_safe}\',\'{_sale_num_safe}\',{_sale_total_val},\'{method}\')" '
+                f'title="Refund this sale (cash back from till)" style="background:#dc2626;color:#fff;border:none;padding:4px 8px;border-radius:4px;cursor:pointer;font-size:11px;">Refund</button>'
+            )
+            _method_display = f'<span style="color:{method_color};">{_sale_method}</span>'
         sales_html += f'''
         <tr>
             <td>{s.get("sale_number", "-")}</td>
             <td>{s.get("date", "-")}</td>
             <td>{money(s.get("total", 0)) if can_see_balances else "---"}</td>
-            <td style="color:{method_color};">{method.upper()}</td>
+            <td>{_method_display}</td>
+            <td>{_sale_actions}</td>
         </tr>
         '''
     
@@ -26644,10 +26660,10 @@ def customer_view(customer_id):
         </div>
         <table class="table" id="salesTable">
             <thead>
-                <tr><th>Sale #</th><th>Date</th><th>Amount</th><th>Method</th></tr>
+                <tr><th>Sale #</th><th>Date</th><th>Amount</th><th>Method</th><th style="width:90px;">Actions</th></tr>
             </thead>
             <tbody>
-                {sales_html or "<tr><td colspan='4' style='text-align:center;color:var(--text-muted)'>No POS sales yet</td></tr>"}
+                {sales_html or "<tr><td colspan='5' style='text-align:center;color:var(--text-muted)'>No POS sales yet</td></tr>"}
             </tbody>
         </table>
     </div>
@@ -26796,6 +26812,38 @@ def customer_view(customer_id):
                 window.location.reload();
             }} else {{
                 alert('Reversal failed: ' + ((j && j.error) || 'Unknown error'));
+            }}
+        }})
+        .catch(err => alert('Network error: ' + err));
+    }}
+    
+    // Refund a POS sale — cash back from till (or bank for card/EFT)
+    function refundPosSale(saleId, saleNumber, amount, method) {{
+        var pretty = (amount || 0).toLocaleString('en-ZA', {{minimumFractionDigits: 2, maximumFractionDigits: 2}});
+        var methodUpper = (method || 'cash').toUpperCase();
+        var moneySource = (method === 'cash') ? 'till (Cash On Hand)' : (method === 'account' ? 'customer account (Debtors)' : 'bank (' + methodUpper + ')');
+        var reason = prompt('Refund sale ' + (saleNumber || '') + ' (R' + pretty + ' ' + methodUpper + ')?\\n\\nMoney comes back from: ' + moneySource + '.\\nStock items will be returned to inventory.\\nOriginal sale stays in audit trail but is marked refunded.\\n\\nReason (required):');
+        if (reason === null) return;
+        reason = (reason || '').trim();
+        if (!reason) {{
+            alert('Reason is required for an audit-trail refund.');
+            return;
+        }}
+        if (!confirm('Confirm refund?\\n\\nSale: ' + (saleNumber || '') + '\\nAmount: R' + pretty + ' ' + methodUpper + '\\nReason: ' + reason)) {{
+            return;
+        }}
+        fetch('/api/pos-sale/' + encodeURIComponent(saleId) + '/refund', {{
+            method: 'POST',
+            headers: {{'Content-Type': 'application/json'}},
+            body: JSON.stringify({{reason: reason}})
+        }})
+        .then(r => r.json())
+        .then(j => {{
+            if (j && j.success) {{
+                alert(j.message || 'Sale refunded.');
+                window.location.reload();
+            }} else {{
+                alert('Refund failed: ' + ((j && j.error) || 'Unknown error'));
             }}
         }})
         .catch(err => alert('Network error: ' + err));
@@ -48148,6 +48196,29 @@ def create_credit_note(invoice_id):
     else:
         inv_items = []
     
+    # ── OPENING BALANCE / NO-ITEMS FALLBACK ──
+    # OPENING-* invoices imported from Sage and other lineless invoices have no
+    # line items but DO have a total. Synthesise a single line so they can be
+    # credited via the same UI without needing a separate flow.
+    if not inv_items:
+        _inv_total_for_synth = float(invoice.get("total", 0) or 0)
+        if _inv_total_for_synth > 0:
+            _inv_subtotal_for_synth = float(invoice.get("subtotal", 0) or 0)
+            _inv_vat_for_synth = float(invoice.get("vat", invoice.get("vat_amount", 0)) or 0)
+            # If subtotal/vat not stored, derive (assume 15% VAT inclusive)
+            if _inv_subtotal_for_synth <= 0 and _inv_vat_for_synth <= 0:
+                _inv_subtotal_for_synth = round(_inv_total_for_synth / 1.15, 2)
+            _inv_num_str = invoice.get("invoice_number", "") or ""
+            _synth_desc = "Opening Balance Adjustment" if _inv_num_str.startswith("OPENING") else f"Invoice {_inv_num_str} Adjustment"
+            inv_items = [{
+                "description": _synth_desc,
+                "quantity": 1,
+                "price": _inv_subtotal_for_synth,
+                "total": _inv_subtotal_for_synth,
+                "_synthetic": True
+            }]
+            logger.info(f"[CREDIT NOTE] Synthesised line item for lineless invoice {_inv_num_str} (R{_inv_subtotal_for_synth:.2f} excl)")
+    
     logger.info(f"[CREDIT NOTE] Invoice {invoice.get('invoice_number')}: {len(inv_items)} items loaded, type={type(raw_items).__name__}")
     
     if request.method == "POST":
@@ -48567,6 +48638,172 @@ def api_reverse_customer_invoice(invoice_id):
         })
     except Exception as e:
         logger.error(f"[REVERSE INV] Error: {e}")
+        return jsonify({"success": False, "error": str(e)[:300]}), 500
+
+
+@app.route("/api/pos-sale/<sale_id>/refund", methods=["POST"])
+@login_required
+def api_refund_pos_sale(sale_id):
+    """
+    Cash refund for a POS sale. Creates an opposite journal that returns money
+    out of the till (or bank for card/EFT). Stock movement is reversed (qty
+    returned to stock). Original sale stays in DB for audit but is marked
+    status='refunded'. Pastel-equivalent of a cash refund.
+    """
+    try:
+        user = Auth.get_current_user()
+        business = Auth.get_current_business()
+        biz_id = business.get("id") if business else None
+        
+        if not biz_id:
+            return jsonify({"success": False, "error": "No business context"}), 400
+        
+        sale = db.get_one("sales", sale_id)
+        if not sale:
+            return jsonify({"success": False, "error": "Sale not found"}), 404
+        
+        if (sale.get("status") or "").lower() in ("refunded", "reversed"):
+            return jsonify({"success": False, "error": f"Sale already {sale.get('status')}"}), 400
+        
+        body = request.get_json(silent=True) or {}
+        reason = (body.get("reason") or "").strip() or "Manual refund"
+        
+        sale_number = sale.get("sale_number") or sale.get("number") or sale_id[:8]
+        customer_name = sale.get("customer_name", "")
+        total = float(sale.get("total", 0) or 0)
+        subtotal = float(sale.get("subtotal", 0) or 0)
+        vat_amount = float(sale.get("vat", sale.get("vat_amount", 0)) or 0)
+        if subtotal <= 0 and vat_amount <= 0 and total > 0:
+            subtotal = round(total / 1.15, 2)
+            vat_amount = round(total - subtotal, 2)
+        
+        payment_method = (sale.get("payment_method", "cash") or "cash").lower()
+        # Same accounts the original sale posted to
+        if payment_method == "account":
+            bank_account = gl(biz_id, "debtors")
+        elif payment_method == "cash":
+            bank_account = "1050"  # Cash On Hand (POS till)
+        else:
+            bank_account = "1000"  # Bank (card / EFT)
+        
+        today_str = today()
+        ref = f"REF-{sale_number}"
+        
+        # Reverse the sale's GL: original was DR Cash/Bank/Debtors, CR Sales, CR VAT
+        # Refund:                     CR Cash/Bank/Debtors, DR Sales, DR VAT
+        gl_entries = [
+            {"account_code": bank_account,             "debit": 0,                 "credit": float(total)},
+            {"account_code": gl(biz_id, "sales"),      "debit": float(subtotal),   "credit": 0},
+            {"account_code": gl(biz_id, "vat_output"), "debit": float(vat_amount), "credit": 0},
+        ]
+        try:
+            create_journal_entry(biz_id, today_str,
+                                 f"REFUND of POS Sale {sale_number} ({reason[:60]})",
+                                 ref, gl_entries)
+        except Exception as je_err:
+            logger.error(f"[REFUND POS] Journal create failed: {je_err}")
+            return jsonify({"success": False, "error": f"Journal creation failed: {str(je_err)[:200]}"}), 500
+        
+        # Reverse stock movement: items go back into stock, COGS reverses
+        stock_reversal_summary = []
+        try:
+            raw_items = sale.get("items", "[]")
+            if isinstance(raw_items, list):
+                sale_items = raw_items
+            elif isinstance(raw_items, str):
+                try:
+                    sale_items = json.loads(raw_items)
+                except Exception:
+                    sale_items = []
+            else:
+                sale_items = []
+            
+            for item in sale_items:
+                stock_id = item.get("stock_id") or item.get("id") or ""
+                qty = float(item.get("quantity") or item.get("qty") or 0)
+                cost = float(item.get("cost") or item.get("unit_cost") or 0)
+                desc = (item.get("description") or "")[:40]
+                if stock_id and qty > 0:
+                    try:
+                        stock_rec = db.get_one("stock", stock_id)
+                        if stock_rec:
+                            current_qty = float(stock_rec.get("qty") or stock_rec.get("quantity") or 0)
+                            new_qty = current_qty + qty
+                            db.update_stock(stock_id, {"qty": new_qty, "quantity": new_qty}, biz_id)
+                            stock_reversal_summary.append({
+                                "stock_id": stock_id,
+                                "code": stock_rec.get("code", ""),
+                                "description": desc,
+                                "qty_change": qty,
+                                "old_qty": current_qty,
+                                "new_qty": new_qty
+                            })
+                            logger.info(f"[REFUND POS] Stock {stock_rec.get('code','')} returned: {current_qty} + {qty} = {new_qty}")
+                    except Exception as st_err:
+                        logger.warning(f"[REFUND POS] Stock return failed for {stock_id}: {st_err}")
+                # Reverse COGS journal: original was DR COGS, CR Stock — refund: CR COGS, DR Stock
+                if qty > 0 and cost > 0:
+                    try:
+                        cos_entries = [
+                            {"account_code": gl(biz_id, "cogs"),  "debit": 0,                 "credit": float(cost) * qty},
+                            {"account_code": gl(biz_id, "stock"), "debit": float(cost) * qty, "credit": 0},
+                        ]
+                        create_journal_entry(biz_id, today_str,
+                                             f"REFUND COS - {desc}",
+                                             f"REFCOS-{sale_id[:8]}", cos_entries)
+                    except Exception as cos_err:
+                        logger.warning(f"[REFUND POS] COGS reversal failed: {cos_err}")
+        except Exception as items_err:
+            logger.warning(f"[REFUND POS] Stock/COGS reversal block failed: {items_err}")
+        
+        # Mark sale as refunded (DO NOT DELETE — audit trail)
+        try:
+            db.save("sales", {
+                "id": sale_id,
+                "status": "refunded",
+                "refunded_at": now(),
+                "refunded_by": user.get("id") if user else "",
+                "refunded_by_name": user.get("name") if user else "",
+                "refund_reason": reason[:500],
+                "refund_reference": ref,
+            })
+        except Exception as upd_err:
+            logger.error(f"[REFUND POS] Status update failed (journal already posted): {upd_err}")
+        
+        # Audit trail
+        try:
+            if log_allocation:
+                log_allocation(
+                    business_id=biz_id,
+                    allocation_type="journal_entry",
+                    source_table="sales",
+                    source_id=sale_id,
+                    description=f"POS Sale {sale_number} refunded: {reason[:120]}",
+                    amount=total,
+                    gl_entries=gl_entries,
+                    stock_movements=stock_reversal_summary,
+                    customer_name=customer_name,
+                    payment_method=payment_method,
+                    reference=ref,
+                    transaction_date=today_str,
+                    created_by=user.get("id") if user else "",
+                    created_by_name=user.get("name") if user else "",
+                    extra={"action": "pos_refund", "original_sale_number": sale_number, "reason": reason}
+                )
+        except Exception as la_err:
+            logger.warning(f"[REFUND POS] Allocation log failed: {la_err}")
+        
+        logger.info(f"[REFUND POS] Sale {sale_number} ({payment_method}) refunded R{total:,.2f} by {user.get('name', user.get('id', 'unknown')) if user else 'unknown'} - reason: {reason[:80]}")
+        
+        return jsonify({
+            "success": True,
+            "message": f"Sale {sale_number} refunded (R{total:,.2f} from {payment_method.upper()})",
+            "reference": ref,
+            "sale_number": sale_number,
+            "stock_returned": len(stock_reversal_summary)
+        })
+    except Exception as e:
+        logger.error(f"[REFUND POS] Error: {e}")
         return jsonify({"success": False, "error": str(e)[:300]}), 500
 
 
