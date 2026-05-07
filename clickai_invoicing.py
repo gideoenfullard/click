@@ -544,7 +544,7 @@ def register_invoicing_routes(app, db, login_required, Auth, render_page,
                     }});
                     dd.innerHTML=h; dd.style.display='block';
                 }});
-            }}, 150);
+            }}, 200);
         }}
         function pickStock(el,stockId,label,price,unit){{
             const row=el.closest('tr');
@@ -2977,7 +2977,7 @@ def register_invoicing_routes(app, db, login_required, Auth, render_page,
                     }});
                     dd.innerHTML=h; dd.style.display='block';
                 }});
-            }}, 150);
+            }}, 200);
         }}
         function pickStock(el,stockId,label,price,unit){{
             const row=el.closest('tr');
@@ -3803,7 +3803,7 @@ def register_invoicing_routes(app, db, login_required, Auth, render_page,
                     }});
                     dd.innerHTML=h; dd.style.display='block';
                 }});
-            }}, 150);
+            }}, 200);
         }}
         function pickStock(el,stockId,label,price,unit){{
             const row=el.closest('tr');

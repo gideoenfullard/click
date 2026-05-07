@@ -26819,26 +26819,30 @@ def customer_view(customer_id):
     
     // Refund a POS sale — cash back from till (or bank for card/EFT)
     function refundPosSale(saleId, saleNumber, amount, method) {{
+        console.log('[REFUND] Button clicked', {{saleId, saleNumber, amount, method}});
         var pretty = (amount || 0).toLocaleString('en-ZA', {{minimumFractionDigits: 2, maximumFractionDigits: 2}});
         var methodUpper = (method || 'cash').toUpperCase();
         var moneySource = (method === 'cash') ? 'till (Cash On Hand)' : (method === 'account' ? 'customer account (Debtors)' : 'bank (' + methodUpper + ')');
         var reason = prompt('Refund sale ' + (saleNumber || '') + ' (R' + pretty + ' ' + methodUpper + ')?\\n\\nMoney comes back from: ' + moneySource + '.\\nStock items will be returned to inventory.\\nOriginal sale stays in audit trail but is marked refunded.\\n\\nReason (required):');
-        if (reason === null) return;
+        if (reason === null) {{ console.log('[REFUND] Cancelled at prompt'); return; }}
         reason = (reason || '').trim();
         if (!reason) {{
             alert('Reason is required for an audit-trail refund.');
             return;
         }}
         if (!confirm('Confirm refund?\\n\\nSale: ' + (saleNumber || '') + '\\nAmount: R' + pretty + ' ' + methodUpper + '\\nReason: ' + reason)) {{
+            console.log('[REFUND] Cancelled at confirm');
             return;
         }}
+        console.log('[REFUND] Sending fetch to /api/pos-sale/' + saleId + '/refund');
         fetch('/api/pos-sale/' + encodeURIComponent(saleId) + '/refund', {{
             method: 'POST',
             headers: {{'Content-Type': 'application/json'}},
             body: JSON.stringify({{reason: reason}})
         }})
-        .then(r => r.json())
+        .then(r => {{ console.log('[REFUND] HTTP status:', r.status); return r.json(); }})
         .then(j => {{
+            console.log('[REFUND] Response:', j);
             if (j && j.success) {{
                 alert(j.message || 'Sale refunded.');
                 window.location.reload();
@@ -26846,7 +26850,7 @@ def customer_view(customer_id):
                 alert('Refund failed: ' + ((j && j.error) || 'Unknown error'));
             }}
         }})
-        .catch(err => alert('Network error: ' + err));
+        .catch(err => {{ console.error('[REFUND] Network error:', err); alert('Network error: ' + err); }});
     }}
     
     // Search/filter any table by text
