@@ -26039,10 +26039,54 @@ def customer_view(customer_id):
                 "id": dn.get("id"),
             })
     
+    # ── DISPLAY-ONLY: FIFO receipt allocation against invoices ──
+    # The DB-stored `status` field can be stale (e.g. OPENING-* invoices imported
+    # from Sage where a later receipt was booked against the customer but never
+    # back-linked to the specific invoice). To show a true status, allocate all
+    # customer receipts (oldest first) against invoices (oldest first), excluding
+    # credited invoices and credit-note offsets. This does NOT mutate the DB.
+    _alloc_paid = {}  # invoice_id -> amount allocated from receipts
+    try:
+        # Pool of receipt money available for allocation
+        _pool = sum(float(r.get("amount", 0) or 0) for r in receipts)
+        # Subtract credit notes that target uncredited invoices (they reduce
+        # what the customer still owes, so receipts cover less of the invoices)
+        # NOTE: credit notes targeting fully-credited invoices already cancel
+        # out via _credited_inv_nums above — skip them here too.
+        _cn_offset = sum(float(cn.get("total", 0) or 0) for cn in credit_notes
+                         if cn.get("invoice_number", "") not in _credited_inv_nums)
+        # Allocate oldest invoice first
+        _invs_oldest_first = sorted(
+            [i for i in invoices if (i.get("status") or "").lower() != "credited"],
+            key=lambda x: x.get("date", "")
+        )
+        # Apply CN offset first (treat as already-paid against oldest invoices)
+        _to_apply = _pool + _cn_offset
+        for _i in _invs_oldest_first:
+            if _to_apply <= 0:
+                break
+            _t = float(_i.get("total", 0) or 0)
+            _take = min(_t, _to_apply)
+            if _take > 0:
+                _alloc_paid[_i.get("id")] = _take
+                _to_apply -= _take
+    except Exception:
+        _alloc_paid = {}
+    
     invoices_html = ""
     for inv in invoices[:200]:
         status = inv.get("status", "outstanding")
-        status_colors = {"paid": "var(--green)", "credited": "var(--red)", "delivered": "#3b82f6", "account": "#f59e0b", "partial_credit": "#f59e0b"}
+        # Override with effective status from FIFO allocation when DB status is
+        # not already "paid"/"credited"/"delivered" (those are authoritative).
+        _orig_status = status
+        if status not in ("paid", "credited", "delivered"):
+            _inv_total_val = float(inv.get("total", 0) or 0)
+            _paid_against = float(_alloc_paid.get(inv.get("id"), 0) or 0)
+            if _inv_total_val > 0 and _paid_against >= _inv_total_val - 0.01:
+                status = "paid"
+            elif _paid_against > 0.01:
+                status = "partial"
+        status_colors = {"paid": "var(--green)", "credited": "var(--red)", "delivered": "#3b82f6", "account": "#f59e0b", "partial_credit": "#f59e0b", "partial": "#f59e0b"}
         status_color = status_colors.get(status, "var(--orange)")
         _inv_paid_info = ""
         if status == "paid" and inv.get("paid_date"):
@@ -26052,6 +26096,9 @@ def customer_view(customer_id):
             elif inv.get("payment_method"):
                 _inv_method = inv.get("payment_method", "").upper()
             _inv_paid_info = f' <span style="font-size:10px;color:var(--text-muted);">({inv.get("paid_date", "")[:10]}{" - " + _inv_method if _inv_method else ""})</span>'
+        elif status == "partial":
+            _paid_against = float(_alloc_paid.get(inv.get("id"), 0) or 0)
+            _inv_paid_info = f' <span style="font-size:10px;color:var(--text-muted);">({money(_paid_against)} of {money(inv.get("total", 0))})</span>'
         
         # Build linked docs column (CN/DN references) — CLICKABLE links
         _inv_num = inv.get("invoice_number", "")
