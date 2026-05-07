@@ -26112,7 +26112,7 @@ def customer_view(customer_id):
     sales = sorted(fut_sales.result(), key=lambda x: x.get("date", ""), reverse=True)
     
     # Calculate balance from source documents (invoices + account sales - receipts - credit notes)
-    _inv_total = sum(float(i.get("total", 0)) for i in invoices if i.get("status") != "credited")
+    _inv_total = sum(float(i.get("total", 0)) for i in invoices if i.get("status") not in ("credited", "reversed"))
     _acc_sales = sum(float(s.get("total", 0)) for s in sales if s.get("payment_method") == "account")
     _rec_total = sum(float(r.get("amount", 0)) for r in receipts)
     # Exclude credit notes whose linked invoice is fully credited (both cancel out)
@@ -26123,7 +26123,7 @@ def customer_view(customer_id):
     
     # Stats
     # Stats — exclude credited invoices (they are cancelled by their credit notes)
-    total_invoiced = sum(float(inv.get("total", 0)) for inv in invoices if inv.get("status") != "credited")
+    total_invoiced = sum(float(inv.get("total", 0)) for inv in invoices if inv.get("status") not in ("credited", "reversed"))
     total_paid = sum(float(r.get("amount", 0)) for r in receipts)
     total_sales = sum(float(s.get("total", 0)) for s in sales)
     
@@ -26139,7 +26139,7 @@ def customer_view(customer_id):
         ytd_start = f"{now_dt.year - 1}-03-01"
     fy_label = f"Mar {fy_year} - Feb {fy_year + 1}"
     
-    ytd_invoices = [inv for inv in invoices if (inv.get("date") or "") >= ytd_start and inv.get("status") != "credited"]
+    ytd_invoices = [inv for inv in invoices if (inv.get("date") or "") >= ytd_start and inv.get("status") not in ("credited", "reversed")]
     ytd_invoiced = sum(float(inv.get("total", 0)) for inv in ytd_invoices)
     ytd_paid_receipts = [r for r in receipts if (r.get("date") or "") >= ytd_start]
     ytd_paid = sum(float(r.get("amount", 0)) for r in ytd_paid_receipts)
@@ -26167,7 +26167,7 @@ def customer_view(customer_id):
     # Build Account Statement / Ledger (all transactions sorted by date)
     _ledger_items = []
     for inv in invoices:
-        if inv.get("status") != "credited":
+        if inv.get("status") not in ("credited", "reversed"):
             _ledger_items.append({
                 "date": inv.get("date", ""),
                 "type": "Invoice",
@@ -26283,7 +26283,7 @@ def customer_view(customer_id):
                          if cn.get("invoice_number", "") not in _credited_inv_nums)
         # Allocate oldest invoice first
         _invs_oldest_first = sorted(
-            [i for i in invoices if (i.get("status") or "").lower() != "credited"],
+            [i for i in invoices if (i.get("status") or "").lower() not in ("credited", "reversed")],
             key=lambda x: x.get("date", "")
         )
         # Apply CN offset first (treat as already-paid against oldest invoices)
@@ -26303,16 +26303,16 @@ def customer_view(customer_id):
     for inv in invoices[:200]:
         status = inv.get("status", "outstanding")
         # Override with effective status from FIFO allocation when DB status is
-        # not already "paid"/"credited"/"delivered" (those are authoritative).
+        # not already "paid"/"credited"/"reversed"/"delivered" (those are authoritative).
         _orig_status = status
-        if status not in ("paid", "credited", "delivered"):
+        if status not in ("paid", "credited", "reversed", "delivered"):
             _inv_total_val = float(inv.get("total", 0) or 0)
             _paid_against = float(_alloc_paid.get(inv.get("id"), 0) or 0)
             if _inv_total_val > 0 and _paid_against >= _inv_total_val - 0.01:
                 status = "paid"
             elif _paid_against > 0.01:
                 status = "partial"
-        status_colors = {"paid": "var(--green)", "credited": "var(--red)", "delivered": "#3b82f6", "account": "#f59e0b", "partial_credit": "#f59e0b", "partial": "#f59e0b"}
+        status_colors = {"paid": "var(--green)", "credited": "var(--red)", "reversed": "#9ca3af", "delivered": "#3b82f6", "account": "#f59e0b", "partial_credit": "#f59e0b", "partial": "#f59e0b"}
         status_color = status_colors.get(status, "var(--orange)")
         _inv_paid_info = ""
         if status == "paid" and inv.get("paid_date"):
@@ -26345,6 +26345,23 @@ def customer_view(customer_id):
             _linked_docs_parts.append(f'<span style="font-size:11px;">{_dn_links}</span>')
         _linked_docs_html = " ".join(_linked_docs_parts) if _linked_docs_parts else '<span style="font-size:11px;color:var(--text-muted);">-</span>'
         
+        # Actions column — Credit + Reverse (hidden for already-reversed/credited invoices)
+        _actions_html = ""
+        _inv_status_lower = (inv.get("status") or "").lower()
+        if _inv_status_lower not in ("reversed", "credited"):
+            _inv_id_safe = inv.get("id", "")
+            _inv_num_safe = (inv.get("invoice_number") or "").replace("'", "")
+            _actions_html = (
+                f'<button onclick="event.stopPropagation();window.location=\'/invoice/{_inv_id_safe}/credit-note\'" '
+                f'title="Issue Credit Note" style="background:#f59e0b;color:#fff;border:none;padding:4px 8px;border-radius:4px;cursor:pointer;font-size:11px;margin-right:4px;">Credit</button>'
+                f'<button onclick="event.stopPropagation();reverseInvoice(\'{_inv_id_safe}\',\'{_inv_num_safe}\',{float(inv.get("total", 0) or 0)})" '
+                f'title="Reverse with journal" style="background:#dc2626;color:#fff;border:none;padding:4px 8px;border-radius:4px;cursor:pointer;font-size:11px;">Reverse</button>'
+            )
+        elif _inv_status_lower == "reversed":
+            _actions_html = '<span style="font-size:10px;color:var(--text-muted);">(reversed)</span>'
+        else:
+            _actions_html = '<span style="font-size:10px;color:var(--text-muted);">(credited)</span>'
+        
         invoices_html += f'''
         <tr style="cursor:pointer;" onclick="window.location='/invoice/{inv.get("id")}'">
             <td>{_inv_num}</td>
@@ -26352,6 +26369,7 @@ def customer_view(customer_id):
             <td>{money(inv.get("total", 0)) if can_see_balances else "---"}</td>
             <td>{_linked_docs_html}</td>
             <td style="color:{status_color};">{status.upper()}{_inv_paid_info}</td>
+            <td onclick="event.stopPropagation();">{_actions_html}</td>
         </tr>
         '''
     
@@ -26611,10 +26629,10 @@ def customer_view(customer_id):
         </div>
         <table class="table" id="invoicesTable">
             <thead>
-                <tr><th>Number</th><th>Date</th><th>Amount</th><th>CN / DN</th><th>Status</th></tr>
+                <tr><th>Number</th><th>Date</th><th>Amount</th><th>CN / DN</th><th>Status</th><th style="width:90px;">Actions</th></tr>
             </thead>
             <tbody>
-                {invoices_html or "<tr><td colspan='5' style='text-align:center;color:var(--text-muted)'>No invoices yet</td></tr>"}
+                {invoices_html or "<tr><td colspan='6' style='text-align:center;color:var(--text-muted)'>No invoices yet</td></tr>"}
             </tbody>
         </table>
     </div>
@@ -26753,6 +26771,36 @@ def customer_view(customer_id):
     </div>
     
     <script>
+    // Reverse a customer invoice with audit trail (creates opposite journal)
+    function reverseInvoice(invoiceId, invoiceNumber, amount) {{
+        var pretty = (amount || 0).toLocaleString('en-ZA', {{minimumFractionDigits: 2, maximumFractionDigits: 2}});
+        var reason = prompt('Reverse invoice ' + (invoiceNumber || '') + ' (R' + pretty + ')?\\n\\nThis creates an opposite journal entry. The original invoice stays in the audit trail but is excluded from balances.\\n\\nReason (required):');
+        if (reason === null) return;
+        reason = (reason || '').trim();
+        if (!reason) {{
+            alert('Reason is required for an audit-trail reversal.');
+            return;
+        }}
+        if (!confirm('Confirm reversal?\\n\\nInvoice: ' + (invoiceNumber || '') + '\\nAmount: R' + pretty + '\\nReason: ' + reason)) {{
+            return;
+        }}
+        fetch('/api/customer-invoice/' + encodeURIComponent(invoiceId) + '/reverse', {{
+            method: 'POST',
+            headers: {{'Content-Type': 'application/json'}},
+            body: JSON.stringify({{reason: reason}})
+        }})
+        .then(r => r.json())
+        .then(j => {{
+            if (j && j.success) {{
+                alert(j.message || 'Invoice reversed.');
+                window.location.reload();
+            }} else {{
+                alert('Reversal failed: ' + ((j && j.error) || 'Unknown error'));
+            }}
+        }})
+        .catch(err => alert('Network error: ' + err));
+    }}
+    
     // Search/filter any table by text
     function filterTable(input, tableId) {{
         const q = input.value.toLowerCase().trim();
@@ -48402,6 +48450,124 @@ def create_credit_note(invoice_id):
     '''
     
     return render_page("Create Credit Note", content, user, "invoices")
+
+
+@app.route("/api/customer-invoice/<invoice_id>/reverse", methods=["POST"])
+@login_required
+def api_reverse_customer_invoice(invoice_id):
+    """
+    Reverse a customer invoice by creating an opposite journal entry (audit trail
+    preserved — original invoice stays in DB but status='reversed' so it's excluded
+    from balances and stats). Use for fixing duplicate opening balances or wrongly
+    captured invoices. Pastel-equivalent of a 'reversal journal'.
+    """
+    try:
+        user = Auth.get_current_user()
+        business = Auth.get_current_business()
+        biz_id = business.get("id") if business else None
+        
+        if not biz_id:
+            return jsonify({"success": False, "error": "No business context"}), 400
+        
+        # Fraud guard - same permission check as credit note
+        try:
+            if FraudGuard:
+                _role = get_user_role()
+                _inv_for_guard = db.get_one("invoices", invoice_id)
+                if _inv_for_guard:
+                    _guard = FraudGuard.can_cancel_invoice(_inv_for_guard, _role)
+                    if not _guard.get("allowed"):
+                        return jsonify({"success": False, "error": _guard.get("reason", "Not allowed")}), 403
+        except Exception as _fg_err:
+            logger.warning(f"[REVERSE INV] FraudGuard check failed (allowing): {_fg_err}")
+        
+        invoice = db.get_one("invoices", invoice_id)
+        if not invoice:
+            return jsonify({"success": False, "error": "Invoice not found"}), 404
+        
+        if (invoice.get("status") or "").lower() in ("reversed", "credited"):
+            return jsonify({"success": False, "error": f"Invoice already {invoice.get('status')}"}), 400
+        
+        body = request.get_json(silent=True) or {}
+        reason = (body.get("reason") or "").strip() or "Manual reversal"
+        
+        inv_number = invoice.get("invoice_number") or invoice.get("number") or invoice_id[:8]
+        customer_name = invoice.get("customer_name", "")
+        total = float(invoice.get("total", 0) or 0)
+        subtotal = float(invoice.get("subtotal", 0) or 0)
+        vat_amount = float(invoice.get("vat", invoice.get("vat_amount", 0)) or 0)
+        # If subtotal/vat not stored, derive from total assuming 15% VAT inclusive
+        if subtotal <= 0 and vat_amount <= 0 and total > 0:
+            subtotal = round(total / 1.15, 2)
+            vat_amount = round(total - subtotal, 2)
+        
+        today_str = today()
+        ref = f"REV-{inv_number}"
+        
+        # Build the reversal GL: opposite of original invoice posting
+        # Original: DR Debtors, CR Sales, CR VAT Output
+        # Reverse:  CR Debtors, DR Sales, DR VAT Output
+        gl_entries = [
+            {"account_code": gl(biz_id, "debtors"),    "debit": 0,             "credit": float(total)},
+            {"account_code": gl(biz_id, "sales"),      "debit": float(subtotal), "credit": 0},
+            {"account_code": gl(biz_id, "vat_output"), "debit": float(vat_amount),"credit": 0},
+        ]
+        
+        try:
+            create_journal_entry(biz_id, today_str,
+                                 f"REVERSAL of Invoice {inv_number} - {customer_name} ({reason[:60]})",
+                                 ref, gl_entries)
+        except Exception as je_err:
+            logger.error(f"[REVERSE INV] Journal create failed: {je_err}")
+            return jsonify({"success": False, "error": f"Journal creation failed: {str(je_err)[:200]}"}), 500
+        
+        # Mark invoice as reversed (DO NOT DELETE — audit trail)
+        try:
+            db.save("invoices", {
+                "id": invoice_id,
+                "status": "reversed",
+                "reversed_at": now(),
+                "reversed_by": user.get("id") if user else "",
+                "reversed_by_name": user.get("name") if user else "",
+                "reversal_reason": reason[:500],
+                "reversal_reference": ref,
+            })
+        except Exception as upd_err:
+            logger.error(f"[REVERSE INV] Status update failed (journal already posted): {upd_err}")
+            # Journal is already posted, log this serious issue
+        
+        # Audit trail
+        try:
+            if log_allocation:
+                log_allocation(
+                    business_id=biz_id,
+                    allocation_type="journal_entry",
+                    source_table="invoices",
+                    source_id=invoice_id,
+                    description=f"Invoice {inv_number} reversed: {reason[:120]}",
+                    amount=total,
+                    gl_entries=gl_entries,
+                    customer_name=customer_name,
+                    reference=ref,
+                    transaction_date=today_str,
+                    created_by=user.get("id") if user else "",
+                    created_by_name=user.get("name") if user else "",
+                    extra={"action": "invoice_reverse", "original_invoice_number": inv_number, "reason": reason}
+                )
+        except Exception as la_err:
+            logger.warning(f"[REVERSE INV] Allocation log failed: {la_err}")
+        
+        logger.info(f"[REVERSE INV] {inv_number} reversed by {user.get('name', user.get('id', 'unknown')) if user else 'unknown'} - reason: {reason[:80]}")
+        
+        return jsonify({
+            "success": True,
+            "message": f"Invoice {inv_number} reversed (R{total:,.2f})",
+            "reference": ref,
+            "invoice_number": inv_number
+        })
+    except Exception as e:
+        logger.error(f"[REVERSE INV] Error: {e}")
+        return jsonify({"success": False, "error": str(e)[:300]}), 500
 
 
 @app.route("/credit-note/<cn_id>")
