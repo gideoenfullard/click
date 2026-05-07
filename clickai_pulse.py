@@ -722,6 +722,12 @@ def register_pulse_routes(app, db, login_required, Auth, generate_id, now, today
                 f_bank_txns = pool.submit(db.get, "bank_transactions", {"business_id": biz_id})
                 f_cashups = pool.submit(db.get, "cash_ups", {"business_id": biz_id})
                 f_timesheets = pool.submit(db.get, "timesheet_entries", {"business_id": biz_id})
+                # FULL VISIBILITY: receipts, supplier docs, GL journals, stock movements
+                f_receipts = pool.submit(db.get, "receipts", {"business_id": biz_id})
+                f_sup_invoices = pool.submit(db.get, "supplier_invoices", {"business_id": biz_id})
+                f_sup_payments = pool.submit(db.get, "supplier_payments", {"business_id": biz_id})
+                f_journals = pool.submit(db.get, "journal_entries", {"business_id": biz_id})
+                f_stock_mvts = pool.submit(db.get, "stock_movements", {"business_id": biz_id})
 
                 def _safe(future, label=""):
                     try:
@@ -745,6 +751,12 @@ def register_pulse_routes(app, db, login_required, Auth, generate_id, now, today
                 bank_txns = _safe(f_bank_txns, "bank_transactions")
                 cashups = _safe(f_cashups, "cash_ups")
                 timesheets = _safe(f_timesheets, "timesheet_entries")
+                # FULL VISIBILITY tables
+                receipts_data = _safe(f_receipts, "receipts")
+                sup_invoices = _safe(f_sup_invoices, "supplier_invoices")
+                sup_payments = _safe(f_sup_payments, "supplier_payments")
+                journals = _safe(f_journals, "journal_entries")
+                stock_mvts = _safe(f_stock_mvts, "stock_movements")
 
                 try:
                     team_users = f_users.result(timeout=20) or []
@@ -1226,6 +1238,36 @@ def register_pulse_routes(app, db, login_required, Auth, generate_id, now, today
                         "amount": 0,
                         "icon": "&#128337;", "color": "#a855f7"
                     })
+
+            # ── FULL VISIBILITY: receipts (customer payments allocated) ──
+            _add_activity(receipts_data, "date",
+                          lambda r: f'Receipt from {(r.get("customer_name", "") or "Customer")[:20]} (allocated)',
+                          lambda r: float(r.get("amount", 0) or 0), "&#128179;", "#22c55e", extra_date_field="created_at")
+
+            # ── FULL VISIBILITY: supplier invoices (bills received) ──
+            _add_activity(sup_invoices, "date",
+                          lambda si: f'Supplier Invoice {si.get("invoice_number", si.get("number", ""))} from {(si.get("supplier_name", "") or "Unknown")[:20]}',
+                          lambda si: float(si.get("total", 0) or 0), "&#128221;", "#ef4444", extra_date_field="created_at")
+
+            # ── FULL VISIBILITY: supplier payments (paid out) ──
+            _add_activity(sup_payments, "date",
+                          lambda sp: f'Paid {(sp.get("supplier_name", "") or "Unknown")[:20]} ({sp.get("payment_method", "") or "n/a"})',
+                          lambda sp: float(sp.get("amount", 0) or 0), "&#128181;", "#dc2626", extra_date_field="created_at")
+
+            # ── FULL VISIBILITY: GL journal entries (manual adjustments) ──
+            _add_activity(journals, "date",
+                          lambda j: f'Journal: {(j.get("description", j.get("reference", "")) or "GL entry")[:30]}',
+                          lambda j: float(j.get("amount", j.get("debit", j.get("credit", 0))) or 0), "&#128221;", "#6366f1", extra_date_field="created_at")
+
+            # ── FULL VISIBILITY: stock movements (in/out/adjustments) ──
+            _add_activity(stock_mvts, "date",
+                          lambda sm: f'Stock {(sm.get("movement_type", sm.get("type", "")) or "move")}: {(sm.get("item_name", sm.get("description", "")) or "")[:25]} ({sm.get("quantity", 0)})',
+                          lambda sm: float(sm.get("value", sm.get("total", 0)) or 0), "&#128230;", "#0891b2", extra_date_field="created_at")
+
+            # ── FULL VISIBILITY: quotes (already loaded but not in feed) ──
+            _add_activity(quotes, "date",
+                          lambda q: f'Quote {q.get("quote_number", q.get("number", ""))} for {(q.get("customer_name", "") or "Unknown")[:20]} ({q.get("status", "draft")})',
+                          lambda q: float(q.get("total", 0) or 0), "&#128203;", "#eab308", extra_date_field="created_at")
 
             activity_feed.sort(key=lambda x: (x["date"], x["time"]), reverse=True)
 

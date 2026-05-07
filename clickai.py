@@ -5100,6 +5100,19 @@ ZANE_TOOLS = [
                 "limit": {"type": "integer", "description": "Max results (default 50, max 200)", "default": 50}
             }
         }
+    },
+    {
+        "name": "get_recent_activity",
+        "description": "Get a unified, chronological feed of EVERYTHING that happened in ClickAI across ALL modules — invoices, receipts, supplier invoices, supplier payments, POS sales, credit notes, delivery notes, purchase orders, GRVs, expenses, bank transactions, GL journals, stock movements, quotes, jobs, cashups, timesheets. Use this whenever the user asks 'what happened today/yesterday/this week', 'what did Daphne do', 'show me every movement', 'what changed in banking yesterday', 'recent activity', 'today's activity'. Can filter by user (who did the action) and by activity types. Returns activities sorted newest-first with WHO did it, WHEN, WHAT, and AMOUNT.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "days_back": {"type": "integer", "description": "How many days back to look (1=today+yesterday, 7=last week, 30=last month). Default 1.", "default": 1},
+                "user_filter": {"type": "string", "description": "Filter by user name (partial match, case-insensitive). E.g. 'Daphne', 'Isaac'. Leave empty for all users."},
+                "activity_types": {"type": "array", "items": {"type": "string"}, "description": "Filter by activity types. Options: invoices, receipts, sales, supplier_invoices, supplier_payments, credit_notes, delivery_notes, purchase_orders, grvs, expenses, bank_transactions, journals, stock_movements, quotes, jobs, cashups, timesheets. Leave empty for ALL types."},
+                "limit": {"type": "integer", "description": "Max activities to return (default 100, max 500)", "default": 100}
+            }
+        }
     }
 ]
 
@@ -8614,6 +8627,219 @@ class ZaneToolHandler:
             return result
         except Exception as e:
             logger.error(f"[ZANE-TOOL] Bank transactions error: {e}")
+            return {"error": str(e)}
+
+    def _tool_get_recent_activity(self, params: dict) -> dict:
+        """
+        Unified activity feed across ALL modules — every movement in ClickAI.
+        Loads transactions in parallel from 17 tables, filters by date/user/type,
+        and returns a chronological list of WHO did WHAT WHEN.
+        """
+        try:
+            from datetime import datetime, timedelta
+            from concurrent.futures import ThreadPoolExecutor
+            
+            days_back = max(1, int(params.get("days_back", 1) or 1))
+            user_filter = (params.get("user_filter", "") or "").strip().lower()
+            type_filter = params.get("activity_types") or []
+            type_filter_set = set(t.lower().strip() for t in type_filter if t) if type_filter else None
+            limit = min(int(params.get("limit", 100) or 100), 500)
+            
+            cutoff_date = (datetime.now() - timedelta(days=days_back)).strftime("%Y-%m-%d")
+            biz_id = self.biz_id
+            
+            # Parallel load all tables
+            pool = ThreadPoolExecutor(max_workers=18)
+            try:
+                fut = {
+                    "invoices": pool.submit(db.get, "invoices", {"business_id": biz_id}),
+                    "receipts": pool.submit(db.get, "receipts", {"business_id": biz_id}),
+                    "sales": pool.submit(db.get, "sales", {"business_id": biz_id}),
+                    "supplier_invoices": pool.submit(db.get, "supplier_invoices", {"business_id": biz_id}),
+                    "supplier_payments": pool.submit(db.get, "supplier_payments", {"business_id": biz_id}),
+                    "credit_notes": pool.submit(db.get, "credit_notes", {"business_id": biz_id}),
+                    "delivery_notes": pool.submit(db.get, "delivery_notes", {"business_id": biz_id}),
+                    "purchase_orders": pool.submit(db.get, "purchase_orders", {"business_id": biz_id}),
+                    "grvs": pool.submit(db.get, "goods_received", {"business_id": biz_id}),
+                    "expenses": pool.submit(db.get, "expenses", {"business_id": biz_id}),
+                    "bank_transactions": pool.submit(db.get, "bank_transactions", {"business_id": biz_id}),
+                    "journals": pool.submit(db.get, "journal_entries", {"business_id": biz_id}),
+                    "stock_movements": pool.submit(db.get, "stock_movements", {"business_id": biz_id}),
+                    "quotes": pool.submit(db.get, "quotes", {"business_id": biz_id}),
+                    "jobs": pool.submit(db.get, "jobs", {"business_id": biz_id}),
+                    "cashups": pool.submit(db.get, "cash_ups", {"business_id": biz_id}),
+                    "timesheets": pool.submit(db.get, "timesheet_entries", {"business_id": biz_id}),
+                    "users": pool.submit(db.get_business_users, biz_id),
+                }
+                
+                def _safe(f, label=""):
+                    try:
+                        return f.result(timeout=15) or []
+                    except Exception as e:
+                        logger.warning(f"[ZANE-TOOL] recent_activity {label} fetch failed: {e}")
+                        return []
+                
+                data = {k: _safe(fut[k], k) for k in fut}
+            finally:
+                pool.shutdown(wait=False)
+            
+            # User name lookup (id -> name)
+            user_names = {}
+            for u in data.get("users", []) or []:
+                uid = u.get("id")
+                name = u.get("name") or u.get("email") or "Unknown"
+                if uid:
+                    user_names[uid] = name
+            
+            # Reverse lookup for filtering: "daphne" -> set of matching user ids
+            matching_user_ids = set()
+            if user_filter:
+                for uid, nm in user_names.items():
+                    if user_filter in (nm or "").lower():
+                        matching_user_ids.add(uid)
+            
+            activities = []
+            
+            def _add(records, atype, date_field, who_field, build_text, get_amount, ref_field=None):
+                """Helper to build activity entries from a record list."""
+                if type_filter_set and atype not in type_filter_set:
+                    return
+                for rec in records:
+                    rec_date = str(rec.get(date_field) or rec.get("created_at", ""))[:10]
+                    if not rec_date or rec_date < cutoff_date:
+                        continue
+                    uid = rec.get(who_field) or rec.get("created_by") or ""
+                    if user_filter and uid not in matching_user_ids:
+                        continue
+                    who = user_names.get(uid, "")
+                    try:
+                        amt = float(get_amount(rec) or 0)
+                    except Exception:
+                        amt = 0.0
+                    try:
+                        text = build_text(rec)
+                    except Exception:
+                        text = atype
+                    ref = ""
+                    if ref_field:
+                        ref = str(rec.get(ref_field, "") or "")
+                    # extract time portion of created_at if present
+                    created_at = str(rec.get("created_at", ""))
+                    time_part = created_at[11:19] if len(created_at) >= 19 else ""
+                    activities.append({
+                        "type": atype,
+                        "date": rec_date,
+                        "time": time_part,
+                        "who": who,
+                        "text": text,
+                        "amount": round(amt, 2),
+                        "reference": ref,
+                        "id": rec.get("id", ""),
+                    })
+            
+            _add(data["invoices"], "invoices", "date", "created_by",
+                 lambda r: f'Invoice {r.get("invoice_number","")} for {(r.get("customer_name","") or "Unknown")[:30]} ({r.get("status","draft")})',
+                 lambda r: r.get("total", 0), ref_field="invoice_number")
+            
+            _add(data["receipts"], "receipts", "date", "created_by",
+                 lambda r: f'Receipt from {(r.get("customer_name","") or "Customer")[:30]} ({r.get("payment_method","") or "n/a"})',
+                 lambda r: r.get("amount", 0), ref_field="reference")
+            
+            _add(data["sales"], "sales", "date", "created_by",
+                 lambda r: f'POS Sale ({r.get("payment_method","cash")})',
+                 lambda r: r.get("total", 0), ref_field="sale_number")
+            
+            _add(data["supplier_invoices"], "supplier_invoices", "date", "created_by",
+                 lambda r: f'Supplier Invoice {r.get("invoice_number", r.get("number",""))} from {(r.get("supplier_name","") or "Unknown")[:30]}',
+                 lambda r: r.get("total", 0), ref_field="invoice_number")
+            
+            _add(data["supplier_payments"], "supplier_payments", "date", "created_by",
+                 lambda r: f'Paid {(r.get("supplier_name","") or "Unknown")[:30]} ({r.get("payment_method","") or "n/a"})',
+                 lambda r: r.get("amount", 0), ref_field="reference")
+            
+            _add(data["credit_notes"], "credit_notes", "date", "created_by",
+                 lambda r: f'Credit Note {r.get("credit_note_number", r.get("number",""))} for {(r.get("customer_name","") or "Unknown")[:30]}',
+                 lambda r: r.get("total", 0), ref_field="credit_note_number")
+            
+            _add(data["delivery_notes"], "delivery_notes", "date", "created_by",
+                 lambda r: f'Delivery Note {r.get("delivery_note_number", r.get("number",""))} to {(r.get("customer_name","") or "Unknown")[:30]}',
+                 lambda r: r.get("total", 0), ref_field="delivery_note_number")
+            
+            _add(data["purchase_orders"], "purchase_orders", "date", "created_by",
+                 lambda r: f'PO {r.get("po_number", r.get("number",""))} to {(r.get("supplier_name","") or "Unknown")[:30]} ({r.get("status","draft")})',
+                 lambda r: r.get("total", 0), ref_field="po_number")
+            
+            _add(data["grvs"], "grvs", "date", "created_by",
+                 lambda r: f'GRV {r.get("grv_number", r.get("number",""))} from {(r.get("supplier_name","") or "Unknown")[:30]}',
+                 lambda r: r.get("total", 0), ref_field="grv_number")
+            
+            _add(data["expenses"], "expenses", "date", "created_by",
+                 lambda r: f'Expense: {(r.get("description", r.get("category","")) or "Unknown")[:40]}',
+                 lambda r: r.get("amount", r.get("total", 0)), ref_field="reference")
+            
+            _add(data["bank_transactions"], "bank_transactions", "date", "created_by",
+                 lambda r: f'Bank: {(r.get("description","") or "")[:40]} ({"matched" if r.get("matched") else "unmatched"})',
+                 lambda r: abs(float(r.get("amount", 0) or 0)), ref_field="reference")
+            
+            _add(data["journals"], "journals", "date", "created_by",
+                 lambda r: f'Journal: {(r.get("description", r.get("reference","")) or "GL entry")[:40]}',
+                 lambda r: r.get("amount", r.get("debit", r.get("credit", 0))), ref_field="reference")
+            
+            _add(data["stock_movements"], "stock_movements", "date", "created_by",
+                 lambda r: f'Stock {(r.get("movement_type", r.get("type","")) or "move")}: {(r.get("item_name", r.get("description","")) or "")[:30]} (qty {r.get("quantity", 0)})',
+                 lambda r: r.get("value", r.get("total", 0)), ref_field="item_code")
+            
+            _add(data["quotes"], "quotes", "date", "created_by",
+                 lambda r: f'Quote {r.get("quote_number", r.get("number",""))} for {(r.get("customer_name","") or "Unknown")[:30]} ({r.get("status","draft")})',
+                 lambda r: r.get("total", 0), ref_field="quote_number")
+            
+            _add(data["jobs"], "jobs", "date", "created_by",
+                 lambda r: f'Job {r.get("job_number", r.get("number",""))} for {(r.get("customer_name","") or "Unknown")[:30]} ({r.get("status","open")})',
+                 lambda r: r.get("total", r.get("quoted_total", 0)), ref_field="job_number")
+            
+            _add(data["cashups"], "cashups", "date", "created_by",
+                 lambda r: f'Cashup ({r.get("status","done")}) — {r.get("till_name","")}'.strip(" —"),
+                 lambda r: r.get("system_total", r.get("declared_total", 0)), ref_field="cashup_number")
+            
+            _add(data["timesheets"], "timesheets", "date", "created_by",
+                 lambda r: f'Timesheet: {(r.get("employee_name","") or "")[:25]} {float(r.get("hours", r.get("total_hours", 0)) or 0):.1f}h',
+                 lambda r: 0)
+            
+            # Sort newest first
+            activities.sort(key=lambda x: (x["date"], x["time"]), reverse=True)
+            
+            # Counts BEFORE limiting
+            total_count = len(activities)
+            by_type = {}
+            by_user = {}
+            for a in activities:
+                by_type[a["type"]] = by_type.get(a["type"], 0) + 1
+                if a["who"]:
+                    by_user[a["who"]] = by_user.get(a["who"], 0) + 1
+            
+            truncated = total_count > limit
+            activities = activities[:limit]
+            
+            result = {
+                "days_back": days_back,
+                "cutoff_date": cutoff_date,
+                "total_activities": total_count,
+                "returned": len(activities),
+                "by_type": by_type,
+                "by_user": by_user,
+                "activities": activities,
+            }
+            if user_filter:
+                result["user_filter"] = user_filter
+                result["matched_users"] = [user_names[uid] for uid in matching_user_ids]
+            if type_filter:
+                result["type_filter"] = list(type_filter_set) if type_filter_set else []
+            if truncated:
+                result["note"] = f"Showing {limit} of {total_count} activities. Increase limit, narrow days_back, or filter by user/type to see more."
+            
+            return result
+        except Exception as e:
+            logger.error(f"[ZANE-TOOL] get_recent_activity error: {e}")
             return {"error": str(e)}
 
 
