@@ -48591,8 +48591,46 @@ def create_credit_note(invoice_id):
         if not credited_items:
             return redirect(f"/invoice/{invoice_id}/credit-note?error=No+items+selected")
         
-        cn_vat = (cn_subtotal * VAT_RATE).quantize(Decimal("0.01"))
-        cn_total = cn_subtotal + cn_vat
+        # ── SMART VAT DETECTION ──
+        # Line items can be VAT-EXCLUSIVE (ClickAI native invoices) or
+        # VAT-INCLUSIVE (Sage imports, opening balances, some legacy data).
+        # Compare sum-of-lines against invoice's stored subtotal vs total
+        # to detect which format we're dealing with.
+        _inv_total_stored = float(invoice.get("total", 0) or 0)
+        _inv_subtotal_stored = float(invoice.get("subtotal", 0) or 0)
+        _line_sum = float(cn_subtotal)  # sum of line totals as we built them
+        
+        # Default: ClickAI-style (line items are VAT-EXCL → add VAT on top)
+        _line_items_are_vat_inclusive = False
+        
+        if _inv_total_stored > 0 and _line_sum > 0:
+            # Distance from each format
+            _dist_to_total = abs(_line_sum - _inv_total_stored)
+            _dist_to_subtotal = abs(_line_sum - _inv_subtotal_stored) if _inv_subtotal_stored > 0 else float('inf')
+            # If line sum is closer to invoice TOTAL than to invoice SUBTOTAL,
+            # the line items are already VAT-inclusive (Sage style).
+            # Use 1% tolerance for rounding.
+            if _dist_to_total < _dist_to_subtotal and _dist_to_total < (_inv_total_stored * 0.01 + 0.10):
+                _line_items_are_vat_inclusive = True
+        
+        # Special case: invoice has NO subtotal stored (true opening-balance style)
+        # then assume line items are VAT-inclusive and back-calc the split.
+        if _inv_subtotal_stored <= 0 and _inv_total_stored > 0 and abs(_line_sum - _inv_total_stored) < 1.0:
+            _line_items_are_vat_inclusive = True
+        
+        if _line_items_are_vat_inclusive:
+            # Line totals are VAT INCLUSIVE — back-extract VAT from total
+            _cn_total_decimal = cn_subtotal  # sum of line totals = VAT-incl total
+            _cn_subtotal_excl = (_cn_total_decimal / (Decimal("1") + VAT_RATE)).quantize(Decimal("0.01"))
+            cn_vat = (_cn_total_decimal - _cn_subtotal_excl).quantize(Decimal("0.01"))
+            cn_total = _cn_total_decimal
+            cn_subtotal = _cn_subtotal_excl  # rewrite to be VAT-excl for storage consistency
+            logger.info(f"[CREDIT NOTE] VAT-incl detected (Sage style): total={float(cn_total):.2f}, subtotal={float(cn_subtotal):.2f}, vat={float(cn_vat):.2f}")
+        else:
+            # Line totals are VAT EXCLUSIVE — add VAT on top (ClickAI style)
+            cn_vat = (cn_subtotal * VAT_RATE).quantize(Decimal("0.01"))
+            cn_total = cn_subtotal + cn_vat
+            logger.info(f"[CREDIT NOTE] VAT-excl (ClickAI style): subtotal={float(cn_subtotal):.2f}, vat={float(cn_vat):.2f}, total={float(cn_total):.2f}")
         
         # Generate credit note number
         existing = db.get("credit_notes", {"business_id": biz_id}) if biz_id else []
