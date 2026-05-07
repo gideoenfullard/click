@@ -359,7 +359,7 @@ def register_invoicing_routes(app, db, login_required, Auth, render_page,
             _first_row_html = (
                 '<tr>'
                 '<td style="position:relative;">'
-                '<input type="text" name="item_desc[]" autocomplete="off" oninput="stockSearch(this)" onfocus="stockSearch(this)" placeholder="Type 2+ chars to search stock..." style="width:100%;padding:8px;border:1px solid var(--border);border-radius:4px;background:var(--bg);color:var(--text);">'
+                '<input type="text" name="item_desc[]" autocomplete="off" oninput="stockSearch(this)" onfocus="stockSearch(this)" placeholder="Type to search stock..." style="width:100%;padding:8px;border:1px solid var(--border);border-radius:4px;background:var(--bg);color:var(--text);">'
                 '<input type="hidden" name="item_stock_id[]" value="">'
                 '<div class="stock-dropdown" style="display:none;"></div>'
                 '</td>'
@@ -372,7 +372,7 @@ def register_invoicing_routes(app, db, login_required, Auth, render_page,
             )
             _add_row_inner = (
                 '<td style="position:relative;">'
-                '<input type="text" name="item_desc[]" autocomplete="off" oninput="stockSearch(this)" onfocus="stockSearch(this)" placeholder="Type 2+ chars to search stock..." style="width:100%;padding:8px;border:1px solid var(--border);border-radius:4px;background:var(--bg);color:var(--text);">'
+                '<input type="text" name="item_desc[]" autocomplete="off" oninput="stockSearch(this)" onfocus="stockSearch(this)" placeholder="Type to search stock..." style="width:100%;padding:8px;border:1px solid var(--border);border-radius:4px;background:var(--bg);color:var(--text);">'
                 '<input type="hidden" name="item_stock_id[]" value="">'
                 '<div class="stock-dropdown" style="display:none;"></div>'
                 '</td>'
@@ -530,7 +530,7 @@ def register_invoicing_routes(app, db, login_required, Auth, render_page,
         function stockSearch(input) {{
             const q = input.value.trim();
             const dd = input.closest('td').querySelector('.stock-dropdown');
-            if (q.length < 2) {{ dd.style.display='none'; return; }}
+            if (q.length < 1) {{ dd.style.display='none'; return; }}
             clearTimeout(_searchTimer);
             _searchTimer = setTimeout(()=>{{
                 fetch('/api/stock/lookup?q='+encodeURIComponent(q)).then(r=>r.json()).then(items=>{{
@@ -544,7 +544,7 @@ def register_invoicing_routes(app, db, login_required, Auth, render_page,
                     }});
                     dd.innerHTML=h; dd.style.display='block';
                 }});
-            }}, 250);
+            }}, 150);
         }}
         function pickStock(el,stockId,label,price,unit){{
             const row=el.closest('tr');
@@ -2891,7 +2891,7 @@ def register_invoicing_routes(app, db, login_required, Auth, render_page,
                     </thead>
                     <tbody id="itemRows">
                         <tr>
-                            <td style="position:relative;"><input type="text" name="item_desc[]" autocomplete="off" oninput="stockSearch(this)" onfocus="stockSearch(this)" placeholder="Type 2+ chars to search stock..." style="width:100%;padding:8px;border:1px solid var(--border);border-radius:4px;background:var(--bg);color:var(--text);"><input type="hidden" name="item_stock_id[]" value=""><div class="stock-dropdown" style="display:none;"></div></td>
+                            <td style="position:relative;"><input type="text" name="item_desc[]" autocomplete="off" oninput="stockSearch(this)" onfocus="stockSearch(this)" placeholder="Type to search stock..." style="width:100%;padding:8px;border:1px solid var(--border);border-radius:4px;background:var(--bg);color:var(--text);"><input type="hidden" name="item_stock_id[]" value=""><div class="stock-dropdown" style="display:none;"></div></td>
                             <td><input type="text" name="item_unit[]" placeholder="ea" style="width:100%;padding:8px;border:1px solid var(--border);border-radius:4px;background:var(--bg);color:var(--text);text-align:center;"></td>
                             <td><input type="number" name="item_qty[]" value="1" min="0.01" step="any" onchange="calcRow(this)" style="width:100%;padding:8px;border:1px solid var(--border);border-radius:4px;background:var(--bg);color:var(--text);"></td>
                             <td><input type="number" name="item_price[]" step="0.01" onchange="calcRow(this)" style="width:100%;padding:8px;border:1px solid var(--border);border-radius:4px;background:var(--bg);color:var(--text);"></td>
@@ -2963,7 +2963,7 @@ def register_invoicing_routes(app, db, login_required, Auth, render_page,
         function stockSearch(input) {{
             const q = input.value.trim();
             const dd = input.closest('td').querySelector('.stock-dropdown');
-            if (q.length < 2) {{ dd.style.display='none'; return; }}
+            if (q.length < 1) {{ dd.style.display='none'; return; }}
             clearTimeout(_searchTimer);
             _searchTimer = setTimeout(()=>{{
                 fetch('/api/stock/lookup?q='+encodeURIComponent(q)).then(r=>r.json()).then(items=>{{
@@ -2977,7 +2977,7 @@ def register_invoicing_routes(app, db, login_required, Auth, render_page,
                     }});
                     dd.innerHTML=h; dd.style.display='block';
                 }});
-            }}, 250);
+            }}, 150);
         }}
         function pickStock(el,stockId,label,price,unit){{
             const row=el.closest('tr');
@@ -2996,7 +2996,7 @@ def register_invoicing_routes(app, db, login_required, Auth, render_page,
             const tbody = document.getElementById('itemRows');
             const row = document.createElement('tr');
             row.innerHTML = `
-                <td style="position:relative;"><input type="text" name="item_desc[]" autocomplete="off" oninput="stockSearch(this)" onfocus="stockSearch(this)" placeholder="Type 2+ chars to search stock..." style="width:100%;padding:8px;border:1px solid var(--border);border-radius:4px;background:var(--bg);color:var(--text);"><input type="hidden" name="item_stock_id[]" value=""><div class="stock-dropdown" style="display:none;"></div></td>
+                <td style="position:relative;"><input type="text" name="item_desc[]" autocomplete="off" oninput="stockSearch(this)" onfocus="stockSearch(this)" placeholder="Type to search stock..." style="width:100%;padding:8px;border:1px solid var(--border);border-radius:4px;background:var(--bg);color:var(--text);"><input type="hidden" name="item_stock_id[]" value=""><div class="stock-dropdown" style="display:none;"></div></td>
                 <td><input type="text" name="item_unit[]" placeholder="ea" style="width:100%;padding:8px;border:1px solid var(--border);border-radius:4px;background:var(--bg);color:var(--text);text-align:center;"></td>
                 <td><input type="number" name="item_qty[]" value="1" min="0.01" step="any" onchange="calcRow(this)" style="width:100%;padding:8px;border:1px solid var(--border);border-radius:4px;background:var(--bg);color:var(--text);"></td>
                 <td><input type="number" name="item_price[]" step="0.01" onchange="calcRow(this)" style="width:100%;padding:8px;border:1px solid var(--border);border-radius:4px;background:var(--bg);color:var(--text);"></td>
@@ -3658,7 +3658,7 @@ def register_invoicing_routes(app, db, login_required, Auth, render_page,
             total_val = float(qty) * float(price)
             existing_rows += f'''
             <tr>
-                <td style="position:relative;"><input type="text" name="item_desc[]" value="{desc}" autocomplete="off" oninput="stockSearch(this)" onfocus="stockSearch(this)" placeholder="Type 2+ chars to search stock..." style="width:100%;padding:8px;border:1px solid var(--border);border-radius:4px;background:var(--bg);color:var(--text);"><input type="hidden" name="item_stock_id[]" value=""><div class="stock-dropdown" style="display:none;"></div></td>
+                <td style="position:relative;"><input type="text" name="item_desc[]" value="{desc}" autocomplete="off" oninput="stockSearch(this)" onfocus="stockSearch(this)" placeholder="Type to search stock..." style="width:100%;padding:8px;border:1px solid var(--border);border-radius:4px;background:var(--bg);color:var(--text);"><input type="hidden" name="item_stock_id[]" value=""><div class="stock-dropdown" style="display:none;"></div></td>
                 <td><input type="text" name="item_unit[]" value="{unit}" placeholder="ea" style="width:100%;padding:8px;border:1px solid var(--border);border-radius:4px;background:var(--bg);color:var(--text);text-align:center;"></td>
                 <td><input type="number" name="item_qty[]" value="{qty}" min="0.01" step="any" onchange="calcRow(this)" style="width:100%;padding:8px;border:1px solid var(--border);border-radius:4px;background:var(--bg);color:var(--text);"></td>
                 <td><input type="number" name="item_price[]" value="{price}" step="0.01" onchange="calcRow(this)" style="width:100%;padding:8px;border:1px solid var(--border);border-radius:4px;background:var(--bg);color:var(--text);"></td>
@@ -3670,7 +3670,7 @@ def register_invoicing_routes(app, db, login_required, Auth, render_page,
         if not existing_rows:
             existing_rows = '''
             <tr>
-                <td style="position:relative;"><input type="text" name="item_desc[]" autocomplete="off" oninput="stockSearch(this)" onfocus="stockSearch(this)" placeholder="Type 2+ chars to search stock..." style="width:100%;padding:8px;border:1px solid var(--border);border-radius:4px;background:var(--bg);color:var(--text);"><input type="hidden" name="item_stock_id[]" value=""><div class="stock-dropdown" style="display:none;"></div></td>
+                <td style="position:relative;"><input type="text" name="item_desc[]" autocomplete="off" oninput="stockSearch(this)" onfocus="stockSearch(this)" placeholder="Type to search stock..." style="width:100%;padding:8px;border:1px solid var(--border);border-radius:4px;background:var(--bg);color:var(--text);"><input type="hidden" name="item_stock_id[]" value=""><div class="stock-dropdown" style="display:none;"></div></td>
                 <td><input type="text" name="item_unit[]" placeholder="ea" style="width:100%;padding:8px;border:1px solid var(--border);border-radius:4px;background:var(--bg);color:var(--text);text-align:center;"></td>
                 <td><input type="number" name="item_qty[]" value="1" min="0.01" step="any" onchange="calcRow(this)" style="width:100%;padding:8px;border:1px solid var(--border);border-radius:4px;background:var(--bg);color:var(--text);"></td>
                 <td><input type="number" name="item_price[]" step="0.01" onchange="calcRow(this)" style="width:100%;padding:8px;border:1px solid var(--border);border-radius:4px;background:var(--bg);color:var(--text);"></td>
@@ -3789,7 +3789,7 @@ def register_invoicing_routes(app, db, login_required, Auth, render_page,
         function stockSearch(input) {{
             const q = input.value.trim();
             const dd = input.closest('td').querySelector('.stock-dropdown');
-            if (q.length < 2) {{ dd.style.display='none'; return; }}
+            if (q.length < 1) {{ dd.style.display='none'; return; }}
             clearTimeout(_searchTimer);
             _searchTimer = setTimeout(()=>{{
                 fetch('/api/stock/lookup?q='+encodeURIComponent(q)).then(r=>r.json()).then(items=>{{
@@ -3803,7 +3803,7 @@ def register_invoicing_routes(app, db, login_required, Auth, render_page,
                     }});
                     dd.innerHTML=h; dd.style.display='block';
                 }});
-            }}, 250);
+            }}, 150);
         }}
         function pickStock(el,stockId,label,price,unit){{
             const row=el.closest('tr');
@@ -3822,7 +3822,7 @@ def register_invoicing_routes(app, db, login_required, Auth, render_page,
             const tbody = document.getElementById('itemRows');
             const row = document.createElement('tr');
             row.innerHTML = `
-                <td style="position:relative;"><input type="text" name="item_desc[]" autocomplete="off" oninput="stockSearch(this)" onfocus="stockSearch(this)" placeholder="Type 2+ chars to search stock..." style="width:100%;padding:8px;border:1px solid var(--border);border-radius:4px;background:var(--bg);color:var(--text);"><input type="hidden" name="item_stock_id[]" value=""><div class="stock-dropdown" style="display:none;"></div></td>
+                <td style="position:relative;"><input type="text" name="item_desc[]" autocomplete="off" oninput="stockSearch(this)" onfocus="stockSearch(this)" placeholder="Type to search stock..." style="width:100%;padding:8px;border:1px solid var(--border);border-radius:4px;background:var(--bg);color:var(--text);"><input type="hidden" name="item_stock_id[]" value=""><div class="stock-dropdown" style="display:none;"></div></td>
                 <td><input type="text" name="item_unit[]" placeholder="ea" style="width:100%;padding:8px;border:1px solid var(--border);border-radius:4px;background:var(--bg);color:var(--text);text-align:center;"></td>
                 <td><input type="number" name="item_qty[]" value="1" min="0.01" step="any" onchange="calcRow(this)" style="width:100%;padding:8px;border:1px solid var(--border);border-radius:4px;background:var(--bg);color:var(--text);"></td>
                 <td><input type="number" name="item_price[]" step="0.01" onchange="calcRow(this)" style="width:100%;padding:8px;border:1px solid var(--border);border-radius:4px;background:var(--bg);color:var(--text);"></td>

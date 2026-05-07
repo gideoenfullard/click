@@ -2789,7 +2789,7 @@ def register_stock_routes(app, db, login_required, Auth, render_page,
         if not biz_id:
             return jsonify([])
         raw = request.args.get("q", "").strip().lower()
-        if len(raw) < 2:
+        if len(raw) < 1:
             return jsonify([])
         # Same normalisation as Stock page filterStock(): collapse "10 x 12" → "10x12"
         normalised = _re.sub(r'\s*[xX]\s*', 'x', raw)
