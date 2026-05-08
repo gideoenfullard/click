@@ -48618,6 +48618,17 @@ def create_credit_note(invoice_id):
         if _inv_subtotal_stored <= 0 and _inv_total_stored > 0 and abs(_line_sum - _inv_total_stored) < 1.0:
             _line_items_are_vat_inclusive = True
         
+        # Sage import case: invoice stored with subtotal == total AND vat == 0
+        # (Sage CSV imports often place the VAT-incl amount in subtotal with vat=0,
+        # losing the VAT split). Line items mirror the same total → treat as VAT-incl.
+        _inv_vat_stored = float(invoice.get("vat", invoice.get("vat_amount", 0)) or 0)
+        if (_inv_total_stored > 0 
+                and _inv_vat_stored == 0 
+                and abs(_inv_subtotal_stored - _inv_total_stored) < 0.01
+                and abs(_line_sum - _inv_total_stored) < 1.0):
+            _line_items_are_vat_inclusive = True
+            logger.info(f"[CREDIT NOTE] Sage-import VAT-incl detected (subtotal==total, vat=0)")
+        
         if _line_items_are_vat_inclusive:
             # Line totals are VAT INCLUSIVE — back-extract VAT from total
             _cn_total_decimal = cn_subtotal  # sum of line totals = VAT-incl total
