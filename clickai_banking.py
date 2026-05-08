@@ -508,6 +508,17 @@ def register_banking_routes(app, db, login_required, Auth, render_page,
                 return;
             }}
             
+            // For all OTHER categories (except Ignore/Transfer), prompt for optional supplier/customer link.
+            // Skip if entityId already provided (avoids recursion when picker calls back into this function).
+            if (!entityId 
+                && category !== 'Ignore' 
+                && category !== 'Transfer Between Accounts' 
+                && category !== 'Customer Payment' 
+                && category !== 'Supplier Payment') {{
+                showAllocationPicker(id, category, description);
+                return;
+            }}
+            
             try {{
                 const payload = {{id, category, description}};
                 if (entityId && entityId !== '__skip__') {{ payload.entity_id = entityId; payload.entity_name = entityName || ''; }}
@@ -544,7 +555,18 @@ def register_banking_routes(app, db, login_required, Auth, render_page,
         }}
         
         async function approveMatch(id, category) {{
-            await categorizeTransaction(id, category, '');
+            // Extract description from the row so showAllocationPicker can pre-match a supplier/customer
+            const row = document.querySelector(`tr[data-id="${{id}}"]`);
+            let desc = '';
+            if (row) {{
+                const cells = row.querySelectorAll('td');
+                if (cells.length >= 2) {{
+                    // Description cell is index 1; grab the first text/div content
+                    const descDiv = cells[1].querySelector('div');
+                    desc = (descDiv ? descDiv.textContent : cells[1].textContent || '').trim();
+                }}
+            }}
+            await categorizeTransaction(id, category, desc);
         }}
         
         // Entity picker for Customer Payment / Supplier Payment
@@ -674,6 +696,99 @@ def register_banking_routes(app, db, login_required, Auth, render_page,
             const invoiceNums = Array.from(checks).map(c => c.getAttribute('data-num'));
             
             categorizeTransaction(txnId, category, description, entityId, entityName, invoiceIds, invoiceNums);
+        }}
+        
+        // ═══════════════════════════════════════════════════════════
+        // GENERIC ALLOCATION PICKER — for any category (e.g. Telephone, Bank Charges, Sales)
+        // Lets user optionally link the transaction to a supplier or customer.
+        // Auto-pre-selects entity matching the description (e.g. "VODACOM" → VODACOM supplier).
+        // ═══════════════════════════════════════════════════════════
+        function showAllocationPicker(txnId, category, description) {{
+            const row = document.querySelector(`tr[data-id="${{txnId}}"]`);
+            const actionCell = row ? row.querySelectorAll('td')[row.querySelectorAll('td').length - 1] : null;
+            if (!actionCell) return;
+            
+            // Decide income vs expense based on row's debit/credit data attrs
+            const debit = parseFloat(row.getAttribute('data-debit') || '0');
+            const credit = parseFloat(row.getAttribute('data-credit') || '0');
+            const isExpense = debit > 0;
+            
+            // Income categories (money in) → show Customers; Expense (money out) → show Suppliers
+            const isCustomer = !isExpense;
+            const entities = isCustomer ? _entityCustomers : _entitySuppliers;
+            const label = isCustomer ? 'Customer' : 'Supplier';
+            const colorAccent = isCustomer ? '#10b981' : '#f59e0b';
+            
+            // Auto-pre-select entity whose name appears in the description
+            const descUpper = (description || '').toUpperCase();
+            let preSelectedId = '';
+            const genericWords = ['PTY','LTD','THE','AND','FOR','BANK','ELECT','ELECTRONIC',
+                                  'PAYMENT','TRANSFER','CREDIT','DEBIT','BUSINESS','ACCOUNT',
+                                  'SERVICE','FEE','CHARGE','CHARGES','CASH','DEPOSIT','FROM','BANKING'];
+            for (const e of entities) {{
+                const ename = (e.name || '').toUpperCase().trim();
+                if (ename.length < 3) continue;
+                const words = ename.split(/\\s+/).filter(w => w.length >= 3 && genericWords.indexOf(w) === -1);
+                for (const w of words) {{
+                    if (descUpper.indexOf(w) !== -1) {{
+                        preSelectedId = e.id;
+                        break;
+                    }}
+                }}
+                if (preSelectedId) break;
+            }}
+            
+            const optionsHtml = entities.map(e => {{
+                const sel = (e.id === preSelectedId) ? ' selected' : '';
+                const safeName = (e.name || '').replace(/"/g, '&quot;');
+                return `<option value="${{e.id}}" data-name="${{safeName}}"${{sel}}>${{e.name}}</option>`;
+            }}).join('');
+            
+            const safeDesc = (description || '').replace(/'/g, "\\\\'");
+            const safeCat = (category || '').replace(/'/g, "\\\\'");
+            
+            const matchBanner = preSelectedId ? `
+                <div style="background:rgba(34,211,238,0.10);border:1px solid rgba(34,211,238,0.4);border-radius:6px;padding:6px 9px;margin-bottom:8px;font-size:11px;color:#22d3ee;">
+                    🔗 Auto-matched to ${{label.toLowerCase()}} based on description. Verify or change below.
+                </div>` : '';
+            
+            actionCell.innerHTML = `
+                <div style="background:rgba(139,92,246,0.08);border:1px solid rgba(139,92,246,0.25);border-radius:10px;padding:12px;min-width:300px;">
+                    <div style="font-size:13px;font-weight:700;color:${{colorAccent}};margin-bottom:6px;">
+                        ${{category}} — Allocate to ${{label}}?
+                    </div>
+                    <div style="font-size:11px;color:var(--text-muted);margin-bottom:8px;">
+                        Optional: link this transaction to a specific ${{label.toLowerCase()}}.
+                    </div>
+                    ${{matchBanner}}
+                    <select id="allocPick_${{txnId}}" style="width:100%;padding:8px;border:1px solid var(--border);border-radius:6px;background:var(--card);color:var(--text);font-size:13px;margin-bottom:8px;">
+                        <option value="">-- None / Skip ${{label}} --</option>
+                        ${{optionsHtml}}
+                    </select>
+                    <div style="display:flex;gap:6px;">
+                        <button onclick="confirmAllocationPick('${{txnId}}','${{safeCat}}','${{safeDesc}}')" 
+                                style="flex:1;padding:8px;background:var(--green);color:white;border:none;border-radius:6px;cursor:pointer;font-weight:700;font-size:13px;">
+                            Allocate
+                        </button>
+                        <button onclick="categorizeTransaction('${{txnId}}','${{safeCat}}','${{safeDesc}}','__skip__','')" 
+                                style="padding:8px 12px;background:var(--card);border:1px solid var(--border);color:var(--text-muted);border-radius:6px;cursor:pointer;font-size:12px;">
+                            Skip
+                        </button>
+                    </div>
+                </div>`;
+        }}
+        
+        function confirmAllocationPick(txnId, category, description) {{
+            const sel = document.getElementById('allocPick_' + txnId);
+            if (!sel) return;
+            const entityId = sel.value;
+            const entityName = (entityId && sel.options[sel.selectedIndex]) 
+                ? (sel.options[sel.selectedIndex].getAttribute('data-name') || sel.options[sel.selectedIndex].text) 
+                : '';
+            
+            // If user left "None / Skip" selected, treat as skip (no entity link)
+            const finalEntityId = entityId || '__skip__';
+            categorizeTransaction(txnId, category, description, finalEntityId, entityName, [], []);
         }}
         
         // ═══════════════════════════════════════════════════════════
