@@ -50581,6 +50581,19 @@ Rules:
 5. For VAT: READ it if shown on document. If not shown, set vat to 0 (Python will calculate)
 6. supplier_vat_number: Look for "VAT No", "VAT Reg", "Tax No" - usually starts with 4
 
+DISCOUNT %: Many invoices have a discount column (headed "DISC", "DISC%", "DIS%", "Discount", "%", or just numbers like 40.00 between price and total). For EACH line item:
+- If a discount % is shown for that line, set "discount_pct" to that number (e.g. 40.00 for 40%)
+- If no discount column or no value for that line, set "discount_pct" to 0
+- Read it ONLY if printed - never guess or calculate
+
+PACK SIZE: Many products are sold in packs/boxes. Look in the description for patterns like:
+- "10P/BOX", "12P/BOX", "25P/BOX" → pack_size = 10, 12, 25
+- "BOX OF 10", "PACK OF 25", "PKT OF 100" → pack_size = 10, 25, 100
+- "10/PK", "25/BOX", "100/PKT" → pack_size = 10, 25, 100
+- "10PK", "25BX" → pack_size = 10, 25
+- If sometimes the pack info is on a NEXT line under the description (e.g. "UNCARDED MTO 12P/BOX"), still attach it to that item's pack_size
+- If no pack indicator found, set "pack_size" to 1 (single units)
+
 IMPORTANT: DO NOT CALCULATE ANYTHING! Just read what is printed on the document.
 - Read subtotal if shown, otherwise set to 0
 - Read VAT if shown, otherwise set to 0  
@@ -50599,15 +50612,15 @@ Return ONLY JSON:
     "invoice_number": "",
     "date": "YYYY-MM-DD",
     "items": [
-        {"description": "Exact product name", "qty": 10, "unit_price": 5.50, "line_total": 0.00}
+        {"description": "Exact product name", "qty": 10, "unit_price": 5.50, "discount_pct": 0.00, "pack_size": 1, "line_total": 0.00}
     ],
     "subtotal": 0.00,
     "vat": 0.00,
     "total": 0.00
 }
 
-NOTE: For line_total, qty, unit_price, subtotal, vat, total - read ONLY what is printed.
-If ANY number is not visible on the document, set it to 0. Python handles all math."""
+NOTE: For line_total, qty, unit_price, discount_pct, subtotal, vat, total - read ONLY what is printed.
+If ANY number is not visible on the document, set it to 0 (or 1 for pack_size). Python handles all math."""
         
         client = _anthropic_client
         
@@ -52412,6 +52425,8 @@ def scan_inbox_page():
                     const qty = item.qty || item.quantity || 1;
                     const price = parseFloat(item.unit_price || item.price || 0);
                     const lineTotal = parseFloat(item.line_total || (qty * price) || 0);
+                    const discountPct = parseFloat(item.discount_pct || 0);
+                    const packSize = parseInt(item.pack_size || 1) || 1;
                     
                     // Match against existing stock
                     const stockMatch = matchStock(desc);
@@ -52427,6 +52442,22 @@ def scan_inbox_page():
                         const codePreview = prefix + String(i + 1).padStart(3, '0');
                         codeBadge = `<span style="background:#f59e0b;color:#000;padding:2px 8px;border-radius:4px;font-size:11px;font-weight:600;">
                             ${{codePreview}} NEW
+                        </span>`;
+                    }}
+                    
+                    // Discount badge (only if discount > 0)
+                    let discountBadge = '';
+                    if (discountPct > 0) {{
+                        discountBadge = `<span style="background:#ef4444;color:#fff;padding:2px 8px;border-radius:4px;font-size:11px;font-weight:600;" title="Discount applied on this line">
+                            🏷️ ${{discountPct.toFixed(0)}}% OFF
+                        </span>`;
+                    }}
+                    
+                    // Pack-size badge (only if pack > 1)
+                    let packBadge = '';
+                    if (packSize > 1) {{
+                        packBadge = `<span style="background:#8b5cf6;color:#fff;padding:2px 8px;border-radius:4px;font-size:11px;font-weight:600;" title="Items per pack/box">
+                            📦 ${{packSize}}/PACK
                         </span>`;
                     }}
                     
@@ -52449,6 +52480,28 @@ def scan_inbox_page():
                                     <span style="background:#6366f1;color:#fff;padding:2px 8px;border-radius:4px;font-size:11px;">
                                         5000/COS
                                     </span>
+                                    ${{discountBadge}}
+                                    ${{packBadge}}
+                                </div>
+                                <div style="display:flex;gap:12px;margin-top:8px;font-size:11px;color:var(--text-muted);align-items:center;">
+                                    <label style="display:flex;align-items:center;gap:4px;">
+                                        Disc %:
+                                        <input type="number" 
+                                               id="item_disc_${{i}}"
+                                               value="${{discountPct.toFixed(2)}}"
+                                               style="border:1px solid var(--border);background:rgba(0,0,0,0.2);width:55px;outline:none;text-align:center;color:#fff;border-radius:3px;padding:2px;font-size:11px;"
+                                               step="0.01" min="0" max="100"
+                                        />
+                                    </label>
+                                    <label style="display:flex;align-items:center;gap:4px;">
+                                        Pack:
+                                        <input type="number" 
+                                               id="item_pack_${{i}}"
+                                               value="${{packSize}}"
+                                               style="border:1px solid var(--border);background:rgba(0,0,0,0.2);width:55px;outline:none;text-align:center;color:#fff;border-radius:3px;padding:2px;font-size:11px;"
+                                               step="1" min="1"
+                                        />
+                                    </label>
                                 </div>
                             </div>
                             <div style="text-align:right;min-width:120px;">
