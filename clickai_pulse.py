@@ -362,11 +362,63 @@ def register_pulse_routes(app, db, login_required, Auth, generate_id, now, today
         loadAssistantItems();
         generateBriefing(false);
 
-        // AUTO-REFRESH every 30 seconds
-        setInterval(function() {{
+        // ═══════════════════════════════════════════════════════════════
+        // SMART AUTO-REFRESH — pauses when tab hidden or user idle
+        // Saves Supabase database requests dramatically
+        // ═══════════════════════════════════════════════════════════════
+        var PULSE_POLL_INTERVAL_MS = 30000;       // 30s when active
+        var PULSE_IDLE_TIMEOUT_MS = 5 * 60 * 1000; // pause after 5 min of no activity
+        var pulsePollTimer = null;
+        var pulseLastActivity = Date.now();
+
+        function pulseRefresh() {{
+            // Skip if tab is hidden (browser is in background, screen locked, etc.)
+            if (document.hidden) return;
+            // Skip if user has been idle for more than 5 minutes
+            if (Date.now() - pulseLastActivity > PULSE_IDLE_TIMEOUT_MS) return;
             loadPulseData(false);
             loadAssistantItems();
-        }}, 30000);
+        }}
+
+        function pulseStartPolling() {{
+            if (pulsePollTimer) return; // already running
+            pulsePollTimer = setInterval(pulseRefresh, PULSE_POLL_INTERVAL_MS);
+        }}
+
+        function pulseStopPolling() {{
+            if (pulsePollTimer) {{
+                clearInterval(pulsePollTimer);
+                pulsePollTimer = null;
+            }}
+        }}
+
+        // Track user activity to detect idle state
+        ['mousemove', 'mousedown', 'keydown', 'scroll', 'touchstart'].forEach(function(evt) {{
+            document.addEventListener(evt, function() {{
+                var wasIdle = (Date.now() - pulseLastActivity > PULSE_IDLE_TIMEOUT_MS);
+                pulseLastActivity = Date.now();
+                // If user was idle and just came back, refresh immediately
+                if (wasIdle && !document.hidden) {{
+                    loadPulseData(false);
+                    loadAssistantItems();
+                }}
+            }}, {{passive: true}});
+        }});
+
+        // When tab becomes visible again, refresh immediately
+        document.addEventListener('visibilitychange', function() {{
+            if (!document.hidden) {{
+                pulseLastActivity = Date.now();
+                loadPulseData(false);
+                loadAssistantItems();
+                pulseStartPolling();
+            }} else {{
+                pulseStopPolling();
+            }}
+        }});
+
+        // Start polling on load
+        pulseStartPolling();
     }});
 
     // ═══════════════════════════════════════════════════
