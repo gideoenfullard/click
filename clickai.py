@@ -53037,13 +53037,25 @@ def scan_inbox_page():
                 const descEl = document.getElementById(`item_desc_${{i}}`);
                 const qtyEl = document.getElementById(`item_qty_${{i}}`);
                 const priceEl = document.getElementById(`item_price_${{i}}`);
+                const discEl = document.getElementById(`item_disc_${{i}}`);
+                const packEl = document.getElementById(`item_pack_${{i}}`);
                 
                 if (descEl) {{
+                    const qty = parseFloat(qtyEl?.value || 1);
+                    const unitPrice = parseFloat(priceEl?.value || 0);
+                    const discPct = parseFloat(discEl?.value || 0);
+                    const packSize = parseInt(packEl?.value || 1) || 1;
+                    // line_total = qty × unit_price × (1 - discount/100)
+                    const grossTotal = qty * unitPrice;
+                    const lineTotal = discPct > 0 ? grossTotal * (1 - discPct / 100) : grossTotal;
+                    
                     editedItems.push({{
                         description: descEl.value.trim(),
-                        quantity: parseFloat(qtyEl?.value || 1),
-                        unit_price: parseFloat(priceEl?.value || 0),
-                        line_total: parseFloat(qtyEl?.value || 1) * parseFloat(priceEl?.value || 0)
+                        quantity: qty,
+                        unit_price: unitPrice,
+                        discount_pct: discPct,
+                        pack_size: packSize,
+                        line_total: lineTotal
                     }});
                 }}
             }});
@@ -54064,9 +54076,36 @@ def api_scan_save_supplier_invoice():
             
             for item in items:
                 desc = item.get("description", "").strip()
-                qty = float(item.get("qty", 1) or 1)
+                qty = float(item.get("qty", item.get("quantity", 1)) or 1)
                 unit_price = float(item.get("unit_price", item.get("price", 0)) or 0)
-                line_total = qty * unit_price
+                # ═══ STAP 2: Pack size and discount support ═══
+                # qty       = number of packs/boxes purchased (e.g. 2 boxes)
+                # pack_size = items per pack (e.g. 10 drills per box) — default 1 = single units
+                # discount_pct = % off list price (e.g. 40 means 40% off) — default 0
+                # actual_units  = total individual items going into stock (qty × pack_size)
+                # net_unit_price = list price after discount (per pack/box)
+                # cost_per_unit = real cost per single item (net_unit_price ÷ pack_size)
+                pack_size = int(item.get("pack_size", 1) or 1)
+                if pack_size < 1:
+                    pack_size = 1
+                discount_pct = float(item.get("discount_pct", 0) or 0)
+                if discount_pct < 0:
+                    discount_pct = 0
+                if discount_pct > 100:
+                    discount_pct = 100
+                
+                # Use line_total from invoice if present (it's already net of discount on real invoices),
+                # otherwise calculate it from qty × unit_price × (1 - discount/100)
+                stated_line_total = float(item.get("line_total", 0) or 0)
+                if stated_line_total > 0:
+                    line_total = stated_line_total
+                else:
+                    gross = qty * unit_price
+                    line_total = gross * (1 - discount_pct / 100) if discount_pct > 0 else gross
+                
+                # Calculate actual units going into stock and true cost per individual unit
+                actual_units = qty * pack_size
+                cost_per_unit = (line_total / actual_units) if actual_units > 0 else unit_price
                 
                 if not desc:
                     continue
@@ -54165,19 +54204,36 @@ def api_scan_save_supplier_invoice():
                         logger.info(f"[SCAN] Best description match (score {best_score}): '{desc}' ~ '{best_match.get('description')}'")
                 
                 if matched:
-                    # Update existing stock - add qty, update cost
+                    # Update existing stock - add ACTUAL units (qty × pack_size), update cost
                     stock_items_matched += 1
-                    new_qty = float(matched.get("quantity", matched.get("qty", 0))) + qty
+                    old_qty = float(matched.get("quantity", matched.get("qty", 0)) or 0)
+                    old_cost = float(matched.get("cost_price", matched.get("cost", 0)) or 0)
+                    old_sell = float(matched.get("selling_price", matched.get("price", 0)) or 0)
+                    new_qty = old_qty + actual_units
                     table = "stock" if matched in all_stock else "stock_items"
-                    db.save(table, {
+                    
+                    update_payload = {
                         "id": matched["id"],
                         "quantity": new_qty,
                         "qty": new_qty,
-                        "cost_price": unit_price,
-                        "cost": unit_price,
+                        "cost_price": cost_per_unit,
+                        "cost": cost_per_unit,
                         "last_purchase_date": today()
-                    })
-                    logger.info(f"[SCAN] Updated stock: {matched.get('code')} qty +{qty}")
+                    }
+                    
+                    # Maintain markup % - if there was a markup before, apply same ratio to new cost
+                    if old_cost > 0 and old_sell > 0 and cost_per_unit > 0:
+                        markup_ratio = old_sell / old_cost
+                        new_sell = round(cost_per_unit * markup_ratio, 2)
+                        update_payload["selling_price"] = new_sell
+                        update_payload["price"] = new_sell
+                        logger.info(f"[SCAN] Markup maintained for {matched.get('code')}: ratio={markup_ratio:.3f}, new sell=R{new_sell}")
+                    
+                    db.save(table, update_payload)
+                    if pack_size > 1 or discount_pct > 0:
+                        logger.info(f"[SCAN] Updated stock: {matched.get('code')} +{actual_units} units ({qty}×{pack_size}/pack, {discount_pct}% off, cost/unit R{cost_per_unit:.2f})")
+                    else:
+                        logger.info(f"[SCAN] Updated stock: {matched.get('code')} qty +{actual_units} @ R{cost_per_unit:.2f}")
                 else:
                     # Create new stock item with smart code
                     stock_items_created += 1
@@ -54190,13 +54246,16 @@ def api_scan_save_supplier_invoice():
                         business_id=biz_id,
                         description=desc,
                         code=final_code,
-                        quantity=qty,
-                        cost_price=unit_price,
-                        selling_price=round(unit_price * 1.3, 2)
+                        quantity=actual_units,
+                        cost_price=cost_per_unit,
+                        selling_price=round(cost_per_unit * 1.3, 2)
                     )
                     db.save_stock(new_stock)
                     stock_by_code[final_code] = new_stock
-                    logger.info(f"[SCAN] Created stock: {final_code} = {desc}")
+                    if pack_size > 1 or discount_pct > 0:
+                        logger.info(f"[SCAN] Created stock: {final_code} = {desc} ({actual_units} units, {qty}×{pack_size}/pack, {discount_pct}% off, cost/unit R{cost_per_unit:.2f})")
+                    else:
+                        logger.info(f"[SCAN] Created stock: {final_code} = {desc}")
         
         # Create supplier invoice
         invoice = RecordFactory.supplier_invoice(
