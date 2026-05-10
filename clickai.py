@@ -51989,6 +51989,27 @@ def scan_inbox_page():
         }}
         if (bestMatch) return bestMatch;
         
+        // MATCH 4 (LEGACY FALLBACK): 2+ exact word overlap (>3 chars), no score gate.
+        // Restores pre-fix behaviour for cases where the score-based gate above is
+        // too strict — e.g. scan description is much longer than stock description
+        // (FULLY GROUND HSS DRILL BULK 10P/BOX 6.0mm vs short stock entries).
+        const dWordsLegacy = new Set(d.split(/[\\s\\-\\/]+/).filter(w => w.length > 3));
+        let bestLegacy = null;
+        let bestLegacyScore = 0;
+        for (const s of existingStock) {{
+            if (!s.d) continue;
+            const sWordsLegacy = new Set(s.d.split(/[\\s\\-\\/]+/).filter(w => w.length > 3));
+            let common = 0;
+            for (const w of dWordsLegacy) {{
+                if (sWordsLegacy.has(w)) common++;
+            }}
+            if (common >= 2 && common > bestLegacyScore) {{
+                bestLegacyScore = common;
+                bestLegacy = {{code: s.c, type: 'partial', score: common}};
+            }}
+        }}
+        if (bestLegacy) return bestLegacy;
+        
         return null;
     }}
     
