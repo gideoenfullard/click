@@ -51820,6 +51820,9 @@ def scan_inbox_page():
     const existingStock = {json.dumps(stock_lookup)};
     
     // Match scanned item description to existing stock
+    // Stricter fuzzy matching: handles spelling errors (MASONRY/MASONARY),
+    // dimension format variants (6.0 x 100 == 6.0MMX100MM == 6X100), and
+    // word-order differences (CONCRETE DRILL BIT == DRILL BIT CONCRETE).
     function matchStock(desc) {{
         if (!desc || !existingStock.length) return null;
         const d = desc.toUpperCase().trim();
@@ -51829,24 +51832,159 @@ def scan_inbox_page():
             if (s.d === d) return {{code: s.c, type: 'exact'}};
         }}
         
-        // MATCH 2: Description contains or is contained
-        for (const s of existingStock) {{
-            if (s.d && d && (s.d.includes(d) || d.includes(s.d))) return {{code: s.c, type: 'contains'}};
+        // ---- Helpers for fuzzy matching -------------------------------
+        // Normalise a string: strip noise units (MM/CM/M), collapse "x"/"-"/"/",
+        // remove trailing zeros from decimals so 6.0 == 6, 8.00 == 8.
+        function _norm(str) {{
+            let n = (str || '').toUpperCase();
+            // Remove common unit suffixes attached to numbers: 100MM, 6.0MM, 12CM
+            n = n.replace(/(\\d+(?:\\.\\d+)?)\\s*(MM|CM|M)\\b/g, '$1');
+            // Collapse separators around 'x' so "6.0 x 100" == "6.0X100" == "6.0-100"
+            n = n.replace(/\\s*[X*]\\s*/g, 'X');
+            n = n.replace(/[\\-\\/_]/g, ' ');
+            // Strip trailing .0 / .00 from numbers (6.0 -> 6)
+            n = n.replace(/(\\d+)\\.0+\\b/g, '$1');
+            // Collapse whitespace
+            n = n.replace(/\\s+/g, ' ').trim();
+            return n;
         }}
         
-        // MATCH 3: Significant word overlap (2+ words with length > 3)
-        const dWords = new Set(d.split(/[\\s\\-\\/]+/).filter(w => w.length > 3));
+        // Extract numeric/dimension tokens (e.g. 6, 100, 6X100)
+        function _dims(str) {{
+            const out = new Set();
+            const matches = (str || '').match(/\\d+(?:\\.\\d+)?(?:X\\d+(?:\\.\\d+)?)*/g) || [];
+            for (const m of matches) {{
+                // Add the full dim string (6X100) AND each component (6, 100)
+                out.add(m);
+                for (const part of m.split('X')) {{
+                    if (part) out.add(part);
+                }}
+            }}
+            return out;
+        }}
+        
+        // Extract word tokens (letters only, length >= 3)
+        function _words(str) {{
+            const out = new Set();
+            const tokens = (str || '').split(/[^A-Z]+/);
+            for (const t of tokens) {{
+                if (t.length >= 3) out.add(t);
+            }}
+            return out;
+        }}
+        
+        // Levenshtein distance (small strings only, capped at 50 chars)
+        function _lev(a, b) {{
+            if (a === b) return 0;
+            if (!a.length) return b.length;
+            if (!b.length) return a.length;
+            if (a.length > 50 || b.length > 50) return 99;
+            const dp = [];
+            for (let i = 0; i <= a.length; i++) dp.push([i]);
+            for (let j = 1; j <= b.length; j++) dp[0].push(j);
+            for (let i = 1; i <= a.length; i++) {{
+                for (let j = 1; j <= b.length; j++) {{
+                    const cost = a[i-1] === b[j-1] ? 0 : 1;
+                    dp[i][j] = Math.min(
+                        dp[i-1][j] + 1,
+                        dp[i][j-1] + 1,
+                        dp[i-1][j-1] + cost
+                    );
+                }}
+            }}
+            return dp[a.length][b.length];
+        }}
+        
+        // Check if two word sets overlap, treating near-spellings as equal.
+        // Returns the count of overlapping (or fuzzy-matched) words.
+        function _wordOverlap(setA, setB) {{
+            let common = 0;
+            const usedB = new Set();
+            for (const wa of setA) {{
+                let matched = false;
+                for (const wb of setB) {{
+                    if (usedB.has(wb)) continue;
+                    if (wa === wb) {{
+                        common++;
+                        usedB.add(wb);
+                        matched = true;
+                        break;
+                    }}
+                }}
+                if (matched) continue;
+                // Try fuzzy: allow 1 edit for words 4-6 chars, 2 edits for 7+
+                for (const wb of setB) {{
+                    if (usedB.has(wb)) continue;
+                    const minLen = Math.min(wa.length, wb.length);
+                    if (minLen < 4) continue;
+                    const tolerance = minLen >= 7 ? 2 : 1;
+                    if (Math.abs(wa.length - wb.length) > tolerance) continue;
+                    if (_lev(wa, wb) <= tolerance) {{
+                        common++;
+                        usedB.add(wb);
+                        break;
+                    }}
+                }}
+            }}
+            return common;
+        }}
+        // ----------------------------------------------------------------
+        
+        const dNorm = _norm(d);
+        const dWords = _words(dNorm);
+        const dDims = _dims(dNorm);
+        
+        // MATCH 2: Normalised exact / contains
+        for (const s of existingStock) {{
+            const sNorm = _norm(s.d || '');
+            if (!sNorm) continue;
+            if (sNorm === dNorm) return {{code: s.c, type: 'exact_norm'}};
+            if (sNorm.includes(dNorm) || dNorm.includes(sNorm)) {{
+                // Only accept contains if the smaller side has at least 2 words
+                // (prevents "BOLT" matching every bolt in stock)
+                const smaller = sNorm.length < dNorm.length ? sNorm : dNorm;
+                const smallerWords = _words(smaller);
+                if (smallerWords.size >= 2) return {{code: s.c, type: 'contains'}};
+            }}
+        }}
+        
+        // MATCH 3: Scored fuzzy match — combine word overlap + dimension overlap
         let bestMatch = null;
         let bestScore = 0;
+        const dTotal = dWords.size + dDims.size;
+        if (dTotal === 0) return null;
+        
         for (const s of existingStock) {{
-            const sWords = new Set(s.d.split(/[\\s\\-\\/]+/).filter(w => w.length > 3));
-            let common = 0;
-            for (const w of dWords) {{
-                if (sWords.has(w)) common++;
+            const sNorm = _norm(s.d || '');
+            if (!sNorm) continue;
+            const sWords = _words(sNorm);
+            const sDims = _dims(sNorm);
+            const sTotal = sWords.size + sDims.size;
+            if (sTotal === 0) continue;
+            
+            const wordCommon = _wordOverlap(dWords, sWords);
+            // For dimensions, require exact match (no fuzzy on numbers)
+            let dimCommon = 0;
+            for (const dim of dDims) {{
+                if (sDims.has(dim)) dimCommon++;
             }}
-            if (common >= 2 && common > bestScore) {{
-                bestScore = common;
-                bestMatch = {{code: s.c, type: 'partial', score: common}};
+            
+            // Score = Jaccard-like: matched / max(scanned tokens, stock tokens)
+            const matched = wordCommon + dimCommon;
+            const denom = Math.max(dTotal, sTotal);
+            const score = denom > 0 ? matched / denom : 0;
+            
+            // Require: at least 1 word match AND at least 1 dimension match
+            // when scan has dimensions; otherwise need 2 word matches.
+            const hasDims = dDims.size > 0 && sDims.size > 0;
+            const passesGate = hasDims
+                ? (wordCommon >= 1 && dimCommon >= 1)
+                : (wordCommon >= 2);
+            
+            // Score threshold: 0.5 = at least half the tokens align
+            if (passesGate && score >= 0.5 && score > bestScore) {{
+                bestScore = score;
+                bestMatch = {{code: s.c, type: 'fuzzy', score: score}};
             }}
         }}
         if (bestMatch) return bestMatch;
