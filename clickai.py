@@ -2991,14 +2991,16 @@ class DB:
             return []
     
     def update_stock(self, stock_id: str, updates: dict, biz_id: str = None):
-        """Update stock item - FIXED version.
+        """Update stock item — column-aware per table.
         
-        BUG FOUND: stock_items.quantity is INTEGER in Supabase.
-        Python sends 5.0 (float) → PostgreSQL rejects with:
-        'invalid input syntax for type integer: "5.0"'
+        stock_items (modern):  quantity, cost_price, selling_price, ...
+        stock (legacy):        qty, cost, price, cost_price, quantity, ...
         
-        FIX: Convert qty to int before sending. Also only sends qty fields
-        if they were explicitly in updates (prevents wiping qty on price changes).
+        BUG HISTORY:
+          - Old code sent every column to every table; missing columns caused
+            42703 (column does not exist) → ALL ATTEMPTS FAILED.
+          - Now: build a tailored payload per table BEFORE sending.
+          - Plus: 22P02 (int type) retry on TRY 1 still kept.
         """
         # Invalidate stock cache on any stock update
         if biz_id:
@@ -3010,111 +3012,144 @@ class DB:
         has_qty = "quantity" in updates or "qty" in updates
         
         if has_qty:
-            # Extract qty - handle 0 correctly (0 is valid, None is not)
             raw_qty = updates.get("quantity")
             if raw_qty is None:
                 raw_qty = updates.get("qty")
             if raw_qty is None:
                 raw_qty = 0
-            # Convert to int for INTEGER columns, but keep precision if fractional
             float_qty = float(raw_qty)
-            # If it's a whole number (5.0, 10.0), send as int. Otherwise keep float for NUMERIC columns.
             if float_qty == int(float_qty):
                 safe_qty = int(float_qty)
             else:
                 safe_qty = float_qty
             logger.info(f"[STOCK UPDATE] Qty: raw={raw_qty} → safe={safe_qty} (type={type(safe_qty).__name__})")
+        else:
+            safe_qty = None
+            float_qty = 0
         
-        # Build field dict - only include qty if it was in updates
-        fields = {}
-        if has_qty:
-            fields["quantity"] = safe_qty
+        # Allowed columns for each table — anything NOT in this set is dropped
+        # before the PATCH, so we never trigger 42703.
+        STOCK_ITEMS_COLS = {
+            "quantity", "code", "description", "category", "cost_price",
+            "selling_price", "reorder_level", "active", "business_id",
+            "created_by", "unit", "total_value", "average_cost", "last_cost",
+            "min_stock", "max_stock", "reorder_qty", "barcode", "supplier_code",
+            "supplier_id", "location", "bin", "weight", "vat_type", "notes",
+            "last_sale_date", "last_purchase_date", "opening_qty", "opening_value",
+            "extra_data"
+        }
+        STOCK_LEGACY_COLS = {
+            "qty", "quantity", "code", "description", "category", "cost",
+            "cost_price", "price", "unit", "business_id", "stock_forecast"
+        }
         
-        # Pass through non-qty fields (selling_price, cost_price, description, etc.)
+        # Build the base "wide" field set (everything the caller passed,
+        # minus qty/quantity which we handle explicitly)
+        base = {}
         for k, v in updates.items():
-            if k not in ("qty", "quantity"):
-                fields[k] = v
+            if k in ("qty", "quantity"):
+                continue
+            base[k] = v
         
-        if not fields:
-            logger.warning(f"[STOCK UPDATE] No fields to update for {stock_id}")
-            return False
-        
-        # === TRY 1: stock_items table ===
+        # === TRY 1: stock_items table (modern, preferred) ===
         try:
-            url = f"{self.url}/rest/v1/stock_items?id=eq.{stock_id}"
-            if biz_id:
-                url += f"&business_id=eq.{biz_id}"
+            fields = {}
+            if has_qty:
+                fields["quantity"] = safe_qty
+            for k, v in base.items():
+                if k in STOCK_ITEMS_COLS:
+                    fields[k] = v
             
-            headers = {**self.headers, "Prefer": "return=representation"}
-            
-            logger.info(f"[STOCK UPDATE] TRY 1: PATCH stock_items → {fields}")
-            resp = requests.patch(url, headers=headers, json=fields, timeout=30)
-            logger.info(f"[STOCK UPDATE] TRY 1: status={resp.status_code}, body={resp.text[:300]}")
-            
-            if resp.status_code == 200:
-                result = resp.json()
-                if result and len(result) > 0:
-                    logger.info(f"[STOCK UPDATE] ✅ SUCCESS! quantity now = {result[0].get('quantity')}")
-                    return True
-                else:
-                    logger.warning(f"[STOCK UPDATE] TRY 1: 200 but empty - ID not found or biz_id mismatch")
-            elif resp.status_code == 400 and "22P02" in resp.text:
-                # STILL integer type error - force int
-                logger.warning(f"[STOCK UPDATE] Integer type error - forcing int conversion")
-                if has_qty:
-                    fields["quantity"] = int(float_qty)
-                resp2 = requests.patch(url, headers=headers, json=fields, timeout=30)
-                if resp2.status_code == 200:
-                    result = resp2.json()
+            if not fields:
+                logger.warning(f"[STOCK UPDATE] No valid fields for stock_items {stock_id}")
+            else:
+                url = f"{self.url}/rest/v1/stock_items?id=eq.{stock_id}"
+                if biz_id:
+                    url += f"&business_id=eq.{biz_id}"
+                headers = {**self.headers, "Prefer": "return=representation"}
+                
+                logger.info(f"[STOCK UPDATE] TRY 1: PATCH stock_items → {fields}")
+                resp = requests.patch(url, headers=headers, json=fields, timeout=30)
+                logger.info(f"[STOCK UPDATE] TRY 1: status={resp.status_code}, body={resp.text[:300]}")
+                
+                if resp.status_code == 200:
+                    result = resp.json()
                     if result and len(result) > 0:
-                        logger.info(f"[STOCK UPDATE] ✅ SUCCESS after int() force! quantity now = {result[0].get('quantity')}")
+                        logger.info(f"[STOCK UPDATE] ✅ SUCCESS! quantity now = {result[0].get('quantity')}")
                         return True
+                    else:
+                        logger.warning(f"[STOCK UPDATE] TRY 1: 200 but empty — ID not in stock_items or biz_id mismatch")
+                elif resp.status_code == 400 and "22P02" in resp.text:
+                    # Integer type error — force int
+                    logger.warning(f"[STOCK UPDATE] TRY 1: integer-type error, retrying with int()")
+                    if has_qty:
+                        fields["quantity"] = int(float_qty)
+                    resp2 = requests.patch(url, headers=headers, json=fields, timeout=30)
+                    if resp2.status_code == 200:
+                        result = resp2.json()
+                        if result and len(result) > 0:
+                            logger.info(f"[STOCK UPDATE] ✅ SUCCESS after int() force!")
+                            return True
         except Exception as e:
             logger.error(f"[STOCK UPDATE] TRY 1 exception: {e}")
         
         # === TRY 2: stock_items WITHOUT biz_id filter (in case of mismatch) ===
         if biz_id:
             try:
-                url = f"{self.url}/rest/v1/stock_items?id=eq.{stock_id}"
+                fields = {}
+                if has_qty:
+                    fields["quantity"] = int(float_qty)  # force int for safety
+                for k, v in base.items():
+                    if k in STOCK_ITEMS_COLS:
+                        fields[k] = v
+                
+                if fields:
+                    url = f"{self.url}/rest/v1/stock_items?id=eq.{stock_id}"
+                    headers = {**self.headers, "Prefer": "return=representation"}
+                    
+                    logger.info(f"[STOCK UPDATE] TRY 2: PATCH stock_items (no biz_id) → {fields}")
+                    resp = requests.patch(url, headers=headers, json=fields, timeout=30)
+                    logger.info(f"[STOCK UPDATE] TRY 2: status={resp.status_code}, body={resp.text[:300]}")
+                    
+                    if resp.status_code == 200:
+                        result = resp.json()
+                        if result and len(result) > 0:
+                            logger.info(f"[STOCK UPDATE] ✅ TRY 2 SUCCESS (no biz_id filter)")
+                            return True
+            except Exception as e:
+                logger.error(f"[STOCK UPDATE] TRY 2 exception: {e}")
+        
+        # === TRY 3: legacy 'stock' table — qty + cost + price ===
+        try:
+            legacy_fields = {}
+            if has_qty:
+                legacy_fields["qty"] = int(float_qty)
+                legacy_fields["quantity"] = int(float_qty)  # legacy has both columns
+            # Map modern names to legacy names
+            for k, v in base.items():
+                if k in STOCK_LEGACY_COLS:
+                    legacy_fields[k] = v
+                # Translate selling_price → price for legacy
+                if k == "selling_price":
+                    legacy_fields["price"] = v
+            
+            if not legacy_fields:
+                logger.warning(f"[STOCK UPDATE] No valid fields for legacy stock {stock_id}")
+            else:
+                url = f"{self.url}/rest/v1/stock?id=eq.{stock_id}"
+                if biz_id:
+                    url += f"&business_id=eq.{biz_id}"
                 headers = {**self.headers, "Prefer": "return=representation"}
                 
-                # Force int for safety
-                safe_fields = dict(fields)
-                if has_qty:
-                    safe_fields["quantity"] = int(float_qty)
-                
-                logger.info(f"[STOCK UPDATE] TRY 2: PATCH stock_items (no biz_id) → {safe_fields}")
-                resp = requests.patch(url, headers=headers, json=safe_fields, timeout=30)
-                logger.info(f"[STOCK UPDATE] TRY 2: status={resp.status_code}, body={resp.text[:300]}")
+                logger.info(f"[STOCK UPDATE] TRY 3: PATCH stock (legacy) → {legacy_fields}")
+                resp = requests.patch(url, headers=headers, json=legacy_fields, timeout=30)
+                logger.info(f"[STOCK UPDATE] TRY 3: status={resp.status_code}, body={resp.text[:300]}")
                 
                 if resp.status_code == 200:
                     result = resp.json()
                     if result and len(result) > 0:
-                        logger.info(f"[STOCK UPDATE] ✅ TRY 2 SUCCESS (no biz_id filter)! biz_id mismatch was the problem")
+                        logger.info(f"[STOCK UPDATE] ✅ TRY 3 SUCCESS (legacy stock table)")
                         return True
-            except Exception as e:
-                logger.error(f"[STOCK UPDATE] TRY 2 exception: {e}")
-        
-        # === TRY 3: legacy 'stock' table with 'qty' column ===
-        try:
-            legacy_fields = dict(fields)
-            if has_qty:
-                legacy_fields.pop("quantity", None)
-                legacy_fields["qty"] = int(float_qty)
-            
-            url = f"{self.url}/rest/v1/stock?id=eq.{stock_id}"
-            if biz_id:
-                url += f"&business_id=eq.{biz_id}"
-            headers = {**self.headers, "Prefer": "return=representation"}
-            
-            logger.info(f"[STOCK UPDATE] TRY 3: PATCH stock (legacy) → {legacy_fields}")
-            resp = requests.patch(url, headers=headers, json=legacy_fields, timeout=30)
-            
-            if resp.status_code == 200:
-                result = resp.json()
-                if result and len(result) > 0:
-                    logger.info(f"[STOCK UPDATE] ✅ TRY 3 SUCCESS (legacy stock table)")
-                    return True
         except Exception as e:
             logger.error(f"[STOCK UPDATE] TRY 3 exception: {e}")
         
@@ -55111,13 +55146,16 @@ def api_scan_save_supplier_invoice():
                 _existing_grvs = db.get("goods_received", {"business_id": biz_id}) if biz_id else []
                 _grv_number = next_document_number("GRV-", _existing_grvs, field="grv_number")
                 _grv_id = generate_id()
+                # UUID fields must be None (not "") to avoid 22P02 invalid syntax error
+                _grv_po_id = _scan_po_id if _scan_po_id else None
+                _grv_supplier_id = supplier.get("id") if supplier and supplier.get("id") else None
                 _grv = {
                     "id": _grv_id,
                     "business_id": biz_id,
                     "grv_number": _grv_number,
-                    "po_id": _scan_po_id or "",
+                    "po_id": _grv_po_id,
                     "po_number": (_po_record.get("po_number") if _po_record else _scan_po_number) or "",
-                    "supplier_id": supplier.get("id") if supplier else "",
+                    "supplier_id": _grv_supplier_id,
                     "supplier_name": supplier_name,
                     "supplier_invoice_number": data.get("invoice_number", ""),
                     "date": data.get("date", today()),
