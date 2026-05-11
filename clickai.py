@@ -30227,6 +30227,19 @@ def grv_new():
     for s in sorted(suppliers, key=lambda x: x.get("name", "")):
         supplier_options += f'<option value="{s.get("id")}">{safe_string(s.get("name", ""))}</option>'
     
+    # Stock list for the search-as-you-type dropdown on Description field
+    _grv_stock = db.get_all_stock(biz_id) if biz_id else []
+    _grv_stock_json = json.dumps([
+        {
+            "id": s.get("id", ""),
+            "code": safe_string(s.get("code", "")),
+            "desc": safe_string(s.get("description", "")),
+            "qty": float(s.get("quantity", s.get("qty", 0)) or 0),
+            "cost": float(s.get("cost_price", s.get("cost", 0)) or 0)
+        }
+        for s in _grv_stock if s.get("code") or s.get("description")
+    ])
+    
     content = f'''
     <div style="margin-bottom:15px;">
         <a href="/grv" style="color:var(--text-muted);">← Back to GRVs</a>
@@ -30250,11 +30263,15 @@ def grv_new():
             
             <h4>Items Received</h4>
             <table class="table" id="grvItems">
-                <thead><tr><th>Code</th><th>Description</th><th>Qty</th><th>Cost Price</th><th></th></tr></thead>
+                <thead><tr><th style="width:18%;">Code</th><th>Description</th><th style="width:10%;">Qty</th><th style="width:14%;">Cost Price</th><th style="width:40px;"></th></tr></thead>
                 <tbody>
-                    <tr>
-                        <td><input type="text" name="item_code[]" class="form-input" placeholder="Code" style="width:100%;"></td>
-                        <td><input type="text" name="item_desc[]" class="form-input" placeholder="Description" style="width:100%;"></td>
+                    <tr class="grv-item-row">
+                        <td class="grv-code-td" style="position:relative;">
+                            <input type="text" name="item_code[]" class="form-input grv-code-input" placeholder="Code" autocomplete="off" oninput="grvCodeSearch(this)" onfocus="grvCodeSearch(this)" style="width:100%;">
+                        </td>
+                        <td class="grv-desc-td" style="position:relative;">
+                            <input type="text" name="item_desc[]" class="form-input grv-desc-input" placeholder="Type to search stock..." autocomplete="off" oninput="grvDescSearch(this)" onfocus="grvDescSearch(this)" style="width:100%;">
+                        </td>
                         <td><input type="number" name="item_qty[]" class="form-input" value="1" step="0.01" style="width:100%;"></td>
                         <td><input type="number" name="item_cost[]" class="form-input" placeholder="0.00" step="0.01" style="width:100%;"></td>
                         <td><button type="button" onclick="this.closest('tr').remove()" style="background:var(--red);color:white;border:none;padding:6px 10px;border-radius:4px;cursor:pointer;">✕</button></td>
@@ -30275,12 +30292,145 @@ def grv_new():
             </div>
         </form>
     </div>
+    <style>
+    .grv-stock-dd {{
+        position: fixed;
+        background: var(--card);
+        border: 1px solid var(--border);
+        border-radius: 6px;
+        box-shadow: 0 6px 24px rgba(0,0,0,0.4);
+        max-height: 280px;
+        overflow-y: auto;
+        z-index: 9999;
+        display: none;
+    }}
+    .grv-stock-dd.show {{ display: block; }}
+    .grv-stock-item {{
+        padding: 8px 12px;
+        cursor: pointer;
+        border-bottom: 1px solid rgba(255,255,255,0.05);
+        display: flex;
+        gap: 10px;
+        align-items: center;
+        font-size: 13px;
+    }}
+    .grv-stock-item:hover {{ background: rgba(99,102,241,0.15); }}
+    .grv-stock-item:last-child {{ border-bottom: none; }}
+    .grv-stock-code {{ color: var(--primary); font-weight: 600; min-width: 90px; }}
+    .grv-stock-desc {{ flex: 1; color: var(--text); }}
+    .grv-stock-qty {{ color: var(--text-muted); font-size: 11px; }}
+    .grv-stock-empty {{ padding: 10px 12px; color: var(--text-muted); font-style: italic; font-size: 12px; }}
+    </style>
     <script>
+    const grvStockData = {_grv_stock_json};
+    
+    // Description search: type → filter → click to fill code+desc+cost
+    function grvDescSearch(input) {{
+        const wrap = input.closest('.grv-desc-td');
+        let dd = wrap.querySelector('.grv-stock-dd');
+        if (!dd) {{
+            dd = document.createElement('div');
+            dd.className = 'grv-stock-dd';
+            wrap.appendChild(dd);
+        }}
+        
+        const q = input.value.toLowerCase().trim().replace(/\\s*[xX]\\s*/g, 'x');
+        const terms = q.split(/\\s+/).filter(t => t.length > 0);
+        
+        let matches = grvStockData.filter(s => {{
+            if (!terms.length) return true;
+            const text = (s.code + ' ' + s.desc).toLowerCase().replace(/\\s*[xX]\\s*/g, 'x');
+            return terms.every(t => text.includes(t));
+        }}).slice(0, 30);
+        
+        if (!terms.length) {{
+            dd.classList.remove('show');
+            return;
+        }}
+        
+        renderGrvDropdown(dd, matches, input.closest('tr'));
+        positionGrvDropdown(dd, input);
+    }}
+    
+    // Code search: type code → filter on code → click to fill all
+    function grvCodeSearch(input) {{
+        const wrap = input.closest('.grv-code-td');
+        let dd = wrap.querySelector('.grv-stock-dd');
+        if (!dd) {{
+            dd = document.createElement('div');
+            dd.className = 'grv-stock-dd';
+            wrap.appendChild(dd);
+        }}
+        
+        const q = input.value.toLowerCase().trim();
+        if (!q) {{
+            dd.classList.remove('show');
+            return;
+        }}
+        
+        let matches = grvStockData.filter(s => {{
+            return s.code.toLowerCase().includes(q);
+        }}).slice(0, 30);
+        
+        renderGrvDropdown(dd, matches, input.closest('tr'));
+        positionGrvDropdown(dd, input);
+    }}
+    
+    function renderGrvDropdown(dd, matches, row) {{
+        if (matches.length === 0) {{
+            dd.innerHTML = '<div class="grv-stock-empty">No stock found</div>';
+        }} else {{
+            dd.innerHTML = matches.map((s, i) => {{
+                const safeDesc = s.desc.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/"/g,'&quot;');
+                const qtyStr = s.qty ? '(Qty: ' + s.qty + ')' : '';
+                return '<div class="grv-stock-item" data-idx="' + i + '">' +
+                    (s.code ? '<span class="grv-stock-code">' + s.code + '</span>' : '') +
+                    '<span class="grv-stock-desc">' + safeDesc + '</span>' +
+                    '<span class="grv-stock-qty">' + qtyStr + '</span>' +
+                    '</div>';
+            }}).join('');
+            
+            dd.querySelectorAll('.grv-stock-item').forEach(el => {{
+                el.addEventListener('click', function() {{
+                    const idx = parseInt(this.getAttribute('data-idx'));
+                    const m = matches[idx];
+                    const codeInput = row.querySelector('input[name="item_code[]"]');
+                    const descInput = row.querySelector('input[name="item_desc[]"]');
+                    const costInput = row.querySelector('input[name="item_cost[]"]');
+                    if (codeInput) codeInput.value = m.code || '';
+                    if (descInput) descInput.value = m.desc || '';
+                    if (costInput && m.cost && !costInput.value) costInput.value = m.cost.toFixed(2);
+                    dd.classList.remove('show');
+                }});
+            }});
+        }}
+    }}
+    
+    function positionGrvDropdown(dd, input) {{
+        const rect = input.getBoundingClientRect();
+        dd.style.left = rect.left + 'px';
+        dd.style.top = (rect.bottom + 2) + 'px';
+        dd.style.width = Math.max(rect.width, 520) + 'px';
+        dd.classList.add('show');
+    }}
+    
+    // Close dropdowns when clicking outside
+    document.addEventListener('click', function(e) {{
+        if (!e.target.closest('.grv-code-input') && !e.target.closest('.grv-desc-input') && !e.target.closest('.grv-stock-dd')) {{
+            document.querySelectorAll('.grv-stock-dd').forEach(d => d.classList.remove('show'));
+        }}
+    }});
+    
     function addGrvRow() {{
         const tbody = document.querySelector('#grvItems tbody');
         const row = document.createElement('tr');
-        row.innerHTML = `<td><input type="text" name="item_code[]" class="form-input" placeholder="Code" style="width:100%;"></td>
-            <td><input type="text" name="item_desc[]" class="form-input" placeholder="Description" style="width:100%;"></td>
+        row.className = 'grv-item-row';
+        row.innerHTML = `<td class="grv-code-td" style="position:relative;">
+                <input type="text" name="item_code[]" class="form-input grv-code-input" placeholder="Code" autocomplete="off" oninput="grvCodeSearch(this)" onfocus="grvCodeSearch(this)" style="width:100%;">
+            </td>
+            <td class="grv-desc-td" style="position:relative;">
+                <input type="text" name="item_desc[]" class="form-input grv-desc-input" placeholder="Type to search stock..." autocomplete="off" oninput="grvDescSearch(this)" onfocus="grvDescSearch(this)" style="width:100%;">
+            </td>
             <td><input type="number" name="item_qty[]" class="form-input" value="1" step="0.01" style="width:100%;"></td>
             <td><input type="number" name="item_cost[]" class="form-input" placeholder="0.00" step="0.01" style="width:100%;"></td>
             <td><button type="button" onclick="this.closest('tr').remove()" style="background:var(--red);color:white;border:none;padding:6px 10px;border-radius:4px;cursor:pointer;">✕</button></td>`;
