@@ -3210,25 +3210,56 @@ class DB:
                 result = response.json()
                 return True, result[0] if result else data
             
-            # Auto-fix: if column not found (PGRST204), remove offending column and retry
-            if response.status_code == 400 and "PGRST204" in response.text:
+            # Auto-fix: if column not found (PGRST204 or 42703), remove offending column and retry
+            if response.status_code == 400 and ("PGRST204" in response.text or "42703" in response.text):
                 try:
                     err_data = response.json()
                     err_msg = err_data.get("message", "")
-                    if "Could not find" in err_msg and "column" in err_msg:
+                    bad_col = None
+                    # PostgREST style: "Could not find the 'foo' column"
+                    if "Could not find" in err_msg and "column" in err_msg and "'" in err_msg:
                         bad_col = err_msg.split("'")[1]
+                    # PostgreSQL native: "column \"foo\" does not exist"
+                    elif "does not exist" in err_msg and "column" in err_msg.lower():
+                        import re as _re_col
+                        _m = _re_col.search(r'column "([^"]+)"', err_msg)
+                        if _m:
+                            bad_col = _m.group(1)
+                    if bad_col:
                         logger.warning(f"[DB SAVE] Column '{bad_col}' not in {table} - removing and retrying")
                         data.pop(bad_col, None)
-                        response2 = requests.post(
-                            url,
-                            headers={**self.headers, "Prefer": "return=representation,resolution=merge-duplicates"},
-                            json=data,
-                            timeout=30
-                        )
-                        if response2.status_code in (200, 201):
-                            result = response2.json()
-                            logger.info(f"[DB SAVE] {table} retry SUCCESS after removing '{bad_col}'")
-                            return True, result[0] if result else data
+                        # Keep retrying for up to 5 different bad columns before giving up
+                        for _retry in range(5):
+                            response2 = requests.post(
+                                url,
+                                headers={**self.headers, "Prefer": "return=representation,resolution=merge-duplicates"},
+                                json=data,
+                                timeout=30
+                            )
+                            if response2.status_code in (200, 201):
+                                result = response2.json()
+                                logger.info(f"[DB SAVE] {table} retry SUCCESS after removing '{bad_col}'")
+                                return True, result[0] if result else data
+                            # Another bad column? strip it and try again
+                            if response2.status_code == 400 and ("PGRST204" in response2.text or "42703" in response2.text):
+                                try:
+                                    _e2 = response2.json().get("message", "")
+                                    _next_col = None
+                                    if "Could not find" in _e2 and "'" in _e2:
+                                        _next_col = _e2.split("'")[1]
+                                    elif "does not exist" in _e2 and "column" in _e2.lower():
+                                        import re as _re_col2
+                                        _m2 = _re_col2.search(r'column "([^"]+)"', _e2)
+                                        if _m2:
+                                            _next_col = _m2.group(1)
+                                    if _next_col and _next_col != bad_col:
+                                        logger.warning(f"[DB SAVE] Another bad column '{_next_col}' - removing and retrying")
+                                        bad_col = _next_col
+                                        data.pop(bad_col, None)
+                                        continue
+                                except Exception:
+                                    pass
+                            break  # not a column error any more
                 except Exception as retry_err:
                     logger.error(f"[DB SAVE] Retry failed: {retry_err}")
             
@@ -53399,6 +53430,9 @@ def scan_inbox_page():
         
         if (saveType.includes('expense') || saveType.includes('supplier')) {{
             // Collect edited line items from input fields
+            // We also need to preserve PO-matching context (stock code, on_po, etc.)
+            // that came from the scan — read the original items by index.
+            const _origItems = (currentItemData.extracted && currentItemData.extracted.items) || currentItemData.items || [];
             const editedItems = [];
             const itemRows = document.querySelectorAll('.line-item-row');
             itemRows.forEach((row, i) => {{
@@ -53417,14 +53451,23 @@ def scan_inbox_page():
                     const grossTotal = qty * unitPrice;
                     const lineTotal = discPct > 0 ? grossTotal * (1 - discPct / 100) : grossTotal;
                     
-                    editedItems.push({{
+                    const _origItem = _origItems[i] || {{}};
+                    const _itemOut = {{
                         description: descEl.value.trim(),
                         quantity: qty,
                         unit_price: unitPrice,
                         discount_pct: discPct,
                         pack_size: packSize,
                         line_total: lineTotal
-                    }});
+                    }};
+                    // Preserve PO match context so backend can use the right stock code
+                    if (_origItem._matched_stock_code) _itemOut._matched_stock_code = _origItem._matched_stock_code;
+                    if (_origItem._on_po !== undefined) _itemOut._on_po = _origItem._on_po;
+                    if (_origItem._po_idx !== undefined) _itemOut._po_idx = _origItem._po_idx;
+                    if (_origItem._po_qty !== undefined) _itemOut._po_qty = _origItem._po_qty;
+                    if (_origItem._qty_diff !== undefined) _itemOut._qty_diff = _origItem._qty_diff;
+                    
+                    editedItems.push(_itemOut);
                 }}
             }});
             
@@ -53443,7 +53486,10 @@ def scan_inbox_page():
                 items: editedItems.length > 0 ? editedItems : (currentItemData.items || []),
                 paid: saveType === 'expense',  // expenses paid now; supplier invoices = on credit (unpaid)
                 payment_method: payMethod,
-                category: currentZaneCategory || ''  // Zane's AI-picked specific category
+                category: currentZaneCategory || '',  // Zane's AI-picked specific category
+                // PO linkage so backend can create GRV + update PO qty_received
+                po_id: (currentItemData.extracted && currentItemData.extracted._matched_po_id) || currentItemData._matched_po_id || '',
+                po_number: (currentItemData.extracted && currentItemData.extracted._matched_po_number) || currentItemData._matched_po_number || ''
             }};
             // ═══ MULTI-GL: Read split amounts from UI if Zane suggested a split ═══
             if (window._zaneSplits && currentZaneCategory === 'Split') {{
@@ -54799,8 +54845,11 @@ def api_scan_save_supplier_invoice():
                         "action": "updated"
                     })
                     
-                    update_payload = {
-                        "id": matched["id"],
+                    # Build stock update — use db.update_stock which handles
+                    # both stock_items (quantity/cost_price/selling_price) and
+                    # legacy stock (qty/cost/price). Passing both names is safe;
+                    # update_stock + auto-fix retry strips whichever doesn't exist.
+                    stock_updates = {
                         "quantity": new_qty,
                         "qty": new_qty,
                         "cost_price": cost_per_unit,
@@ -54812,15 +54861,18 @@ def api_scan_save_supplier_invoice():
                     if old_cost > 0 and old_sell > 0 and cost_per_unit > 0:
                         markup_ratio = old_sell / old_cost
                         new_sell = round(cost_per_unit * markup_ratio, 2)
-                        update_payload["selling_price"] = new_sell
-                        update_payload["price"] = new_sell
+                        stock_updates["selling_price"] = new_sell
+                        stock_updates["price"] = new_sell
                         logger.info(f"[SCAN] Markup maintained for {matched.get('code')}: ratio={markup_ratio:.3f}, new sell=R{new_sell}")
                     
-                    db.save(table, update_payload)
-                    if pack_size > 1 or discount_pct > 0:
-                        logger.info(f"[SCAN] Updated stock: {matched.get('code')} +{actual_units} units ({qty}×{pack_size}/pack, {discount_pct}% off, cost/unit R{cost_per_unit:.2f})")
+                    _upd_ok = db.update_stock(matched["id"], stock_updates, biz_id)
+                    if _upd_ok:
+                        if pack_size > 1 or discount_pct > 0:
+                            logger.info(f"[SCAN] Updated stock: {matched.get('code')} +{actual_units} units ({qty}×{pack_size}/pack, {discount_pct}% off, cost/unit R{cost_per_unit:.2f})")
+                        else:
+                            logger.info(f"[SCAN] Updated stock: {matched.get('code')} qty +{actual_units} @ R{cost_per_unit:.2f}")
                     else:
-                        logger.info(f"[SCAN] Updated stock: {matched.get('code')} qty +{actual_units} @ R{cost_per_unit:.2f}")
+                        logger.error(f"[SCAN] FAILED to update stock: {matched.get('code')} id={matched['id']}")
                 else:
                     # Create new stock item with smart code
                     stock_items_created += 1
@@ -54958,6 +55010,154 @@ def api_scan_save_supplier_invoice():
         # Supplier balance is now calculated dynamically — no manual update needed
         
         logger.info(f"[SCAN SAVE] Supplier invoice saved: {inv_id}, {len(items)} items, {stock_items_matched} matched, {stock_items_created} new, {expenses_booked} expenses")
+        
+        # ════════════════════════════════════════════════════════════════════
+        # GRV + PO UPDATE — equivalent to manual "PO Receive" flow
+        # If a PO was linked (via dropdown or auto-match), update its qty_received
+        # per item and set status to received/partial. Also create a GRV record.
+        # ════════════════════════════════════════════════════════════════════
+        grv_id_created = None
+        grv_number_created = None
+        try:
+            _scan_po_id = (data.get("po_id") or "").strip()
+            _scan_po_number = (data.get("po_number") or "").strip()
+            
+            # Build received_items list from the invoice items that touched stock
+            received_items = []
+            for item in items:
+                _desc = (item.get("description") or "").strip()
+                _qty = float(item.get("qty", item.get("quantity", 0)) or 0)
+                _pack = int(item.get("pack_size", 1) or 1)
+                if _pack < 1:
+                    _pack = 1
+                # Apply same sanity check as elsewhere
+                if _pack > 1 and int(_qty) == _pack and _qty > 1:
+                    _pack = 1
+                _actual = _qty * _pack
+                _unit_price = float(item.get("unit_price", item.get("price", 0)) or 0)
+                _line_total = float(item.get("line_total", _qty * _unit_price) or 0)
+                _cost_per_unit = (_line_total / _actual) if _actual > 0 else _unit_price
+                # Skip pure-expense items
+                _du = _desc.upper()
+                _is_exp = any(kw in _du for kw in expense_keywords)
+                if _is_exp or not _desc or _actual <= 0:
+                    continue
+                received_items.append({
+                    "description": _desc,
+                    "code": item.get("_matched_stock_code", ""),
+                    "qty_ordered": item.get("_po_qty") if item.get("_po_qty") is not None else _qty,
+                    "qty_received": _actual,
+                    "unit_price": _unit_price,
+                    "line_total": _line_total,
+                    "cost_per_unit": _cost_per_unit,
+                    "booked_to_stock": True
+                })
+            
+            # ─── Update linked PO (if any) ───────────────────────────────
+            _po_record = None
+            if _scan_po_id:
+                _po_record = db.get_one("purchase_orders", _scan_po_id)
+            
+            if _po_record and received_items:
+                try:
+                    _po_items = _po_record.get("items", [])
+                    if isinstance(_po_items, str):
+                        try:
+                            _po_items = json.loads(_po_items)
+                        except Exception:
+                            _po_items = []
+                    
+                    # For each invoice item that has _po_idx, increment qty_received on that PO line
+                    for item in items:
+                        _po_idx = item.get("_po_idx")
+                        if _po_idx is None:
+                            continue
+                        if not isinstance(_po_idx, int) or _po_idx < 0 or _po_idx >= len(_po_items):
+                            continue
+                        _qty = float(item.get("qty", item.get("quantity", 0)) or 0)
+                        _pack = int(item.get("pack_size", 1) or 1)
+                        if _pack < 1:
+                            _pack = 1
+                        if _pack > 1 and int(_qty) == _pack and _qty > 1:
+                            _pack = 1
+                        _actual = _qty * _pack
+                        _po_items[_po_idx]["qty_received"] = float(_po_items[_po_idx].get("qty_received", 0) or 0) + _actual
+                    
+                    # Determine new PO status
+                    _all_received = True
+                    for _pi in _po_items:
+                        _ordered = float(_pi.get("qty", _pi.get("quantity", 1)) or 1)
+                        _recv = float(_pi.get("qty_received", 0) or 0)
+                        if _recv < _ordered:
+                            _all_received = False
+                            break
+                    _new_status = "received" if _all_received else "partial"
+                    
+                    # Save PO update — only valid fields
+                    VALID_PO_FIELDS = {"id", "po_number", "date", "supplier_id", "supplier_name", "items", "notes", "total", "status", "received_date", "created_at", "business_id", "updated_at", "expected_date", "subtotal", "vat", "emailed", "emailed_at", "created_by", "sales_person", "reference"}
+                    _clean_po = {k: v for k, v in _po_record.items() if k in VALID_PO_FIELDS}
+                    _clean_po["items"] = json.dumps(_po_items)
+                    _clean_po["status"] = _new_status
+                    _clean_po["updated_at"] = now()
+                    if _all_received:
+                        _clean_po["received_date"] = today()
+                    db.save("purchase_orders", _clean_po)
+                    logger.info(f"[SCAN GRV] Updated PO {_po_record.get('po_number')} status → {_new_status}")
+                except Exception as _po_upd_err:
+                    logger.error(f"[SCAN GRV] PO update failed (non-fatal): {_po_upd_err}")
+            
+            # ─── Create the GRV record ────────────────────────────────────
+            if received_items:
+                _existing_grvs = db.get("goods_received", {"business_id": biz_id}) if biz_id else []
+                _grv_number = next_document_number("GRV-", _existing_grvs, field="grv_number")
+                _grv_id = generate_id()
+                _grv = {
+                    "id": _grv_id,
+                    "business_id": biz_id,
+                    "grv_number": _grv_number,
+                    "po_id": _scan_po_id or "",
+                    "po_number": (_po_record.get("po_number") if _po_record else _scan_po_number) or "",
+                    "supplier_id": supplier.get("id") if supplier else "",
+                    "supplier_name": supplier_name,
+                    "supplier_invoice_number": data.get("invoice_number", ""),
+                    "date": data.get("date", today()),
+                    "items": json.dumps(received_items),
+                    "received_by": user.get("name", "") if user else "",
+                    "notes": f"Auto-created from scanned invoice {data.get('invoice_number','')}",
+                    "status": "received",
+                    "created_at": now()
+                }
+                _ok, _err = db.save("goods_received", _grv)
+                if _ok:
+                    grv_id_created = _grv_id
+                    grv_number_created = _grv_number
+                    logger.info(f"[SCAN GRV] Created {_grv_number} for invoice {inv_id} — {len(received_items)} items")
+                else:
+                    logger.error(f"[SCAN GRV] GRV save failed (non-fatal): {_err}")
+                
+                # Log stock movements per item (best effort)
+                _all_stock_for_movements = all_stock if 'all_stock' in dir() else (db.get_all_stock(biz_id) if biz_id else [])
+                for _ri in received_items:
+                    try:
+                        # Resolve stock_id from code
+                        _sid = None
+                        if _ri.get("code"):
+                            for _s in _all_stock_for_movements:
+                                if (_s.get("code") or "").upper() == (_ri.get("code") or "").upper():
+                                    _sid = _s.get("id")
+                                    break
+                        if _sid:
+                            db.save("stock_movements", RecordFactory.stock_movement(
+                                business_id=biz_id, stock_id=_sid, movement_type="in",
+                                quantity=_ri["qty_received"],
+                                reference=f"{_grv_number} | {data.get('invoice_number','')} | {supplier_name}"
+                            ))
+                    except Exception as _mv_err:
+                        logger.warning(f"[SCAN GRV] Movement log failed for {_ri.get('code')}: {_mv_err}")
+        except Exception as _grv_block_err:
+            # Never let GRV failures break the invoice save
+            logger.error(f"[SCAN GRV] Block failed (non-fatal): {_grv_block_err}")
+        # ════════════════════════════════════════════════════════════════════
         
         # === ALLOCATION LOG ===
         try:
