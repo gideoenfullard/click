@@ -51987,6 +51987,12 @@ def scan_inbox_page():
             const denom = Math.max(dTotal, sTotal);
             const score = denom > 0 ? matched / denom : 0;
             
+            // Stock-coverage score: how many of the stock item's tokens
+            // appear in the scan. Lets a short stock item like "LOCTITE 6ML"
+            // match a long noisy scan like
+            // "LOCTITE LOCK NUT 242 6ML (L8VR) UNCARDED MTC".
+            const stockCoverage = sTotal > 0 ? matched / sTotal : 0;
+            
             // Require: at least 1 word match AND at least 1 dimension match
             // when scan has dimensions; otherwise need 2 word matches.
             const hasDims = dDims.size > 0 && sDims.size > 0;
@@ -51998,6 +52004,18 @@ def scan_inbox_page():
             if (passesGate && score >= 0.5 && score > bestScore) {{
                 bestScore = score;
                 bestMatch = {{code: s.c, type: 'fuzzy', score: score}};
+            }}
+            // Stock-coverage fallback: ALL of the stock item's tokens are
+            // present in the scan. Requires sTotal >= 2 (so single-token
+            // stock items like bare "BOLT" don't match every bolt scan)
+            // and the same word+dim gate as above. Effective score is
+            // capped just under a perfect Jaccard so direct hits still win.
+            else if (passesGate && sTotal >= 2 && stockCoverage >= 1.0) {{
+                const covScore = 0.5 + (stockCoverage * 0.49); // 0.99 max
+                if (covScore > bestScore) {{
+                    bestScore = covScore;
+                    bestMatch = {{code: s.c, type: 'fuzzy_cov', score: covScore}};
+                }}
             }}
         }}
         if (bestMatch) return bestMatch;
