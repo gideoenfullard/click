@@ -51113,6 +51113,168 @@ IMPORTANT: Read ALL numbers exactly as printed on the document. Do NOT calculate
                 logger.warning(f"[SCAN] Timesheet: Could not find employees in response. Keys: {list(extracted.keys())}")
         
         logger.info(f"[SCAN] Done: {scan_type} via {extracted.get('ai_source', 'unknown')}")
+        
+        # ══════════════════════════════════════════════════════════════════════
+        # STEP 5: PO-MATCHING — for invoice/supplier_invoice scans, find a
+        # matching Purchase Order in the database and use Haiku to map invoice
+        # items to PO line items (so existing stock codes get pre-matched).
+        # This is cheap (Haiku) and only runs when supplier is identified.
+        # ══════════════════════════════════════════════════════════════════════
+        try:
+            if scan_type in ("invoice", "supplier_invoice", "other") and biz_id and extracted.get("items"):
+                _po_supplier_name = (extracted.get("supplier_name") or "").strip()
+                _po_order_number = (extracted.get("order_number") or "").strip()
+                
+                # Resolve supplier in DB by name (case-insensitive contains)
+                _matched_supplier = None
+                if _po_supplier_name:
+                    _all_sups = db.get("suppliers", {"business_id": biz_id}) or []
+                    _sn_upper = _po_supplier_name.upper()
+                    for _s in _all_sups:
+                        _s_name = (_s.get("name") or "").upper().strip()
+                        if not _s_name:
+                            continue
+                        if _s_name == _sn_upper or _sn_upper in _s_name or _s_name in _sn_upper:
+                            _matched_supplier = _s
+                            break
+                
+                # Fetch this supplier's open POs (all statuses except cancelled)
+                _supplier_pos = []
+                if _matched_supplier:
+                    _all_pos = db.get("purchase_orders", {"business_id": biz_id}) or []
+                    _supplier_pos = [_p for _p in _all_pos
+                                     if _p.get("supplier_id") == _matched_supplier.get("id")
+                                     and (_p.get("status") or "").lower() != "cancelled"]
+                
+                # Pick PO: prefer explicit order_number match, fall back to most recent
+                _target_po = None
+                if _po_order_number and _supplier_pos:
+                    _ord_up = _po_order_number.upper().replace(" ", "")
+                    for _p in _supplier_pos:
+                        _pn = (_p.get("po_number") or "").upper().replace(" ", "")
+                        if _pn and (_pn == _ord_up or _pn in _ord_up or _ord_up in _pn):
+                            _target_po = _p
+                            break
+                
+                # Stash supplier & PO context on the extracted dict so frontend can show it
+                if _matched_supplier:
+                    extracted["_matched_supplier_id"] = _matched_supplier.get("id")
+                    extracted["_matched_supplier_name"] = _matched_supplier.get("name")
+                if _supplier_pos:
+                    # Send compact list for the dropdown (newest first)
+                    _po_list_for_ui = sorted(
+                        _supplier_pos,
+                        key=lambda x: x.get("date", ""), reverse=True
+                    )[:20]
+                    extracted["_supplier_pos"] = [
+                        {
+                            "id": _p.get("id"),
+                            "po_number": _p.get("po_number", ""),
+                            "date": _p.get("date", ""),
+                            "status": _p.get("status", "draft"),
+                            "total": float(_p.get("total", 0) or 0)
+                        }
+                        for _p in _po_list_for_ui
+                    ]
+                if _target_po:
+                    extracted["_matched_po_id"] = _target_po.get("id")
+                    extracted["_matched_po_number"] = _target_po.get("po_number")
+                
+                # If a PO was identified, ask Haiku to map invoice items → PO items
+                if _target_po and ANTHROPIC_API_KEY:
+                    try:
+                        _po_items_raw = _target_po.get("items", [])
+                        if isinstance(_po_items_raw, str):
+                            try:
+                                _po_items_raw = json.loads(_po_items_raw)
+                            except Exception:
+                                _po_items_raw = []
+                        # Normalise PO items for Haiku
+                        _po_items_brief = []
+                        for _i, _pi in enumerate(_po_items_raw or []):
+                            _po_items_brief.append({
+                                "po_idx": _i,
+                                "code": (_pi.get("code") or _pi.get("stock_code") or "").strip(),
+                                "description": (_pi.get("description") or "").strip(),
+                                "qty": float(_pi.get("qty", _pi.get("quantity", 0)) or 0)
+                            })
+                        _inv_items_brief = []
+                        for _j, _ii in enumerate(extracted.get("items", []) or []):
+                            _inv_items_brief.append({
+                                "inv_idx": _j,
+                                "description": (_ii.get("description") or "").strip(),
+                                "qty": float(_ii.get("quantity", _ii.get("qty", 0)) or 0)
+                            })
+                        
+                        if _po_items_brief and _inv_items_brief:
+                            _match_prompt = f"""You are matching supplier invoice line items to Purchase Order line items.
+
+PURCHASE ORDER ({_target_po.get('po_number','?')}):
+{json.dumps(_po_items_brief, indent=2)}
+
+INVOICE LINE ITEMS:
+{json.dumps(_inv_items_brief, indent=2)}
+
+For each invoice item, decide which PO item (if any) it matches. Match by description meaning, not exact text — items may have minor wording differences, packaging notes, or batch info. Use the PO's stock code where available; this is the existing code in our database.
+
+A qty difference (e.g. PO says 5, invoice says 3) is NORMAL — partial deliveries happen. Still match them.
+
+If an invoice item is not on the PO at all, set po_idx to null.
+
+Respond with ONLY a JSON array, one entry per invoice item, in the same order. Format:
+[
+  {{"inv_idx": 0, "po_idx": 2, "stock_code": "HAR000414", "po_qty": 1, "qty_diff": 0}},
+  {{"inv_idx": 1, "po_idx": null, "stock_code": null, "po_qty": null, "qty_diff": null}},
+  ...
+]
+
+po_qty = the qty from PO (or null if no match)
+qty_diff = invoice_qty - po_qty (or null if no match)
+stock_code = the PO item's code (or null if no match or PO has no code)
+
+Return ONLY the JSON array, no explanation."""
+                            
+                            _haiku_resp = _anthropic_client.messages.create(
+                                model="claude-haiku-4-5-20251001",
+                                max_tokens=2000,
+                                messages=[{"role": "user", "content": _match_prompt}]
+                            )
+                            _haiku_text = _haiku_resp.content[0].text.strip() if _haiku_resp.content else ""
+                            # Strip code fences if any
+                            if _haiku_text.startswith("```"):
+                                _haiku_text = _haiku_text.split("```")[1]
+                                if _haiku_text.startswith("json"):
+                                    _haiku_text = _haiku_text[4:]
+                                _haiku_text = _haiku_text.strip()
+                            try:
+                                _matches = json.loads(_haiku_text)
+                                if isinstance(_matches, list):
+                                    # Apply matches to extracted items
+                                    for _m in _matches:
+                                        _idx = _m.get("inv_idx")
+                                        if _idx is None or _idx < 0 or _idx >= len(extracted.get("items", [])):
+                                            continue
+                                        _item = extracted["items"][_idx]
+                                        _po_idx = _m.get("po_idx")
+                                        if _po_idx is not None:
+                                            _item["_on_po"] = True
+                                            _item["_po_idx"] = _po_idx
+                                            if _m.get("stock_code"):
+                                                _item["_matched_stock_code"] = _m.get("stock_code")
+                                            if _m.get("po_qty") is not None:
+                                                _item["_po_qty"] = _m.get("po_qty")
+                                            if _m.get("qty_diff") is not None:
+                                                _item["_qty_diff"] = _m.get("qty_diff")
+                                        else:
+                                            _item["_on_po"] = False
+                                    logger.info(f"[SCAN-PO] Matched {sum(1 for i in extracted['items'] if i.get('_on_po'))}/{len(extracted['items'])} invoice items to PO {_target_po.get('po_number')}")
+                            except json.JSONDecodeError as _je:
+                                logger.warning(f"[SCAN-PO] Haiku returned non-JSON: {_je} — {_haiku_text[:120]}")
+                    except Exception as _po_err:
+                        logger.warning(f"[SCAN-PO] PO matching failed (non-fatal): {_po_err}")
+        except Exception as _scan_po_err:
+            logger.warning(f"[SCAN-PO] PO-match block failed (non-fatal): {_scan_po_err}")
+        
         return jsonify({"success": True, "extracted": extracted, "type": scan_type})
         
     except Exception as e:
@@ -52446,8 +52608,62 @@ def scan_inbox_page():
             // Extract items from either data.items OR data.extracted.items (email scans)
             const items = data.items || (data.extracted && data.extracted.items) || [];
             
+            // ── PO LINKAGE BANNER ───────────────────────────────────────────
+            // Show what PO (if any) Sonnet/Haiku matched, or a picker if none.
+            const _ext = data.extracted || data;
+            const _matchedPoNumber = _ext._matched_po_number || data._matched_po_number || '';
+            const _matchedPoId = _ext._matched_po_id || data._matched_po_id || '';
+            const _supplierPos = _ext._supplier_pos || data._supplier_pos || [];
+            const _matchedSupplierName = _ext._matched_supplier_name || data._matched_supplier_name || '';
+            let poBannerHtml = '';
+            if (_matchedPoNumber && _matchedPoId) {{
+                // Already matched — show confirmation banner
+                const _onPoCount = items.filter(it => it._on_po === true).length;
+                const _offPoCount = items.filter(it => it._on_po === false).length;
+                poBannerHtml = `
+                <div style="margin:10px 0;padding:12px;background:rgba(16,185,129,0.1);border:2px solid rgba(16,185,129,0.4);border-radius:10px;">
+                    <div style="display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;">
+                        <div>
+                            <span style="font-size:14px;font-weight:600;color:#10b981;">📋 Linked to Purchase Order</span>
+                            <a href="/purchase/${{_matchedPoId}}" target="_blank" style="margin-left:10px;color:#10b981;text-decoration:underline;font-weight:600;">${{_matchedPoNumber}}</a>
+                        </div>
+                        <div style="font-size:12px;color:var(--text-muted);">
+                            ${{_onPoCount}} matched · ${{_offPoCount}} not on PO
+                        </div>
+                    </div>
+                </div>`;
+            }} else if (_supplierPos.length > 0) {{
+                // Supplier known but no PO matched — show picker
+                let opts = '<option value="">— Select a PO —</option>';
+                _supplierPos.forEach(p => {{
+                    opts += `<option value="${{p.id}}" data-num="${{p.po_number}}">${{p.po_number}} (${{p.date}}, ${{p.status}})</option>`;
+                }});
+                poBannerHtml = `
+                <div style="margin:10px 0;padding:12px;background:rgba(251,191,36,0.1);border:2px solid rgba(251,191,36,0.4);border-radius:10px;">
+                    <div style="font-size:13px;font-weight:600;color:#fbbf24;margin-bottom:8px;">⚠ No Purchase Order linked</div>
+                    <div style="font-size:11px;color:var(--text-muted);margin-bottom:8px;">Pick an existing PO for ${{_matchedSupplierName || 'this supplier'}}, or type a new PO number, or skip.</div>
+                    <div style="display:grid;grid-template-columns:1fr 1fr auto;gap:8px;">
+                        <select id="po_picker_select" onchange="onPoPickerChange()" style="padding:8px;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text);font-size:13px;">
+                            ${{opts}}
+                        </select>
+                        <input id="po_picker_new" type="text" placeholder="Or enter new PO #" style="padding:8px;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text);font-size:13px;" />
+                        <button onclick="applyPoPicker()" style="padding:8px 14px;background:var(--primary);color:white;border:none;border-radius:6px;cursor:pointer;font-size:13px;font-weight:600;">Link</button>
+                    </div>
+                </div>`;
+            }} else if (_matchedSupplierName) {{
+                // Supplier known, no PO at all
+                poBannerHtml = `
+                <div style="margin:10px 0;padding:10px;background:rgba(251,191,36,0.08);border:1px solid rgba(251,191,36,0.3);border-radius:8px;font-size:12px;color:var(--text-muted);">
+                    📭 No outstanding POs for ${{_matchedSupplierName}}. Type a new PO number below to create one, or leave blank for a cash purchase.
+                    <div style="display:flex;gap:8px;margin-top:8px;">
+                        <input id="po_picker_new" type="text" placeholder="New PO #" style="flex:1;padding:6px;background:var(--bg);border:1px solid var(--border);border-radius:4px;color:var(--text);font-size:12px;" />
+                        <button onclick="applyPoPicker()" style="padding:6px 12px;background:var(--primary);color:white;border:none;border-radius:4px;cursor:pointer;font-size:12px;">Create & link</button>
+                    </div>
+                </div>`;
+            }}
+            
             if (items.length > 0) {{
-                itemsHtml = `
+                itemsHtml = poBannerHtml + `
                 <div style="margin:15px 0;background:rgba(99,102,241,0.1);border-radius:12px;padding:15px;">
                     <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;">
                         <span style="font-weight:600;color:var(--primary);">LINE ITEMS (${{items.length}})</span>
@@ -52474,9 +52690,20 @@ def scan_inbox_page():
                     }}
                     
                     // Match against existing stock
+                    // PO PRIORITY: if Haiku already matched this item to a PO line
+                    // with a known stock code, use that — it's a deterministic match.
                     const stockMatch = matchStock(desc);
+                    const poStockCode = item._matched_stock_code || null;
+                    const onPo = item._on_po === true;
+                    const offPo = item._on_po === false;
+                    const qtyDiff = (typeof item._qty_diff === 'number') ? item._qty_diff : null;
                     let codeBadge = '';
-                    if (stockMatch) {{
+                    if (poStockCode) {{
+                        // PO told us the exact stock code — trust it
+                        codeBadge = `<span style="background:#22c55e;color:#fff;padding:2px 8px;border-radius:4px;font-size:11px;font-weight:600;">
+                            ${{poStockCode}} ✓ FROM PO
+                        </span>`;
+                    }} else if (stockMatch) {{
                         codeBadge = `<span style="background:#22c55e;color:#fff;padding:2px 8px;border-radius:4px;font-size:11px;font-weight:600;">
                             ${{stockMatch.code}} GOOD: MATCHED
                         </span>`;
@@ -52487,6 +52714,26 @@ def scan_inbox_page():
                         const codePreview = prefix + String(i + 1).padStart(3, '0');
                         codeBadge = `<span style="background:#f59e0b;color:#000;padding:2px 8px;border-radius:4px;font-size:11px;font-weight:600;">
                             ${{codePreview}} NEW
+                        </span>`;
+                    }}
+                    
+                    // PO presence badges
+                    let poBadge = '';
+                    if (onPo) {{
+                        poBadge = `<span style="background:#10b981;color:#fff;padding:2px 8px;border-radius:4px;font-size:11px;font-weight:600;" title="Matched to Purchase Order line">
+                            📋 ON PO
+                        </span>`;
+                    }} else if (offPo) {{
+                        poBadge = `<span style="background:#f97316;color:#fff;padding:2px 8px;border-radius:4px;font-size:11px;font-weight:600;" title="This item is not on the matched Purchase Order">
+                            ⚠ NOT ON PO
+                        </span>`;
+                    }}
+                    // Qty-difference badge
+                    let qtyDiffBadge = '';
+                    if (qtyDiff !== null && Math.abs(qtyDiff) > 0.001) {{
+                        const sign = qtyDiff > 0 ? '+' : '';
+                        qtyDiffBadge = `<span style="background:#fbbf24;color:#000;padding:2px 8px;border-radius:4px;font-size:11px;font-weight:600;" title="Quantity differs from PO (PO: ${{item._po_qty}}, invoice: ${{qty}})">
+                            ⚠ Qty ${{sign}}${{qtyDiff}}
                         </span>`;
                     }}
                     
@@ -52527,6 +52774,8 @@ def scan_inbox_page():
                                     </span>
                                     ${{discountBadge}}
                                     ${{packBadge}}
+                                    ${{poBadge}}
+                                    ${{qtyDiffBadge}}
                                 </div>
                                 <div style="display:flex;gap:12px;margin-top:8px;font-size:11px;color:var(--text-muted);align-items:center;">
                                     <label style="display:flex;align-items:center;gap:4px;">
@@ -52646,13 +52895,16 @@ def scan_inbox_page():
                 <div style="display:grid;grid-template-columns:1fr 1fr;gap:15px;">
                     <!-- LEFT: Book as Expense (paid now) -->
                     <div style="padding:12px;background:rgba(249,115,22,0.08);border:1px solid rgba(249,115,22,0.3);border-radius:8px;">
-                        <div style="font-size:13px;font-weight:600;color:var(--orange);margin-bottom:8px;">Paid Now (Expense)</div>
+                        <div style="font-size:13px;font-weight:600;color:var(--orange);margin-bottom:8px;">Paid Now / On Account (Expense)</div>
                         <div style="font-size:11px;color:var(--text-muted);margin-bottom:8px;">How was it paid?</div>
-                        <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px;margin-bottom:10px;" id="payMethodBtns">
+                        <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px;margin-bottom:6px;" id="payMethodBtns">
                             <button type="button" class="btn" onclick="selectPayMethod('cash')" id="pmCash" style="padding:8px;font-size:12px;background:#10b981;color:white;border:2px solid #10b981;">💵 Cash</button>
                             <button type="button" class="btn" onclick="selectPayMethod('petty')" id="pmPetty" style="padding:8px;font-size:12px;background:var(--card);color:var(--text);border:2px solid var(--border);">🪙 Petty</button>
                             <button type="button" class="btn" onclick="selectPayMethod('card')" id="pmCard" style="padding:8px;font-size:12px;background:var(--card);color:var(--text);border:2px solid var(--border);">💳 Card</button>
                             <button type="button" class="btn" onclick="selectPayMethod('eft')" id="pmEft" style="padding:8px;font-size:12px;background:var(--card);color:var(--text);border:2px solid var(--border);">🏦 EFT</button>
+                        </div>
+                        <div style="margin-bottom:10px;">
+                            <button type="button" class="btn" onclick="selectPayMethod('account')" id="pmAccount" style="width:100%;padding:8px;font-size:12px;background:var(--card);color:var(--text);border:2px solid var(--border);">🏦 On Account (pay later)</button>
                         </div>
                         <input type="hidden" id="selectedPayMethod" value="cash">
                         <button class="btn" onclick="processAs('expense')" style="width:100%;padding:12px;background:var(--orange);color:white;font-weight:600;">📋 Book as Expense</button>
@@ -53060,7 +53312,7 @@ def scan_inbox_page():
     function selectPayMethod(method) {{
         document.getElementById('selectedPayMethod').value = method;
         // Update button styles
-        ['pmCash','pmPetty','pmCard','pmEft'].forEach(id => {{
+        ['pmCash','pmPetty','pmCard','pmEft','pmAccount'].forEach(id => {{
             const btn = document.getElementById(id);
             if (btn) {{
                 btn.style.background = 'var(--card)';
@@ -53068,13 +53320,74 @@ def scan_inbox_page():
                 btn.style.borderColor = 'var(--border)';
             }}
         }});
-        const colors = {{cash: '#10b981', petty: '#f59e0b', card: '#8b5cf6', eft: '#3b82f6'}};
-        const idMap = {{cash: 'pmCash', petty: 'pmPetty', card: 'pmCard', eft: 'pmEft'}};
+        const colors = {{cash: '#10b981', petty: '#f59e0b', card: '#8b5cf6', eft: '#3b82f6', account: '#6366f1'}};
+        const idMap = {{cash: 'pmCash', petty: 'pmPetty', card: 'pmCard', eft: 'pmEft', account: 'pmAccount'}};
         const activeBtn = document.getElementById(idMap[method] || 'pmCash');
         if (activeBtn) {{
             activeBtn.style.background = colors[method] || '#10b981';
             activeBtn.style.color = 'white';
             activeBtn.style.borderColor = colors[method] || '#10b981';
+        }}
+    }}
+    
+    // PO picker — populates new-PO field when an existing PO is selected
+    function onPoPickerChange() {{
+        const sel = document.getElementById('po_picker_select');
+        const newField = document.getElementById('po_picker_new');
+        if (sel && newField) {{
+            const opt = sel.options[sel.selectedIndex];
+            if (opt && opt.value) {{
+                newField.value = opt.getAttribute('data-num') || '';
+            }}
+        }}
+    }}
+    
+    // Apply PO picker: either select existing PO or create new one, then re-match items
+    async function applyPoPicker() {{
+        const sel = document.getElementById('po_picker_select');
+        const newField = document.getElementById('po_picker_new');
+        const selectedId = sel ? sel.value : '';
+        const newNum = newField ? newField.value.trim() : '';
+        
+        if (!selectedId && !newNum) {{
+            alert('Pick an existing PO or enter a new PO number.');
+            return;
+        }}
+        
+        const ext = currentItemData.extracted || currentItemData;
+        const supplierName = ext._matched_supplier_name || ext.supplier_name || currentItemData.supplier_name || '';
+        const supplierId = ext._matched_supplier_id || '';
+        
+        try {{
+            const resp = await fetch('/api/scan/link-po', {{
+                method: 'POST',
+                headers: {{'Content-Type': 'application/json'}},
+                body: JSON.stringify({{
+                    po_id: selectedId,
+                    new_po_number: newNum,
+                    supplier_id: supplierId,
+                    supplier_name: supplierName,
+                    items: ext.items || currentItemData.items || []
+                }})
+            }});
+            const data = await resp.json();
+            if (data.success) {{
+                // Merge PO context back into currentItemData and re-render
+                if (currentItemData.extracted) {{
+                    currentItemData.extracted._matched_po_id = data.po_id;
+                    currentItemData.extracted._matched_po_number = data.po_number;
+                    currentItemData.extracted.items = data.matched_items || currentItemData.extracted.items;
+                }} else {{
+                    currentItemData._matched_po_id = data.po_id;
+                    currentItemData._matched_po_number = data.po_number;
+                    currentItemData.items = data.matched_items || currentItemData.items;
+                }}
+                renderModalForm(currentItemType, currentItemData);
+            }} else {{
+                alert('Error: ' + (data.error || 'PO link failed'));
+            }}
+        }} catch(e) {{
+            alert('Connection error: ' + e.message);
         }}
     }}
     
@@ -54016,6 +54329,171 @@ def api_linked_doc_upload():
         return jsonify({"success": False, "error": str(_e)})
 
 
+@app.route("/api/scan/link-po", methods=["POST"])
+@login_required
+def api_scan_link_po():
+    """
+    Link the in-progress scanned invoice to a PO (existing or new) and
+    re-run Haiku matching against the PO's line items.
+    Body: { po_id?, new_po_number?, supplier_id?, supplier_name?, items[] }
+    Returns: { success, po_id, po_number, matched_items[] }
+    """
+    try:
+        data = request.get_json() or {}
+        business = Auth.get_current_business()
+        user = Auth.get_current_user()
+        biz_id = business.get("id") if business else None
+        
+        if not biz_id:
+            return jsonify({"success": False, "error": "No business selected"})
+        
+        po_id = (data.get("po_id") or "").strip()
+        new_po_num = (data.get("new_po_number") or "").strip()
+        supplier_id = (data.get("supplier_id") or "").strip()
+        supplier_name = (data.get("supplier_name") or "").strip()
+        items = data.get("items", []) or []
+        
+        target_po = None
+        
+        if po_id:
+            target_po = db.get_one("purchase_orders", po_id)
+            if not target_po:
+                return jsonify({"success": False, "error": "PO not found"})
+        elif new_po_num:
+            # Check if a PO with this number already exists for the supplier
+            all_pos = db.get("purchase_orders", {"business_id": biz_id}) or []
+            new_up = new_po_num.upper().replace(" ", "")
+            for _p in all_pos:
+                _pn = (_p.get("po_number") or "").upper().replace(" ", "")
+                if _pn == new_up:
+                    target_po = _p
+                    break
+            
+            if not target_po:
+                # Resolve supplier if we only got a name
+                if not supplier_id and supplier_name:
+                    all_sups = db.get("suppliers", {"business_id": biz_id}) or []
+                    sn_up = supplier_name.upper().strip()
+                    for _s in all_sups:
+                        if (_s.get("name") or "").upper().strip() == sn_up:
+                            supplier_id = _s.get("id", "")
+                            break
+                
+                # Create new draft PO
+                new_po = {
+                    "id": generate_id(),
+                    "business_id": biz_id,
+                    "po_number": new_po_num,
+                    "supplier_id": supplier_id or "",
+                    "supplier_name": supplier_name or "Unknown",
+                    "date": today(),
+                    "items": json.dumps([]),  # empty — items come from the invoice
+                    "subtotal": 0,
+                    "vat": 0,
+                    "total": 0,
+                    "status": "sent",
+                    "notes": "Auto-created from scanned invoice",
+                    "created_by": user.get("id") if user else None,
+                    "created_at": now()
+                }
+                ok, err = db.save("purchase_orders", new_po)
+                if not ok:
+                    return jsonify({"success": False, "error": f"Could not create PO: {err}"})
+                target_po = new_po
+                logger.info(f"[LINK PO] Created new PO {new_po_num} for {supplier_name}")
+        else:
+            return jsonify({"success": False, "error": "Provide either po_id or new_po_number"})
+        
+        # Run Haiku to re-match items against this PO's line items (if any)
+        po_items_raw = target_po.get("items", [])
+        if isinstance(po_items_raw, str):
+            try:
+                po_items_raw = json.loads(po_items_raw)
+            except Exception:
+                po_items_raw = []
+        
+        matched_items = list(items)  # start from current items
+        
+        if po_items_raw and items and ANTHROPIC_API_KEY:
+            try:
+                po_brief = []
+                for _i, _pi in enumerate(po_items_raw or []):
+                    po_brief.append({
+                        "po_idx": _i,
+                        "code": (_pi.get("code") or _pi.get("stock_code") or "").strip(),
+                        "description": (_pi.get("description") or "").strip(),
+                        "qty": float(_pi.get("qty", _pi.get("quantity", 0)) or 0)
+                    })
+                inv_brief = []
+                for _j, _ii in enumerate(items):
+                    inv_brief.append({
+                        "inv_idx": _j,
+                        "description": (_ii.get("description") or "").strip(),
+                        "qty": float(_ii.get("quantity", _ii.get("qty", 0)) or 0)
+                    })
+                
+                match_prompt = f"""Match invoice items to PO items.
+
+PO ({target_po.get('po_number','?')}):
+{json.dumps(po_brief, indent=2)}
+
+INVOICE:
+{json.dumps(inv_brief, indent=2)}
+
+For each invoice item, find the matching PO item by description meaning. Qty differences are normal (partial delivery). Reply with ONLY a JSON array:
+[{{"inv_idx":0,"po_idx":2,"stock_code":"HAR000414","po_qty":1,"qty_diff":0}}, {{"inv_idx":1,"po_idx":null,"stock_code":null,"po_qty":null,"qty_diff":null}}]
+
+po_qty = qty from PO. qty_diff = invoice_qty - po_qty. stock_code = PO item's code if it has one. po_idx = null if not on PO."""
+                
+                hk = _anthropic_client.messages.create(
+                    model="claude-haiku-4-5-20251001",
+                    max_tokens=2000,
+                    messages=[{"role": "user", "content": match_prompt}]
+                )
+                ht = hk.content[0].text.strip() if hk.content else ""
+                if ht.startswith("```"):
+                    ht = ht.split("```")[1]
+                    if ht.startswith("json"):
+                        ht = ht[4:]
+                    ht = ht.strip()
+                
+                _matches = json.loads(ht)
+                if isinstance(_matches, list):
+                    for _m in _matches:
+                        _idx = _m.get("inv_idx")
+                        if _idx is None or _idx < 0 or _idx >= len(matched_items):
+                            continue
+                        _it = matched_items[_idx]
+                        if _m.get("po_idx") is not None:
+                            _it["_on_po"] = True
+                            _it["_po_idx"] = _m.get("po_idx")
+                            if _m.get("stock_code"):
+                                _it["_matched_stock_code"] = _m.get("stock_code")
+                            if _m.get("po_qty") is not None:
+                                _it["_po_qty"] = _m.get("po_qty")
+                            if _m.get("qty_diff") is not None:
+                                _it["_qty_diff"] = _m.get("qty_diff")
+                        else:
+                            _it["_on_po"] = False
+            except Exception as _he:
+                logger.warning(f"[LINK PO] Haiku match failed (non-fatal): {_he}")
+        else:
+            # PO has no items (newly created or empty). Mark all invoice items as "not on PO"
+            # — they will populate the PO when the invoice is saved.
+            for _it in matched_items:
+                _it["_on_po"] = False
+        
+        return jsonify({
+            "success": True,
+            "po_id": target_po.get("id"),
+            "po_number": target_po.get("po_number"),
+            "matched_items": matched_items
+        })
+    except Exception as e:
+        logger.exception(f"[LINK PO] Failed: {e}")
+        return jsonify({"success": False, "error": str(e)})
+
+
 @app.route("/api/scan/save-supplier-invoice", methods=["POST"])
 @login_required
 def api_scan_save_supplier_invoice():
@@ -54209,11 +54687,21 @@ def api_scan_save_supplier_invoice():
                     logger.info(f"[SCAN] Expense: {desc} → {expense_category}: R{line_total:.2f}")
                     continue  # Don't book to stock
                 
+                # MATCH 0 (PO-OVERRIDE): if Haiku matched this item to a PO line
+                # with a known stock code, that is the most reliable signal we have.
+                # Skip all fuzzy matching and use that code directly.
+                _po_stock_code = (item.get("_matched_stock_code") or "").strip().upper()
+                matched = None
+                if _po_stock_code and _po_stock_code in stock_by_code:
+                    matched = stock_by_code[_po_stock_code]
+                    logger.info(f"[SCAN] PO-override match: invoice item → {_po_stock_code} (from PO)")
+                
                 # Generate SMART CODE from description using shared function
                 smart_code = smart_stock_code(desc, set(stock_by_code.keys()))
                 
                 # MATCH 1: Try exact smart code match
-                matched = stock_by_code.get(smart_code)
+                if not matched:
+                    matched = stock_by_code.get(smart_code)
                 
                 # MATCH 2: Try partial code match (e.g., BLT-12 matches BLT-12-50)
                 if not matched:
@@ -54753,7 +55241,7 @@ def api_scan_save_expense():
             supplier=data.get("supplier_name", ""),
             supplier_name=data.get("supplier_name", ""),
             payment_method=payment_method,
-            status="paid",
+            status="unpaid" if (payment_method or "").lower().strip() == "account" else "paid",
             created_by=user.get("id") if user else None,
             splits=splits if splits and len(splits) > 1 else None
         )
@@ -54779,6 +55267,9 @@ def api_scan_save_expense():
             _credit_account = gl(biz_id, "bank")
         elif _pay_method == "cash":
             _credit_account = gl(biz_id, "cash")
+        elif _pay_method == "account":
+            # On Account: post to Creditors, will be settled later via supplier payment
+            _credit_account = gl(biz_id, "creditors")
         else:
             _credit_account = gl(biz_id, "bank")
         
