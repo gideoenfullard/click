@@ -52444,7 +52444,14 @@ def scan_inbox_page():
                     const price = parseFloat(item.unit_price || item.price || 0);
                     const lineTotal = parseFloat(item.line_total || (qty * price) || 0);
                     const discountPct = parseFloat(item.discount_pct || 0);
-                    const packSize = parseInt(item.pack_size || 1) || 1;
+                    let packSize = parseInt(item.pack_size || 1) || 1;
+                    // SANITY CHECK: qty == pack_size with qty > 1 is almost certainly
+                    // a scanner mis-read (it grabbed "12P/BOX" from the description
+                    // and applied it as a multiplier). A real purchase never buys
+                    // exactly pack-size boxes — force pack=1 here.
+                    if (packSize > 1 && qty === packSize) {{
+                        packSize = 1;
+                    }}
                     
                     // Match against existing stock
                     const stockMatch = matchStock(desc);
@@ -52616,19 +52623,29 @@ def scan_inbox_page():
             `;
             
             saveHtml = `
-                <div style="margin-bottom:15px;">
-                    <label style="display:block;margin-bottom:8px;font-weight:600;font-size:14px;">How was this paid?</label>
-                    <div style="display:grid;grid-template-columns:1fr 1fr 1fr 1fr;gap:10px;" id="payMethodBtns">
-                        <button type="button" class="btn" onclick="selectPayMethod('cash')" id="pmCash" style="padding:12px;background:#10b981;color:white;border:3px solid #10b981;">💵 Cash</button>
-                        <button type="button" class="btn" onclick="selectPayMethod('petty')" id="pmPetty" style="padding:12px;background:var(--card);color:var(--text);border:3px solid var(--border);">🪙 Petty Cash</button>
-                        <button type="button" class="btn" onclick="selectPayMethod('card')" id="pmCard" style="padding:12px;background:var(--card);color:var(--text);border:3px solid var(--border);">💳 Card</button>
-                        <button type="button" class="btn" onclick="selectPayMethod('eft')" id="pmEft" style="padding:12px;background:var(--card);color:var(--text);border:3px solid var(--border);">🏦 EFT</button>
+                <div style="display:grid;grid-template-columns:1fr 1fr;gap:15px;">
+                    <!-- LEFT: Book as Expense (paid now) -->
+                    <div style="padding:12px;background:rgba(249,115,22,0.08);border:1px solid rgba(249,115,22,0.3);border-radius:8px;">
+                        <div style="font-size:13px;font-weight:600;color:var(--orange);margin-bottom:8px;">Paid Now (Expense)</div>
+                        <div style="font-size:11px;color:var(--text-muted);margin-bottom:8px;">How was it paid?</div>
+                        <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px;margin-bottom:10px;" id="payMethodBtns">
+                            <button type="button" class="btn" onclick="selectPayMethod('cash')" id="pmCash" style="padding:8px;font-size:12px;background:#10b981;color:white;border:2px solid #10b981;">💵 Cash</button>
+                            <button type="button" class="btn" onclick="selectPayMethod('petty')" id="pmPetty" style="padding:8px;font-size:12px;background:var(--card);color:var(--text);border:2px solid var(--border);">🪙 Petty</button>
+                            <button type="button" class="btn" onclick="selectPayMethod('card')" id="pmCard" style="padding:8px;font-size:12px;background:var(--card);color:var(--text);border:2px solid var(--border);">💳 Card</button>
+                            <button type="button" class="btn" onclick="selectPayMethod('eft')" id="pmEft" style="padding:8px;font-size:12px;background:var(--card);color:var(--text);border:2px solid var(--border);">🏦 EFT</button>
+                        </div>
+                        <input type="hidden" id="selectedPayMethod" value="cash">
+                        <button class="btn" onclick="processAs('expense')" style="width:100%;padding:12px;background:var(--orange);color:white;font-weight:600;">📋 Book as Expense</button>
                     </div>
-                    <input type="hidden" id="selectedPayMethod" value="cash">
-                </div>
-                <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;">
-                    <button class="btn" onclick="processAs('expense')" style="padding:14px;background:var(--orange);color:white;">📋 Book as Expense</button>
-                    <button class="btn" onclick="processAs('supplier')" style="padding:14px;background:var(--primary);color:white;">📦 Stock Purchase (Credit)</button>
+                    <!-- RIGHT: Stock Purchase on Credit -->
+                    <div style="padding:12px;background:rgba(99,102,241,0.08);border:1px solid rgba(99,102,241,0.3);border-radius:8px;">
+                        <div style="font-size:13px;font-weight:600;color:var(--primary);margin-bottom:8px;">On Account (Credit)</div>
+                        <div style="font-size:11px;color:var(--text-muted);margin-bottom:8px;">Due date uses supplier's payment terms.</div>
+                        <div style="padding:8px;background:rgba(0,0,0,0.15);border-radius:6px;margin-bottom:10px;font-size:12px;color:var(--text-muted);min-height:48px;display:flex;align-items:center;">
+                            <span>📅 Outstanding — to be paid later via Banking</span>
+                        </div>
+                        <button class="btn" onclick="processAs('supplier')" style="width:100%;padding:12px;background:var(--primary);color:white;font-weight:600;">📦 Stock Purchase (Credit)</button>
+                    </div>
                 </div>
             `;
         }} else if (type === 'customer_order') {{
@@ -53091,7 +53108,7 @@ def scan_inbox_page():
                 vat: parseFloat(document.getElementById('m_vat')?.value || 0),
                 total: parseFloat(document.getElementById('m_total')?.value || 0),
                 items: editedItems.length > 0 ? editedItems : (currentItemData.items || []),
-                paid: true,
+                paid: saveType === 'expense',  // expenses paid now; supplier invoices = on credit (unpaid)
                 payment_method: payMethod,
                 category: currentZaneCategory || ''  // Zane's AI-picked specific category
             }};
@@ -54106,6 +54123,13 @@ def api_scan_save_supplier_invoice():
                 pack_size = int(item.get("pack_size", 1) or 1)
                 if pack_size < 1:
                     pack_size = 1
+                # SANITY CHECK: qty == pack_size with qty > 1 is almost certainly
+                # a scanner mis-read (it picked up "12P/BOX" from the description
+                # and applied it as a multiplier). A real purchase never buys
+                # exactly pack-size boxes — force pack=1 here so we don't inflate stock.
+                if pack_size > 1 and int(qty) == pack_size and qty > 1:
+                    logger.info(f"[SCAN] Pack sanity: qty={qty} == pack_size={pack_size} for '{desc}' — forcing pack_size=1")
+                    pack_size = 1
                 discount_pct = float(item.get("discount_pct", 0) or 0)
                 if discount_pct < 0:
                     discount_pct = 0
@@ -54216,6 +54240,28 @@ def api_scan_save_supplier_invoice():
                         if len(sig_common) >= 2 and score > best_score:
                             best_score = score
                             best_match = stock_item
+                            continue
+                        
+                        # STOCK-COVERAGE FALLBACK: When stock description is short
+                        # (e.g. "LOCTITE 6ML") and scan is long with filler words
+                        # (e.g. "LOCTITE LOCK NUT 242 6ML (L8VR) UNCARDED MTO 12P/BOX"),
+                        # the sig_common>=2 gate above misses it. Allow a match when
+                        # ALL of the stock's tokens appear in the scan, requires
+                        # stock has at least 2 tokens total (so single-token stock
+                        # like bare "BOLT" doesn't match every bolt scan).
+                        if best_match is None and len(stock_words) >= 2:
+                            stock_covered = stock_words.issubset(desc_words)
+                            if stock_covered:
+                                # Sanity: must share at least 1 significant word AND
+                                # at least 1 digit/size token (prevents brand-only matches).
+                                stock_has_sig = any(len(w) > 3 for w in stock_words)
+                                stock_has_size = any(w.isdigit() or any(c.isdigit() for c in w) for w in stock_words)
+                                if stock_has_sig and stock_has_size:
+                                    cov_score = len(common)  # lower than sig_common-based scores
+                                    if cov_score > best_score:
+                                        best_score = cov_score
+                                        best_match = stock_item
+                                        logger.info(f"[SCAN] Stock-coverage candidate: '{desc}' covers '{stock_desc}'")
                     
                     if not matched and best_match:
                         matched = best_match
