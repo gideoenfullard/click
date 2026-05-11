@@ -548,6 +548,21 @@ def register_purchases_routes(app, db, login_required, Auth, render_page,
                     "link": "",
                     "source": p.get("source", "")
                 })
+            # Include supplier credit notes (they reduce what we owe — show as debits)
+            try:
+                _sup_cns = db.get("supplier_credit_notes", {"business_id": biz_id}) if biz_id else []
+                for _cn in _sup_cns:
+                    if _cn.get("supplier_id") == supplier_id and (_cn.get("status") or "active") == "active":
+                        _sup_ledger_items.append({
+                            "date": _cn.get("date", ""),
+                            "type": "Credit Note",
+                            "reference": _cn.get("cn_number", "-"),
+                            "debit": float(_cn.get("total", 0) or 0),
+                            "credit": 0,
+                            "link": f"/supplier-credit-note/{_cn.get('id','')}"
+                        })
+            except Exception:
+                pass
         _sup_ledger_items.sort(key=lambda x: x.get("date", ""))
         _sup_running = 0
         _sup_ledger_html = ""
@@ -3298,7 +3313,10 @@ def register_purchases_routes(app, db, login_required, Auth, render_page,
         <div class="card">
             <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:15px;">
                 <h3 class="card-title" style="margin:0;"> Supplier Invoices</h3>
-                <button class="btn btn-primary" onclick="document.getElementById('aiInput').value='Record supplier invoice from ';document.getElementById('aiInput').focus();">+ Record Invoice</button>
+                <div style="display:flex;gap:8px;">
+                    <a href="/supplier-credit-notes" class="btn btn-secondary" style="padding:8px 14px;font-size:13px;text-decoration:none;display:inline-block;">↩️ Credit Notes</a>
+                    <button class="btn btn-primary" onclick="document.getElementById('aiInput').value='Record supplier invoice from ';document.getElementById('aiInput').focus();">+ Record Invoice</button>
+                </div>
             </div>
             
             <div class="stat-card orange" style="margin-bottom:20px;">
@@ -3377,7 +3395,12 @@ def register_purchases_routes(app, db, login_required, Auth, render_page,
             '''
         
         status = invoice.get("status", "unpaid")
-        status_color = "var(--green)" if status == "paid" else "var(--orange)"
+        if status == "paid":
+            status_color = "var(--green)"
+        elif status == "credited":
+            status_color = "#6b7280"  # grey: invoice reversed by credit note
+        else:
+            status_color = "var(--orange)"
         supplier_id = invoice.get("supplier_id", "")
         supplier_name = safe_string(invoice.get("supplier_name", "-"))
         
@@ -3416,10 +3439,85 @@ def register_purchases_routes(app, db, login_required, Auth, render_page,
             if _link:
                 _ref_display = _ref_display.replace(safe_string(_doc_num), f'<a href="{_link}" style="color:var(--primary);text-decoration:none;">{safe_string(_doc_num)}</a>')
         
+        # ─── Determine which actions are available on this invoice ───────────
+        # Edit: only if not paid, not credited, and snapshot is available (new
+        #       invoices captured after this fix). Without a snapshot we cannot
+        #       reliably reverse the original effects.
+        # Credit Note: allowed unless invoice is already credited. Works even
+        #       without a snapshot (best-effort stock reversal).
+        # Delete: only if not paid, not credited, has snapshot, AND no linked
+        #       supplier_payment. This is a true undo and should be rare.
+        _inv_status = (invoice.get("status") or "").lower()
+        _has_snapshot = bool(invoice.get("stock_snapshots"))
+        # Check for linked supplier payments
+        _all_payments = db.get("supplier_payments", {"business_id": biz_id}) if biz_id else []
+        _has_payment = any(p.get("invoice_id") == invoice_id or p.get("supplier_invoice_id") == invoice_id for p in _all_payments)
+        _is_credited = _inv_status == "credited"
+        _is_paid = _inv_status == "paid"
+        _can_edit = (not _is_paid) and (not _is_credited) and (not _has_payment) and _has_snapshot
+        _can_credit = not _is_credited
+        _can_delete = (not _is_paid) and (not _is_credited) and (not _has_payment) and _has_snapshot
+        # Fetch existing credit notes against this invoice (to show inline)
+        try:
+            _all_scns = db.get("supplier_credit_notes", {"business_id": biz_id}) if biz_id else []
+        except Exception:
+            _all_scns = []
+        _linked_scns = [c for c in _all_scns if c.get("original_invoice_id") == invoice_id]
+        _linked_scns = sorted(_linked_scns, key=lambda x: x.get("date", ""), reverse=True)
+        
+        # Build action button HTML
+        _action_btns = ""
+        if _can_edit:
+            _action_btns += '<button class="btn" onclick="openEditInvoiceModal()" style="padding:6px 14px;font-size:13px;background:var(--primary);color:white;">✏️ Edit</button>'
+        if _can_credit:
+            _action_btns += '<button class="btn" onclick="openCreditNoteModal()" style="padding:6px 14px;font-size:13px;background:#f59e0b;color:white;">↩️ Credit Note</button>'
+        if _can_delete:
+            _action_btns += '<button class="btn" onclick="confirmDeleteInvoice()" style="padding:6px 14px;font-size:13px;background:var(--red);color:white;">🗑 Delete</button>'
+        # If no actions, show a helpful hint
+        if not _action_btns:
+            _hint = ""
+            if _is_credited:
+                _hint = "Already credited — no further actions"
+            elif _is_paid:
+                _hint = "Paid — use Credit Note via supplier page to reverse"
+            elif _has_payment:
+                _hint = "Linked to payment — use Credit Note via supplier page"
+            elif not _has_snapshot:
+                _hint = "Legacy invoice — only Credit Note available"
+                _action_btns = '<button class="btn" onclick="openCreditNoteModal()" style="padding:6px 14px;font-size:13px;background:#f59e0b;color:white;">↩️ Credit Note</button>'
+            if _hint and not _action_btns:
+                _action_btns = f'<span style="color:var(--text-muted);font-size:12px;">{_hint}</span>'
+        
+        # Build linked credit notes section (if any exist)
+        _scn_section = ""
+        if _linked_scns:
+            _scn_rows = ""
+            for _scn in _linked_scns:
+                _scn_rows += f'''
+                <tr>
+                    <td><a href="/supplier-credit-note/{_scn.get("id","")}" style="color:var(--primary);">{safe_string(_scn.get("cn_number","-"))}</a></td>
+                    <td>{_scn.get("date","-")}</td>
+                    <td>{safe_string(_scn.get("reason","-"))}</td>
+                    <td style="text-align:right;">-{money(_scn.get("total", 0))}</td>
+                </tr>
+                '''
+            _scn_section = f'''
+            <div class="card" style="margin-top:20px;border:2px solid #f59e0b;">
+                <h3 style="margin-bottom:15px;color:#f59e0b;">↩️ Credit Notes Against This Invoice ({len(_linked_scns)})</h3>
+                <table class="table">
+                    <thead>
+                        <tr><th>CN Number</th><th>Date</th><th>Reason</th><th style="text-align:right;">Amount</th></tr>
+                    </thead>
+                    <tbody>{_scn_rows}</tbody>
+                </table>
+            </div>
+            '''
+        
         content = f'''
         <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:20px;">
             <a href="{back_link}" style="color:var(--text-muted);">← Back</a>
-            <div style="display:flex;gap:10px;align-items:center;">
+            <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;">
+                {_action_btns}
                 {scan_btn}
                 <span style="padding:6px 16px;border-radius:20px;font-size:13px;font-weight:700;color:white;background:{status_color};">{status.upper()}</span>
             </div>
@@ -3491,7 +3589,73 @@ def register_purchases_routes(app, db, login_required, Auth, render_page,
                 </tfoot>
             </table>
         </div>
-        ''' if items_html else '') + '''
+        ''' if items_html else '') + f'''
+        
+        {_scn_section}
+        
+        <!-- ════════ EDIT INVOICE MODAL ════════ -->
+        <div id="editInvModal" style="display:none;position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.85);z-index:1001;align-items:flex-start;justify-content:center;overflow-y:auto;padding:30px 10px;">
+            <div style="background:var(--card);border-radius:12px;max-width:900px;width:100%;position:relative;padding:25px;">
+                <button onclick="document.getElementById('editInvModal').style.display='none'" style="position:absolute;top:10px;right:10px;background:var(--red);color:white;border:none;border-radius:50%;width:30px;height:30px;cursor:pointer;font-size:18px;">×</button>
+                <h2 style="margin:0 0 20px 0;color:var(--primary);">✏️ Edit Supplier Invoice</h2>
+                <div style="background:rgba(245,158,11,0.1);border:1px solid rgba(245,158,11,0.4);border-radius:8px;padding:12px;margin-bottom:20px;font-size:13px;">
+                    ⚠️ Editing will reverse the original stock and GL effects and re-apply with the new values. The original quantities, costs and selling prices will be restored before changes are applied.
+                </div>
+                
+                <div style="display:grid;grid-template-columns:1fr 1fr;gap:15px;margin-bottom:15px;">
+                    <div>
+                        <label style="font-size:12px;color:var(--text-muted);display:block;">Invoice Number</label>
+                        <input id="ed_inv_num" type="text" style="width:100%;padding:8px;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text);" />
+                    </div>
+                    <div>
+                        <label style="font-size:12px;color:var(--text-muted);display:block;">Date</label>
+                        <input id="ed_date" type="date" style="width:100%;padding:8px;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text);" />
+                    </div>
+                </div>
+                
+                <h4 style="margin:15px 0 8px 0;">Line Items</h4>
+                <div id="ed_items" style="max-height:300px;overflow-y:auto;border:1px solid var(--border);border-radius:8px;padding:8px;"></div>
+                <button onclick="addEditLine()" style="margin-top:8px;padding:6px 12px;background:var(--card);border:1px dashed var(--border);border-radius:6px;color:var(--text-muted);cursor:pointer;font-size:12px;">+ Add Line Item</button>
+                
+                <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:15px;margin-top:20px;padding-top:15px;border-top:1px solid var(--border);">
+                    <div>
+                        <label style="font-size:12px;color:var(--text-muted);display:block;">Subtotal</label>
+                        <input id="ed_subtotal" type="number" step="0.01" style="width:100%;padding:8px;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text);" />
+                    </div>
+                    <div>
+                        <label style="font-size:12px;color:var(--text-muted);display:block;">VAT</label>
+                        <input id="ed_vat" type="number" step="0.01" style="width:100%;padding:8px;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text);" />
+                    </div>
+                    <div>
+                        <label style="font-size:12px;color:var(--text-muted);display:block;">Total</label>
+                        <input id="ed_total" type="number" step="0.01" style="width:100%;padding:8px;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text);" />
+                    </div>
+                </div>
+                
+                <div style="display:flex;gap:10px;margin-top:20px;justify-content:flex-end;">
+                    <button onclick="document.getElementById('editInvModal').style.display='none'" style="padding:10px 20px;background:var(--card);border:1px solid var(--border);border-radius:6px;color:var(--text);cursor:pointer;">Cancel</button>
+                    <button onclick="saveEditInvoice()" id="ed_save_btn" style="padding:10px 20px;background:var(--primary);color:white;border:none;border-radius:6px;cursor:pointer;font-weight:600;">Save Changes</button>
+                </div>
+            </div>
+        </div>
+        
+        <!-- ════════ CREDIT NOTE MODAL ════════ -->
+        <div id="cnModal" style="display:none;position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.85);z-index:1001;align-items:center;justify-content:center;">
+            <div style="background:var(--card);border-radius:12px;max-width:500px;width:90%;position:relative;padding:25px;">
+                <button onclick="document.getElementById('cnModal').style.display='none'" style="position:absolute;top:10px;right:10px;background:var(--red);color:white;border:none;border-radius:50%;width:30px;height:30px;cursor:pointer;font-size:18px;">×</button>
+                <h2 style="margin:0 0 15px 0;color:#f59e0b;">↩️ Create Credit Note</h2>
+                <p style="font-size:13px;color:var(--text-muted);margin-bottom:15px;">
+                    This will create a credit note for <strong>{money(invoice.get("total", 0))}</strong>, reverse the stock and GL effects, and mark this invoice as credited.
+                </p>
+                <label style="font-size:12px;color:var(--text-muted);display:block;margin-bottom:5px;">Reason (optional)</label>
+                <textarea id="cn_reason" rows="3" placeholder="e.g. Data entry error, Goods returned, Price adjustment" style="width:100%;padding:8px;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text);resize:vertical;"></textarea>
+                <div style="display:flex;gap:10px;margin-top:15px;justify-content:flex-end;">
+                    <button onclick="document.getElementById('cnModal').style.display='none'" style="padding:10px 20px;background:var(--card);border:1px solid var(--border);border-radius:6px;color:var(--text);cursor:pointer;">Cancel</button>
+                    <button onclick="confirmCreditNote()" id="cn_save_btn" style="padding:10px 20px;background:#f59e0b;color:white;border:none;border-radius:6px;cursor:pointer;font-weight:600;">Create Credit Note</button>
+                </div>
+            </div>
+        </div>
+        ''' + '''
         
         <!-- Scanned Document Modal -->
         <div id="scanInvModal" style="display:none;position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.8);z-index:1000;align-items:center;justify-content:center;">
@@ -3525,11 +3689,819 @@ def register_purchases_routes(app, db, login_required, Auth, render_page,
         document.getElementById('scanInvModal').addEventListener('click', function(e) {
             if (e.target === this) this.style.display = 'none';
         });
+        
+        // ═════════════ Edit / Credit Note / Delete handlers ═════════════
+        const _invId = ''' + f"'{invoice_id}'" + ''';
+        const _invCurrent = ''' + f'{json.dumps({"invoice_number": invoice.get("invoice_number",""), "date": invoice.get("date","") or "", "subtotal": float(invoice.get("subtotal",0) or 0), "vat": float(invoice.get("vat",0) or 0), "total": float(invoice.get("total",0) or 0), "items": (json.loads(invoice.get("items","[]")) if isinstance(invoice.get("items"),str) else (invoice.get("items") or []))})};' + '''
+        
+        function renderEditLine(item, idx) {
+            const desc = (item.description || item.desc || '').replace(/"/g, '&quot;');
+            const qty = parseFloat(item.qty || item.quantity || 1);
+            const price = parseFloat(item.unit_price || item.price || 0);
+            const total = parseFloat(item.line_total || item.total || (qty * price));
+            return `
+            <div class="ed-line" data-idx="${idx}" style="display:grid;grid-template-columns:1fr 80px 100px 100px 30px;gap:6px;margin-bottom:6px;align-items:center;">
+                <input type="text" class="ed-desc" value="${desc}" style="padding:6px;background:var(--bg);border:1px solid var(--border);border-radius:4px;color:var(--text);font-size:13px;" />
+                <input type="number" step="0.01" class="ed-qty" value="${qty}" style="padding:6px;background:var(--bg);border:1px solid var(--border);border-radius:4px;color:var(--text);font-size:13px;text-align:right;" />
+                <input type="number" step="0.01" class="ed-price" value="${price.toFixed(2)}" style="padding:6px;background:var(--bg);border:1px solid var(--border);border-radius:4px;color:var(--text);font-size:13px;text-align:right;" />
+                <input type="number" step="0.01" class="ed-total" value="${total.toFixed(2)}" style="padding:6px;background:rgba(0,0,0,0.2);border:1px solid var(--border);border-radius:4px;color:var(--text-muted);font-size:13px;text-align:right;" readonly />
+                <button onclick="this.parentElement.remove()" style="background:transparent;border:none;color:var(--red);cursor:pointer;font-size:16px;">×</button>
+            </div>`;
+        }
+        
+        function openEditInvoiceModal() {
+            document.getElementById('ed_inv_num').value = _invCurrent.invoice_number || '';
+            document.getElementById('ed_date').value = _invCurrent.date || '';
+            document.getElementById('ed_subtotal').value = (_invCurrent.subtotal || 0).toFixed(2);
+            document.getElementById('ed_vat').value = (_invCurrent.vat || 0).toFixed(2);
+            document.getElementById('ed_total').value = (_invCurrent.total || 0).toFixed(2);
+            const container = document.getElementById('ed_items');
+            const items = _invCurrent.items || [];
+            container.innerHTML = items.length > 0
+                ? items.map((it, i) => renderEditLine(it, i)).join('')
+                : '<div style="color:var(--text-muted);font-size:12px;padding:8px;">No line items — add one below.</div>';
+            // Header row
+            if (items.length > 0) {
+                container.insertAdjacentHTML('afterbegin', '<div style="display:grid;grid-template-columns:1fr 80px 100px 100px 30px;gap:6px;margin-bottom:6px;font-size:11px;color:var(--text-muted);font-weight:600;"><div>Description</div><div style="text-align:right;">Qty</div><div style="text-align:right;">Price</div><div style="text-align:right;">Total</div><div></div></div>');
+            }
+            // Wire up total auto-calc on qty/price change
+            container.querySelectorAll('.ed-line').forEach(row => {
+                const qtyEl = row.querySelector('.ed-qty');
+                const priceEl = row.querySelector('.ed-price');
+                const totalEl = row.querySelector('.ed-total');
+                const recalc = () => {
+                    const q = parseFloat(qtyEl.value || 0);
+                    const p = parseFloat(priceEl.value || 0);
+                    totalEl.value = (q * p).toFixed(2);
+                };
+                qtyEl.addEventListener('input', recalc);
+                priceEl.addEventListener('input', recalc);
+            });
+            document.getElementById('editInvModal').style.display = 'flex';
+        }
+        
+        function addEditLine() {
+            const container = document.getElementById('ed_items');
+            const existingLines = container.querySelectorAll('.ed-line').length;
+            const html = renderEditLine({description:'', qty:1, unit_price:0, line_total:0}, existingLines);
+            // Strip placeholder if it exists
+            const placeholder = container.querySelector('div[style*="text-muted"]');
+            if (placeholder && !placeholder.classList.contains('ed-line')) placeholder.remove();
+            // Add header if first line
+            if (existingLines === 0 && !container.querySelector('div[style*="grid-template-columns"]')) {
+                container.insertAdjacentHTML('beforeend', '<div style="display:grid;grid-template-columns:1fr 80px 100px 100px 30px;gap:6px;margin-bottom:6px;font-size:11px;color:var(--text-muted);font-weight:600;"><div>Description</div><div style="text-align:right;">Qty</div><div style="text-align:right;">Price</div><div style="text-align:right;">Total</div><div></div></div>');
+            }
+            container.insertAdjacentHTML('beforeend', html);
+            const newRow = container.querySelector('.ed-line:last-child');
+            const qtyEl = newRow.querySelector('.ed-qty');
+            const priceEl = newRow.querySelector('.ed-price');
+            const totalEl = newRow.querySelector('.ed-total');
+            const recalc = () => {
+                const q = parseFloat(qtyEl.value || 0);
+                const p = parseFloat(priceEl.value || 0);
+                totalEl.value = (q * p).toFixed(2);
+            };
+            qtyEl.addEventListener('input', recalc);
+            priceEl.addEventListener('input', recalc);
+        }
+        
+        async function saveEditInvoice() {
+            const btn = document.getElementById('ed_save_btn');
+            btn.disabled = true;
+            btn.textContent = 'Saving...';
+            const items = [];
+            document.querySelectorAll('#ed_items .ed-line').forEach(row => {
+                const desc = row.querySelector('.ed-desc').value.trim();
+                const qty = parseFloat(row.querySelector('.ed-qty').value || 0);
+                const price = parseFloat(row.querySelector('.ed-price').value || 0);
+                const total = parseFloat(row.querySelector('.ed-total').value || (qty * price));
+                if (desc) items.push({description: desc, quantity: qty, unit_price: price, line_total: total});
+            });
+            const payload = {
+                invoice_number: document.getElementById('ed_inv_num').value.trim(),
+                date: document.getElementById('ed_date').value,
+                subtotal: parseFloat(document.getElementById('ed_subtotal').value || 0),
+                vat: parseFloat(document.getElementById('ed_vat').value || 0),
+                total: parseFloat(document.getElementById('ed_total').value || 0),
+                items: items
+            };
+            try {
+                const resp = await fetch('/api/supplier-invoice/' + _invId + '/edit', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify(payload)
+                });
+                const data = await resp.json();
+                if (data.success) {
+                    alert('Invoice updated successfully.');
+                    location.reload();
+                } else {
+                    alert('Error: ' + (data.error || 'Update failed'));
+                    btn.disabled = false;
+                    btn.textContent = 'Save Changes';
+                }
+            } catch(e) {
+                alert('Connection error: ' + e.message);
+                btn.disabled = false;
+                btn.textContent = 'Save Changes';
+            }
+        }
+        
+        function openCreditNoteModal() {
+            document.getElementById('cn_reason').value = '';
+            document.getElementById('cnModal').style.display = 'flex';
+        }
+        
+        async function confirmCreditNote() {
+            const btn = document.getElementById('cn_save_btn');
+            btn.disabled = true;
+            btn.textContent = 'Creating...';
+            const reason = document.getElementById('cn_reason').value.trim();
+            try {
+                const resp = await fetch('/api/supplier-invoice/' + _invId + '/credit-note', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({reason: reason})
+                });
+                const data = await resp.json();
+                if (data.success) {
+                    alert('Credit note ' + data.cn_number + ' created successfully.');
+                    location.reload();
+                } else {
+                    alert('Error: ' + (data.error || 'Credit note failed'));
+                    btn.disabled = false;
+                    btn.textContent = 'Create Credit Note';
+                }
+            } catch(e) {
+                alert('Connection error: ' + e.message);
+                btn.disabled = false;
+                btn.textContent = 'Create Credit Note';
+            }
+        }
+        
+        async function confirmDeleteInvoice() {
+            if (!confirm('Delete this invoice permanently?\\n\\nThis will:\\n• Reverse all stock changes\\n• Remove GL entries\\n• Delete the invoice record\\n\\nThis cannot be undone. Continue?')) return;
+            try {
+                const resp = await fetch('/api/supplier-invoice/' + _invId + '/delete', {method: 'POST'});
+                const data = await resp.json();
+                if (data.success) {
+                    alert('Invoice deleted.');
+                    window.location.href = '/supplier-invoices';
+                } else {
+                    alert('Error: ' + (data.error || 'Delete failed'));
+                }
+            } catch(e) {
+                alert('Connection error: ' + e.message);
+            }
+        }
+        
+        // Close modals on backdrop click
+        document.getElementById('editInvModal').addEventListener('click', function(e) { if (e.target === this) this.style.display = 'none'; });
+        document.getElementById('cnModal').addEventListener('click', function(e) { if (e.target === this) this.style.display = 'none'; });
         </script>
         '''
         
         return render_page(f"Supplier Invoice {invoice.get('invoice_number', '')}", content, user, "purchases")
     
+
+    # ════════════════════════════════════════════════════════════════════
+    # SUPPLIER INVOICE: Edit / Credit Note / Delete
+    # ════════════════════════════════════════════════════════════════════
+    
+    def _reverse_stock_from_snapshot(biz_id, snapshots):
+        """
+        Reverse the stock effects of a supplier invoice using its stored snapshot.
+        Returns (success, message).
+        
+        For each snapshot entry:
+          - action='updated': restore old_qty/cost/sell exactly (subtracts delta)
+          - action='created': delete the stock_items row
+        """
+        if not snapshots:
+            return True, "No stock snapshot to reverse"
+        
+        if isinstance(snapshots, str):
+            try:
+                snapshots = json.loads(snapshots)
+            except Exception:
+                return False, "Snapshot data corrupted"
+        
+        for snap in (snapshots or []):
+            try:
+                stock_id = snap.get("stock_id")
+                action = snap.get("action", "updated")
+                table = snap.get("table", "stock_items")
+                
+                if not stock_id:
+                    continue
+                
+                if action == "created":
+                    # This stock item was created by the invoice — delete it entirely
+                    try:
+                        db.delete(table, stock_id, biz_id)
+                    except Exception as e:
+                        logger.warning(f"[REVERSE] Could not delete created stock {stock_id}: {e}")
+                else:
+                    # Updated: restore old qty/cost/sell exactly
+                    old_qty = float(snap.get("old_qty", 0) or 0)
+                    old_cost = float(snap.get("old_cost", 0) or 0)
+                    old_sell = float(snap.get("old_sell", 0) or 0)
+                    
+                    restore_payload = {
+                        "id": stock_id,
+                        "quantity": old_qty,
+                        "qty": old_qty,
+                        "cost_price": old_cost,
+                        "cost": old_cost,
+                    }
+                    if old_sell > 0:
+                        restore_payload["selling_price"] = old_sell
+                        restore_payload["price"] = old_sell
+                    db.save(table, restore_payload)
+                    logger.info(f"[REVERSE] Restored stock {snap.get('code','?')}: qty={old_qty}, cost={old_cost}, sell={old_sell}")
+            except Exception as e:
+                logger.error(f"[REVERSE] Snapshot entry failed: {e}")
+        
+        return True, "Stock reversed"
+    
+    def _delete_invoice_journals(biz_id, inv_id):
+        """Delete all journal entries linked to a supplier invoice by reference."""
+        try:
+            ref = f"INV-{inv_id[:8]}"
+            all_journals = db.get("journals", {"business_id": biz_id}) if biz_id else []
+            removed = 0
+            for j in all_journals:
+                if j.get("reference") == ref:
+                    try:
+                        db.delete("journals", j.get("id"), biz_id)
+                        removed += 1
+                    except Exception as e:
+                        logger.warning(f"[REVERSE] Could not delete journal {j.get('id')}: {e}")
+            logger.info(f"[REVERSE] Deleted {removed} journal entries for {ref}")
+            return removed
+        except Exception as e:
+            logger.error(f"[REVERSE] _delete_invoice_journals failed: {e}")
+            return 0
+    
+    def _legacy_reverse_stock_from_items(biz_id, items):
+        """
+        Best-effort stock reversal for legacy invoices without a snapshot.
+        Subtracts the line item quantities from current stock.
+        Does NOT restore cost/sell (we don't know what they were before).
+        """
+        if not items:
+            return 0
+        if isinstance(items, str):
+            try:
+                items = json.loads(items)
+            except Exception:
+                return 0
+        
+        all_stock = db.get_all_stock(biz_id) if biz_id else []
+        reversed_count = 0
+        
+        for item in (items or []):
+            desc = (item.get("description") or "").strip().lower()
+            qty = float(item.get("qty", item.get("quantity", 0)) or 0)
+            pack_size = int(item.get("pack_size", 1) or 1)
+            actual = qty * pack_size if pack_size > 1 and qty != pack_size else qty
+            if not desc or actual <= 0:
+                continue
+            
+            # Find the stock item by description (best effort)
+            for s in all_stock:
+                sd = (s.get("description") or "").strip().lower()
+                if sd == desc or (desc and desc in sd) or (sd and sd in desc):
+                    current_qty = float(s.get("quantity", s.get("qty", 0)) or 0)
+                    new_qty = max(0, current_qty - actual)
+                    table = "stock" if "code" in s and s.get("code") and not s.get("description","").startswith("__") else "stock_items"
+                    try:
+                        db.save(table, {"id": s["id"], "quantity": new_qty, "qty": new_qty})
+                        reversed_count += 1
+                    except Exception as e:
+                        logger.warning(f"[REVERSE-LEGACY] Could not reverse stock {s.get('code')}: {e}")
+                    break
+        
+        return reversed_count
+    
+    def _log_pulse_event(biz_id, user, event_type, summary, detail=""):
+        """Add a pulse activity entry. Silent on failure."""
+        try:
+            db.save("activity_log", {
+                "id": generate_id(),
+                "business_id": biz_id,
+                "type": event_type,
+                "summary": summary,
+                "detail": detail,
+                "user_id": user.get("id") if user else None,
+                "user_name": user.get("name") or user.get("email", "") if user else "System",
+                "created_at": now()
+            })
+        except Exception:
+            pass  # activity_log table may not exist; silent
+    
+    
+    @app.route("/api/supplier-invoice/<invoice_id>/edit", methods=["POST"])
+    @login_required
+    def api_supplier_invoice_edit(invoice_id):
+        """
+        Edit a supplier invoice: reverses original stock/GL effects, then re-applies
+        with new values. Requires a stored snapshot.
+        """
+        try:
+            user = Auth.get_current_user()
+            business = Auth.get_current_business()
+            biz_id = business.get("id") if business else None
+            
+            invoice = db.get_one("supplier_invoices", invoice_id)
+            if not invoice:
+                return jsonify({"success": False, "error": "Invoice not found"})
+            
+            status = (invoice.get("status") or "").lower()
+            if status in ("paid", "credited"):
+                return jsonify({"success": False, "error": f"Cannot edit a {status} invoice — use a credit note instead"})
+            
+            # Check for linked payments
+            all_payments = db.get("supplier_payments", {"business_id": biz_id}) if biz_id else []
+            if any(p.get("invoice_id") == invoice_id or p.get("supplier_invoice_id") == invoice_id for p in all_payments):
+                return jsonify({"success": False, "error": "Cannot edit an invoice with linked payments — use a credit note"})
+            
+            snapshots = invoice.get("stock_snapshots")
+            if not snapshots:
+                return jsonify({"success": False, "error": "No snapshot — this legacy invoice can only be reversed via a credit note"})
+            
+            data = request.get_json() or {}
+            new_invoice_number = (data.get("invoice_number") or "").strip()
+            new_date = (data.get("date") or "").strip() or invoice.get("date", today())
+            new_items = data.get("items", [])
+            new_subtotal = float(data.get("subtotal", 0) or 0)
+            new_vat = float(data.get("vat", 0) or 0)
+            new_total = float(data.get("total", 0) or 0)
+            
+            # STEP 1: Reverse the old effects
+            _reverse_stock_from_snapshot(biz_id, snapshots)
+            _delete_invoice_journals(biz_id, invoice_id)
+            
+            # STEP 2: Re-apply with new values
+            all_stock = db.get_all_stock(biz_id) if biz_id else []
+            new_snapshots = []
+            
+            for item in (new_items or []):
+                desc = (item.get("description") or "").strip()
+                qty = float(item.get("qty", item.get("quantity", 0)) or 0)
+                unit_price = float(item.get("unit_price", item.get("price", 0)) or 0)
+                line_total = float(item.get("line_total", qty * unit_price) or 0)
+                
+                if not desc or qty <= 0:
+                    continue
+                
+                # Find existing stock by description (exact or contains)
+                desc_lower = desc.lower().strip()
+                matched = None
+                for s in all_stock:
+                    sd = (s.get("description") or "").strip().lower()
+                    if sd == desc_lower:
+                        matched = s
+                        break
+                if not matched:
+                    for s in all_stock:
+                        sd = (s.get("description") or "").strip().lower()
+                        if sd and (desc_lower in sd or sd in desc_lower):
+                            matched = s
+                            break
+                
+                cost_per_unit = (line_total / qty) if qty > 0 else unit_price
+                
+                if matched:
+                    old_qty = float(matched.get("quantity", matched.get("qty", 0)) or 0)
+                    old_cost = float(matched.get("cost_price", matched.get("cost", 0)) or 0)
+                    old_sell = float(matched.get("selling_price", matched.get("price", 0)) or 0)
+                    new_qty = old_qty + qty
+                    table = "stock" if matched in all_stock else "stock_items"
+                    
+                    new_snapshots.append({
+                        "stock_id": matched["id"], "table": table,
+                        "code": matched.get("code", ""), "description": matched.get("description", ""),
+                        "old_qty": old_qty, "old_cost": old_cost, "old_sell": old_sell,
+                        "delta_qty": qty, "new_cost": cost_per_unit, "action": "updated"
+                    })
+                    
+                    update_payload = {
+                        "id": matched["id"], "quantity": new_qty, "qty": new_qty,
+                        "cost_price": cost_per_unit, "cost": cost_per_unit, "last_purchase_date": today()
+                    }
+                    if old_cost > 0 and old_sell > 0 and cost_per_unit > 0:
+                        markup_ratio = old_sell / old_cost
+                        new_sell = round(cost_per_unit * markup_ratio, 2)
+                        update_payload["selling_price"] = new_sell
+                        update_payload["price"] = new_sell
+                    db.save(table, update_payload)
+                else:
+                    # Create new stock item
+                    final_code = smart_stock_code(desc, set(s.get("code","").upper() for s in all_stock if s.get("code")))
+                    new_stock = RecordFactory.stock_item(
+                        business_id=biz_id, description=desc, code=final_code,
+                        quantity=qty, cost_price=cost_per_unit, selling_price=round(cost_per_unit * 1.3, 2)
+                    )
+                    db.save_stock(new_stock)
+                    new_snapshots.append({
+                        "stock_id": new_stock["id"], "table": "stock_items",
+                        "code": final_code, "description": desc,
+                        "old_qty": 0, "old_cost": 0, "old_sell": 0,
+                        "delta_qty": qty, "new_cost": cost_per_unit, "action": "created"
+                    })
+            
+            # STEP 3: Re-create journal entries with new totals
+            net_amount = new_total - new_vat
+            supplier_name = invoice.get("supplier_name", "Unknown")
+            create_journal_entry(biz_id, new_date, f"Purchase - {supplier_name}", f"INV-{invoice_id[:8]}", [
+                {"account_code": gl(biz_id, "purchases"), "debit": round(net_amount, 2), "credit": 0},
+                {"account_code": gl(biz_id, "vat_input"), "debit": round(new_vat, 2), "credit": 0},
+                {"account_code": gl(biz_id, "creditors"), "debit": 0, "credit": round(new_total, 2)},
+            ])
+            
+            # STEP 4: Update the invoice record
+            update_inv = {
+                "id": invoice_id,
+                "invoice_number": new_invoice_number or invoice.get("invoice_number"),
+                "date": new_date,
+                "subtotal": new_subtotal,
+                "vat": new_vat,
+                "total": new_total,
+                "items": json.dumps(new_items),
+                "stock_snapshots": json.dumps(new_snapshots),
+                "updated_at": now()
+            }
+            db.save("supplier_invoices", update_inv)
+            
+            # Pulse log
+            _log_pulse_event(biz_id, user, "supplier_invoice_edited",
+                f"Edited invoice {new_invoice_number or invoice.get('invoice_number','?')} from {supplier_name}",
+                f"New total: R{new_total:.2f}")
+            
+            # Allocation log
+            try:
+                if log_allocation:
+                    log_allocation(
+                        business_id=biz_id, allocation_type="supplier_invoice_edited",
+                        source_table="supplier_invoices", source_id=invoice_id,
+                        description=f"Invoice edited - {supplier_name} - {new_invoice_number}",
+                        amount=new_total, gl_entries=[
+                            {"account_code": gl(biz_id, "purchases"), "debit": round(net_amount, 2), "credit": 0},
+                            {"account_code": gl(biz_id, "vat_input"), "debit": round(new_vat, 2), "credit": 0},
+                            {"account_code": gl(biz_id, "creditors"), "debit": 0, "credit": round(new_total, 2)},
+                        ],
+                        ai_reasoning="User edited invoice. Original effects reversed, new values applied.",
+                        ai_confidence="HIGH", ai_worker="System",
+                        supplier_name=supplier_name, payment_method="account",
+                        reference=new_invoice_number, transaction_date=new_date,
+                        created_by=user.get("id") if user else "", created_by_name=user.get("name", "") if user else ""
+                    )
+            except Exception:
+                pass
+            
+            return jsonify({"success": True, "invoice_id": invoice_id})
+        except Exception as e:
+            logger.exception(f"[EDIT SUPPLIER INVOICE] Failed: {e}")
+            return jsonify({"success": False, "error": str(e)})
+    
+    
+    @app.route("/api/supplier-invoice/<invoice_id>/credit-note", methods=["POST"])
+    @login_required
+    def api_supplier_invoice_credit_note(invoice_id):
+        """
+        Create a credit note that fully reverses a supplier invoice.
+        Works with or without a snapshot (legacy invoices get best-effort reversal).
+        """
+        try:
+            user = Auth.get_current_user()
+            business = Auth.get_current_business()
+            biz_id = business.get("id") if business else None
+            
+            invoice = db.get_one("supplier_invoices", invoice_id)
+            if not invoice:
+                return jsonify({"success": False, "error": "Invoice not found"})
+            
+            if (invoice.get("status") or "").lower() == "credited":
+                return jsonify({"success": False, "error": "Invoice already credited"})
+            
+            data = request.get_json() or {}
+            reason = (data.get("reason") or "").strip() or "Reversal"
+            
+            supplier_id = invoice.get("supplier_id")
+            supplier_name = invoice.get("supplier_name", "Unknown")
+            inv_total = float(invoice.get("total", 0) or 0)
+            inv_subtotal = float(invoice.get("subtotal", 0) or 0)
+            inv_vat = float(invoice.get("vat", 0) or 0)
+            
+            # STEP 1: Reverse stock (snapshot if available, else legacy best-effort)
+            snapshots = invoice.get("stock_snapshots")
+            had_snapshot = bool(snapshots)
+            if had_snapshot:
+                _reverse_stock_from_snapshot(biz_id, snapshots)
+                cn_snapshots = snapshots if isinstance(snapshots, str) else json.dumps(snapshots)
+            else:
+                # Legacy invoice — best-effort stock reversal
+                items_raw = invoice.get("items", "[]")
+                _legacy_reverse_stock_from_items(biz_id, items_raw)
+                cn_snapshots = "[]"
+            
+            # STEP 2: Generate CN number
+            existing_cns = db.get("supplier_credit_notes", {"business_id": biz_id}) if biz_id else []
+            cn_number = next_document_number("SCR-", existing_cns, field="cn_number")
+            
+            # STEP 3: Create journal entries that REVERSE the original invoice
+            # Original: Dr Purchases / Dr VAT Input / Cr Creditors
+            # Credit:   Cr Purchases / Cr VAT Input / Dr Creditors
+            cn_id = generate_id()
+            net_amount = inv_total - inv_vat
+            cn_ref = f"SCR-{cn_id[:8]}"
+            create_journal_entry(biz_id, today(), f"Credit Note - {supplier_name}", cn_ref, [
+                {"account_code": gl(biz_id, "purchases"), "debit": 0, "credit": round(net_amount, 2)},
+                {"account_code": gl(biz_id, "vat_input"), "debit": 0, "credit": round(inv_vat, 2)},
+                {"account_code": gl(biz_id, "creditors"), "debit": round(inv_total, 2), "credit": 0},
+            ])
+            
+            # STEP 4: Create credit note record
+            cn_record = {
+                "id": cn_id,
+                "business_id": biz_id,
+                "supplier_id": supplier_id,
+                "supplier_name": supplier_name,
+                "cn_number": cn_number,
+                "original_invoice_id": invoice_id,
+                "date": today(),
+                "subtotal": inv_subtotal,
+                "vat": inv_vat,
+                "total": inv_total,
+                "reason": reason,
+                "items": invoice.get("items", "[]") if isinstance(invoice.get("items"), str) else json.dumps(invoice.get("items", [])),
+                "status": "active",
+                "stock_snapshots": cn_snapshots,
+                "created_by": user.get("id") if user else None,
+                "created_at": now()
+            }
+            success, result = db.save("supplier_credit_notes", cn_record)
+            if not success:
+                logger.error(f"[CREDIT NOTE] Failed to save: {result}")
+                return jsonify({"success": False, "error": f"Database error: {result}"})
+            
+            # STEP 5: Mark invoice as credited
+            db.save("supplier_invoices", {"id": invoice_id, "status": "credited", "updated_at": now()})
+            
+            # Pulse log
+            _log_pulse_event(biz_id, user, "supplier_credit_note_created",
+                f"Credit note {cn_number} created for {supplier_name}",
+                f"Reverses invoice {invoice.get('invoice_number','?')} — R{inv_total:.2f}. Reason: {reason}")
+            
+            # Allocation log
+            try:
+                if log_allocation:
+                    log_allocation(
+                        business_id=biz_id, allocation_type="supplier_credit_note",
+                        source_table="supplier_credit_notes", source_id=cn_id,
+                        description=f"Credit Note {cn_number} - {supplier_name} - reverses {invoice.get('invoice_number','?')}",
+                        amount=inv_total, gl_entries=[
+                            {"account_code": gl(biz_id, "purchases"), "debit": 0, "credit": round(net_amount, 2)},
+                            {"account_code": gl(biz_id, "vat_input"), "debit": 0, "credit": round(inv_vat, 2)},
+                            {"account_code": gl(biz_id, "creditors"), "debit": round(inv_total, 2), "credit": 0},
+                        ],
+                        ai_reasoning=f"Credit note reversing supplier invoice. Reason: {reason}. Snapshot available: {had_snapshot}.",
+                        ai_confidence="HIGH", ai_worker="System",
+                        supplier_name=supplier_name, payment_method="account",
+                        reference=cn_number, transaction_date=today(),
+                        created_by=user.get("id") if user else "", created_by_name=user.get("name", "") if user else ""
+                    )
+            except Exception:
+                pass
+            
+            return jsonify({"success": True, "cn_number": cn_number, "cn_id": cn_id})
+        except Exception as e:
+            logger.exception(f"[CREDIT NOTE] Failed: {e}")
+            return jsonify({"success": False, "error": str(e)})
+    
+    
+    @app.route("/api/supplier-invoice/<invoice_id>/delete", methods=["POST"])
+    @login_required
+    def api_supplier_invoice_delete(invoice_id):
+        """
+        Hard delete a supplier invoice. Reverses stock via snapshot, removes
+        journal entries, deletes the invoice. Only for unpaid/uncredited
+        invoices with no linked payments.
+        """
+        try:
+            user = Auth.get_current_user()
+            business = Auth.get_current_business()
+            biz_id = business.get("id") if business else None
+            
+            invoice = db.get_one("supplier_invoices", invoice_id)
+            if not invoice:
+                return jsonify({"success": False, "error": "Invoice not found"})
+            
+            status = (invoice.get("status") or "").lower()
+            if status in ("paid", "credited"):
+                return jsonify({"success": False, "error": f"Cannot delete a {status} invoice — use credit note"})
+            
+            all_payments = db.get("supplier_payments", {"business_id": biz_id}) if biz_id else []
+            if any(p.get("invoice_id") == invoice_id or p.get("supplier_invoice_id") == invoice_id for p in all_payments):
+                return jsonify({"success": False, "error": "Cannot delete an invoice with linked payments"})
+            
+            snapshots = invoice.get("stock_snapshots")
+            if not snapshots:
+                return jsonify({"success": False, "error": "No snapshot — legacy invoices must be reversed via credit note"})
+            
+            supplier_name = invoice.get("supplier_name", "?")
+            inv_number = invoice.get("invoice_number", "?")
+            inv_total = float(invoice.get("total", 0) or 0)
+            
+            # STEP 1: Reverse stock
+            _reverse_stock_from_snapshot(biz_id, snapshots)
+            
+            # STEP 2: Delete journal entries
+            _delete_invoice_journals(biz_id, invoice_id)
+            
+            # STEP 3: Delete the invoice itself
+            db.delete("supplier_invoices", invoice_id, biz_id)
+            
+            # Pulse log
+            _log_pulse_event(biz_id, user, "supplier_invoice_deleted",
+                f"Deleted invoice {inv_number} from {supplier_name}",
+                f"Total R{inv_total:.2f} fully reversed (stock + GL).")
+            
+            # Allocation log
+            try:
+                if log_allocation:
+                    log_allocation(
+                        business_id=biz_id, allocation_type="supplier_invoice_deleted",
+                        source_table="supplier_invoices", source_id=invoice_id,
+                        description=f"Invoice deleted - {supplier_name} - {inv_number}",
+                        amount=inv_total, gl_entries=[],
+                        ai_reasoning="User deleted invoice. Stock and GL fully reversed via snapshot.",
+                        ai_confidence="HIGH", ai_worker="System",
+                        supplier_name=supplier_name, payment_method="",
+                        reference=inv_number, transaction_date=today(),
+                        created_by=user.get("id") if user else "", created_by_name=user.get("name", "") if user else ""
+                    )
+            except Exception:
+                pass
+            
+            return jsonify({"success": True})
+        except Exception as e:
+            logger.exception(f"[DELETE SUPPLIER INVOICE] Failed: {e}")
+            return jsonify({"success": False, "error": str(e)})
+    
+    
+    @app.route("/supplier-credit-notes")
+    @login_required
+    def supplier_credit_notes_page():
+        """List all supplier credit notes."""
+        user = Auth.get_current_user()
+        business = Auth.get_current_business()
+        biz_id = business.get("id") if business else None
+        
+        cns = db.get("supplier_credit_notes", {"business_id": biz_id}) if biz_id else []
+        cns = sorted(cns, key=lambda x: x.get("date", ""), reverse=True)
+        
+        rows = ""
+        for cn in cns:
+            cn_id = cn.get("id", "")
+            inv_id = cn.get("original_invoice_id", "")
+            inv_link = f'<a href="/supplier-invoice/{inv_id}" style="color:var(--primary);">View invoice</a>' if inv_id else "-"
+            rows += f'''
+            <tr>
+                <td><a href="/supplier-credit-note/{cn_id}" style="color:var(--primary);font-weight:600;">{safe_string(cn.get("cn_number","-"))}</a></td>
+                <td>{cn.get("date","-")}</td>
+                <td>{safe_string(cn.get("supplier_name","-"))}</td>
+                <td>{safe_string(cn.get("reason","-"))[:60]}</td>
+                <td>{inv_link}</td>
+                <td style="text-align:right;color:#f59e0b;font-weight:600;">-{money(cn.get("total",0))}</td>
+            </tr>
+            '''
+        
+        content = f'''
+        <h2 style="margin-bottom:20px;">↩️ Supplier Credit Notes ({len(cns)})</h2>
+        <div class="card">
+            <table class="table">
+                <thead>
+                    <tr><th>CN Number</th><th>Date</th><th>Supplier</th><th>Reason</th><th>Original Invoice</th><th style="text-align:right;">Amount</th></tr>
+                </thead>
+                <tbody>
+                    {rows or '<tr><td colspan="6" style="text-align:center;color:var(--text-muted);padding:30px;">No credit notes yet</td></tr>'}
+                </tbody>
+            </table>
+        </div>
+        '''
+        return render_page("Supplier Credit Notes", content, user, "purchases")
+    
+    
+    @app.route("/supplier-credit-note/<cn_id>")
+    @login_required
+    def supplier_credit_note_view(cn_id):
+        """View a single supplier credit note."""
+        user = Auth.get_current_user()
+        business = Auth.get_current_business()
+        biz_id = business.get("id") if business else None
+        
+        cn = db.get_one("supplier_credit_notes", cn_id)
+        if not cn:
+            flash("Credit note not found", "error")
+            return redirect("/supplier-credit-notes")
+        
+        # Parse items
+        raw_items = cn.get("items", [])
+        if isinstance(raw_items, str):
+            try:
+                raw_items = json.loads(raw_items)
+            except Exception:
+                raw_items = []
+        
+        items_html = ""
+        for item in (raw_items or []):
+            desc = safe_string(str(item.get("description", "-")))
+            qty = float(item.get("qty", item.get("quantity", 1)) or 1)
+            price = float(item.get("price", item.get("unit_price", 0)) or 0)
+            total = float(item.get("total", item.get("line_total", qty * price)) or 0)
+            items_html += f'''
+            <tr>
+                <td>{desc}</td>
+                <td style="text-align:right;">{qty:.2f}</td>
+                <td style="text-align:right;">{money(price)}</td>
+                <td style="text-align:right;">{money(total)}</td>
+            </tr>
+            '''
+        
+        supplier_id = cn.get("supplier_id", "")
+        supplier_name = safe_string(cn.get("supplier_name", "-"))
+        orig_inv_id = cn.get("original_invoice_id", "")
+        orig_inv = db.get_one("supplier_invoices", orig_inv_id) if orig_inv_id else None
+        orig_link = ""
+        if orig_inv:
+            orig_link = f'<a href="/supplier-invoice/{orig_inv_id}" style="color:var(--primary);">{safe_string(orig_inv.get("invoice_number","-"))}</a>'
+        
+        back_link = f'/supplier/{supplier_id}' if supplier_id else '/supplier-credit-notes'
+        
+        content = f'''
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:20px;">
+            <a href="{back_link}" style="color:var(--text-muted);">← Back</a>
+            <span style="padding:6px 16px;border-radius:20px;font-size:13px;font-weight:700;color:white;background:#f59e0b;">CREDIT NOTE</span>
+        </div>
+        
+        <div class="card">
+            <div style="display:flex;justify-content:space-between;align-items:start;">
+                <div>
+                    <h2 style="margin:0;color:#f59e0b;">↩️ Supplier Credit Note</h2>
+                    <p style="font-size:20px;font-weight:bold;margin:5px 0;color:var(--primary);">{safe_string(cn.get("cn_number","-"))}</p>
+                </div>
+                <div style="text-align:right;">
+                    <p style="color:var(--text-muted);margin:0;font-size:12px;">TOTAL CREDITED</p>
+                    <p style="font-size:28px;font-weight:bold;margin:0;color:#f59e0b;">-{money(cn.get("total", 0))}</p>
+                </div>
+            </div>
+            
+            <div style="display:grid;grid-template-columns:repeat(auto-fit, minmax(180px, 1fr));gap:15px;margin-top:20px;padding-top:15px;border-top:1px solid var(--border);">
+                <div>
+                    <span style="color:var(--text-muted);font-size:11px;display:block;">SUPPLIER</span>
+                    <span style="font-size:14px;">{"<a href=/supplier/" + supplier_id + " style=color:var(--primary)>" + supplier_name + "</a>" if supplier_id else supplier_name}</span>
+                </div>
+                <div>
+                    <span style="color:var(--text-muted);font-size:11px;display:block;">DATE</span>
+                    <span style="font-size:14px;">{cn.get("date", "-")}</span>
+                </div>
+                <div>
+                    <span style="color:var(--text-muted);font-size:11px;display:block;">ORIGINAL INVOICE</span>
+                    <span style="font-size:14px;">{orig_link or "-"}</span>
+                </div>
+                <div>
+                    <span style="color:var(--text-muted);font-size:11px;display:block;">SUBTOTAL</span>
+                    <span style="font-size:14px;">{money(cn.get("subtotal", 0))}</span>
+                </div>
+                <div>
+                    <span style="color:var(--text-muted);font-size:11px;display:block;">VAT (15%)</span>
+                    <span style="font-size:14px;">{money(cn.get("vat", 0))}</span>
+                </div>
+                <div>
+                    <span style="color:var(--text-muted);font-size:11px;display:block;">REASON</span>
+                    <span style="font-size:14px;">{safe_string(cn.get("reason", "-"))}</span>
+                </div>
+            </div>
+        </div>
+        
+        ''' + (f'''
+        <div class="card" style="margin-top:20px;">
+            <h3 style="margin-bottom:15px;">Reversed Line Items</h3>
+            <table class="table">
+                <thead>
+                    <tr><th>Description</th><th style="text-align:right;">Qty</th><th style="text-align:right;">Price</th><th style="text-align:right;">Total</th></tr>
+                </thead>
+                <tbody>
+                    {items_html}
+                </tbody>
+            </table>
+        </div>
+        ''' if items_html else '')
+        
+        return render_page(f"Credit Note {cn.get('cn_number','')}", content, user, "purchases")
+
 
 
     @app.route("/api/supplier/gl-suggest", methods=["POST"])

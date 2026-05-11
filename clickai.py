@@ -2141,7 +2141,7 @@ def calc_customer_balance(biz_id: str, customer_id: str) -> float:
 def calc_supplier_balance(biz_id: str, supplier_id: str) -> float:
     """Calculate supplier balance from source documents (supplier invoices, expenses, payments).
     Positive = we owe the supplier.  Negative = we overpaid / supplier in credit.
-    Balance = supplier_invoices - supplier_payments
+    Balance = supplier_invoices - supplier_payments - supplier_credit_notes
     """
     try:
         # What we owe: supplier invoices
@@ -2158,7 +2158,15 @@ def calc_supplier_balance(biz_id: str, supplier_id: str) -> float:
                      (p.get("supplier_name") or "").upper().strip() == _sup_name_upper)]
         pay_total = sum(float(p.get("amount", 0)) for p in payments)
 
-        return round(si_total - pay_total, 2)
+        # Active supplier credit notes also reduce what we owe
+        cn_total = 0.0
+        try:
+            s_cns = db.get("supplier_credit_notes", {"business_id": biz_id, "supplier_id": supplier_id}) or []
+            cn_total = sum(float(cn.get("total", 0)) for cn in s_cns if (cn.get("status") or "active") == "active")
+        except Exception:
+            pass
+
+        return round(si_total - pay_total - cn_total, 2)
     except Exception as e:
         logger.error(f"[CALC BALANCE] Supplier {supplier_id} error: {e}")
         return 0.0
@@ -2279,6 +2287,18 @@ def calc_all_supplier_balances(biz_id: str) -> dict:
                 sid = _name_to_id.get(_pname, "")
             if sid:
                 balances[sid] = balances.get(sid, 0) - float(p.get("amount", 0))
+
+        # Credits: active supplier credit notes also reduce what we owe
+        try:
+            all_s_cns = db.get("supplier_credit_notes", {"business_id": biz_id}) or []
+            for cn in all_s_cns:
+                if (cn.get("status") or "active") != "active":
+                    continue
+                sid = cn.get("supplier_id", "")
+                if sid:
+                    balances[sid] = balances.get(sid, 0) - float(cn.get("total", 0))
+        except Exception:
+            pass
 
         return {k: round(v, 2) for k, v in balances.items()}
     except Exception as e:
@@ -54072,6 +54092,7 @@ def api_scan_save_supplier_invoice():
         stock_items_created = 0
         stock_items_matched = 0
         expenses_booked = 0
+        stock_snapshots = []  # Captures old_qty/cost/sell + delta per affected stock item — enables reliable reversal on edit/credit/delete
         
         # Keywords that indicate EXPENSE not STOCK
         expense_keywords = [
@@ -54276,6 +54297,20 @@ def api_scan_save_supplier_invoice():
                     new_qty = old_qty + actual_units
                     table = "stock" if matched in all_stock else "stock_items"
                     
+                    # SNAPSHOT: record old values so this invoice can be reversed later
+                    stock_snapshots.append({
+                        "stock_id": matched["id"],
+                        "table": table,
+                        "code": matched.get("code", ""),
+                        "description": matched.get("description", ""),
+                        "old_qty": old_qty,
+                        "old_cost": old_cost,
+                        "old_sell": old_sell,
+                        "delta_qty": actual_units,
+                        "new_cost": cost_per_unit,
+                        "action": "updated"
+                    })
+                    
                     update_payload = {
                         "id": matched["id"],
                         "quantity": new_qty,
@@ -54316,6 +54351,21 @@ def api_scan_save_supplier_invoice():
                     )
                     db.save_stock(new_stock)
                     stock_by_code[final_code] = new_stock
+                    
+                    # SNAPSHOT: record that this stock item was newly created — on reversal it gets deleted
+                    stock_snapshots.append({
+                        "stock_id": new_stock["id"],
+                        "table": "stock_items",
+                        "code": final_code,
+                        "description": desc,
+                        "old_qty": 0,
+                        "old_cost": 0,
+                        "old_sell": 0,
+                        "delta_qty": actual_units,
+                        "new_cost": cost_per_unit,
+                        "action": "created"
+                    })
+                    
                     if pack_size > 1 or discount_pct > 0:
                         logger.info(f"[SCAN] Created stock: {final_code} = {desc} ({actual_units} units, {qty}×{pack_size}/pack, {discount_pct}% off, cost/unit R{cost_per_unit:.2f})")
                     else:
@@ -54335,6 +54385,9 @@ def api_scan_save_supplier_invoice():
             status="paid" if is_paid else "unpaid",
             scanned=True
         )
+        # Attach stock snapshots so this invoice can be reliably reversed
+        # by edit/credit-note/delete actions later.
+        invoice["stock_snapshots"] = json.dumps(stock_snapshots)
         inv_id = invoice["id"]
         
         success, result = db.save("supplier_invoices", invoice)
