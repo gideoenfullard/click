@@ -30501,46 +30501,95 @@ def grv_new():
             grv_gl_total = 0.0
             if add_stock:
                 all_stock = db.get_all_stock(biz_id)
+                # Build code lookup once (uppercased, stripped)
+                stock_by_code = {}
+                for s in all_stock:
+                    _c = str(s.get("code", "") or "").upper().strip()
+                    if _c:
+                        stock_by_code[_c] = s
+                
                 for item in items:
-                    code = item.get("code", "")
-                    # Try match by code
+                    code = str(item.get("code", "") or "").upper().strip()
+                    desc = str(item.get("description", "") or "").strip()
+                    desc_upper = desc.upper()
+                    cost_price = float(item.get("cost_price", 0) or 0)
+                    qty_in = float(item.get("quantity", 0) or 0)
+                    
+                    if qty_in <= 0 or not desc:
+                        continue
+                    
+                    # ── STEP 1: Try to match existing stock ──
                     matched = None
-                    for s in all_stock:
-                        if code and s.get("code", "").strip().upper() == code.upper():
-                            matched = s
-                            break
-                    if matched:
-                        current_qty = float(matched.get("qty") or matched.get("quantity") or 0)
-                        new_qty = current_qty + item["quantity"]
-                        cost_price = float(item.get("cost_price", 0) or 0)
-                        stock_updates = {"qty": new_qty, "quantity": new_qty}
-                        
-                        # Update cost and recalc selling price (maintain markup %)
-                        if cost_price > 0:
-                            old_cost = float(matched.get("cost") or matched.get("cost_price") or 0)
-                            old_sell = float(matched.get("price") or matched.get("selling_price") or 0)
-                            stock_updates["cost"] = cost_price
-                            stock_updates["cost_price"] = cost_price
-                            if old_cost > 0 and old_sell > 0:
-                                markup_ratio = old_sell / old_cost
-                                new_sell = round(cost_price * markup_ratio, 2)
-                            elif cost_price > 0:
-                                new_sell = round(cost_price * 1.3, 2)
-                            else:
-                                new_sell = old_sell
-                            stock_updates["selling_price"] = new_sell
-                            stock_updates["price"] = new_sell
-                            logger.info(f"[GRV] Price recalc {matched.get('code','')}: cost {old_cost}->{cost_price}, sell {old_sell}->{new_sell}")
-                        
-                        db.update_stock(matched["id"], stock_updates, biz_id)
+                    
+                    # 1a. Exact code match
+                    if code and code in stock_by_code:
+                        matched = stock_by_code[code]
+                        logger.info(f"[GRV] Matched by code: {code}")
+                    
+                    # 1b. Exact description match (case-insensitive)
+                    if not matched and desc_upper:
+                        for s in all_stock:
+                            s_desc = str(s.get("description", "") or "").upper().strip()
+                            if s_desc and s_desc == desc_upper:
+                                matched = s
+                                logger.info(f"[GRV] Matched by description: {desc_upper}")
+                                break
+                    
+                    # ── STEP 2: Auto-create if no match found ──
+                    if not matched:
                         try:
-                            db.save("stock_movements", RecordFactory.stock_movement(
-                                business_id=biz_id, stock_id=matched["id"], movement_type="in",
-                                quantity=item["quantity"], reference=f"GRV {grv_num}"
-                            ))
-                        except: pass
-                        # Accumulate GL value
-                        grv_gl_total += item["quantity"] * cost_price
+                            final_code = code or smart_stock_code(desc, set(stock_by_code.keys()))
+                            new_stock = RecordFactory.stock_item(
+                                business_id=biz_id,
+                                description=desc,
+                                code=final_code,
+                                quantity=0,  # Will be set below via update
+                                cost_price=cost_price,
+                                selling_price=round(cost_price * 1.3, 2) if cost_price > 0 else 0
+                            )
+                            db.save_stock(new_stock)
+                            matched = new_stock
+                            stock_by_code[final_code] = new_stock
+                            all_stock.append(new_stock)
+                            logger.info(f"[GRV] Auto-created stock: {final_code} = {desc}")
+                        except Exception as create_err:
+                            logger.error(f"[GRV] Failed to auto-create stock for '{desc}': {create_err}")
+                            continue
+                    
+                    # ── STEP 3: Update qty + cost + selling price ──
+                    current_qty = float(matched.get("qty") or matched.get("quantity") or 0)
+                    new_qty = current_qty + qty_in
+                    stock_updates = {"qty": new_qty, "quantity": new_qty}
+                    
+                    if cost_price > 0:
+                        old_cost = float(matched.get("cost") or matched.get("cost_price") or 0)
+                        old_sell = float(matched.get("price") or matched.get("selling_price") or 0)
+                        stock_updates["cost"] = cost_price
+                        stock_updates["cost_price"] = cost_price
+                        if old_cost > 0 and old_sell > 0:
+                            markup_ratio = old_sell / old_cost
+                            new_sell = round(cost_price * markup_ratio, 2)
+                        elif cost_price > 0:
+                            new_sell = round(cost_price * 1.3, 2)
+                        else:
+                            new_sell = old_sell
+                        stock_updates["selling_price"] = new_sell
+                        stock_updates["price"] = new_sell
+                        logger.info(f"[GRV] Price recalc {matched.get('code','')}: cost {old_cost}->{cost_price}, sell {old_sell}->{new_sell}")
+                    
+                    db.update_stock(matched["id"], stock_updates, biz_id)
+                    logger.info(f"[GRV] Stock updated {matched.get('code','')}: {current_qty} + {qty_in} = {new_qty}")
+                    
+                    try:
+                        db.save("stock_movements", RecordFactory.stock_movement(
+                            business_id=biz_id, stock_id=matched["id"], movement_type="in",
+                            quantity=qty_in, reference=f"GRV {grv_num}"
+                        ))
+                    except Exception:
+                        pass
+                    
+                    # Accumulate GL value
+                    grv_gl_total += qty_in * cost_price
             
             # --- GL Journal Entry for GRV stock received ---
             if grv_gl_total > 0:
@@ -30624,7 +30673,7 @@ def grv_new():
             
             <div style="margin-top:15px;">
                 <label style="display:flex;align-items:center;gap:8px;cursor:pointer;">
-                    <input type="checkbox" name="add_stock" value="1" checked> Auto-update stock quantities (match by code)
+                    <input type="checkbox" name="add_stock" value="1" checked> Auto-update stock — match existing by code or description, otherwise create new
                 </label>
             </div>
             
