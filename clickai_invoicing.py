@@ -1745,11 +1745,40 @@ def register_invoicing_routes(app, db, login_required, Auth, render_page,
             </div>
             </body></html>'''
             
-            inv_attachment = {
-                'filename': f'{inv_no}.html',
-                'content': attachment_html,
-                'content_type': 'text/html'
-            }
+            # Build PDF attachment via shared renderer (replaces HTML attachment
+            # that was being blocked by corporate spam filters as a phishing vector)
+            try:
+                from clickai import render_document_pdf as _render_doc_pdf
+                _inv_customer = None
+                if invoice.get("customer_id"):
+                    _inv_customer = db.get_one("customers", invoice.get("customer_id"))
+                if not _inv_customer:
+                    _inv_customer = {"name": cust_name}
+                _inv_doc = {
+                    "invoice_number": inv_no,
+                    "date": date,
+                    "reference": invoice.get("reference", "") or invoice.get("order_reference", ""),
+                    "sales_person": invoice.get("sales_person", ""),
+                    "subtotal": subtotal,
+                    "vat": vat,
+                    "total": total,
+                    "items": items,
+                    "notes": invoice.get("notes", ""),
+                    "customer_name": cust_name,
+                }
+                pdf_bytes = _render_doc_pdf("invoice", _inv_doc, business or {}, _inv_customer)
+                inv_attachment = {
+                    'filename': f'Invoice_{inv_no}.pdf',
+                    'content': pdf_bytes,
+                    'content_type': 'application/pdf'
+                }
+            except Exception as _pdf_err:
+                logger.error(f"[INV EMAIL] PDF render failed, falling back to HTML: {_pdf_err}")
+                inv_attachment = {
+                    'filename': f'{inv_no}.html',
+                    'content': attachment_html,
+                    'content_type': 'text/html'
+                }
             
             # Send to each recipient INDIVIDUALLY so one bad address doesn't block the others.
             # CCs are attached ONLY to the first email so CC recipients get one copy, not N.
@@ -3999,11 +4028,41 @@ def register_invoicing_routes(app, db, login_required, Auth, render_page,
             </div>
             </body></html>'''
             
-            quote_attachment = {
-                'filename': f'{quote_no}.html',
-                'content': attachment_html,
-                'content_type': 'text/html'
-            }
+            # Build PDF attachment via shared renderer (replaces HTML attachment
+            # that was being blocked by corporate spam filters as a phishing vector)
+            try:
+                from clickai import render_document_pdf as _render_doc_pdf
+                _q_customer = None
+                if quote.get("customer_id"):
+                    _q_customer = db.get_one("customers", quote.get("customer_id"))
+                if not _q_customer:
+                    _q_customer = {"name": cust_name}
+                _q_doc = {
+                    "quote_number": quote_no,
+                    "date": date,
+                    "reference": quote.get("reference", "") or quote.get("order_reference", ""),
+                    "sales_person": salesman,
+                    "expected_date": valid_until,
+                    "subtotal": subtotal,
+                    "vat": vat,
+                    "total": total,
+                    "items": items,
+                    "notes": quote.get("notes", ""),
+                    "customer_name": cust_name,
+                }
+                pdf_bytes = _render_doc_pdf("quote", _q_doc, business or {}, _q_customer)
+                quote_attachment = {
+                    'filename': f'Quote_{quote_no}.pdf',
+                    'content': pdf_bytes,
+                    'content_type': 'application/pdf'
+                }
+            except Exception as _pdf_err:
+                logger.error(f"[QUOTE EMAIL] PDF render failed, falling back to HTML: {_pdf_err}")
+                quote_attachment = {
+                    'filename': f'{quote_no}.html',
+                    'content': attachment_html,
+                    'content_type': 'text/html'
+                }
             
             # Send email
             success = Email.send(to_email, subject, body_html, body_text, business=business, attachments=[quote_attachment])

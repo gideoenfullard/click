@@ -2732,11 +2732,35 @@ def register_purchases_routes(app, db, login_required, Auth, render_page,
             <div style="padding:5px 20px;font-size:9px;color:#bbb;">Sent via Click AI</div>
             </body></html>'''
             
-            po_attachment = {
-                'filename': f'{po_number}.html',
-                'content': attachment_html,
-                'content_type': 'text/html'
-            }
+            # Build PDF attachment via shared renderer (replaces HTML attachment
+            # that was being blocked by corporate spam filters as a phishing vector)
+            try:
+                # Import the renderer from clickai.py (where Email class lives)
+                from clickai import render_document_pdf as _render_doc_pdf
+                _po_supplier = _sup_rec or {"name": supplier_name, "email": _sup_email, "phone": _sup_phone, "address": _sup_address}
+                _po_doc = {
+                    "po_number": po_number,
+                    "date": po.get("date", "-"),
+                    "reference": ref_val,
+                    "sales_person": sp_val,
+                    "expected_date": expected_date,
+                    "items": items,
+                    "notes": notes,
+                    "supplier_name": supplier_name,
+                }
+                pdf_bytes = _render_doc_pdf("purchase_order", _po_doc, business or {}, _po_supplier)
+                po_attachment = {
+                    'filename': f'PO_{po_number}.pdf',
+                    'content': pdf_bytes,
+                    'content_type': 'application/pdf'
+                }
+            except Exception as _pdf_err:
+                logger.error(f"[PO EMAIL] PDF render failed, falling back to HTML: {_pdf_err}")
+                po_attachment = {
+                    'filename': f'{po_number}.html',
+                    'content': attachment_html,
+                    'content_type': 'text/html'
+                }
             
             success = Email.send(supplier_email, subject, body_html, body_text, business=business, attachments=[po_attachment])
             

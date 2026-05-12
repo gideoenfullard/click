@@ -2829,6 +2829,348 @@ _STOCK_CACHE_TTL = 30  # seconds — short enough to stay fresh
 _stock_cache = {}   # {biz_id: (timestamp, data)}
 _STOCK_CACHE_TTL = 30  # seconds — short enough to stay fresh
 
+
+# ════════════════════════════════════════════════════════════════════
+# PDF DOCUMENT RENDERER — used for emailed POs, invoices, quotes, CNs.
+# Replaces previous .html attachments which were blocked by corporate
+# spam filters (Astaro, Mimecast, Proofpoint, MS Defender) because HTML
+# attachments are a known phishing vector. PDFs pass through cleanly.
+# ════════════════════════════════════════════════════════════════════
+def render_document_pdf(doc_type: str, doc: dict, business: dict, party: dict = None) -> bytes:
+    """
+    Render a professional PDF for a business document.
+    doc_type: 'purchase_order' | 'invoice' | 'quote' | 'credit_note'
+    doc: the document dict (PO, invoice, quote, or credit note record)
+    business: the issuing business dict
+    party: the supplier (for PO) or customer (for invoice/quote/CN) dict
+    Returns raw PDF bytes. POs hide prices; everything else shows totals.
+    """
+    from reportlab.lib.pagesizes import A4
+    from reportlab.lib.units import mm
+    from reportlab.lib import colors as _rl_colors
+    from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+    from reportlab.lib.enums import TA_RIGHT, TA_CENTER
+    from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle
+    
+    def _money(v):
+        try:
+            return f"R {float(v):,.2f}"
+        except Exception:
+            return "R 0.00"
+    
+    def _qty(v):
+        try:
+            f = float(v)
+            return f"{int(f)}" if f == int(f) else f"{f:g}"
+        except Exception:
+            return str(v)
+    
+    title_map = {
+        "purchase_order": "PURCHASE ORDER",
+        "invoice": "TAX INVOICE",
+        "quote": "QUOTATION",
+        "credit_note": "CREDIT NOTE",
+    }
+    number_field_map = {
+        "purchase_order": "po_number",
+        "invoice": "invoice_number",
+        "quote": "quote_number",
+        "credit_note": "cn_number",
+    }
+    party_label_map = {
+        "purchase_order": "Order To",
+        "invoice": "Bill To",
+        "quote": "Quote For",
+        "credit_note": "Credit To",
+    }
+    title = title_map.get(doc_type, "DOCUMENT")
+    number_field = number_field_map.get(doc_type, "number")
+    party_label = party_label_map.get(doc_type, "To")
+    doc_number = str(doc.get(number_field) or doc.get("number") or "-")
+    show_prices = doc_type != "purchase_order"  # POs hide prices (Fulltech convention)
+    
+    buf = io.BytesIO()
+    pdf = SimpleDocTemplate(
+        buf, pagesize=A4,
+        leftMargin=15*mm, rightMargin=15*mm,
+        topMargin=15*mm, bottomMargin=15*mm,
+        title=f"{title} {doc_number}",
+        author=str((business or {}).get("name", "")),
+    )
+    
+    styles = getSampleStyleSheet()
+    PRIMARY = _rl_colors.HexColor("#0f766e")
+    DARK = _rl_colors.HexColor("#1f2937")
+    GREY = _rl_colors.HexColor("#6b7280")
+    LIGHT_GREY = _rl_colors.HexColor("#e5e7eb")
+    HEADER_BG = _rl_colors.HexColor("#f1f5f9")
+    
+    s_company = ParagraphStyle("C", parent=styles["Normal"], fontName="Helvetica-Bold", fontSize=14, textColor=_rl_colors.white, leading=16)
+    s_company_sub = ParagraphStyle("CS", parent=styles["Normal"], fontName="Helvetica", fontSize=9, textColor=_rl_colors.white, leading=11)
+    s_doctitle = ParagraphStyle("DT", parent=styles["Normal"], fontName="Helvetica-Bold", fontSize=18, textColor=_rl_colors.white, alignment=TA_RIGHT, leading=22)
+    s_label = ParagraphStyle("L", parent=styles["Normal"], fontName="Helvetica", fontSize=8, textColor=GREY, leading=11)
+    s_value = ParagraphStyle("V", parent=styles["Normal"], fontName="Helvetica-Bold", fontSize=10, textColor=DARK, leading=12)
+    s_party_name = ParagraphStyle("PN", parent=styles["Normal"], fontName="Helvetica-Bold", fontSize=12, textColor=PRIMARY, leading=14)
+    s_party_line = ParagraphStyle("PL", parent=styles["Normal"], fontName="Helvetica", fontSize=9, textColor=DARK, leading=11)
+    s_sec_label = ParagraphStyle("SL", parent=styles["Normal"], fontName="Helvetica-Bold", fontSize=8, textColor=GREY, leading=10)
+    s_cell = ParagraphStyle("CL", parent=styles["Normal"], fontName="Helvetica", fontSize=9, textColor=DARK, leading=11)
+    s_cell_bold = ParagraphStyle("CLB", parent=styles["Normal"], fontName="Helvetica-Bold", fontSize=9, textColor=DARK, leading=11)
+    s_total = ParagraphStyle("T", parent=styles["Normal"], fontName="Helvetica-Bold", fontSize=12, textColor=PRIMARY, alignment=TA_RIGHT, leading=14)
+    s_footer = ParagraphStyle("F", parent=styles["Normal"], fontName="Helvetica", fontSize=8, textColor=GREY, alignment=TA_CENTER, leading=10)
+    
+    elements = []
+    
+    # ── Header band ──
+    business = business or {}
+    biz_name = str(business.get("name", "Business"))
+    biz_address = str(business.get("address", "") or "").replace("\n", "<br/>")
+    biz_vat = str(business.get("vat_number", "") or "")
+    biz_reg = str(business.get("registration_number", "") or business.get("reg_number", "") or "")
+    biz_phone = str(business.get("phone", "") or "")
+    biz_email = str(business.get("email", "") or "")
+    
+    company_block = [Paragraph(biz_name, s_company)]
+    if biz_address:
+        company_block.append(Paragraph(biz_address, s_company_sub))
+    meta_bits = []
+    if biz_reg:
+        meta_bits.append(f"Reg: {biz_reg}")
+    if biz_vat:
+        meta_bits.append(f"VAT: {biz_vat}")
+    if meta_bits:
+        company_block.append(Paragraph(" &nbsp;|&nbsp; ".join(meta_bits), s_company_sub))
+    
+    header_t = Table([[company_block, Paragraph(title, s_doctitle)]], colWidths=[110*mm, 70*mm])
+    header_t.setStyle(TableStyle([
+        ("BACKGROUND", (0, 0), (-1, -1), PRIMARY),
+        ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+        ("LEFTPADDING", (0, 0), (-1, -1), 10),
+        ("RIGHTPADDING", (0, 0), (-1, -1), 10),
+        ("TOPPADDING", (0, 0), (-1, -1), 10),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 10),
+    ]))
+    elements.append(header_t)
+    elements.append(Spacer(1, 8))
+    
+    # ── Meta + party block ──
+    doc_date = str(doc.get("date", "") or "-")
+    doc_ref = str(doc.get("reference", "") or "")
+    doc_sales = str(doc.get("sales_person", "") or "")
+    doc_expected = str(doc.get("expected_date", "") or "")
+    
+    label_for_number = {
+        "purchase_order": "Purchase Order No:",
+        "invoice": "Tax Invoice No:",
+        "quote": "Quotation No:",
+        "credit_note": "Credit Note No:",
+    }.get(doc_type, "Document No:")
+    
+    meta_rows = [
+        [Paragraph(label_for_number, s_label), Paragraph(doc_number, s_value)],
+        [Paragraph("Date:", s_label), Paragraph(doc_date, s_value)],
+    ]
+    if doc_ref:
+        meta_rows.append([Paragraph("Reference:", s_label), Paragraph(doc_ref, s_value)])
+    if doc_sales:
+        meta_rows.append([Paragraph("Sales Person:", s_label), Paragraph(doc_sales, s_value)])
+    if doc_expected and doc_type == "purchase_order":
+        meta_rows.append([Paragraph("Expected:", s_label), Paragraph(doc_expected, s_value)])
+    elif doc_expected and doc_type == "quote":
+        meta_rows.append([Paragraph("Valid Until:", s_label), Paragraph(doc_expected, s_value)])
+    if doc_type == "credit_note":
+        _orig = doc.get("original_invoice_number") or doc.get("source_invoice_number")
+        if _orig:
+            meta_rows.append([Paragraph("Reverses:", s_label), Paragraph(str(_orig), s_value)])
+    
+    meta_t = Table(meta_rows, colWidths=[32*mm, 55*mm])
+    meta_t.setStyle(TableStyle([
+        ("VALIGN", (0, 0), (-1, -1), "TOP"),
+        ("LEFTPADDING", (0, 0), (-1, -1), 0),
+        ("RIGHTPADDING", (0, 0), (-1, -1), 4),
+        ("TOPPADDING", (0, 0), (-1, -1), 2),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 2),
+    ]))
+    
+    party = party or {}
+    party_name = str(party.get("name", "") or doc.get("supplier_name", "") or doc.get("customer_name", "") or "")
+    party_email = str(party.get("email", "") or "")
+    party_phone = str(party.get("phone", "") or "")
+    party_address = str(party.get("address", "") or "").replace("\n", "<br/>")
+    party_vat = str(party.get("vat_number", "") or "")
+    
+    party_block = [Paragraph(party_label.upper(), s_sec_label), Spacer(1, 4),
+                   Paragraph(party_name or "-", s_party_name)]
+    if party_address:
+        party_block.append(Paragraph(party_address, s_party_line))
+    if party_phone:
+        party_block.append(Paragraph(f"Tel: {party_phone}", s_party_line))
+    if party_email:
+        party_block.append(Paragraph(party_email, s_party_line))
+    if party_vat:
+        party_block.append(Paragraph(f"VAT: {party_vat}", s_party_line))
+    
+    middle_t = Table([[meta_t, party_block]], colWidths=[90*mm, 90*mm])
+    middle_t.setStyle(TableStyle([
+        ("VALIGN", (0, 0), (-1, -1), "TOP"),
+        ("LEFTPADDING", (0, 0), (-1, -1), 0),
+        ("RIGHTPADDING", (0, 0), (-1, -1), 0),
+        ("TOPPADDING", (0, 0), (-1, -1), 4),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 8),
+    ]))
+    elements.append(middle_t)
+    elements.append(Spacer(1, 4))
+    
+    # ── Line items ──
+    items = doc.get("items", []) or []
+    if isinstance(items, str):
+        try:
+            items = json.loads(items)
+        except Exception:
+            items = []
+    
+    if show_prices:
+        items_rows = [[
+            Paragraph("CODE", s_sec_label),
+            Paragraph("DESCRIPTION", s_sec_label),
+            Paragraph("QTY", s_sec_label),
+            Paragraph("UNIT PRICE", s_sec_label),
+            Paragraph("AMOUNT", s_sec_label),
+        ]]
+        for it in items:
+            code = str(it.get("code", "") or "")
+            desc = str(it.get("description", "") or "")
+            qty = it.get("qty") if it.get("qty") is not None else it.get("quantity", 0)
+            unit = it.get("unit_price") if it.get("unit_price") is not None else it.get("price", 0)
+            line_total = it.get("line_total")
+            if line_total is None:
+                line_total = it.get("total")  # invoice records use 'total' per line
+            if line_total is None:
+                try:
+                    line_total = float(qty) * float(unit)
+                except Exception:
+                    line_total = 0
+            items_rows.append([
+                Paragraph(code, s_cell),
+                Paragraph(desc, s_cell),
+                Paragraph(_qty(qty), s_cell),
+                Paragraph(_money(unit), s_cell),
+                Paragraph(_money(line_total), s_cell_bold),
+            ])
+        items_t = Table(items_rows, colWidths=[25*mm, 75*mm, 18*mm, 28*mm, 34*mm], repeatRows=1)
+        items_t.setStyle(TableStyle([
+            ("BACKGROUND", (0, 0), (-1, 0), HEADER_BG),
+            ("LINEBELOW", (0, 0), (-1, 0), 1.5, _rl_colors.HexColor("#cbd5e1")),
+            ("LINEBELOW", (0, 1), (-1, -1), 0.4, LIGHT_GREY),
+            ("VALIGN", (0, 0), (-1, -1), "TOP"),
+            ("ALIGN", (2, 0), (2, -1), "CENTER"),
+            ("ALIGN", (3, 0), (4, -1), "RIGHT"),
+            ("LEFTPADDING", (0, 0), (-1, -1), 6),
+            ("RIGHTPADDING", (0, 0), (-1, -1), 6),
+            ("TOPPADDING", (0, 0), (-1, -1), 6),
+            ("BOTTOMPADDING", (0, 0), (-1, -1), 6),
+        ]))
+    else:
+        items_rows = [[
+            Paragraph("CODE", s_sec_label),
+            Paragraph("DESCRIPTION", s_sec_label),
+            Paragraph("QTY", s_sec_label),
+        ]]
+        for it in items:
+            code = str(it.get("code", "") or "")
+            desc = str(it.get("description", "") or "")
+            qty = it.get("qty") if it.get("qty") is not None else it.get("quantity", 0)
+            items_rows.append([
+                Paragraph(code, s_cell),
+                Paragraph(desc, s_cell),
+                Paragraph(_qty(qty), s_cell_bold),
+            ])
+        items_t = Table(items_rows, colWidths=[30*mm, 130*mm, 20*mm], repeatRows=1)
+        items_t.setStyle(TableStyle([
+            ("BACKGROUND", (0, 0), (-1, 0), HEADER_BG),
+            ("LINEBELOW", (0, 0), (-1, 0), 1.5, _rl_colors.HexColor("#cbd5e1")),
+            ("LINEBELOW", (0, 1), (-1, -1), 0.4, LIGHT_GREY),
+            ("VALIGN", (0, 0), (-1, -1), "TOP"),
+            ("ALIGN", (2, 0), (2, -1), "CENTER"),
+            ("LEFTPADDING", (0, 0), (-1, -1), 6),
+            ("RIGHTPADDING", (0, 0), (-1, -1), 6),
+            ("TOPPADDING", (0, 0), (-1, -1), 6),
+            ("BOTTOMPADDING", (0, 0), (-1, -1), 6),
+        ]))
+    elements.append(items_t)
+    elements.append(Spacer(1, 8))
+    
+    # ── Totals (only when prices shown) ──
+    if show_prices:
+        try:
+            subtotal = float(doc.get("subtotal", 0) or 0)
+        except Exception:
+            subtotal = 0
+        try:
+            vat = float(doc.get("vat", 0) or 0)
+        except Exception:
+            vat = 0
+        try:
+            total = float(doc.get("total", 0) or 0)
+        except Exception:
+            total = subtotal + vat
+        
+        totals_rows = [
+            [Paragraph("Subtotal:", s_cell), Paragraph(_money(subtotal), s_cell_bold)],
+            [Paragraph("VAT (15%):", s_cell), Paragraph(_money(vat), s_cell_bold)],
+            [Paragraph("TOTAL:", s_value), Paragraph(_money(total), s_total)],
+        ]
+        totals_t = Table(totals_rows, colWidths=[35*mm, 40*mm])
+        totals_t.setStyle(TableStyle([
+            ("ALIGN", (0, 0), (-1, -1), "RIGHT"),
+            ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+            ("LINEABOVE", (0, 2), (-1, 2), 1.5, PRIMARY),
+            ("TOPPADDING", (0, 0), (-1, -1), 4),
+            ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
+            ("LEFTPADDING", (0, 0), (-1, -1), 6),
+            ("RIGHTPADDING", (0, 0), (-1, -1), 6),
+        ]))
+        wrapper = Table([[None, totals_t]], colWidths=[105*mm, 75*mm])
+        wrapper.setStyle(TableStyle([
+            ("VALIGN", (0, 0), (-1, -1), "TOP"),
+            ("LEFTPADDING", (0, 0), (-1, -1), 0),
+            ("RIGHTPADDING", (0, 0), (-1, -1), 0),
+            ("TOPPADDING", (0, 0), (-1, -1), 0),
+            ("BOTTOMPADDING", (0, 0), (-1, -1), 0),
+        ]))
+        elements.append(wrapper)
+        elements.append(Spacer(1, 12))
+    
+    # ── Reason (credit note) / Notes ──
+    reason = str(doc.get("reason", "") or "").strip()
+    notes = str(doc.get("notes", "") or "").strip()
+    if doc_type == "credit_note" and reason:
+        elements.append(Paragraph("REASON FOR CREDIT", s_sec_label))
+        elements.append(Spacer(1, 4))
+        elements.append(Paragraph(reason.replace("\n", "<br/>"), s_party_line))
+        elements.append(Spacer(1, 10))
+    if notes:
+        elements.append(Paragraph("NOTES", s_sec_label))
+        elements.append(Spacer(1, 4))
+        elements.append(Paragraph(notes.replace("\n", "<br/>"), s_party_line))
+        elements.append(Spacer(1, 10))
+    
+    # ── Footer ──
+    elements.append(Spacer(1, 6))
+    footer_bits = []
+    if biz_phone:
+        footer_bits.append(f"Tel: {biz_phone}")
+    if biz_email:
+        footer_bits.append(biz_email)
+    if footer_bits:
+        elements.append(Paragraph(" &nbsp;|&nbsp; ".join(footer_bits), s_footer))
+    elements.append(Paragraph("Generated by Click AI", s_footer))
+    
+    pdf.build(elements)
+    pdf_bytes = buf.getvalue()
+    buf.close()
+    return pdf_bytes
+
+
 class DB:
     """
     Minimal database layer. Just stores and retrieves.
@@ -49823,11 +50165,36 @@ def api_credit_note_email(cn_id):
         <div style="padding:10px 25px;font-size:11px;color:#666;">This credit has been applied to your account.</div>
         </body></html>'''
         
-        cn_attachment = {
-            'filename': f'{cn_no}.html',
-            'content': attachment_html,
-            'content_type': 'text/html'
-        }
+        # Build PDF attachment via shared renderer (replaces HTML attachment
+        # that was being blocked by corporate spam filters as a phishing vector)
+        try:
+            _cn_customer = None
+            if cn.get("customer_id"):
+                _cn_customer = db.get_one("customers", cn.get("customer_id"))
+            cn_doc = {
+                "cn_number": cn_no,
+                "date": date,
+                "subtotal": subtotal,
+                "vat": vat,
+                "total": total,
+                "items": items,
+                "reason": reason,
+                "original_invoice_number": orig_inv,
+                "customer_name": cust_name,
+            }
+            pdf_bytes = render_document_pdf("credit_note", cn_doc, business or {}, _cn_customer or {"name": cust_name})
+            cn_attachment = {
+                'filename': f'CreditNote_{cn_no}.pdf',
+                'content': pdf_bytes,
+                'content_type': 'application/pdf'
+            }
+        except Exception as _pdf_err:
+            logger.error(f"[CN EMAIL] PDF render failed, falling back to HTML: {_pdf_err}")
+            cn_attachment = {
+                'filename': f'{cn_no}.html',
+                'content': attachment_html,
+                'content_type': 'text/html'
+            }
         
         success = Email.send(to_email, subject, body_html, body_text, business=business, attachments=[cn_attachment])
         
