@@ -4114,11 +4114,64 @@ def register_purchases_routes(app, db, login_required, Auth, render_page,
             # STEP 3: Re-create journal entries with new totals
             net_amount = new_total - new_vat
             supplier_name = invoice.get("supplier_name", "Unknown")
-            create_journal_entry(biz_id, new_date, f"Purchase - {supplier_name}", f"INV-{invoice_id[:8]}", [
-                {"account_code": gl(biz_id, "purchases"), "debit": round(net_amount, 2), "credit": 0},
-                {"account_code": gl(biz_id, "vat_input"), "debit": round(new_vat, 2), "credit": 0},
-                {"account_code": gl(biz_id, "creditors"), "debit": 0, "credit": round(new_total, 2)},
-            ])
+            
+            # ══════════════════════════════════════════════════════════════
+            # GL ALLOCATION on edit — preserve the invoice's stored intent.
+            # If user changed allocation on edit (data['allocation_intent']),
+            # apply the new choice. Otherwise reuse what was saved originally.
+            # ══════════════════════════════════════════════════════════════
+            _alloc_intent_new = (data.get("allocation_intent") or invoice.get("allocation_intent") or "stock").lower()
+            if _alloc_intent_new not in ("stock", "cos", "split"):
+                _alloc_intent_new = "stock"
+            _item_allocs_raw = data.get("item_allocations")
+            if _item_allocs_raw is None:
+                _item_allocs_raw = invoice.get("item_allocations") or {}
+            if isinstance(_item_allocs_raw, str):
+                try:
+                    _item_allocs_raw = json.loads(_item_allocs_raw)
+                except Exception:
+                    _item_allocs_raw = {}
+            
+            stock_dr = 0.0
+            cos_dr = 0.0
+            if _alloc_intent_new == "split" and _item_allocs_raw:
+                for idx, item in enumerate(new_items or []):
+                    line_total = float(item.get("line_total", 0) or 0)
+                    if line_total <= 0:
+                        _q = float(item.get("quantity", item.get("qty", 0)) or 0)
+                        _p = float(item.get("unit_price", item.get("price", 0)) or 0)
+                        _d = float(item.get("discount_pct", 0) or 0)
+                        line_total = _q * _p * (1 - _d / 100.0)
+                    line_net = line_total / 1.15 if new_vat > 0 else line_total
+                    item_intent = (_item_allocs_raw.get(str(idx)) or _item_allocs_raw.get(idx) or "stock").lower()
+                    if item_intent == "cos":
+                        cos_dr += line_net
+                    else:
+                        stock_dr += line_net
+                # Rounding adjustment
+                total_alloc = round(stock_dr + cos_dr, 2)
+                diff = round(net_amount - total_alloc, 2)
+                if abs(diff) > 0:
+                    if stock_dr >= cos_dr:
+                        stock_dr += diff
+                    else:
+                        cos_dr += diff
+            elif _alloc_intent_new == "cos":
+                cos_dr = net_amount
+            else:
+                stock_dr = net_amount
+            
+            # Build journal lines (unpaid status is enforced at top — see line 4022)
+            journal_lines_new = []
+            if stock_dr > 0:
+                journal_lines_new.append({"account_code": gl(biz_id, "stock"), "debit": round(stock_dr, 2), "credit": 0})
+            if cos_dr > 0:
+                journal_lines_new.append({"account_code": gl(biz_id, "cogs"), "debit": round(cos_dr, 2), "credit": 0})
+            if new_vat > 0:
+                journal_lines_new.append({"account_code": gl(biz_id, "vat_input"), "debit": round(new_vat, 2), "credit": 0})
+            journal_lines_new.append({"account_code": gl(biz_id, "creditors"), "debit": 0, "credit": round(new_total, 2)})
+            
+            create_journal_entry(biz_id, new_date, f"Purchase - {supplier_name}", f"INV-{invoice_id[:8]}", journal_lines_new)
             
             # STEP 4: Update the invoice record
             update_inv = {
@@ -4130,8 +4183,11 @@ def register_purchases_routes(app, db, login_required, Auth, render_page,
                 "total": new_total,
                 "items": json.dumps(new_items),
                 "stock_snapshots": json.dumps(new_snapshots),
+                "allocation_intent": _alloc_intent_new,
                 "updated_at": now()
             }
+            if _item_allocs_raw:
+                update_inv["item_allocations"] = json.dumps(_item_allocs_raw) if not isinstance(_item_allocs_raw, str) else _item_allocs_raw
             db.save("supplier_invoices", update_inv)
             
             # Pulse log
@@ -4146,12 +4202,8 @@ def register_purchases_routes(app, db, login_required, Auth, render_page,
                         business_id=biz_id, allocation_type="supplier_invoice_edited",
                         source_table="supplier_invoices", source_id=invoice_id,
                         description=f"Invoice edited - {supplier_name} - {new_invoice_number}",
-                        amount=new_total, gl_entries=[
-                            {"account_code": gl(biz_id, "purchases"), "debit": round(net_amount, 2), "credit": 0},
-                            {"account_code": gl(biz_id, "vat_input"), "debit": round(new_vat, 2), "credit": 0},
-                            {"account_code": gl(biz_id, "creditors"), "debit": 0, "credit": round(new_total, 2)},
-                        ],
-                        ai_reasoning="User edited invoice. Original effects reversed, new values applied.",
+                        amount=new_total, gl_entries=journal_lines_new,
+                        ai_reasoning=f"User edited invoice. Allocation intent: {_alloc_intent_new}.",
                         ai_confidence="HIGH", ai_worker="System",
                         supplier_name=supplier_name, payment_method="account",
                         reference=new_invoice_number, transaction_date=new_date,
@@ -4211,16 +4263,68 @@ def register_purchases_routes(app, db, login_required, Auth, render_page,
             cn_number = next_document_number("SCR-", existing_cns, field="cn_number")
             
             # STEP 3: Create journal entries that REVERSE the original invoice
-            # Original: Dr Purchases / Dr VAT Input / Cr Creditors
-            # Credit:   Cr Purchases / Cr VAT Input / Dr Creditors
+            # Reverse using the SAME GL codes the invoice originally debited.
+            # Read allocation_intent from the invoice (defaults to 'stock').
             cn_id = generate_id()
             net_amount = inv_total - inv_vat
             cn_ref = f"SCR-{cn_id[:8]}"
-            create_journal_entry(biz_id, today(), f"Credit Note - {supplier_name}", cn_ref, [
-                {"account_code": gl(biz_id, "purchases"), "debit": 0, "credit": round(net_amount, 2)},
-                {"account_code": gl(biz_id, "vat_input"), "debit": 0, "credit": round(inv_vat, 2)},
-                {"account_code": gl(biz_id, "creditors"), "debit": round(inv_total, 2), "credit": 0},
-            ])
+            
+            _cn_alloc_intent = (invoice.get("allocation_intent") or "stock").lower()
+            if _cn_alloc_intent not in ("stock", "cos", "split"):
+                _cn_alloc_intent = "stock"
+            _cn_item_allocs = invoice.get("item_allocations") or {}
+            if isinstance(_cn_item_allocs, str):
+                try:
+                    _cn_item_allocs = json.loads(_cn_item_allocs)
+                except Exception:
+                    _cn_item_allocs = {}
+            
+            cn_stock_cr = 0.0
+            cn_cos_cr = 0.0
+            if _cn_alloc_intent == "split" and _cn_item_allocs:
+                _inv_items_raw = invoice.get("items") or "[]"
+                if isinstance(_inv_items_raw, str):
+                    try:
+                        _inv_items_list = json.loads(_inv_items_raw)
+                    except Exception:
+                        _inv_items_list = []
+                else:
+                    _inv_items_list = _inv_items_raw
+                for idx, item in enumerate(_inv_items_list or []):
+                    line_total = float(item.get("line_total", 0) or 0)
+                    if line_total <= 0:
+                        _q = float(item.get("quantity", item.get("qty", 0)) or 0)
+                        _p = float(item.get("unit_price", item.get("price", 0)) or 0)
+                        _d = float(item.get("discount_pct", 0) or 0)
+                        line_total = _q * _p * (1 - _d / 100.0)
+                    line_net = line_total / 1.15 if inv_vat > 0 else line_total
+                    item_intent = (_cn_item_allocs.get(str(idx)) or _cn_item_allocs.get(idx) or "stock").lower()
+                    if item_intent == "cos":
+                        cn_cos_cr += line_net
+                    else:
+                        cn_stock_cr += line_net
+                total_alloc = round(cn_stock_cr + cn_cos_cr, 2)
+                diff = round(net_amount - total_alloc, 2)
+                if abs(diff) > 0:
+                    if cn_stock_cr >= cn_cos_cr:
+                        cn_stock_cr += diff
+                    else:
+                        cn_cos_cr += diff
+            elif _cn_alloc_intent == "cos":
+                cn_cos_cr = net_amount
+            else:
+                cn_stock_cr = net_amount
+            
+            cn_journal_lines = []
+            if cn_stock_cr > 0:
+                cn_journal_lines.append({"account_code": gl(biz_id, "stock"), "debit": 0, "credit": round(cn_stock_cr, 2)})
+            if cn_cos_cr > 0:
+                cn_journal_lines.append({"account_code": gl(biz_id, "cogs"), "debit": 0, "credit": round(cn_cos_cr, 2)})
+            if inv_vat > 0:
+                cn_journal_lines.append({"account_code": gl(biz_id, "vat_input"), "debit": 0, "credit": round(inv_vat, 2)})
+            cn_journal_lines.append({"account_code": gl(biz_id, "creditors"), "debit": round(inv_total, 2), "credit": 0})
+            
+            create_journal_entry(biz_id, today(), f"Credit Note - {supplier_name}", cn_ref, cn_journal_lines)
             
             # STEP 4: Create credit note record
             cn_record = {
@@ -4261,11 +4365,7 @@ def register_purchases_routes(app, db, login_required, Auth, render_page,
                         business_id=biz_id, allocation_type="supplier_credit_note",
                         source_table="supplier_credit_notes", source_id=cn_id,
                         description=f"Credit Note {cn_number} - {supplier_name} - reverses {invoice.get('invoice_number','?')}",
-                        amount=inv_total, gl_entries=[
-                            {"account_code": gl(biz_id, "purchases"), "debit": 0, "credit": round(net_amount, 2)},
-                            {"account_code": gl(biz_id, "vat_input"), "debit": 0, "credit": round(inv_vat, 2)},
-                            {"account_code": gl(biz_id, "creditors"), "debit": round(inv_total, 2), "credit": 0},
-                        ],
+                        amount=inv_total, gl_entries=cn_journal_lines,
                         ai_reasoning=f"Credit note reversing supplier invoice. Reason: {reason}. Snapshot available: {had_snapshot}.",
                         ai_confidence="HIGH", ai_worker="System",
                         supplier_name=supplier_name, payment_method="account",

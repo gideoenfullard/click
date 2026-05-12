@@ -53013,6 +53013,12 @@ def scan_inbox_page():
                                         />
                                     </label>
                                 </div>
+                                <div class="alloc-col" style="display:none;margin-top:8px;font-size:11px;align-items:center;gap:6px;">
+                                    <span style="color:var(--text-muted);">Allocate to:</span>
+                                    <button type="button" id="item_alloc_stock_${{i}}" onclick="setItemAlloc(${{i}}, 'stock')" style="padding:4px 10px;background:#6366f1;color:white;border:1px solid #6366f1;border-radius:4px;font-size:11px;cursor:pointer;">📦 Stock</button>
+                                    <button type="button" id="item_alloc_cos_${{i}}" onclick="setItemAlloc(${{i}}, 'cos')" style="padding:4px 10px;background:var(--card);color:var(--text);border:1px solid var(--border);border-radius:4px;font-size:11px;cursor:pointer;">🔧 COS</button>
+                                    <input type="hidden" id="item_alloc_${{i}}" value="stock">
+                                </div>
                             </div>
                             <div style="text-align:right;min-width:120px;">
                                 <div style="font-size:12px;color:var(--text-muted);margin-bottom:4px;">
@@ -53125,14 +53131,22 @@ def scan_inbox_page():
                         <input type="hidden" id="selectedPayMethod" value="cash">
                         <button class="btn" onclick="processAs('expense')" style="width:100%;padding:12px;background:var(--orange);color:white;font-weight:600;">📋 Book as Expense</button>
                     </div>
-                    <!-- RIGHT: Stock Purchase on Credit -->
+                    <!-- RIGHT: Supplier Invoice on Credit — with allocation intent -->
                     <div style="padding:12px;background:rgba(99,102,241,0.08);border:1px solid rgba(99,102,241,0.3);border-radius:8px;">
                         <div style="font-size:13px;font-weight:600;color:var(--primary);margin-bottom:8px;">On Account (Credit)</div>
-                        <div style="font-size:11px;color:var(--text-muted);margin-bottom:8px;">Due date uses supplier's payment terms.</div>
-                        <div style="padding:8px;background:rgba(0,0,0,0.15);border-radius:6px;margin-bottom:10px;font-size:12px;color:var(--text-muted);min-height:48px;display:flex;align-items:center;">
-                            <span>📅 Outstanding — to be paid later via Banking</span>
+                        <div style="font-size:11px;color:var(--text-muted);margin-bottom:8px;">What is this purchase for?</div>
+                        <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px;margin-bottom:6px;" id="allocIntentBtns">
+                            <button type="button" class="btn" onclick="selectAllocIntent('stock')" id="aiStock" style="padding:8px;font-size:12px;background:var(--primary);color:white;border:2px solid var(--primary);">📦 For Resale (Stock)</button>
+                            <button type="button" class="btn" onclick="selectAllocIntent('cos')" id="aiCos" style="padding:8px;font-size:12px;background:var(--card);color:var(--text);border:2px solid var(--border);">🔧 Consumed (Cost of Sales)</button>
                         </div>
-                        <button class="btn" onclick="processAs('supplier')" style="width:100%;padding:12px;background:var(--primary);color:white;font-weight:600;">📦 Stock Purchase (Credit)</button>
+                        <div style="margin-bottom:10px;">
+                            <button type="button" class="btn" onclick="toggleSplitMode()" id="aiSplit" style="width:100%;padding:8px;font-size:12px;background:var(--card);color:var(--text);border:2px solid var(--border);">⚖️ Split items (mix stock & COS)</button>
+                        </div>
+                        <input type="hidden" id="selectedAllocIntent" value="stock">
+                        <div id="allocIntentHelp" style="padding:6px 8px;background:rgba(0,0,0,0.15);border-radius:6px;margin-bottom:10px;font-size:11px;color:var(--text-muted);min-height:34px;">
+                            📦 Goes into stock asset (1300) — COS will hit when sold.
+                        </div>
+                        <button class="btn" onclick="processAs('supplier')" style="width:100%;padding:12px;background:var(--primary);color:white;font-weight:600;">💾 Book Supplier Invoice</button>
                     </div>
                 </div>
             `;
@@ -53546,6 +53560,74 @@ def scan_inbox_page():
         }}
     }}
     
+    // Allocation intent for supplier invoices (stock vs COS vs split)
+    function selectAllocIntent(intent) {{
+        const hidden = document.getElementById('selectedAllocIntent');
+        if (hidden) hidden.value = intent;
+        // Reset all buttons to inactive
+        ['aiStock','aiCos','aiSplit'].forEach(id => {{
+            const btn = document.getElementById(id);
+            if (btn) {{
+                btn.style.background = 'var(--card)';
+                btn.style.color = 'var(--text)';
+                btn.style.borderColor = 'var(--border)';
+            }}
+        }});
+        // Activate the chosen one
+        const idMap = {{stock: 'aiStock', cos: 'aiCos', split: 'aiSplit'}};
+        const colorMap = {{stock: '#6366f1', cos: '#f97316', split: '#8b5cf6'}};
+        const activeBtn = document.getElementById(idMap[intent]);
+        if (activeBtn) {{
+            activeBtn.style.background = colorMap[intent];
+            activeBtn.style.color = 'white';
+            activeBtn.style.borderColor = colorMap[intent];
+        }}
+        // Update help text
+        const helpEl = document.getElementById('allocIntentHelp');
+        if (helpEl) {{
+            if (intent === 'stock') {{
+                helpEl.innerHTML = '📦 Goes into stock asset (1300) — COS will hit when sold.';
+            }} else if (intent === 'cos') {{
+                helpEl.innerHTML = '🔧 Booked directly to Cost of Sales (5000) — consumed in production / not held as stock.';
+            }} else if (intent === 'split') {{
+                helpEl.innerHTML = '⚖️ Set each line item to Stock or COS in the items table below.';
+            }}
+        }}
+        // Show / hide per-item allocation column
+        const splitCols = document.querySelectorAll('.alloc-col');
+        splitCols.forEach(c => {{ c.style.display = (intent === 'split') ? '' : 'none'; }});
+    }}
+    
+    function toggleSplitMode() {{
+        const cur = document.getElementById('selectedAllocIntent')?.value || 'stock';
+        if (cur === 'split') {{
+            selectAllocIntent('stock');
+        }} else {{
+            selectAllocIntent('split');
+        }}
+    }}
+    
+    // Per-line item allocation toggle (called when in split mode)
+    function setItemAlloc(idx, intent) {{
+        const hidden = document.getElementById('item_alloc_' + idx);
+        if (hidden) hidden.value = intent;
+        const stockBtn = document.getElementById('item_alloc_stock_' + idx);
+        const cosBtn = document.getElementById('item_alloc_cos_' + idx);
+        if (stockBtn && cosBtn) {{
+            if (intent === 'stock') {{
+                stockBtn.style.background = '#6366f1';
+                stockBtn.style.color = 'white';
+                cosBtn.style.background = 'var(--card)';
+                cosBtn.style.color = 'var(--text)';
+            }} else {{
+                cosBtn.style.background = '#f97316';
+                cosBtn.style.color = 'white';
+                stockBtn.style.background = 'var(--card)';
+                stockBtn.style.color = 'var(--text)';
+            }}
+        }}
+    }}
+    
     // PO picker — populates new-PO field when an existing PO is selected
     function onPoPickerChange() {{
         const sel = document.getElementById('po_picker_select');
@@ -53659,6 +53741,19 @@ def scan_inbox_page():
             // Get payment method from selection (expenses are always paid)
             const payMethod = document.getElementById('selectedPayMethod')?.value || 'cash';
             
+            // Get allocation intent (stock / cos / split) — for supplier invoices
+            const allocIntent = document.getElementById('selectedAllocIntent')?.value || 'stock';
+            // Build per-item allocations if in split mode
+            const itemAllocations = {{}};
+            if (allocIntent === 'split') {{
+                itemRows.forEach((row, i) => {{
+                    const allocEl = document.getElementById('item_alloc_' + i);
+                    if (allocEl) {{
+                        itemAllocations[i] = allocEl.value || 'stock';
+                    }}
+                }});
+            }}
+            
             payload = {{
                 supplier_name: document.getElementById('m_supplier')?.value || 'Unknown',
                 supplier_phone: document.getElementById('m_phone')?.value || '',
@@ -53674,7 +53769,10 @@ def scan_inbox_page():
                 category: currentZaneCategory || '',  // Zane's AI-picked specific category
                 // PO linkage so backend can create GRV + update PO qty_received
                 po_id: (currentItemData.extracted && currentItemData.extracted._matched_po_id) || currentItemData._matched_po_id || '',
-                po_number: (currentItemData.extracted && currentItemData.extracted._matched_po_number) || currentItemData._matched_po_number || ''
+                po_number: (currentItemData.extracted && currentItemData.extracted._matched_po_number) || currentItemData._matched_po_number || '',
+                // Allocation intent: stock=DR 1300, cos=DR 5000, split=per-item
+                allocation_intent: allocIntent,
+                item_allocations: itemAllocations
             }};
             // ═══ MULTI-GL: Read split amounts from UI if Zane suggested a split ═══
             if (window._zaneSplits && currentZaneCategory === 'Split') {{
@@ -55113,6 +55211,15 @@ def api_scan_save_supplier_invoice():
         # Attach stock snapshots so this invoice can be reliably reversed
         # by edit/credit-note/delete actions later.
         invoice["stock_snapshots"] = json.dumps(stock_snapshots)
+        # Allocation intent: 'stock' (DR 1300), 'cos' (DR 5000), or 'split' (per-item)
+        _alloc_intent = (data.get("allocation_intent") or "stock").lower()
+        if _alloc_intent not in ("stock", "cos", "split"):
+            _alloc_intent = "stock"
+        invoice["allocation_intent"] = _alloc_intent
+        # Per-item allocations (only relevant when intent='split')
+        _item_allocs = data.get("item_allocations") or {}
+        if _item_allocs:
+            invoice["item_allocations"] = json.dumps(_item_allocs)
         inv_id = invoice["id"]
         
         success, result = db.save("supplier_invoices", invoice)
@@ -55177,20 +55284,63 @@ def api_scan_save_supplier_invoice():
         vat_amount = float(data.get("vat", 0))
         net_amount = total_amount - vat_amount
         
+        # ══════════════════════════════════════════════════════════════════
+        # GL ALLOCATION — driven by user choice on scan-review screen
+        # 'stock' → DR 1300 (stock asset, COS hits when sold)
+        # 'cos'   → DR 5000 (Cost of Sales, consumed in production)
+        # 'split' → per-item allocation, line totals routed to 1300 or 5000
+        # No more guessing — gebruik wat die gebruiker self gekies het.
+        # ══════════════════════════════════════════════════════════════════
+        stock_dr = 0.0
+        cos_dr = 0.0
+        
+        if _alloc_intent == "split" and _item_allocs:
+            # Per-item routing — sum net per intent
+            for idx, item in enumerate(items):
+                line_total = float(item.get("line_total", 0) or 0)
+                # If line_total missing, fall back to qty * unit_price
+                if line_total <= 0:
+                    _q = float(item.get("quantity", item.get("qty", 0)) or 0)
+                    _p = float(item.get("unit_price", item.get("price", 0)) or 0)
+                    _d = float(item.get("discount_pct", 0) or 0)
+                    line_total = _q * _p * (1 - _d / 100.0)
+                # Strip VAT pro-rata (VAT-inclusive line totals from scan)
+                line_net = line_total / 1.15 if vat_amount > 0 else line_total
+                item_intent = (_item_allocs.get(str(idx)) or _item_allocs.get(idx) or "stock").lower()
+                if item_intent == "cos":
+                    cos_dr += line_net
+                else:
+                    stock_dr += line_net
+            # Rounding adjustment so total debits = net_amount
+            total_alloc = round(stock_dr + cos_dr, 2)
+            diff = round(net_amount - total_alloc, 2)
+            if abs(diff) > 0:
+                # Apply diff to the larger bucket
+                if stock_dr >= cos_dr:
+                    stock_dr += diff
+                else:
+                    cos_dr += diff
+        elif _alloc_intent == "cos":
+            cos_dr = net_amount
+        else:  # 'stock' (default)
+            stock_dr = net_amount
+        
+        # Build journal lines
+        journal_lines = []
+        if stock_dr > 0:
+            journal_lines.append({"account_code": gl(biz_id, "stock"), "debit": round(stock_dr, 2), "credit": 0})  # Stock asset
+        if cos_dr > 0:
+            journal_lines.append({"account_code": gl(biz_id, "cogs"), "debit": round(cos_dr, 2), "credit": 0})    # Cost of Sales
+        if vat_amount > 0:
+            journal_lines.append({"account_code": gl(biz_id, "vat_input"), "debit": round(vat_amount, 2), "credit": 0})
+        # Credit side: bank if paid, creditors if on account
         if is_paid:
-            # Paid: Debit Purchases + VAT Input, Credit Bank
-            create_journal_entry(biz_id, data.get("date", today()), f"Purchase - {supplier_name}", f"INV-{inv_id[:8]}", [
-                {"account_code": gl(biz_id, "purchases"), "debit": round(net_amount, 2), "credit": 0},    # Purchases
-                {"account_code": gl(biz_id, "vat_input"), "debit": round(vat_amount, 2), "credit": 0},    # VAT Input
-                {"account_code": gl(biz_id, "bank"), "debit": 0, "credit": round(total_amount, 2)},  # Bank
-            ])
+            journal_lines.append({"account_code": gl(biz_id, "bank"), "debit": 0, "credit": round(total_amount, 2)})
         else:
-            # Unpaid: Debit Purchases + VAT Input, Credit Creditors
-            create_journal_entry(biz_id, data.get("date", today()), f"Purchase - {supplier_name}", f"INV-{inv_id[:8]}", [
-                {"account_code": gl(biz_id, "purchases"), "debit": round(net_amount, 2), "credit": 0},    # Purchases
-                {"account_code": gl(biz_id, "vat_input"), "debit": round(vat_amount, 2), "credit": 0},    # VAT Input
-                {"account_code": gl(biz_id, "creditors"), "debit": 0, "credit": round(total_amount, 2)},  # Creditors
-            ])
+            journal_lines.append({"account_code": gl(biz_id, "creditors"), "debit": 0, "credit": round(total_amount, 2)})
+        
+        create_journal_entry(biz_id, data.get("date", today()), f"Purchase - {supplier_name}", f"INV-{inv_id[:8]}", journal_lines)
+        logger.info(f"[SCAN SAVE] Journal posted: intent={_alloc_intent} stock_dr=R{stock_dr:.2f} cos_dr=R{cos_dr:.2f} vat=R{vat_amount:.2f} total=R{total_amount:.2f}")
         
         # Supplier balance is now calculated dynamically — no manual update needed
         
