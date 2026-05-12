@@ -51258,13 +51258,24 @@ DISCOUNT %: Many invoices have a discount column (headed "DISC", "DISC%", "DIS%"
 - If no discount column or no value for that line, set "discount_pct" to 0
 - Read it ONLY if printed - never guess or calculate
 
-PACK SIZE: Many products are sold in packs/boxes. Look in the description for patterns like:
+PACK SIZE: Many products are sold in packs/boxes OR priced per multiple units. Look for patterns:
+
+A) Pack indicators in the DESCRIPTION:
 - "10P/BOX", "12P/BOX", "25P/BOX" → pack_size = 10, 12, 25
 - "BOX OF 10", "PACK OF 25", "PKT OF 100" → pack_size = 10, 25, 100
 - "10/PK", "25/BOX", "100/PKT" → pack_size = 10, 25, 100
 - "10PK", "25BX" → pack_size = 10, 25
 - If sometimes the pack info is on a NEXT line under the description (e.g. "UNCARDED MTO 12P/BOX"), still attach it to that item's pack_size
-- If no pack indicator found, set "pack_size" to 1 (single units)
+
+B) "PER" COLUMN on the invoice (common on fastener/hardware invoices like NSS Fasteners):
+   The invoice has a header like "Net Price | Per | Amount" with values like "27.20 | 100 | 54.40".
+   The "Per" column means the unit price is for that many units. Read the Per number into pack_size.
+- Per column says "100" → pack_size = 100 (price is per 100 units)
+- Per column says "10" → pack_size = 10
+- Per column says "1" → pack_size = 1 (price is per single unit)
+- Example: Qty 200, Net Price 27.20, Per 100, Amount 54.40 → pack_size = 100 (because 200 × 27.20 / 100 = 54.40)
+
+If no pack/per indicator found, set "pack_size" to 1 (single units).
 
 IMPORTANT: DO NOT CALCULATE ANYTHING! Just read what is printed on the document.
 - Read subtotal if shown, otherwise set to 0
