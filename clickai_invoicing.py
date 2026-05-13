@@ -1745,8 +1745,11 @@ def register_invoicing_routes(app, db, login_required, Auth, render_page,
             </div>
             </body></html>'''
             
-            # Build PDF attachment via shared renderer (replaces HTML attachment
-            # that was being blocked by corporate spam filters as a phishing vector)
+            # Build PDF attachment via shared renderer.
+            # CRITICAL: NO HTML fallback. If PDF rendering fails, return a clear
+            # error so the user knows to install reportlab — never send HTML
+            # attachments because Gmail/Outlook block them as phishing risks
+            # (recipient sees only "View" button linking to Google Drive).
             try:
                 from clickai import render_document_pdf as _render_doc_pdf
                 _inv_customer = None
@@ -1767,18 +1770,26 @@ def register_invoicing_routes(app, db, login_required, Auth, render_page,
                     "customer_name": cust_name,
                 }
                 pdf_bytes = _render_doc_pdf("invoice", _inv_doc, business or {}, _inv_customer)
+                if not pdf_bytes or len(pdf_bytes) < 100:
+                    raise ValueError(f"PDF renderer returned empty/invalid bytes (size={len(pdf_bytes) if pdf_bytes else 0})")
                 inv_attachment = {
                     'filename': f'Invoice_{inv_no}.pdf',
                     'content': pdf_bytes,
                     'content_type': 'application/pdf'
                 }
+                logger.info(f"[INV EMAIL] PDF rendered successfully for {inv_no}: {len(pdf_bytes)} bytes")
+            except ImportError as _imp_err:
+                logger.error(f"[INV EMAIL] reportlab not installed on server: {_imp_err}")
+                return jsonify({
+                    "success": False,
+                    "error": "PDF generator not installed on server. Please add 'reportlab' to requirements.txt and redeploy."
+                })
             except Exception as _pdf_err:
-                logger.error(f"[INV EMAIL] PDF render failed, falling back to HTML: {_pdf_err}")
-                inv_attachment = {
-                    'filename': f'{inv_no}.html',
-                    'content': attachment_html,
-                    'content_type': 'text/html'
-                }
+                logger.error(f"[INV EMAIL] PDF render failed for invoice {inv_no}: {_pdf_err}", exc_info=True)
+                return jsonify({
+                    "success": False,
+                    "error": f"Failed to generate PDF invoice: {str(_pdf_err)}. Email NOT sent — please check server logs and try again."
+                })
             
             # Send to each recipient INDIVIDUALLY so one bad address doesn't block the others.
             # CCs are attached ONLY to the first email so CC recipients get one copy, not N.
