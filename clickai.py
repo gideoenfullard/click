@@ -2957,6 +2957,8 @@ def render_document_pdf(doc_type: str, doc: dict, business: dict, party: dict = 
     doc_ref = str(doc.get("reference", "") or "")
     doc_sales = str(doc.get("sales_person", "") or "")
     doc_expected = str(doc.get("expected_date", "") or "")
+    doc_delivery_note = str(doc.get("delivery_note", "") or "")
+    doc_payment_terms = str(doc.get("payment_terms", "") or "")
     
     label_for_number = {
         "purchase_order": "Purchase Order No:",
@@ -2969,6 +2971,12 @@ def render_document_pdf(doc_type: str, doc: dict, business: dict, party: dict = 
         [Paragraph(label_for_number, s_label), Paragraph(doc_number, s_value)],
         [Paragraph("Date:", s_label), Paragraph(doc_date, s_value)],
     ]
+    # Payment Terms — only on invoice/quote (not PO, not credit_note)
+    if doc_payment_terms and doc_type in ("invoice", "quote"):
+        meta_rows.append([Paragraph("Payment Terms:", s_label), Paragraph(doc_payment_terms, s_value)])
+    # Delivery Note — only on invoice (links to the DN that became this invoice)
+    if doc_delivery_note and doc_type == "invoice":
+        meta_rows.append([Paragraph("Delivery Note:", s_label), Paragraph(doc_delivery_note, s_value)])
     if doc_ref:
         meta_rows.append([Paragraph("Reference:", s_label), Paragraph(doc_ref, s_value)])
     if doc_sales:
@@ -3153,6 +3161,49 @@ def render_document_pdf(doc_type: str, doc: dict, business: dict, party: dict = 
         elements.append(Spacer(1, 4))
         elements.append(Paragraph(notes.replace("\n", "<br/>"), s_party_line))
         elements.append(Spacer(1, 10))
+    
+    # ── Banking Details ──
+    # Only on invoice / quote / credit_note. NEVER on purchase_order (we don't
+    # share our banking details with suppliers on POs).
+    if doc_type in ("invoice", "quote", "credit_note"):
+        biz_bank_name = str(business.get("bank_name", "") or "").strip()
+        biz_bank_acc = str(business.get("bank_account", "") or business.get("account_number", "") or "").strip()
+        biz_bank_branch = str(business.get("bank_branch", "") or business.get("branch_code", "") or "").strip()
+        biz_bank_holder = str(business.get("bank_account_holder", "") or business.get("account_holder", "") or biz_name or "").strip()
+        biz_bank_type = str(business.get("bank_account_type", "") or business.get("account_type", "") or "").strip()
+        biz_bank_swift = str(business.get("bank_swift", "") or business.get("swift_code", "") or "").strip()
+        # Only show the section if at least bank name OR account number is set
+        if biz_bank_name or biz_bank_acc:
+            elements.append(Paragraph("BANKING DETAILS", s_sec_label))
+            elements.append(Spacer(1, 4))
+            bank_rows = []
+            if biz_bank_holder:
+                bank_rows.append([Paragraph("Account Holder:", s_label), Paragraph(biz_bank_holder, s_value)])
+            if biz_bank_name:
+                bank_rows.append([Paragraph("Bank:", s_label), Paragraph(biz_bank_name, s_value)])
+            if biz_bank_acc:
+                bank_rows.append([Paragraph("Account No:", s_label), Paragraph(biz_bank_acc, s_value)])
+            if biz_bank_branch:
+                bank_rows.append([Paragraph("Branch Code:", s_label), Paragraph(biz_bank_branch, s_value)])
+            if biz_bank_type:
+                bank_rows.append([Paragraph("Account Type:", s_label), Paragraph(biz_bank_type, s_value)])
+            if biz_bank_swift:
+                bank_rows.append([Paragraph("SWIFT:", s_label), Paragraph(biz_bank_swift, s_value)])
+            # Add reference hint for invoice (helps customer reference payment)
+            if doc_type == "invoice" and doc_number:
+                bank_rows.append([Paragraph("Use Reference:", s_label), Paragraph(doc_number, s_value)])
+            bank_t = Table(bank_rows, colWidths=[35*mm, 80*mm])
+            bank_t.setStyle(TableStyle([
+                ("VALIGN", (0, 0), (-1, -1), "TOP"),
+                ("LEFTPADDING", (0, 0), (-1, -1), 6),
+                ("RIGHTPADDING", (0, 0), (-1, -1), 6),
+                ("TOPPADDING", (0, 0), (-1, -1), 3),
+                ("BOTTOMPADDING", (0, 0), (-1, -1), 3),
+                ("BACKGROUND", (0, 0), (-1, -1), _rl_colors.HexColor("#f9fafb")),
+                ("BOX", (0, 0), (-1, -1), 0.5, LIGHT_GREY),
+            ]))
+            elements.append(bank_t)
+            elements.append(Spacer(1, 10))
     
     # ── Footer ──
     elements.append(Spacer(1, 6))
