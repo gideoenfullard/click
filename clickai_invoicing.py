@@ -1640,6 +1640,39 @@ def register_invoicing_routes(app, db, login_required, Auth, render_page,
             if not invoice:
                 return jsonify({"success": False, "error": "Invoice not found"})
             
+            # ─────────────────────────────────────────────────────────────────
+            # AUTO-CC: Always include the customer's saved CC addresses
+            # (cc_emails / email_cc / accounts_contact_email / sales_contact_email)
+            # on every invoice email — without requiring the user to tick them
+            # manually in the modal. The modal still allows EXTRA custom CCs.
+            # ─────────────────────────────────────────────────────────────────
+            _auto_cc_customer = None
+            if invoice.get("customer_id"):
+                _auto_cc_customer = db.get_one("customers", invoice.get("customer_id"))
+            if _auto_cc_customer:
+                _auto_cc_raw = []
+                # Saved canonical CC list
+                _saved = _auto_cc_customer.get("cc_emails") or _auto_cc_customer.get("email_cc") or ""
+                if _saved:
+                    for _e in str(_saved).split(","):
+                        _auto_cc_raw.append(_e.strip())
+                # Accounts + Sales contact emails — also act as CCs by default
+                if _auto_cc_customer.get("accounts_contact_email"):
+                    _auto_cc_raw.append(str(_auto_cc_customer.get("accounts_contact_email")).strip())
+                if _auto_cc_customer.get("sales_contact_email"):
+                    _auto_cc_raw.append(str(_auto_cc_customer.get("sales_contact_email")).strip())
+                # Validate & dedupe against existing To + CC lists
+                for _e in _auto_cc_raw:
+                    if not _e:
+                        continue
+                    _ekey = _e.lower()
+                    if _ekey in seen:
+                        continue
+                    seen.add(_ekey)
+                    if _email_pattern.match(_e):
+                        cc_emails_list.append(_e)
+                        logger.info(f"[INV EMAIL] Auto-CC added from customer record: {_e}")
+            
             # Build email content
             biz_name = business.get("name", "Business") if business else "Business"
             inv_no = invoice.get("invoice_number", "")
@@ -1753,10 +1786,36 @@ def register_invoicing_routes(app, db, login_required, Auth, render_page,
             try:
                 from clickai import render_document_pdf as _render_doc_pdf
                 _inv_customer = None
+                # 1) Try by customer_id (the normal case)
                 if invoice.get("customer_id"):
                     _inv_customer = db.get_one("customers", invoice.get("customer_id"))
+                # 2) Fall back to lookup by name within this business (handles legacy invoices
+                #    where customer_id was missing, broken, or stored as a name string)
+                if not _inv_customer and cust_name and biz_id:
+                    try:
+                        _cust_matches = db.get("customers", {"business_id": biz_id}) or []
+                        _cust_lower = cust_name.strip().lower()
+                        for _c in _cust_matches:
+                            if str(_c.get("name", "")).strip().lower() == _cust_lower:
+                                _inv_customer = _c
+                                logger.info(f"[INV EMAIL] Customer resolved by name lookup: {cust_name}")
+                                break
+                    except Exception as _cust_lookup_err:
+                        logger.warning(f"[INV EMAIL] Customer name lookup failed: {_cust_lookup_err}")
+                # 3) Last resort — just the name (PDF will show name only, no address/VAT)
                 if not _inv_customer:
                     _inv_customer = {"name": cust_name}
+                    logger.warning(f"[INV EMAIL] Customer record NOT found for invoice {inv_no} — PDF will lack address/VAT details")
+                else:
+                    # Ensure address & vat_number have fallback values from alternate fields
+                    # (some customer records use physical_address instead of address)
+                    if not _inv_customer.get("address"):
+                        _inv_customer["address"] = (
+                            _inv_customer.get("physical_address", "")
+                            or _inv_customer.get("postal_address", "")
+                            or _inv_customer.get("delivery_address", "")
+                            or ""
+                        )
                 _inv_doc = {
                     "invoice_number": inv_no,
                     "date": date,
