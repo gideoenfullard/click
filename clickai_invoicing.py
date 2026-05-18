@@ -1641,37 +1641,10 @@ def register_invoicing_routes(app, db, login_required, Auth, render_page,
                 return jsonify({"success": False, "error": "Invoice not found"})
             
             # ─────────────────────────────────────────────────────────────────
-            # AUTO-CC: Always include the customer's saved CC addresses
-            # (cc_emails / email_cc / accounts_contact_email / sales_contact_email)
-            # on every invoice email — without requiring the user to tick them
-            # manually in the modal. The modal still allows EXTRA custom CCs.
+            # CC handling: send ONLY what the user explicitly selected/typed
+            # in the email modal. No automatic CC of accounts_contact_email
+            # or sales_contact_email — the user is in full control.
             # ─────────────────────────────────────────────────────────────────
-            _auto_cc_customer = None
-            if invoice.get("customer_id"):
-                _auto_cc_customer = db.get_one("customers", invoice.get("customer_id"))
-            if _auto_cc_customer:
-                _auto_cc_raw = []
-                # Saved canonical CC list
-                _saved = _auto_cc_customer.get("cc_emails") or _auto_cc_customer.get("email_cc") or ""
-                if _saved:
-                    for _e in str(_saved).split(","):
-                        _auto_cc_raw.append(_e.strip())
-                # Accounts + Sales contact emails — also act as CCs by default
-                if _auto_cc_customer.get("accounts_contact_email"):
-                    _auto_cc_raw.append(str(_auto_cc_customer.get("accounts_contact_email")).strip())
-                if _auto_cc_customer.get("sales_contact_email"):
-                    _auto_cc_raw.append(str(_auto_cc_customer.get("sales_contact_email")).strip())
-                # Validate & dedupe against existing To + CC lists
-                for _e in _auto_cc_raw:
-                    if not _e:
-                        continue
-                    _ekey = _e.lower()
-                    if _ekey in seen:
-                        continue
-                    seen.add(_ekey)
-                    if _email_pattern.match(_e):
-                        cc_emails_list.append(_e)
-                        logger.info(f"[INV EMAIL] Auto-CC added from customer record: {_e}")
             
             # Build email content
             biz_name = business.get("name", "Business") if business else "Business"
