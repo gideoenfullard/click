@@ -129,6 +129,7 @@ def register_purchases_routes(app, db, login_required, Auth, render_page,
             <h2 style="margin:0;">Suppliers (<span id="supplierCount">{total_suppliers}</span>)</h2>
             <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;">
                 <a href="/supplier-invoices" class="btn btn-secondary" style="font-size:12px;padding:6px 12px;">📋 Supplier Invoices</a>
+                <a href="/supplier-credit-notes" class="btn btn-secondary" style="font-size:12px;padding:6px 12px;">↩️ Credit Notes</a>
                 <input type="text" id="supplierSearch" placeholder="🔍 Search name, code, phone..." 
                     oninput="filterSuppliers()" 
                     style="padding:8px 12px;border-radius:6px;border:1px solid var(--border);background:var(--card);color:var(--text);width:250px;">
@@ -1379,6 +1380,7 @@ def register_purchases_routes(app, db, login_required, Auth, render_page,
                 </div>
                 <div style="display:flex;gap:10px;">
                     <a href="/grv" class="btn btn-secondary">📦 GRV List</a>
+                    <a href="/supplier-credit-notes" class="btn btn-secondary">↩️ Credit Notes</a>
                     <a href="/purchase/new" class="btn btn-primary">+ New Purchase Order</a>
                 </div>
             </div>
@@ -4503,7 +4505,16 @@ def register_purchases_routes(app, db, login_required, Auth, render_page,
             '''
         
         content = f'''
-        <h2 style="margin-bottom:20px;">↩️ Supplier Credit Notes ({len(cns)})</h2>
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:20px;flex-wrap:wrap;gap:10px;">
+            <h2 style="margin:0;">↩️ Supplier Credit Notes ({len(cns)})</h2>
+            <div style="display:flex;gap:10px;">
+                <a href="/suppliers" class="btn btn-secondary" style="font-size:13px;padding:8px 14px;">👥 Suppliers</a>
+                <a href="/supplier-invoices" class="btn btn-primary" style="font-size:13px;padding:8px 14px;">+ New Credit Note (from Invoice)</a>
+            </div>
+        </div>
+        <div style="background:rgba(245,158,11,0.08);border:1px solid rgba(245,158,11,0.25);border-radius:8px;padding:10px 14px;margin-bottom:15px;font-size:13px;color:var(--text-muted);">
+            💡 <strong>How to create a credit note:</strong> Open the supplier invoice you want to credit → click the <strong style="color:#f59e0b;">↩️ Credit Note</strong> button. This reverses the invoice, returns stock, and posts the GL entries automatically.
+        </div>
         <div class="card">
             <table class="table">
                 <thead>
