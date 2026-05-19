@@ -554,10 +554,47 @@ def register_purchases_routes(app, db, login_required, Auth, render_page,
                 _sup_cns = db.get("supplier_credit_notes", {"business_id": biz_id}) if biz_id else []
                 for _cn in _sup_cns:
                     if _cn.get("supplier_id") == supplier_id and (_cn.get("status") or "active") == "active":
+                        # ── Extract extra info from the reason field (META JSON tail) ──
+                        # Scanned credit notes pack the supplier's own CN number and the
+                        # target invoice number into the 'reason' field as:
+                        #   "human description | META:{...json...}"
+                        # We pull those out here so we can show them on the statement
+                        # alongside our internal SCR-xxxx reference.
+                        _cn_reason = _cn.get("reason", "") or ""
+                        _supplier_cn_num = ""
+                        _vs_invoice_num = ""
+                        try:
+                            if "| META:" in _cn_reason:
+                                _meta_str = _cn_reason.split("| META:", 1)[1].strip()
+                                _meta_obj = json.loads(_meta_str)
+                                _supplier_cn_num = (_meta_obj.get("supplier_cn_number") or "").strip()
+                                _vs_invoice_num = (_meta_obj.get("original_invoice_number") or "").strip()
+                        except Exception:
+                            pass
+                        # Fallback: if META wasn't there (e.g. legacy CN from old endpoint),
+                        # try to look up the original invoice number from original_invoice_id
+                        if not _vs_invoice_num and _cn.get("original_invoice_id"):
+                            try:
+                                _orig_inv = db.get_one("supplier_invoices", _cn.get("original_invoice_id"))
+                                if _orig_inv:
+                                    _vs_invoice_num = _orig_inv.get("invoice_number", "") or ""
+                            except Exception:
+                                pass
+                        # Build a richer reference label: SCR-xxxx + supplier's own number
+                        # + vs invoice — all on one line, with the SCR being the clickable link.
+                        _cn_extras_bits = []
+                        if _supplier_cn_num:
+                            _cn_extras_bits.append(f"Ref: {safe_string(_supplier_cn_num)}")
+                        if _vs_invoice_num:
+                            _cn_extras_bits.append(f"vs {safe_string(_vs_invoice_num)}")
+                        _cn_extras_html = ""
+                        if _cn_extras_bits:
+                            _cn_extras_html = f' <span style="font-size:11px;color:var(--text-muted);">· {" · ".join(_cn_extras_bits)}</span>'
                         _sup_ledger_items.append({
                             "date": _cn.get("date", ""),
                             "type": "Credit Note",
                             "reference": _cn.get("cn_number", "-"),
+                            "reference_extras_html": _cn_extras_html,
                             "debit": float(_cn.get("total", 0) or 0),
                             "credit": 0,
                             "link": f"/supplier-credit-note/{_cn.get('id','')}"
@@ -570,6 +607,7 @@ def register_purchases_routes(app, db, login_required, Auth, render_page,
         for _sli in _sup_ledger_items:
             _sup_running += _sli["credit"] - _sli["debit"]  # credit = we owe more, debit = we paid
             _sref = f'<a href="{_sli["link"]}" style="color:var(--primary);text-decoration:none;">{safe_string(_sli["reference"])}</a>' if _sli.get("link") else safe_string(_sli["reference"])
+            _sref += _sli.get("reference_extras_html", "")  # extras for credit notes (supplier CN number + vs invoice)
             _ssrc = f' <span style="font-size:10px;color:var(--text-muted);">({_sli.get("source","")})</span>' if _sli.get("source") else ""
             _sbal_color = "color:var(--orange);" if _sup_running > 0.01 else "color:var(--green);" if _sup_running < -0.01 else ""
             _sup_ledger_html += f'''<tr>
