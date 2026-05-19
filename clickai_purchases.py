@@ -5159,10 +5159,10 @@ Nothing else."""
             cn_record = {
                 "id": cn_id,
                 "business_id": biz_id,
-                "supplier_id": supplier_id,
+                "supplier_id": supplier_id or None,
                 "supplier_name": supplier_name,
                 "cn_number": cn_number,
-                "original_invoice_id": target_invoice_id if target_type == "invoice" else "",
+                "original_invoice_id": (target_invoice_id or None) if target_type == "invoice" else None,
                 "date": cn_date,
                 "subtotal": cn_subtotal,
                 "vat": vat_in_credit,
@@ -5171,7 +5171,7 @@ Nothing else."""
                 "items": json.dumps(cn_items_raw) if not isinstance(cn_items_raw, str) else cn_items_raw,
                 "status": "active",
                 "stock_snapshots": cn_snapshots_for_record,
-                "created_by": user.get("id") if user else None,
+                "created_by": (user.get("id") if user else None) or None,
                 "created_at": now()
             }
             ok, result = db.save("supplier_credit_notes", cn_record)
