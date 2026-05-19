@@ -4613,7 +4613,56 @@ def register_invoicing_routes(app, db, login_required, Auth, render_page,
             except Exception:
                 linked_docs_html = ""
         
+        # Build logo HTML if business has one
+        biz_logo = business.get("logo_url", "") if business else ""
+        logo_html = f'<img src="{biz_logo}" style="height:60px;object-fit:contain;" alt="Logo">' if biz_logo else f'<div style="width:60px;height:60px;background:rgba(255,255,255,0.2);border-radius:8px;display:flex;align-items:center;justify-content:center;font-size:24px;font-weight:700;">DN</div>'
+
         content = f'''
+        <style>
+        /* ── SCREEN: constrain card width so it looks neat on wide monitors ── */
+        .dn-print-wrap {{
+            max-width: 900px;
+            margin: 0 auto;
+        }}
+        /* ── PRINT: A4 page setup ── */
+        @media print {{
+            @page {{
+                size: A4 portrait;
+                margin: 12mm 14mm 14mm 14mm;
+            }}
+            /* hide every nav/button/header that render_page adds */
+            body > *:not(.dn-print-wrap),
+            .no-print,
+            nav, header, footer,
+            .sidebar, .topbar,
+            .flash-messages {{
+                display: none !important;
+            }}
+            .dn-print-wrap {{
+                max-width: 100%;
+                margin: 0;
+            }}
+            /* make sure the card fills the A4 width */
+            .dn-card {{
+                width: 100% !important;
+                box-shadow: none !important;
+                border-radius: 0 !important;
+            }}
+            /* allow the items table to break across pages */
+            .dn-items-tbody tr {{
+                page-break-inside: avoid;
+            }}
+            /* repeat the table header on every new page */
+            .dn-items-thead {{
+                display: table-header-group;
+            }}
+            /* footer (signature line) always on same page as last item */
+            .dn-footer {{
+                page-break-inside: avoid;
+            }}
+        }}
+        </style>
+
         <div class="no-print" style="display:flex;justify-content:space-between;align-items:center;margin-bottom:20px;">
             <a href="/delivery-notes" style="color:var(--text-muted);">← Back to Delivery Notes</a>
             <div style="display:flex;gap:10px;">
@@ -4621,81 +4670,86 @@ def register_invoicing_routes(app, db, login_required, Auth, render_page,
                 <button onclick="window.print()" class="btn btn-secondary">🖨️ Print</button>
             </div>
         </div>
-        
+
         {linked_docs_html}
-        
-        <div class="card" style="background:white;color:#333;padding:0;overflow:hidden;">
+
+        <div class="dn-print-wrap">
+        <div class="card dn-card" style="background:white;color:#333;padding:0;overflow:hidden;">
+
             <!-- TOP BAR -->
-            <div style="background:#7c3aed;color:white;padding:25px 40px;display:flex;justify-content:space-between;align-items:center;">
-                <div>
-                    <h1 style="margin:0;font-size:28px;font-weight:700;">{biz_name}</h1>
-                    {f'<p style="margin:4px 0 0 0;font-size:13px;opacity:0.8;">{biz_address}</p>' if biz_address else ''}
+            <div style="background:#7c3aed;color:white;padding:20px 30px;display:flex;justify-content:space-between;align-items:center;">
+                <div style="display:flex;align-items:center;gap:14px;">
+                    {logo_html}
+                    <div>
+                        <h1 style="margin:0;font-size:22px;font-weight:700;">{biz_name}</h1>
+                        {f'<p style="margin:3px 0 0 0;font-size:11px;opacity:0.8;">{biz_address}</p>' if biz_address else ''}
+                    </div>
                 </div>
                 <div style="text-align:right;">
-                    <h2 style="margin:0;font-size:32px;font-weight:700;letter-spacing:2px;">DELIVERY NOTE</h2>
-                    <span style="background:rgba(255,255,255,0.2);color:white;padding:4px 12px;border-radius:20px;font-size:12px;">
+                    <h2 style="margin:0;font-size:26px;font-weight:700;letter-spacing:2px;">DELIVERY NOTE</h2>
+                    <span style="background:rgba(255,255,255,0.2);color:white;padding:3px 10px;border-radius:20px;font-size:11px;">
                         {status.upper()}
                     </span>
                 </div>
             </div>
-            
+
             <!-- DETAILS GRID -->
-            <div style="padding:10px 25px;display:grid;grid-template-columns:1fr 1fr;gap:0;border-bottom:1px solid #e5e7eb;">
-                <div style="border-right:1px solid #e5e7eb;padding-right:25px;">
-                    <table style="width:100%;font-size:14px;color:#333;">
-                        <tr><td style="padding:4px 0;color:#888;width:130px;">DN Number:</td><td style="padding:4px 0;font-weight:600;">{dn.get("delivery_note_number", "-")}</td></tr>
-                        <tr><td style="padding:4px 0;color:#888;">Date:</td><td style="padding:4px 0;">{dn.get("date", "-")}</td></tr>
-                        <tr><td style="padding:4px 0;color:#888;">Invoice:</td><td style="padding:4px 0;">{invoice_link or "-"}</td></tr>
+            <div style="padding:10px 30px;display:grid;grid-template-columns:1fr 1fr;gap:0;border-bottom:2px solid #e5e7eb;">
+                <div style="border-right:1px solid #e5e7eb;padding-right:20px;">
+                    <table style="width:100%;font-size:13px;color:#333;">
+                        <tr><td style="padding:3px 0;color:#888;width:120px;">DN Number:</td><td style="padding:3px 0;font-weight:600;">{dn.get("delivery_note_number", "-")}</td></tr>
+                        <tr><td style="padding:3px 0;color:#888;">Date:</td><td style="padding:3px 0;">{dn.get("date", "-")}</td></tr>
+                        <tr><td style="padding:3px 0;color:#888;">Invoice:</td><td style="padding:3px 0;">{invoice_link or "-"}</td></tr>
                     </table>
-                    {f'<div style="margin-top:8px;font-size:13px;color:#666;">Tel: {biz_phone}</div>' if biz_phone else ''}
+                    {f'<div style="margin-top:6px;font-size:12px;color:#666;">Tel: {biz_phone}</div>' if biz_phone else ''}
                 </div>
-                <div style="padding-left:25px;">
-                    <div style="font-size:11px;color:#888;text-transform:uppercase;letter-spacing:1px;margin-bottom:8px;font-weight:600;">Deliver To</div>
-                    <div style="font-size:16px;font-weight:700;color:#7c3aed;margin-bottom:4px;">{safe_string(dn.get("customer_name", "-"))}</div>
+                <div style="padding-left:20px;">
+                    <div style="font-size:10px;color:#888;text-transform:uppercase;letter-spacing:1px;margin-bottom:6px;font-weight:600;">Deliver To</div>
+                    <div style="font-size:15px;font-weight:700;color:#7c3aed;margin-bottom:3px;">{safe_string(dn.get("customer_name", "-"))}</div>
                     {f'<div style="font-size:10px;color:#555;">{safe_string(dn.get("delivery_address", ""))}</div>' if dn.get("delivery_address") else ''}
                 </div>
             </div>
-            
+
             <!-- ITEMS TABLE -->
-            <div style="padding:0 25px;">
-                <table style="width:100%;border-collapse:collapse;font-size:14px;">
-                    <thead>
+            <div style="padding:0 30px;">
+                <table style="width:100%;border-collapse:collapse;font-size:12px;">
+                    <thead class="dn-items-thead">
                         <tr style="background:#f1f5f9;border-bottom:2px solid #cbd5e1;">
-                            <th style="padding:5px 6px;text-align:left;color:#475569;font-weight:600;font-size:10px;text-transform:uppercase;">Description</th>
-                            <th style="padding:5px 6px;text-align:center;color:#475569;font-weight:600;font-size:10px;text-transform:uppercase;width:100px;">Quantity</th>
+                            <th style="padding:5px 8px;text-align:left;color:#475569;font-weight:600;font-size:10px;text-transform:uppercase;">Description</th>
+                            <th style="padding:5px 8px;text-align:center;color:#475569;font-weight:600;font-size:10px;text-transform:uppercase;width:80px;">Qty</th>
                         </tr>
                     </thead>
-                    <tbody style="color:#333;">
+                    <tbody class="dn-items-tbody" style="color:#333;">
                         {items_html}
                     </tbody>
                 </table>
             </div>
-            
-            <!-- FOOTER -->
-            <div style="padding:10px 25px;display:grid;grid-template-columns:1fr 1fr;gap:40px;border-top:1px solid #e5e7eb;margin-top:20px;">
+
+            <!-- FOOTER (signature line) -->
+            <div class="dn-footer" style="padding:14px 30px 20px;display:grid;grid-template-columns:1fr 1fr;gap:40px;border-top:1px solid #e5e7eb;margin-top:16px;">
                 <div>
-                    <div style="font-size:12px;color:#888;text-transform:uppercase;margin-bottom:8px;">Received By (Name & Signature)</div>
-                    <div style="border-bottom:1px solid #ccc;height:40px;"></div>
+                    <div style="font-size:11px;color:#888;text-transform:uppercase;margin-bottom:8px;">Received By (Name &amp; Signature)</div>
+                    <div style="border-bottom:1px solid #ccc;height:36px;"></div>
                 </div>
                 <div>
-                    <div style="font-size:12px;color:#888;text-transform:uppercase;margin-bottom:8px;">Date Received</div>
-                    <div style="border-bottom:1px solid #ccc;height:40px;"></div>
+                    <div style="font-size:11px;color:#888;text-transform:uppercase;margin-bottom:8px;">Date Received</div>
+                    <div style="border-bottom:1px solid #ccc;height:36px;"></div>
                 </div>
             </div>
-            
-            {"<div style='padding:0 25px 20px;'><div style='padding:12px;background:#fafafa;border-radius:6px;font-size:13px;color:#666;'><strong>Notes:</strong> " + safe_string(dn.get('notes','')) + "</div></div>" if dn.get('notes') else ""}
-        </div>
-        
+
+            {"<div style='padding:0 30px 16px;'><div style='padding:10px;background:#fafafa;border-radius:6px;font-size:12px;color:#666;'><strong>Notes:</strong> " + safe_string(dn.get('notes','')) + "</div></div>" if dn.get('notes') else ""}
+
+        </div><!-- /.dn-card -->
+        </div><!-- /.dn-print-wrap -->
+
         <script>
         async function updateStatus(status) {{
             if (!confirm('Update status to ' + status + '?')) return;
-            
             const response = await fetch('/api/delivery-note/{dn_id}/status', {{
                 method: 'POST',
                 headers: {{'Content-Type': 'application/json'}},
                 body: JSON.stringify({{status: status}})
             }});
-            
             if (response.ok) {{
                 location.reload();
             }} else {{
