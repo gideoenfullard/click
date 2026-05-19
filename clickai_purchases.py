@@ -4910,4 +4910,314 @@ Nothing else."""
             logger.error(f"[PAY] Error: {e}")
             return jsonify({"success": False, "error": str(e)})
 
+    @app.route("/api/scan/save-supplier-credit-note", methods=["POST"])
+    @login_required
+    def api_scan_save_supplier_credit_note():
+        """
+        Save a scanned supplier credit note.
+        
+        Accepts:
+          - supplier_name, cn_number (the credit note's own number), date,
+            subtotal, vat, total, items (line items from the credit note)
+          - target_type: "invoice" or "balance_bf"
+          - target_invoice_id (when target_type == "invoice")
+          - credit_amount: the actual amount to credit (may be LESS than total
+            for a partial credit)
+          - original_invoice_ref (informational — what Sonnet read on the document)
+        
+        Behaviour:
+          - Creates a supplier_credit_notes record with credit_amount.
+          - Posts journal: DR Creditors / CR Stock-or-COGS / CR VAT Input.
+          - If target_type == "invoice" AND credit_amount >= invoice total:
+              * Marks the invoice as 'credited'
+              * Fully reverses the original stock from snapshot
+          - If target_type == "invoice" AND credit_amount < invoice total:
+              * Invoice stays open (supplier balance auto-deducts the credit
+                via the existing _sup_running calc in supplier_view)
+              * Reverses stock PROPORTIONALLY: ratio = credit_amount / invoice_total
+          - If target_type == "balance_bf":
+              * No invoice link, no stock reversal (the credit is a pure
+                money credit against the supplier account — no items to undo)
+        """
+        try:
+            user = Auth.get_current_user()
+            business = Auth.get_current_business()
+            biz_id = business.get("id") if business else None
+            
+            if not biz_id:
+                return jsonify({"success": False, "error": "No business selected"})
+            
+            data = request.get_json() or {}
+            supplier_name = (data.get("supplier_name") or "Unknown Supplier").strip()
+            cn_doc_number = (data.get("cn_number") or "").strip()  # The number printed on the credit note doc itself
+            cn_date = data.get("date") or today()
+            cn_subtotal = float(data.get("subtotal", 0) or 0)
+            cn_vat = float(data.get("vat", 0) or 0)
+            cn_total = float(data.get("total", 0) or 0)
+            cn_items_raw = data.get("items", []) or []
+            target_type = (data.get("target_type") or "invoice").lower().strip()
+            target_invoice_id = (data.get("target_invoice_id") or "").strip()
+            target_invoice_number = (data.get("target_invoice_number") or "").strip()
+            credit_amount = float(data.get("credit_amount", 0) or 0)
+            original_invoice_ref = (data.get("original_invoice_ref") or "").strip()
+            
+            if credit_amount <= 0:
+                return jsonify({"success": False, "error": "Credit amount must be greater than zero"})
+            
+            if target_type not in ("invoice", "balance_bf"):
+                target_type = "invoice"
+            
+            if target_type == "invoice" and not target_invoice_id:
+                return jsonify({"success": False, "error": "Pick a target invoice, or select Balance Brought Forward"})
+            
+            # Find or create supplier
+            suppliers = db.get("suppliers", {"business_id": biz_id}) or []
+            supplier = None
+            for s in suppliers:
+                s_name = (s.get("name") or "").strip()
+                if not s_name:
+                    continue
+                if supplier_name.lower() == s_name.lower() or supplier_name.lower() in s_name.lower() or s_name.lower() in supplier_name.lower():
+                    supplier = s
+                    break
+            if not supplier:
+                # New supplier (rare for a credit note, but possible)
+                new_sup = RecordFactory.supplier(
+                    business_id=biz_id,
+                    name=supplier_name,
+                    phone=data.get("supplier_phone", "") or "",
+                    email=data.get("supplier_email", "") or "",
+                    created_by=user.get("id", "") if user else ""
+                )
+                ok, _ = db.save("suppliers", new_sup)
+                supplier = new_sup
+            supplier_id = supplier.get("id")
+            
+            # ── Look up the target invoice (if any) for full/partial decision
+            target_invoice = None
+            invoice_total = 0.0
+            is_full_credit = False
+            if target_type == "invoice":
+                target_invoice = db.get_one("supplier_invoices", target_invoice_id)
+                if not target_invoice:
+                    return jsonify({"success": False, "error": "Target invoice not found"})
+                if (target_invoice.get("status") or "").lower() == "credited":
+                    return jsonify({"success": False, "error": "Target invoice is already credited"})
+                invoice_total = float(target_invoice.get("total", 0) or 0)
+                # Tolerance: treat 'within 1 cent' as full credit
+                is_full_credit = credit_amount >= (invoice_total - 0.01) and invoice_total > 0
+                if not target_invoice_number:
+                    target_invoice_number = target_invoice.get("invoice_number", "")
+            
+            # ── Allocation intent (inherit from target invoice or default to stock)
+            _alloc_intent = "stock"
+            if target_invoice:
+                _alloc_intent = (target_invoice.get("allocation_intent") or "stock").lower()
+                if _alloc_intent not in ("stock", "cos", "split"):
+                    _alloc_intent = "stock"
+            
+            # ── Generate CN number for our system (separate from the doc's own number)
+            existing_cns = db.get("supplier_credit_notes", {"business_id": biz_id}) or []
+            cn_number = next_document_number("SCR-", existing_cns, field="cn_number")
+            cn_id = generate_id()
+            cn_ref = f"SCR-{cn_id[:8]}"
+            
+            # ── STOCK REVERSAL (only when targeting an invoice)
+            stock_reversal_note = ""
+            cn_snapshots_for_record = "[]"
+            if target_type == "invoice" and target_invoice:
+                snapshots_raw = target_invoice.get("stock_snapshots")
+                if is_full_credit:
+                    # FULL credit — reverse stock exactly per original snapshot
+                    if snapshots_raw:
+                        _reverse_stock_from_snapshot(biz_id, snapshots_raw)
+                        cn_snapshots_for_record = snapshots_raw if isinstance(snapshots_raw, str) else json.dumps(snapshots_raw)
+                        stock_reversal_note = "Full stock reversal from snapshot"
+                    else:
+                        # Legacy: best-effort from items
+                        _legacy_reverse_stock_from_items(biz_id, target_invoice.get("items", "[]"))
+                        stock_reversal_note = "Full stock reversal (legacy, no snapshot)"
+                else:
+                    # PARTIAL credit — reverse stock proportionally
+                    if invoice_total > 0 and credit_amount > 0:
+                        ratio = credit_amount / invoice_total
+                    else:
+                        ratio = 0
+                    if snapshots_raw and ratio > 0:
+                        # Build a scaled snapshot: scale each delta by ratio.
+                        # We can't simply restore old_qty (that would full-reverse).
+                        # Instead, compute current snapshot delta and subtract ratio*delta.
+                        try:
+                            snaps = snapshots_raw if isinstance(snapshots_raw, list) else json.loads(snapshots_raw)
+                        except Exception:
+                            snaps = []
+                        partial_reversed = 0
+                        for snap in (snaps or []):
+                            try:
+                                stock_id = snap.get("stock_id")
+                                action = snap.get("action", "updated")
+                                table = snap.get("table", "stock_items")
+                                if not stock_id or action == "created":
+                                    # We don't delete created stock for partials — too risky.
+                                    # Adjust quantity downward by ratio of the delta instead.
+                                    if action == "created":
+                                        try:
+                                            cur = db.get_one(table, stock_id)
+                                            if cur:
+                                                cur_qty = float(cur.get("quantity", cur.get("qty", 0)) or 0)
+                                                # On 'created', the entire current qty IS the delta.
+                                                reduce_by = cur_qty * ratio
+                                                new_qty = max(0, cur_qty - reduce_by)
+                                                db.save(table, {"id": stock_id, "quantity": new_qty, "qty": new_qty})
+                                                partial_reversed += 1
+                                        except Exception as _e:
+                                            logger.warning(f"[CN-PARTIAL] created-stock partial reduce failed: {_e}")
+                                    continue
+                                # Updated: delta = current - old_qty. Reduce current by ratio*delta.
+                                old_qty = float(snap.get("old_qty", 0) or 0)
+                                cur = db.get_one(table, stock_id)
+                                if not cur:
+                                    continue
+                                cur_qty = float(cur.get("quantity", cur.get("qty", 0)) or 0)
+                                delta_added = max(0, cur_qty - old_qty)  # qty originally added by invoice (rough)
+                                # If invoice has been partially consumed, delta_added may be < snap delta;
+                                # use the smaller of (snap-delta, delta_added) to be safe.
+                                snap_delta = max(0, (float(snap.get("qty_delta", 0) or 0)))
+                                if snap_delta <= 0:
+                                    # Fall back to (cur - old) which is positive when stock still on hand
+                                    snap_delta = delta_added
+                                reduce_by = snap_delta * ratio
+                                new_qty = max(0, cur_qty - reduce_by)
+                                db.save(table, {"id": stock_id, "quantity": new_qty, "qty": new_qty})
+                                partial_reversed += 1
+                            except Exception as _e:
+                                logger.warning(f"[CN-PARTIAL] snapshot entry partial reverse failed: {_e}")
+                        stock_reversal_note = f"Partial stock reversal ({int(ratio*100)}% — {partial_reversed} items adjusted)"
+                    else:
+                        # No snapshot or zero ratio — skip stock; pure money credit
+                        stock_reversal_note = "No proportional stock reversal (no snapshot or zero ratio)"
+                    cn_snapshots_for_record = "[]"  # No clean snapshot to store on the partial CN
+            else:
+                # Balance B/F credit — no items, no stock to reverse
+                stock_reversal_note = "Balance B/F credit — no stock reversal"
+            
+            # ── JOURNAL: DR Creditors (reduce what we owe), CR Stock/COGS, CR VAT Input
+            # Use the credit_amount (not the doc total) so partials post correctly.
+            # VAT portion scales with the ratio of credit_amount to (doc total OR invoice total).
+            # If the credit_amount equals doc total, use doc VAT directly; otherwise apportion.
+            if cn_total > 0 and cn_vat > 0:
+                vat_in_credit = round(cn_vat * (credit_amount / cn_total), 2)
+            else:
+                # Calculate VAT inclusive: VAT portion = amount × 15/115
+                vat_in_credit = round(credit_amount * 0.15 / 1.15, 2) if credit_amount > 0 else 0
+            net_in_credit = round(credit_amount - vat_in_credit, 2)
+            
+            cn_journal_lines = []
+            if _alloc_intent == "cos":
+                cn_journal_lines.append({"account_code": gl(biz_id, "cogs"), "debit": 0, "credit": net_in_credit})
+            else:
+                cn_journal_lines.append({"account_code": gl(biz_id, "stock"), "debit": 0, "credit": net_in_credit})
+            if vat_in_credit > 0:
+                cn_journal_lines.append({"account_code": gl(biz_id, "vat_input"), "debit": 0, "credit": vat_in_credit})
+            cn_journal_lines.append({"account_code": gl(biz_id, "creditors"), "debit": round(credit_amount, 2), "credit": 0})
+            
+            _journal_desc = f"Credit Note - {supplier_name}"
+            if target_type == "invoice" and target_invoice_number:
+                _journal_desc += f" (vs {target_invoice_number})"
+            elif target_type == "balance_bf":
+                _journal_desc += " (Balance B/F)"
+            try:
+                create_journal_entry(biz_id, cn_date, _journal_desc, cn_ref, cn_journal_lines)
+            except Exception as _je:
+                logger.error(f"[CN-SCAN] Journal entry failed: {_je}")
+            
+            # ── Save the credit note record
+            cn_record = {
+                "id": cn_id,
+                "business_id": biz_id,
+                "supplier_id": supplier_id,
+                "supplier_name": supplier_name,
+                "cn_number": cn_number,
+                "supplier_cn_number": cn_doc_number,  # the number printed on the supplier's CN
+                "original_invoice_id": target_invoice_id if target_type == "invoice" else "",
+                "original_invoice_number": target_invoice_number if target_type == "invoice" else "",
+                "target_type": target_type,  # 'invoice' or 'balance_bf'
+                "is_partial": (target_type == "invoice" and not is_full_credit),
+                "date": cn_date,
+                "subtotal": cn_subtotal,
+                "vat": vat_in_credit,
+                "total": round(credit_amount, 2),  # actual credit applied (not doc total)
+                "document_total": cn_total,  # what was printed on the doc
+                "credit_amount": round(credit_amount, 2),
+                "reason": original_invoice_ref or "Scanned supplier credit note",
+                "items": json.dumps(cn_items_raw) if not isinstance(cn_items_raw, str) else cn_items_raw,
+                "status": "active",
+                "stock_snapshots": cn_snapshots_for_record,
+                "source": "scan",
+                "created_by": user.get("id") if user else None,
+                "created_at": now()
+            }
+            ok, result = db.save("supplier_credit_notes", cn_record)
+            if not ok:
+                logger.error(f"[CN-SCAN] DB save failed: {result}")
+                return jsonify({"success": False, "error": f"Database error: {result}"})
+            
+            # ── Mark target invoice as 'credited' only for FULL credits
+            if target_type == "invoice" and is_full_credit:
+                try:
+                    db.save("supplier_invoices", {"id": target_invoice_id, "status": "credited", "updated_at": now()})
+                except Exception as _ie:
+                    logger.warning(f"[CN-SCAN] Could not mark invoice credited: {_ie}")
+            
+            # ── Pulse event
+            if target_type == "invoice":
+                _pulse_summary = f"Credit note {cn_number} created for {supplier_name}"
+                _pulse_detail = (f"{'FULL' if is_full_credit else 'PARTIAL'} credit of R{credit_amount:.2f} "
+                                 f"vs invoice {target_invoice_number or '?'} (total R{invoice_total:.2f}). "
+                                 f"{stock_reversal_note}.")
+            else:
+                _pulse_summary = f"Credit note {cn_number} (Balance B/F) for {supplier_name}"
+                _pulse_detail = f"Credit of R{credit_amount:.2f} against supplier balance brought forward. {stock_reversal_note}."
+            _log_pulse_event(biz_id, user, "supplier_credit_note_created", _pulse_summary, _pulse_detail)
+            
+            # ── Allocation log
+            try:
+                if log_allocation:
+                    log_allocation(
+                        business_id=biz_id, allocation_type="supplier_credit_note",
+                        source_table="supplier_credit_notes", source_id=cn_id,
+                        description=f"Credit Note {cn_number} - {supplier_name}" + (
+                            f" - {('FULL' if is_full_credit else 'PARTIAL')} vs {target_invoice_number}" if target_type == "invoice" else " - Balance B/F"
+                        ),
+                        amount=round(credit_amount, 2), gl_entries=cn_journal_lines,
+                        ai_reasoning=(f"Scanned credit note. Document total R{cn_total:.2f}, "
+                                      f"applied R{credit_amount:.2f}. {stock_reversal_note}."),
+                        ai_confidence="HIGH", ai_worker="Scan",
+                        supplier_name=supplier_name, payment_method="account",
+                        reference=cn_number, transaction_date=cn_date,
+                        created_by=user.get("id") if user else "",
+                        created_by_name=user.get("name", "") if user else ""
+                    )
+            except Exception:
+                pass
+            
+            return jsonify({
+                "success": True,
+                "cn_number": cn_number,
+                "cn_id": cn_id,
+                "credit_amount": round(credit_amount, 2),
+                "target_type": target_type,
+                "is_full_credit": is_full_credit,
+                "stock_reversal": stock_reversal_note,
+                "message": (
+                    f"Credit note {cn_number} saved — R{credit_amount:.2f} credited "
+                    + (f"against invoice {target_invoice_number}" if target_type == "invoice" else "to Balance B/F")
+                    + (" (full reversal)" if (target_type == "invoice" and is_full_credit) else
+                       (" (partial)" if target_type == "invoice" else ""))
+                )
+            })
+        except Exception as e:
+            logger.exception(f"[CN-SCAN] Failed: {e}")
+            return jsonify({"success": False, "error": str(e)})
+    
     logger.info("[PURCHASES] All supplier & purchase routes registered ✓")

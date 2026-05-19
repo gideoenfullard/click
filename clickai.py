@@ -51294,13 +51294,46 @@ Return ONLY valid JSON:
 
 NOTE: Read item descriptions and quantities exactly. Price can be 0 - we will use our own prices."""
         else:
-            prompt = """Read this invoice/receipt carefully. Extract ALL line items AND supplier details.
+            prompt = """Read this supplier document carefully. Extract ALL line items AND supplier details.
 
-Rules:
+═══════════════════════════════════════════════════════════════════════
+STEP 1: IDENTIFY DOCUMENT TYPE
+═══════════════════════════════════════════════════════════════════════
+First, determine what TYPE of document this is. Set "document_type" to ONE of:
+
+A) "credit_note" — if the document is a SUPPLIER CREDIT NOTE / RETURN.
+   Indicators (any ONE of these means credit_note):
+   - The word "CREDIT NOTE", "CREDITNOTA", "CR NOTE", "CRN", "RETURNS", "RETURN NOTE", or "REFUND" appears prominently (usually at the top, as the document title)
+   - Document number starts with "CR", "CN", "SCR", "CRN", "RTN", or similar credit prefix
+   - Totals are shown as NEGATIVE numbers (e.g. -1500.00 or in brackets like (1500.00))
+   - Wording like "We credit your account with...", "Returned goods", "Credit to your account"
+   - A reference to an ORIGINAL invoice that is being credited (e.g. "Credit against Invoice INV-123", "Original Invoice: 4567", "Re: Inv 8910")
+
+B) "invoice" — if it's a normal supplier invoice / tax invoice / receipt (the default).
+   - Title says "TAX INVOICE", "INVOICE", "RECEIPT", "PROFORMA"
+   - Positive totals
+   - Money owed by us TO the supplier
+
+When in doubt, default to "invoice".
+
+═══════════════════════════════════════════════════════════════════════
+STEP 2: IF IT IS A CREDIT NOTE
+═══════════════════════════════════════════════════════════════════════
+- Put the credit note's OWN document number into "invoice_number" (this is the CR/SCR number)
+- ALSO read the ORIGINAL INVOICE NUMBER that is being credited. Look for:
+  * "Original Invoice", "Ref Invoice", "Against Invoice", "Credit against", "Re: Invoice", "Inv No (credited)"
+  * Often shown near the top right or as a "Reference" field
+  * Put this number into "original_invoice_ref"
+- Amounts: read them as POSITIVE numbers (drop any minus signs or brackets) — the credit_note flag is enough to tell the system it's a reduction. So a "-R 1,500.00" credit becomes total: 1500.00 with document_type: "credit_note".
+- If no original invoice reference is visible on the credit note, set "original_invoice_ref" to "" (empty string) — the user will pick the target manually.
+
+═══════════════════════════════════════════════════════════════════════
+STEP 3: NORMAL EXTRACTION RULES (apply to both invoices and credit notes)
+═══════════════════════════════════════════════════════════════════════
 1. Copy descriptions EXACTLY as printed on the document
 2. Read EVERY item row - do not skip any
 3. Look at the TOP and BOTTOM of the document for phone, email, address, VAT number
-4. Invoice number from: "Invoice No", "Inv No", "Tax Invoice", "Ref", "Document No"
+4. Document number from: "Invoice No", "Inv No", "Tax Invoice", "Ref", "Document No", "Credit Note No", "CR No"
 5. For VAT: READ it if shown on document. If not shown, set vat to 0 (Python will calculate)
 6. supplier_vat_number: Look for "VAT No", "VAT Reg", "Tax No" - usually starts with 4
 
@@ -51338,6 +51371,8 @@ Python will calculate any missing values afterwards.
 
 Return ONLY JSON:
 {
+    "document_type": "invoice",
+    "original_invoice_ref": "",
     "supplier_name": "Company name exactly as printed",
     "supplier_phone": "",
     "supplier_email": "",
@@ -51354,7 +51389,9 @@ Return ONLY JSON:
 }
 
 NOTE: For line_total, qty, unit_price, discount_pct, subtotal, vat, total - read ONLY what is printed.
-If ANY number is not visible on the document, set it to 0 (or 1 for pack_size). Python handles all math."""
+If ANY number is not visible on the document, set it to 0 (or 1 for pack_size). Python handles all math.
+For document_type: use "invoice" by default, "credit_note" ONLY if you clearly see credit/return indicators.
+For original_invoice_ref: only fill it when document_type is "credit_note" AND you actually see the original invoice number; otherwise leave it as "" (empty string)."""
         
         client = _anthropic_client
         
@@ -51893,6 +51930,46 @@ IMPORTANT: Read ALL numbers exactly as printed on the document. Do NOT calculate
                 if _target_po:
                     extracted["_matched_po_id"] = _target_po.get("id")
                     extracted["_matched_po_number"] = _target_po.get("po_number")
+
+                # ═══════════════════════════════════════════════════════════
+                # CREDIT-NOTE TARGETING: if this scan looks like a credit note,
+                # attach the supplier's open invoices so the UI can let the
+                # user pick which invoice (or Balance B/F) to credit against,
+                # and pre-match by original_invoice_ref if Sonnet read one.
+                # ═══════════════════════════════════════════════════════════
+                _doc_type = (extracted.get("document_type") or "invoice").lower()
+                if _doc_type == "credit_note" and _matched_supplier:
+                    try:
+                        _all_supplier_invs = db.get("supplier_invoices", {"business_id": biz_id}) or []
+                        # Only invoices for this supplier that are NOT already credited
+                        _supplier_invs = [
+                            _si for _si in _all_supplier_invs
+                            if _si.get("supplier_id") == _matched_supplier.get("id")
+                            and (_si.get("status") or "").lower() != "credited"
+                        ]
+                        _si_list = sorted(_supplier_invs, key=lambda x: x.get("date", ""), reverse=True)[:50]
+                        extracted["_supplier_open_invoices"] = [
+                            {
+                                "id": _si.get("id"),
+                                "invoice_number": _si.get("invoice_number", ""),
+                                "date": _si.get("date", ""),
+                                "total": float(_si.get("total", 0) or 0),
+                                "status": _si.get("status", "")
+                            }
+                            for _si in _si_list
+                        ]
+                        # Auto-match by original_invoice_ref if Sonnet read one
+                        _orig_ref = (extracted.get("original_invoice_ref") or "").strip().upper().replace(" ", "")
+                        if _orig_ref:
+                            for _si in _si_list:
+                                _inv_num = (_si.get("invoice_number") or "").upper().replace(" ", "")
+                                if _inv_num and (_inv_num == _orig_ref or _inv_num in _orig_ref or _orig_ref in _inv_num):
+                                    extracted["_matched_original_invoice_id"] = _si.get("id")
+                                    extracted["_matched_original_invoice_number"] = _si.get("invoice_number")
+                                    extracted["_matched_original_invoice_total"] = float(_si.get("total", 0) or 0)
+                                    break
+                    except Exception as _cn_err:
+                        logger.warning(f"[SCAN] Credit-note target lookup failed: {_cn_err}")
                 
                 # If a PO was identified, ask Haiku to map invoice items → PO items
                 if _target_po and ANTHROPIC_API_KEY:
@@ -53376,8 +53453,76 @@ def scan_inbox_page():
                 </div>`;
             }}
             
+            // ── CREDIT NOTE DETECTION & TARGET PICKER ───────────────────────
+            // Sonnet sets document_type = "credit_note" on the OCR pass when
+            // it sees credit-note indicators. Backend then attaches the
+            // supplier's open invoices (and may auto-match one by reference).
+            const _docType = (_ext.document_type || data.document_type || 'invoice').toLowerCase();
+            const _isCreditNote = (_docType === 'credit_note');
+            const _origInvRef = _ext.original_invoice_ref || data.original_invoice_ref || '';
+            const _openInvoices = _ext._supplier_open_invoices || data._supplier_open_invoices || [];
+            const _matchedOrigInvId = _ext._matched_original_invoice_id || data._matched_original_invoice_id || '';
+            const _matchedOrigInvNum = _ext._matched_original_invoice_number || data._matched_original_invoice_number || '';
+            const _matchedOrigInvTotal = parseFloat(_ext._matched_original_invoice_total || data._matched_original_invoice_total || 0);
+            // Expose to processAs() and the save handler
+            window._isCreditNote = _isCreditNote;
+            window._scanCreditNoteData = _isCreditNote ? {{
+                origInvRef: _origInvRef,
+                openInvoices: _openInvoices,
+                matchedOrigInvId: _matchedOrigInvId,
+                matchedOrigInvNum: _matchedOrigInvNum,
+                matchedOrigInvTotal: _matchedOrigInvTotal
+            }} : null;
+            let creditNoteBannerHtml = '';
+            if (_isCreditNote) {{
+                // Build invoice picker dropdown
+                let invOpts = '<option value="">— Select target invoice —</option>';
+                _openInvoices.forEach(si => {{
+                    const sel = (si.id === _matchedOrigInvId) ? ' selected' : '';
+                    invOpts += `<option value="${{si.id}}" data-num="${{si.invoice_number}}" data-total="${{si.total}}"${{sel}}>${{si.invoice_number}} · ${{si.date}} · R${{(si.total || 0).toFixed(2)}}</option>`;
+                }});
+                // Pre-fill the credit amount with the scanned total (user can lower for partial)
+                const _scannedTotal = parseFloat(data.total || (data.extracted && data.extracted.total) || 0);
+                const _autoMatchInfo = _matchedOrigInvNum
+                    ? `<div style="font-size:12px;color:#10b981;margin-bottom:8px;">✓ Auto-matched to invoice <strong>${{_matchedOrigInvNum}}</strong> (R${{_matchedOrigInvTotal.toFixed(2)}}) from reference on document.</div>`
+                    : (_origInvRef
+                        ? `<div style="font-size:12px;color:#fbbf24;margin-bottom:8px;">⚠ Reference "${{_origInvRef}}" on document — could not auto-match to an open invoice. Pick manually below.</div>`
+                        : `<div style="font-size:12px;color:var(--text-muted);margin-bottom:8px;">No original invoice reference found on document. Pick the target manually.</div>`);
+                creditNoteBannerHtml = `
+                <div style="margin:10px 0;padding:14px;background:rgba(245,158,11,0.12);border:2px solid #f59e0b;border-radius:10px;">
+                    <div style="display:flex;align-items:center;gap:10px;margin-bottom:10px;">
+                        <span style="font-size:22px;">↩️</span>
+                        <strong style="color:#f59e0b;font-size:15px;">This appears to be a SUPPLIER CREDIT NOTE</strong>
+                    </div>
+                    ${{_autoMatchInfo}}
+                    <div style="font-size:12px;color:var(--text-muted);margin-bottom:6px;">Apply this credit against:</div>
+                    <div style="display:grid;grid-template-columns:auto 1fr;gap:6px;margin-bottom:8px;align-items:center;">
+                        <label style="display:flex;align-items:center;gap:6px;font-size:13px;cursor:pointer;">
+                            <input type="radio" name="cn_target_type" value="invoice" ${{_matchedOrigInvId || _openInvoices.length > 0 ? 'checked' : ''}} onchange="onCnTargetTypeChange()"> Specific Invoice
+                        </label>
+                        <select id="cn_target_invoice" onchange="onCnTargetInvoiceChange()" style="padding:8px;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text);font-size:13px;">
+                            ${{invOpts}}
+                        </select>
+                    </div>
+                    <div style="margin-bottom:10px;">
+                        <label style="display:flex;align-items:center;gap:6px;font-size:13px;cursor:pointer;">
+                            <input type="radio" name="cn_target_type" value="balance_bf" ${{!_matchedOrigInvId && _openInvoices.length === 0 ? 'checked' : ''}} onchange="onCnTargetTypeChange()"> Balance Brought Forward (general credit on supplier account)
+                        </label>
+                    </div>
+                    <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;align-items:end;">
+                        <div>
+                            <label style="display:block;font-size:11px;color:var(--text-muted);margin-bottom:4px;">CREDIT AMOUNT (full or partial)</label>
+                            <input type="number" step="0.01" id="cn_credit_amount" value="${{_scannedTotal.toFixed(2)}}" oninput="onCnAmountChange()" style="width:100%;padding:8px;font-size:16px;font-weight:600;background:rgba(245,158,11,0.08);border:2px solid #f59e0b;border-radius:6px;color:var(--text);">
+                        </div>
+                        <div id="cn_amount_hint" style="font-size:11px;color:var(--text-muted);padding-bottom:8px;">
+                            Default = full credit note total. Lower it for a partial credit.
+                        </div>
+                    </div>
+                </div>`;
+            }}
+            
             if (items.length > 0) {{
-                itemsHtml = poBannerHtml + `
+                itemsHtml = poBannerHtml + creditNoteBannerHtml + `
                 <div style="margin:15px 0;background:rgba(99,102,241,0.1);border-radius:12px;padding:15px;">
                     <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;">
                         <span style="font-weight:600;color:var(--primary);">LINE ITEMS (${{items.length}})</span>
@@ -53546,7 +53691,7 @@ def scan_inbox_page():
                 
                 itemsHtml += '</div></div>';
             }} else {{
-                itemsHtml = `
+                itemsHtml = creditNoteBannerHtml + `
                 <div style="margin:15px 0;padding:20px;text-align:center;background:rgba(245,158,11,0.1);border-radius:12px;color:#f59e0b;">
                     [!] No line items extracted - consider re-scanning
                 </div>
@@ -53648,6 +53793,25 @@ def scan_inbox_page():
                     </div>
                 </div>
             `;
+            
+            // ── If this is a credit note, replace the save area entirely.
+            // The full-bleed Credit Note button submits to the new endpoint
+            // and uses the target invoice / Balance B/F + credit_amount the
+            // user picked in the orange banner above.
+            if (_isCreditNote) {{
+                saveHtml = `
+                    <div style="padding:14px;background:rgba(245,158,11,0.08);border:2px solid rgba(245,158,11,0.4);border-radius:10px;">
+                        <div style="font-size:13px;font-weight:600;color:#f59e0b;margin-bottom:8px;">↩️ Supplier Credit Note</div>
+                        <div style="font-size:11px;color:var(--text-muted);margin-bottom:12px;">
+                            This will record a credit on the supplier account. Stock will be reversed proportionally to the credit amount.
+                            Pick the target invoice (or Balance Brought Forward) and confirm the credit amount in the orange banner above before saving.
+                        </div>
+                        <button class="btn" onclick="processAs('supplier_credit_note')" style="width:100%;padding:14px;background:#f59e0b;color:white;font-weight:700;font-size:15px;border:none;border-radius:8px;cursor:pointer;">
+                            ↩️ Save as Credit Note
+                        </button>
+                    </div>
+                `;
+            }}
         }} else if (type === 'customer_order') {{
             const orderItems = data.items || [];
             let orderItemsHtml = '';
@@ -54187,13 +54351,128 @@ def scan_inbox_page():
         }}
     }}
     
+    // ═══════════════════════════════════════════════════════════════════
+    // CREDIT NOTE UI HELPERS
+    // ═══════════════════════════════════════════════════════════════════
+    function onCnTargetTypeChange() {{
+        // Enable/disable the invoice dropdown depending on which radio is picked.
+        const radios = document.getElementsByName('cn_target_type');
+        let val = 'invoice';
+        for (const r of radios) {{ if (r.checked) {{ val = r.value; break; }} }}
+        const sel = document.getElementById('cn_target_invoice');
+        if (sel) sel.disabled = (val !== 'invoice');
+        onCnAmountChange();
+    }}
+    function onCnTargetInvoiceChange() {{
+        // When invoice changes, show hint about full vs partial.
+        onCnAmountChange();
+    }}
+    function onCnAmountChange() {{
+        const sel = document.getElementById('cn_target_invoice');
+        const amtEl = document.getElementById('cn_credit_amount');
+        const hint = document.getElementById('cn_amount_hint');
+        if (!hint) return;
+        const radios = document.getElementsByName('cn_target_type');
+        let target = 'invoice';
+        for (const r of radios) {{ if (r.checked) {{ target = r.value; break; }} }}
+        const amt = parseFloat((amtEl && amtEl.value) || 0);
+        if (target === 'balance_bf') {{
+            hint.innerHTML = `<span style="color:#10b981;">Will reduce supplier Balance Brought Forward by R${{amt.toFixed(2)}}</span>`;
+            return;
+        }}
+        let invTotal = 0;
+        if (sel && sel.value) {{
+            const opt = sel.options[sel.selectedIndex];
+            invTotal = parseFloat(opt && opt.getAttribute('data-total') || 0);
+        }}
+        if (invTotal > 0) {{
+            if (amt >= invTotal - 0.01) {{
+                hint.innerHTML = `<span style="color:#10b981;">FULL credit — invoice will be marked credited.</span>`;
+            }} else if (amt > 0) {{
+                const remaining = invTotal - amt;
+                hint.innerHTML = `<span style="color:#f59e0b;">PARTIAL credit — invoice stays open with R${{remaining.toFixed(2)}} outstanding.</span>`;
+            }} else {{
+                hint.innerHTML = `<span style="color:var(--red);">Enter a credit amount above 0.</span>`;
+            }}
+        }} else {{
+            hint.innerHTML = `<span style="color:var(--text-muted);">Pick a target invoice to see full / partial.</span>`;
+        }}
+    }}
+    
     async function processAs(saveType) {{
         let payload = {{}};
         let endpoint = '';
         let successMsg = '';
         let redirect = '';
         
-        if (saveType.includes('expense') || saveType.includes('supplier')) {{
+        // ── CREDIT NOTE: special branch — must come BEFORE the generic
+        // supplier-invoice branch (because 'supplier_credit_note' contains
+        // the substring 'supplier' and would otherwise be caught below).
+        if (saveType === 'supplier_credit_note') {{
+            // Read target choice from the orange credit-note banner
+            const radios = document.getElementsByName('cn_target_type');
+            let targetType = 'invoice';
+            for (const r of radios) {{ if (r.checked) {{ targetType = r.value; break; }} }}
+            const sel = document.getElementById('cn_target_invoice');
+            const targetInvoiceId = (targetType === 'invoice' && sel) ? sel.value : '';
+            const targetInvoiceNumber = (targetType === 'invoice' && sel && sel.value)
+                ? (sel.options[sel.selectedIndex].getAttribute('data-num') || '')
+                : '';
+            const targetInvoiceTotal = (targetType === 'invoice' && sel && sel.value)
+                ? parseFloat(sel.options[sel.selectedIndex].getAttribute('data-total') || 0)
+                : 0;
+            const creditAmount = parseFloat((document.getElementById('cn_credit_amount') || {{}}).value || 0);
+            // Validation
+            if (creditAmount <= 0) {{
+                alert('Please enter a credit amount above zero.');
+                return;
+            }}
+            if (targetType === 'invoice' && !targetInvoiceId) {{
+                alert('Please pick a target invoice, or select "Balance Brought Forward".');
+                return;
+            }}
+            if (targetType === 'invoice' && targetInvoiceTotal > 0 && creditAmount > targetInvoiceTotal + 0.01) {{
+                if (!confirm(`The credit amount (R${{creditAmount.toFixed(2)}}) is greater than the invoice total (R${{targetInvoiceTotal.toFixed(2)}}). Continue anyway?`)) return;
+            }}
+            // Collect edited items so backend has line-level detail for proportional stock reversal
+            const _origItems = (currentItemData.extracted && currentItemData.extracted.items) || currentItemData.items || [];
+            const editedItems = [];
+            const itemRows = document.querySelectorAll('.line-item-row');
+            itemRows.forEach((row, i) => {{
+                const descEl = document.getElementById(`item_desc_${{i}}`);
+                const qtyEl = document.getElementById(`item_qty_${{i}}`);
+                const priceEl = document.getElementById(`item_price_${{i}}`);
+                if (descEl) {{
+                    const _orig = _origItems[i] || {{}};
+                    editedItems.push({{
+                        description: descEl.value.trim(),
+                        qty: parseFloat(qtyEl?.value || _orig.qty || 1),
+                        unit_price: parseFloat(priceEl?.value || _orig.unit_price || 0),
+                        discount_pct: parseFloat(_orig.discount_pct || 0),
+                        pack_size: parseInt(_orig.pack_size || 1),
+                        line_total: parseFloat(_orig.line_total || 0)
+                    }});
+                }}
+            }});
+            payload = {{
+                supplier_name: document.getElementById('m_supplier')?.value || 'Unknown',
+                supplier_phone: document.getElementById('m_phone')?.value || '',
+                supplier_email: document.getElementById('m_email')?.value || '',
+                cn_number: document.getElementById('m_invoice_num')?.value || '',
+                date: document.getElementById('m_date')?.value || '',
+                subtotal: parseFloat(document.getElementById('m_subtotal')?.value || 0),
+                vat: parseFloat(document.getElementById('m_vat')?.value || 0),
+                total: parseFloat(document.getElementById('m_total')?.value || 0),
+                items: editedItems.length > 0 ? editedItems : (currentItemData.items || []),
+                target_type: targetType,
+                target_invoice_id: targetInvoiceId,
+                target_invoice_number: targetInvoiceNumber,
+                credit_amount: creditAmount,
+                original_invoice_ref: (currentItemData.extracted && currentItemData.extracted.original_invoice_ref) || currentItemData.original_invoice_ref || ''
+            }};
+            endpoint = '/api/scan/save-supplier-credit-note';
+            redirect = '/supplier-credit-notes';
+        }} else if (saveType.includes('expense') || saveType.includes('supplier')) {{
             // Collect edited line items from input fields
             // We also need to preserve PO-matching context (stock code, on_po, etc.)
             // that came from the scan — read the original items by index.
