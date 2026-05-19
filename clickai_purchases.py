@@ -5132,28 +5132,45 @@ Nothing else."""
                 logger.error(f"[CN-SCAN] Journal entry failed: {_je}")
             
             # ── Save the credit note record
+            # Pack the extra metadata that the existing supplier_credit_notes
+            # schema doesn't have its own columns for, into the 'reason' field
+            # as a JSON tag followed by a human-readable description. The legacy
+            # endpoint puts a plain string in reason; we stay backwards-readable
+            # by putting the human description first and the JSON tag last.
+            _human_reason = (
+                f"FULL credit vs {target_invoice_number}" if (target_type == "invoice" and is_full_credit)
+                else f"PARTIAL credit (R{credit_amount:.2f} of R{invoice_total:.2f}) vs {target_invoice_number}" if (target_type == "invoice")
+                else "Credit applied to Balance Brought Forward"
+            )
+            if original_invoice_ref:
+                _human_reason += f" — doc ref: {original_invoice_ref}"
+            _meta = {
+                "target_type": target_type,
+                "is_partial": (target_type == "invoice" and not is_full_credit),
+                "supplier_cn_number": cn_doc_number,
+                "original_invoice_number": target_invoice_number if target_type == "invoice" else "",
+                "document_total": round(cn_total, 2),
+                "credit_amount": round(credit_amount, 2),
+                "source": "scan",
+                "stock_reversal": stock_reversal_note
+            }
+            _reason_combined = f"{_human_reason} | META:{json.dumps(_meta)}"
+            
             cn_record = {
                 "id": cn_id,
                 "business_id": biz_id,
                 "supplier_id": supplier_id,
                 "supplier_name": supplier_name,
                 "cn_number": cn_number,
-                "supplier_cn_number": cn_doc_number,  # the number printed on the supplier's CN
                 "original_invoice_id": target_invoice_id if target_type == "invoice" else "",
-                "original_invoice_number": target_invoice_number if target_type == "invoice" else "",
-                "target_type": target_type,  # 'invoice' or 'balance_bf'
-                "is_partial": (target_type == "invoice" and not is_full_credit),
                 "date": cn_date,
                 "subtotal": cn_subtotal,
                 "vat": vat_in_credit,
                 "total": round(credit_amount, 2),  # actual credit applied (not doc total)
-                "document_total": cn_total,  # what was printed on the doc
-                "credit_amount": round(credit_amount, 2),
-                "reason": original_invoice_ref or "Scanned supplier credit note",
+                "reason": _reason_combined,
                 "items": json.dumps(cn_items_raw) if not isinstance(cn_items_raw, str) else cn_items_raw,
                 "status": "active",
                 "stock_snapshots": cn_snapshots_for_record,
-                "source": "scan",
                 "created_by": user.get("id") if user else None,
                 "created_at": now()
             }
