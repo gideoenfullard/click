@@ -4687,7 +4687,7 @@ def register_invoicing_routes(app, db, login_required, Auth, render_page,
             <a href="/delivery-notes" style="color:var(--text-muted);">← Back to Delivery Notes</a>
             <div style="display:flex;gap:10px;">
                 {actions}
-                <button onclick="window.print()" class="btn btn-secondary">🖨️ Print</button>
+                <button onclick="window.open('/delivery-note/{dn_id}/print', '_blank')" class="btn btn-secondary">🖨️ Print</button>
             </div>
         </div>
 
@@ -4780,6 +4780,313 @@ def register_invoicing_routes(app, db, login_required, Auth, render_page,
         '''
         
         return render_page(f"Delivery Note {dn.get('delivery_note_number', '')}", content, user, "delivery-notes")
+    
+    
+    @app.route("/delivery-note/<dn_id>/print")
+    @login_required
+    def delivery_note_print(dn_id):
+        """Clean printable view of a delivery note - no sidebar, no header, no chrome.
+        Opens in a new tab; auto-triggers print dialog. Paginates naturally for long item lists."""
+        
+        business = Auth.get_current_business()
+        
+        dn = db.get_one("delivery_notes", dn_id)
+        if not dn:
+            return "Delivery note not found", 404
+        
+        # Parse items
+        try:
+            items = json.loads(dn.get("items", "[]"))
+        except:
+            items = []
+        
+        items_html = ""
+        for item in items:
+            items_html += f'''
+            <tr>
+                <td class="desc-cell">{safe_string(item.get("description", "-"))}</td>
+                <td class="qty-cell">{item.get("quantity", 1)}</td>
+            </tr>
+            '''
+        
+        status = dn.get("status", "draft")
+        
+        # Link to invoice (plain text on print view - no clickable link needed)
+        invoice_display = safe_string(dn.get("source_invoice_number", "")) or "-"
+        
+        biz_name = business.get("name", "Business") if business else "Business"
+        biz_address = safe_string(business.get("address", "")).replace("\n", "<br>") if business else ""
+        biz_phone = business.get("phone", "") if business else ""
+        biz_logo = business.get("logo_url", "") if business else ""
+        
+        logo_html = f'<img src="{biz_logo}" style="height:60px;object-fit:contain;" alt="Logo">' if biz_logo else f'<div style="width:60px;height:60px;background:rgba(255,255,255,0.2);border-radius:8px;display:flex;align-items:center;justify-content:center;font-size:24px;font-weight:700;color:white;">DN</div>'
+        
+        notes_html = ""
+        if dn.get('notes'):
+            notes_html = f"<div style='margin-top:20px;padding:10px;background:#fafafa;border-radius:6px;font-size:12px;color:#666;'><strong>Notes:</strong> {safe_string(dn.get('notes',''))}</div>"
+        
+        dn_number = dn.get("delivery_note_number", "-")
+        
+        html = f'''<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Delivery Note {dn_number}</title>
+<style>
+    * {{ box-sizing: border-box; }}
+    html, body {{
+        margin: 0;
+        padding: 0;
+        background: white;
+        color: #333;
+        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Arial, sans-serif;
+        font-size: 12px;
+    }}
+    .doc {{
+        max-width: 210mm;
+        margin: 0 auto;
+        padding: 0;
+    }}
+    .top-bar {{
+        background: #7c3aed;
+        color: white;
+        padding: 20px 30px;
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+    }}
+    .top-bar h1 {{
+        margin: 0;
+        font-size: 22px;
+        font-weight: 700;
+    }}
+    .top-bar h2 {{
+        margin: 0;
+        font-size: 26px;
+        font-weight: 700;
+        letter-spacing: 2px;
+    }}
+    .biz-block {{
+        display: flex;
+        align-items: center;
+        gap: 14px;
+    }}
+    .biz-address {{
+        margin: 3px 0 0 0;
+        font-size: 11px;
+        opacity: 0.9;
+    }}
+    .status-badge {{
+        display: inline-block;
+        background: rgba(255,255,255,0.2);
+        color: white;
+        padding: 3px 10px;
+        border-radius: 20px;
+        font-size: 11px;
+        margin-top: 4px;
+    }}
+    .details {{
+        padding: 14px 30px;
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 0;
+        border-bottom: 2px solid #e5e7eb;
+    }}
+    .details .left {{
+        border-right: 1px solid #e5e7eb;
+        padding-right: 20px;
+    }}
+    .details .right {{
+        padding-left: 20px;
+    }}
+    .details table {{
+        width: 100%;
+        font-size: 13px;
+    }}
+    .details td {{
+        padding: 3px 0;
+    }}
+    .details .label {{
+        color: #888;
+        width: 120px;
+    }}
+    .details .value {{
+        font-weight: 600;
+    }}
+    .deliver-label {{
+        font-size: 10px;
+        color: #888;
+        text-transform: uppercase;
+        letter-spacing: 1px;
+        margin-bottom: 6px;
+        font-weight: 600;
+    }}
+    .deliver-to {{
+        font-size: 15px;
+        font-weight: 700;
+        color: #7c3aed;
+        margin-bottom: 3px;
+    }}
+    .deliver-address {{
+        font-size: 10px;
+        color: #555;
+    }}
+    .biz-tel {{
+        margin-top: 6px;
+        font-size: 12px;
+        color: #666;
+    }}
+    .items-wrap {{
+        padding: 0 30px;
+    }}
+    table.items {{
+        width: 100%;
+        border-collapse: collapse;
+        font-size: 12px;
+        margin-top: 12px;
+    }}
+    table.items thead tr {{
+        background: #f1f5f9;
+        border-bottom: 2px solid #cbd5e1;
+    }}
+    table.items th {{
+        padding: 6px 8px;
+        text-align: left;
+        color: #475569;
+        font-weight: 600;
+        font-size: 10px;
+        text-transform: uppercase;
+    }}
+    table.items th.qty-head {{
+        text-align: center;
+        width: 80px;
+    }}
+    table.items tbody tr {{
+        border-bottom: 1px solid #e5e7eb;
+        page-break-inside: avoid;
+    }}
+    table.items .desc-cell {{
+        padding: 5px 8px;
+        font-size: 11px;
+    }}
+    table.items .qty-cell {{
+        padding: 5px 8px;
+        text-align: center;
+        font-size: 11px;
+        font-weight: 600;
+    }}
+    /* Repeat table header on every printed page */
+    table.items thead {{
+        display: table-header-group;
+    }}
+    .footer-sign {{
+        padding: 18px 30px 20px;
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 40px;
+        border-top: 1px solid #e5e7eb;
+        margin-top: 20px;
+        page-break-inside: avoid;
+    }}
+    .sign-label {{
+        font-size: 11px;
+        color: #888;
+        text-transform: uppercase;
+        margin-bottom: 8px;
+    }}
+    .sign-line {{
+        border-bottom: 1px solid #ccc;
+        height: 36px;
+    }}
+    .notes-wrap {{
+        padding: 0 30px 16px;
+    }}
+    @page {{
+        size: A4 portrait;
+        margin: 12mm 0 14mm 0;
+    }}
+    @media print {{
+        html, body {{
+            margin: 0;
+            padding: 0;
+        }}
+        .doc {{
+            max-width: 100%;
+        }}
+    }}
+</style>
+</head>
+<body>
+<div class="doc">
+
+    <div class="top-bar">
+        <div class="biz-block">
+            {logo_html}
+            <div>
+                <h1>{biz_name}</h1>
+                {f'<p class="biz-address">{biz_address}</p>' if biz_address else ''}
+            </div>
+        </div>
+        <div style="text-align:right;">
+            <h2>DELIVERY NOTE</h2>
+            <span class="status-badge">{status.upper()}</span>
+        </div>
+    </div>
+
+    <div class="details">
+        <div class="left">
+            <table>
+                <tr><td class="label">DN Number:</td><td class="value">{dn_number}</td></tr>
+                <tr><td class="label">Date:</td><td>{dn.get("date", "-")}</td></tr>
+                <tr><td class="label">Invoice:</td><td>{invoice_display}</td></tr>
+            </table>
+            {f'<div class="biz-tel">Tel: {biz_phone}</div>' if biz_phone else ''}
+        </div>
+        <div class="right">
+            <div class="deliver-label">Deliver To</div>
+            <div class="deliver-to">{safe_string(dn.get("customer_name", "-"))}</div>
+            {f'<div class="deliver-address">{safe_string(dn.get("delivery_address", ""))}</div>' if dn.get("delivery_address") else ''}
+        </div>
+    </div>
+
+    <div class="items-wrap">
+        <table class="items">
+            <thead>
+                <tr>
+                    <th>Description</th>
+                    <th class="qty-head">Qty</th>
+                </tr>
+            </thead>
+            <tbody>
+                {items_html}
+            </tbody>
+        </table>
+    </div>
+
+    <div class="footer-sign">
+        <div>
+            <div class="sign-label">Received By (Name &amp; Signature)</div>
+            <div class="sign-line"></div>
+        </div>
+        <div>
+            <div class="sign-label">Date Received</div>
+            <div class="sign-line"></div>
+        </div>
+    </div>
+
+    {f'<div class="notes-wrap">{notes_html}</div>' if notes_html else ''}
+
+</div>
+<script>
+    // Auto-open print dialog when page loads
+    window.addEventListener('load', function() {{
+        setTimeout(function() {{ window.print(); }}, 300);
+    }});
+</script>
+</body>
+</html>'''
+        
+        return html
     
     
     @app.route("/api/delivery-note/<dn_id>/status", methods=["POST"])
