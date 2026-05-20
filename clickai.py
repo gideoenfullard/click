@@ -2939,73 +2939,62 @@ Thank you for your business!
         _bal_bg = "#fef2f2" if final_balance > 0 else "#f0fdf4"
         _bal_color = "#dc2626" if final_balance > 0 else "#16a34a"
         
+        # ════════════════════════════════════════════════════════════════
+        # SHORT cover note for the email BODY. The full statement ledger is
+        # in the attached PDF — so the body just needs a friendly greeting,
+        # the balance summary, bank details, and a line saying "see attached".
+        # This matches QuickBooks / Sage / Xero norm: PDF attached + short body.
+        # ════════════════════════════════════════════════════════════════
+        # Bank details strip (inline in cover note — saves recipient opening PDF
+        # just to pay)
+        bank_strip = ""
+        if bank_name and bank_account:
+            bank_strip = f'''
+            <div style="background:#f0fdf4;padding:12px 14px;border-radius:6px;margin:14px 0;border-left:3px solid #16a34a;">
+                <div style="font-size:11px;font-weight:700;color:#166534;margin-bottom:6px;text-transform:uppercase;letter-spacing:0.5px;">Banking Details for Payment</div>
+                <table style="font-size:13px;border-collapse:collapse;">
+                    <tr><td style="padding:2px 16px 2px 0;color:#6b7280;">Bank:</td><td><strong>{safe(bank_name)}</strong></td></tr>
+                    <tr><td style="padding:2px 16px 2px 0;color:#6b7280;">Account:</td><td><strong>{safe(bank_account)}</strong></td></tr>
+                    {f'<tr><td style="padding:2px 16px 2px 0;color:#6b7280;">Branch:</td><td>{safe(bank_branch)}</td></tr>' if bank_branch else ''}
+                    <tr><td style="padding:2px 16px 2px 0;color:#6b7280;">Reference:</td><td><strong>{cust_code or name[:15]}</strong></td></tr>
+                </table>
+            </div>
+            '''
+        
         body_html = f'''
         <html>
-        <body style="font-family: Arial, Helvetica, sans-serif; padding: 10px; background: #f3f4f6; margin:0;">
-            <div style="max-width: 760px; margin: 0 auto; background: white; padding: 20px 24px; border-radius: 8px; box-shadow: 0 2px 10px rgba(0,0,0,0.08);">
+        <body style="font-family: Arial, Helvetica, sans-serif; padding: 14px; background: #f3f4f6; margin:0;">
+            <div style="max-width: 600px; margin: 0 auto; background: white; padding: 22px 26px; border-radius: 8px; box-shadow: 0 2px 10px rgba(0,0,0,0.08);">
                 
-                <!-- Header: Business info LEFT, Statement title RIGHT -->
-                <div style="display:flex;justify-content:space-between;align-items:flex-start;border-bottom: 2px solid #1f2937; padding-bottom: 10px; margin-bottom: 14px;">
-                    <div style="flex:1;">
-                        <h1 style="color: #1f2937; margin: 0; font-size: 20px;">{biz_name}</h1>
-                        {f'<p style="color:#6b7280;margin:2px 0;font-size:11px;">{biz_address}</p>' if biz_address else ''}
-                        {f'<p style="color:#6b7280;margin:2px 0;font-size:11px;">Tel: {biz_phone}</p>' if biz_phone else ''}
-                        {f'<p style="color:#6b7280;margin:2px 0;font-size:11px;">Email: {biz_email}</p>' if biz_email else ''}
-                        {f'<p style="color:#6b7280;margin:2px 0;font-size:11px;">VAT No: {biz_vat}</p>' if biz_vat else ''}
-                    </div>
-                    <div style="text-align:right;">
-                        <h2 style="color: #1f2937; margin:0; font-size: 22px; letter-spacing:2px;">STATEMENT</h2>
-                        <div style="font-size:11px;color:#6b7280;margin-top:4px;">Date: <strong style="color:#1f2937;">{today()}</strong></div>
-                        {f'<div style="font-size:11px;color:#6b7280;">Account: <strong style="color:#1f2937;">{cust_code}</strong></div>' if cust_code else ''}
-                    </div>
+                <h2 style="color:#1f2937;margin:0 0 4px 0;font-size:20px;">Statement of Account</h2>
+                <div style="color:#6b7280;font-size:12px;margin-bottom:18px;">{biz_name} &middot; {today()}</div>
+                
+                <p style="color:#1f2937;font-size:14px;margin:0 0 10px 0;">Dear {name},</p>
+                <p style="color:#374151;font-size:14px;line-height:1.5;margin:0 0 14px 0;">
+                    Please find attached your statement of account as at <strong>{today()}</strong>.
+                    The PDF contains a full breakdown of all invoices, payments, credit notes and your aging summary.
+                </p>
+                
+                <div style="background:{_bal_bg};padding:14px 16px;border-radius:6px;margin:14px 0;">
+                    <div style="font-size:10px;color:#6b7280;text-transform:uppercase;letter-spacing:0.5px;font-weight:600;">Balance Due</div>
+                    <div style="font-size:28px;font-weight:700;color:{_bal_color};margin-top:3px;">R{final_balance:,.2f}</div>
                 </div>
                 
-                <!-- Customer block + Balance Due side-by-side -->
-                <table style="width:100%;border-collapse:collapse;margin-bottom:14px;">
-                    <tr>
-                        <td style="vertical-align:top;width:55%;padding:0 14px 0 0;">
-                            <div style="font-size:9px;color:#6b7280;text-transform:uppercase;letter-spacing:0.5px;font-weight:600;margin-bottom:3px;">Statement To</div>
-                            <div style="font-size:14px;font-weight:700;color:#1f2937;">{name}</div>
-                            {cust_addr_html}
-                            {cust_phone_html}
-                            {cust_email_html}
-                            {cust_vat_html}
-                        </td>
-                        <td style="vertical-align:top;width:45%;text-align:right;background:{_bal_bg};padding:10px 14px;border-radius:6px;">
-                            <div style="font-size:10px;color:#6b7280;text-transform:uppercase;letter-spacing:0.5px;font-weight:600;">Balance Due</div>
-                            <div style="font-size:24px;font-weight:700;color:{_bal_color};margin-top:3px;">R{final_balance:,.2f}</div>
-                        </td>
-                    </tr>
-                </table>
+                {bank_strip}
                 
-                <!-- Full transaction ledger -->
-                <table style="width:100%;border-collapse:collapse;margin:6px 0;">
-                    <thead>
-                        <tr style="background: #1f2937; color: white;">
-                            <th style="padding: 7px 8px; text-align: left; font-size:10px;font-weight:600;text-transform:uppercase;letter-spacing:0.5px;">Date</th>
-                            <th style="padding: 7px 8px; text-align: left; font-size:10px;font-weight:600;text-transform:uppercase;letter-spacing:0.5px;">Type</th>
-                            <th style="padding: 7px 8px; text-align: left; font-size:10px;font-weight:600;text-transform:uppercase;letter-spacing:0.5px;">Reference</th>
-                            <th style="padding: 7px 8px; text-align: right; font-size:10px;font-weight:600;text-transform:uppercase;letter-spacing:0.5px;">Debit</th>
-                            <th style="padding: 7px 8px; text-align: right; font-size:10px;font-weight:600;text-transform:uppercase;letter-spacing:0.5px;">Credit</th>
-                            <th style="padding: 7px 8px; text-align: right; font-size:10px;font-weight:600;text-transform:uppercase;letter-spacing:0.5px;">Balance</th>
-                        </tr>
-                    </thead>
-                    <tbody>
-                        {ledger_rows}
-                    </tbody>
-                </table>
+                <p style="color:#374151;font-size:13px;margin:14px 0 4px 0;">
+                    If you have any queries regarding this statement, please reply to this email or contact us on the details below.
+                </p>
+                <p style="color:#374151;font-size:13px;margin:14px 0 4px 0;">
+                    Kind regards,<br>
+                    <strong>{biz_name}</strong>
+                </p>
+                {f'<p style="color:#6b7280;font-size:11px;margin:2px 0;">Tel: {biz_phone}</p>' if biz_phone else ''}
+                {f'<p style="color:#6b7280;font-size:11px;margin:2px 0;">Email: {biz_email}</p>' if biz_email else ''}
                 
-                <!-- Aging summary -->
-                {aging_html}
-                
-                <!-- Bank details for payment -->
-                {bank_section}
-                
-                <hr style="border: none; border-top: 1px solid #e5e7eb; margin: 14px 0 8px 0;">
-                
+                <hr style="border: none; border-top: 1px solid #e5e7eb; margin: 18px 0 8px 0;">
                 <p style="color: #9ca3af; font-size: 10px; text-align:center; margin:6px 0;">
-                    This statement was generated automatically by {biz_name}<br>
-                    {today()} • Powered by Click AI
+                    Powered by Click AI
                 </p>
             </div>
         </body>
@@ -3042,6 +3031,158 @@ Thank you for your business!
             pdf_attachments = None
         
         return Email.send(email, subject, body_html, business=business, attachments=pdf_attachments, cc=cc)
+    
+    @staticmethod
+    def send_document_pdf(doc_type: str, doc: dict, business: dict, party: dict,
+                          to_email: str, subject: str = None, cover_message: str = None,
+                          cc=None) -> bool:
+        """Send a business document (invoice/quote/PO/credit_note) as a PDF
+        attachment with a short cover note in the email body.
+        
+        This is the international norm (QuickBooks/Sage/Xero) — PDF attached,
+        short professional cover note, no raw HTML duplication of the document.
+        
+        Args:
+            doc_type:      'invoice' | 'quote' | 'purchase_order' | 'credit_note' | 'delivery_note'
+            doc:           the document dict (must include 'id', number, total, date)
+            business:      the issuing business
+            party:         the customer (for invoice/quote/CN) or supplier (for PO)
+            to_email:      recipient (override) — required
+            subject:       optional override; auto-generated from doc_type + number if omitted
+            cover_message: optional extra body text (e.g. "Thank you for your order")
+            cc:            optional CC list/string
+        
+        Returns True on success.
+        """
+        if not to_email or "@" not in to_email:
+            logger.warning(f"[EMAIL DOC] Invalid recipient: {to_email}")
+            return False
+        
+        biz_name = safe(business.get("name", "Business")) if business else "Business"
+        biz_phone = business.get("phone", "") if business else ""
+        biz_email = business.get("email", "") if business else ""
+        party_name = safe(party.get("name", "")) if party else ""
+        
+        # ── Identify document number / fields per type ──
+        type_labels = {
+            "invoice":         {"label": "Invoice",         "number_key": "invoice_number",       "prefix": "INV"},
+            "quote":           {"label": "Quote",           "number_key": "quote_number",         "prefix": "QUO"},
+            "purchase_order":  {"label": "Purchase Order",  "number_key": "po_number",            "prefix": "PO"},
+            "credit_note":     {"label": "Credit Note",     "number_key": "credit_note_number",   "prefix": "CN"},
+            "delivery_note":   {"label": "Delivery Note",   "number_key": "delivery_note_number", "prefix": "DN"},
+        }
+        meta = type_labels.get(doc_type, {"label": doc_type.replace("_", " ").title(), "number_key": "number", "prefix": "DOC"})
+        doc_label = meta["label"]
+        doc_number = safe(doc.get(meta["number_key"], "") or doc.get("number", "") or doc.get("id", "")[:8])
+        doc_date = safe(doc.get("date", today()))
+        doc_total = float(doc.get("total", 0) or 0)
+        
+        # ── Subject ──
+        if not subject:
+            subject = f"{doc_label} {doc_number} from {biz_name}"
+        
+        # ── PDF generation ──
+        attachments = None
+        try:
+            pdf_bytes = render_document_pdf(doc_type, doc, business, party)
+            # Friendly filename
+            _safe_num = "".join(c if c.isalnum() or c in "_-" else "_" for c in doc_number).strip("_")
+            pdf_filename = f"{meta['prefix']}_{_safe_num or 'doc'}.pdf"
+            attachments = [{
+                "filename": pdf_filename,
+                "content": pdf_bytes,
+                "content_type": "application/pdf",
+            }]
+            logger.info(f"[EMAIL DOC] PDF generated: {pdf_filename} ({len(pdf_bytes)} bytes) for {doc_type}")
+        except Exception as _pdf_err:
+            logger.error(f"[EMAIL DOC] PDF generation failed for {doc_type}: {_pdf_err}")
+            # Don't bail — still send the cover note so the customer knows
+            attachments = None
+        
+        # ── Cover note HTML body (short, professional, mirrors QB/Sage/Xero norm) ──
+        # Greeting line — "Dear <name>," falls back to "Hello," if no party name
+        greeting = f"Dear {party_name}," if party_name else "Hello,"
+        
+        # Body line — varies slightly by document type so it reads naturally
+        body_lines = {
+            "invoice":        f"Please find attached your invoice <strong>{doc_number}</strong> dated <strong>{doc_date}</strong>.",
+            "quote":          f"Please find attached your quote <strong>{doc_number}</strong> dated <strong>{doc_date}</strong> for your review.",
+            "purchase_order": f"Please find attached our purchase order <strong>{doc_number}</strong> dated <strong>{doc_date}</strong>.",
+            "credit_note":    f"Please find attached credit note <strong>{doc_number}</strong> dated <strong>{doc_date}</strong>.",
+            "delivery_note":  f"Please find attached delivery note <strong>{doc_number}</strong> dated <strong>{doc_date}</strong>.",
+        }
+        main_line = body_lines.get(doc_type, f"Please find attached {doc_label.lower()} <strong>{doc_number}</strong>.")
+        
+        # Total line — only shown for documents with a meaningful total
+        total_html = ""
+        if doc_type in ("invoice", "quote", "credit_note") and doc_total > 0:
+            _color = "#dc2626" if doc_type == "credit_note" else "#1f2937"
+            total_html = f'''
+            <div style="background:#f9fafb;padding:12px 14px;border-radius:6px;margin:14px 0;border-left:3px solid #6366f1;">
+                <div style="font-size:10px;color:#6b7280;text-transform:uppercase;letter-spacing:0.5px;font-weight:600;">Amount</div>
+                <div style="font-size:22px;font-weight:700;color:{_color};margin-top:3px;">R{doc_total:,.2f}</div>
+            </div>
+            '''
+        
+        # Optional extra cover message from caller
+        extra_msg_html = f'<p style="color:#374151;font-size:13px;line-height:1.5;margin:10px 0;">{safe(cover_message)}</p>' if cover_message else ""
+        
+        # Closing line per doc type
+        closings = {
+            "invoice":        "Thank you for your business.",
+            "quote":          "Please let us know if you have any questions or would like to proceed.",
+            "purchase_order": "Please confirm receipt and expected delivery date.",
+            "credit_note":    "This credit note has been applied to your account.",
+            "delivery_note":  "Please sign and return the delivery note upon receipt of goods.",
+        }
+        closing = closings.get(doc_type, "")
+        
+        body_html = f'''
+        <html>
+        <body style="font-family: Arial, Helvetica, sans-serif; padding: 14px; background: #f3f4f6; margin:0;">
+            <div style="max-width: 600px; margin: 0 auto; background: white; padding: 22px 26px; border-radius: 8px; box-shadow: 0 2px 10px rgba(0,0,0,0.08);">
+                
+                <h2 style="color:#1f2937;margin:0 0 4px 0;font-size:20px;">{doc_label} {doc_number}</h2>
+                <div style="color:#6b7280;font-size:12px;margin-bottom:18px;">{biz_name} &middot; {doc_date}</div>
+                
+                <p style="color:#1f2937;font-size:14px;margin:0 0 10px 0;">{greeting}</p>
+                <p style="color:#374151;font-size:14px;line-height:1.5;margin:0 0 10px 0;">{main_line}</p>
+                
+                {total_html}
+                
+                {extra_msg_html}
+                
+                {f'<p style="color:#374151;font-size:13px;line-height:1.5;margin:14px 0 4px 0;">{closing}</p>' if closing else ''}
+                
+                <p style="color:#374151;font-size:13px;margin:18px 0 4px 0;">
+                    Kind regards,<br>
+                    <strong>{biz_name}</strong>
+                </p>
+                {f'<p style="color:#6b7280;font-size:11px;margin:2px 0;">Tel: {safe(biz_phone)}</p>' if biz_phone else ''}
+                {f'<p style="color:#6b7280;font-size:11px;margin:2px 0;">Email: {safe(biz_email)}</p>' if biz_email else ''}
+                
+                <hr style="border: none; border-top: 1px solid #e5e7eb; margin: 18px 0 8px 0;">
+                <p style="color: #9ca3af; font-size: 10px; text-align:center; margin:6px 0;">
+                    Powered by Click AI
+                </p>
+            </div>
+        </body>
+        </html>
+        '''
+        
+        # Plain text fallback for clients that block HTML
+        body_text = (
+            f"{greeting}\n\n"
+            f"Please find attached {doc_label.lower()} {doc_number} dated {doc_date}.\n"
+        )
+        if doc_total > 0 and doc_type in ("invoice", "quote", "credit_note"):
+            body_text += f"Amount: R{doc_total:,.2f}\n"
+        if closing:
+            body_text += f"\n{closing}\n"
+        body_text += f"\nKind regards,\n{biz_name}"
+        
+        return Email.send(to_email, subject, body_html, body_text, business=business,
+                          attachments=attachments, cc=cc)
 
 
 # 
@@ -12565,55 +12706,38 @@ Which email provider are you using? (Gmail/Outlook/Other)""",
                         break
                 
                 if invoice:
-                    # Build email content
+                    # Build email content using the new PDF-attachment helper.
+                    # Body is a short professional cover note; the full invoice
+                    # is in the attached PDF (matches QuickBooks/Sage/Xero norm).
                     biz_name = context.get("business_name", "Business")
                     inv_no = invoice.get("invoice_number", "")
-                    total = float(invoice.get("total", 0))
-                    date = invoice.get("date", today())
-                    cust_name = invoice.get("customer_name", "Customer")
                     
-                    subject = f"Invoice {inv_no} from {biz_name}"
-                    
-                    body_html = f'''
-                    <html>
-                    <body style="font-family: Arial, sans-serif; padding: 20px; background: #f5f5f5;">
-                        <div style="max-width: 600px; margin: 0 auto; background: white; padding: 30px; border-radius: 10px;">
-                            <h2 style="color: #333;">Invoice {inv_no}</h2>
-                            
-                            <p>Dear {cust_name},</p>
-                            
-                            <p>Please find your invoice details below:</p>
-                            
-                            <table style="width: 100%; margin: 20px 0; border-collapse: collapse;">
-                                <tr><td style="padding: 8px; border-bottom: 1px solid #eee;"><strong>Invoice #:</strong></td><td>{inv_no}</td></tr>
-                                <tr><td style="padding: 8px; border-bottom: 1px solid #eee;"><strong>Date:</strong></td><td>{date}</td></tr>
-                                <tr><td style="padding: 8px; border-bottom: 1px solid #eee;"><strong>Amount:</strong></td><td style="font-size: 20px; font-weight: bold; color: #10b981;">R{total:,.2f}</td></tr>
-                            </table>
-                            
-                            <p>Thank you for your business!</p>
-                            
-                            <hr style="border: none; border-top: 1px solid #eee; margin: 20px 0;">
-                            
-                            <p style="color: #888; font-size: 12px;">
-                                {biz_name}<br>
-                                Sent via Click AI
-                            </p>
-                        </div>
-                    </body>
-                    </html>
-                    '''
-                    
-                    body_text = f"Invoice {inv_no} from {biz_name}\n\nDear {cust_name},\n\nInvoice #: {inv_no}\nDate: {date}\nAmount: R{total:,.2f}\n\nThank you for your business!\n\n{biz_name}"
-                    
-                    # Get business for SMTP settings
+                    # Get business for SMTP settings + PDF render
                     business = Auth.get_current_business()
                     
+                    # Fetch the customer record so the PDF has full address etc.
+                    customer_for_pdf = None
                     try:
-                        success = Email.send(to_email, subject, body_html, body_text, business=business)
+                        biz_id = context.get("business_id") or (business.get("id") if business else None)
+                        if biz_id and invoice.get("customer_id"):
+                            customer_for_pdf = db.get_one("customers", invoice.get("customer_id"))
+                    except Exception:
+                        pass
+                    if not customer_for_pdf:
+                        customer_for_pdf = {"name": invoice.get("customer_name", "Customer")}
+                    
+                    try:
+                        success = Email.send_document_pdf(
+                            doc_type="invoice",
+                            doc=invoice,
+                            business=business,
+                            party=customer_for_pdf,
+                            to_email=to_email,
+                        )
                         if success:
                             return {
-                                "response": f"DONE: **Invoice {inv_no} emailed to {to_email}!**",
-                                "actions_taken": [f"Emailed invoice to {to_email}"],
+                                "response": f"DONE: **Invoice {inv_no} emailed to {to_email}!** (PDF attached)",
+                                "actions_taken": [f"Emailed invoice PDF to {to_email}"],
                                 "data": {"invoice_id": invoice.get("id"), "email": to_email},
                                 "suggestions": [{"label": "📄 View Invoice", "url": f"/invoice/{invoice.get('id')}"}]
                             }
@@ -62655,26 +62779,26 @@ class RecurringInvoices:
                     # Auto-send email if enabled
                     if recurring.get("auto_send") and recurring.get("customer_email"):
                         try:
-                            # Get business for email details
+                            # Get business for email details + PDF render
                             business = db.get_one("businesses", recurring.get("business_id"))
-                            biz_name = business.get("name", "Your Supplier") if business else "Your Supplier"
                             
-                            email_body = f"""
-Dear {recurring.get('customer_name')},
-
-Please find attached your invoice {invoice.get('invoice_number')} for {money(invoice.get('total', 0))}.
-
-This is an automatically generated recurring invoice.
-
-Thank you for your business.
-
-{biz_name}
-                            """.strip()
+                            # Resolve the customer record so the PDF can include address etc.
+                            customer_for_pdf = None
+                            if invoice.get("customer_id"):
+                                customer_for_pdf = db.get_one("customers", invoice.get("customer_id"))
+                            if not customer_for_pdf:
+                                customer_for_pdf = {
+                                    "name": recurring.get("customer_name"),
+                                    "email": recurring.get("customer_email"),
+                                }
                             
-                            Email.send(
-                                to=recurring.get("customer_email"),
-                                subject=f"Invoice {invoice.get('invoice_number')} from {biz_name}",
-                                body=email_body
+                            Email.send_document_pdf(
+                                doc_type="invoice",
+                                doc=invoice,
+                                business=business,
+                                party=customer_for_pdf,
+                                to_email=recurring.get("customer_email"),
+                                cover_message="This is an automatically generated recurring invoice.",
                             )
                             
                             emailed.append(invoice.get("invoice_number"))
