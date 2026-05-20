@@ -4630,36 +4630,37 @@ def register_invoicing_routes(app, db, login_required, Auth, render_page,
                 size: A4 portrait;
                 margin: 12mm 14mm 14mm 14mm;
             }}
-            /* hide every nav/button/header that render_page adds */
+            /* Hide chrome - render_page's header, nav, sidebar, footer, zane chat, etc.
+               Using display:none (not visibility:hidden) so they don't take up space
+               and the printable content stays in normal flow for proper pagination. */
             .no-print,
             nav, header, footer,
             .sidebar, .topbar, .top-bar, .side-bar,
-            .flash-messages {{
+            .header, .nav, .nav-wrapper, .nav-selector,
+            .flash-messages,
+            #zaneChat, #zaneProactiveTip, #pageHelp,
+            #globalOfflineBanner,
+            .page-help, .zane-chat, .proactive-tip {{
                 display: none !important;
             }}
-            /* Walk up the DOM: every ancestor of .dn-print-wrap must be visible,
-               and any sibling of those ancestors must be hidden. This isolates
-               the printable card without breaking when render_page nests it
-               inside a sidebar/content wrapper. */
+            /* Reset wrappers to zero spacing so the card starts at top of page
+               and the browser can paginate naturally across multiple pages. */
             html, body {{
                 background: white !important;
                 margin: 0 !important;
                 padding: 0 !important;
             }}
-            body * {{
-                visibility: hidden;
-            }}
-            .dn-print-wrap, .dn-print-wrap * {{
-                visibility: visible;
+            .main-scroll, .container, main, main.container {{
+                margin: 0 !important;
+                padding: 0 !important;
+                overflow: visible !important;
+                height: auto !important;
+                max-height: none !important;
             }}
             .dn-print-wrap {{
-                position: absolute;
-                left: 0;
-                top: 0;
-                width: 100%;
-                max-width: 100%;
-                margin: 0;
-                padding: 0;
+                max-width: 100% !important;
+                margin: 0 !important;
+                padding: 0 !important;
             }}
             /* make sure the card fills the A4 width */
             .dn-card {{
