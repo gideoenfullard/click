@@ -2726,91 +2726,284 @@ Thank you for your business!
         bank_account = business.get("bank_account", "") if business else ""
         bank_branch = business.get("bank_branch", "") if business else ""
         
-        # Build invoice list — COMPACT rows
-        invoice_rows = ""
+        # ════════════════════════════════════════════════════════════════
+        # Build full transaction ledger (same logic as customer_statement_print)
+        # so the emailed statement matches the on-screen / print version with
+        # Date | Type | Reference | Debit | Credit | Balance columns.
+        # ════════════════════════════════════════════════════════════════
+        biz_id = business.get("id", "") if business else ""
+        cust_id = customer.get("id", "")
+        
+        # Pull all source documents
+        try:
+            receipts = db.get("receipts", {"business_id": biz_id}) if biz_id else []
+        except Exception:
+            receipts = []
+        cust_receipts = [r for r in receipts if r.get("customer_id") == cust_id]
+        # Also catch receipts that were saved without customer_id but match by name
+        _cust_name_upper = (customer.get("name") or "").upper().strip()
+        _by_id_set = {r.get("id") for r in cust_receipts}
+        cust_receipts += [r for r in receipts
+                          if not r.get("customer_id") and _cust_name_upper
+                          and (r.get("customer_name") or "").upper().strip() == _cust_name_upper
+                          and r.get("id") not in _by_id_set]
+        
+        try:
+            credit_notes = db.get("credit_notes", {"business_id": biz_id, "customer_id": cust_id}) if biz_id else []
+        except Exception:
+            credit_notes = []
+        try:
+            sales = db.get("sales", {"business_id": biz_id, "customer_id": cust_id}) if biz_id else []
+        except Exception:
+            sales = []
+        
+        # Detect refunds/reversals from allocation_log
+        _refunded_sale_ids = set()
+        _reversed_invoice_ids = set()
+        try:
+            _alloc_log = db.get("allocation_log", {"business_id": biz_id}) if biz_id else []
+            for _al in _alloc_log or []:
+                _src_id = _al.get("source_id", "")
+                if not _src_id:
+                    continue
+                _extra_raw = _al.get("extra", "{}")
+                if isinstance(_extra_raw, str):
+                    try:
+                        _extra = json.loads(_extra_raw) if _extra_raw else {}
+                    except Exception:
+                        _extra = {}
+                elif isinstance(_extra_raw, dict):
+                    _extra = _extra_raw
+                else:
+                    _extra = {}
+                _action = _extra.get("action", "")
+                if _action == "pos_refund" and _al.get("source_table") == "sales":
+                    _refunded_sale_ids.add(_src_id)
+                elif _action == "invoice_reverse" and _al.get("source_table") == "invoices":
+                    _reversed_invoice_ids.add(_src_id)
+        except Exception:
+            pass
+        
+        # Build transaction list
+        transactions = []
         for inv in invoices:
-            status = inv.get("status", "outstanding")
-            status_color = "#10b981" if status == "paid" else "#f59e0b"
-            invoice_rows += f'''
+            if (inv.get("status") or "").lower() in ("reversed",) or inv.get("id") in _reversed_invoice_ids:
+                continue
+            transactions.append({
+                "date": inv.get("date"),
+                "type": "Invoice",
+                "reference": inv.get("invoice_number", ""),
+                "debit": float(inv.get("total", 0) or 0),
+                "credit": 0,
+            })
+        for r in cust_receipts:
+            transactions.append({
+                "date": r.get("date"),
+                "type": "Payment",
+                "reference": r.get("receipt_number") or r.get("reference") or "",
+                "debit": 0,
+                "credit": float(r.get("amount", 0) or 0),
+            })
+        for cn in credit_notes:
+            transactions.append({
+                "date": cn.get("date"),
+                "type": "Credit Note",
+                "reference": cn.get("credit_note_number") or cn.get("number", ""),
+                "debit": 0,
+                "credit": float(cn.get("total", 0) or 0),
+            })
+        for s in sales:
+            if s.get("id") in _refunded_sale_ids:
+                continue
+            if (s.get("payment_method") or "").lower() in ("account", "credit"):
+                transactions.append({
+                    "date": s.get("date"),
+                    "type": "POS Sale",
+                    "reference": s.get("sale_number") or (s.get("id", "") or "")[:10],
+                    "debit": float(s.get("total", 0) or 0),
+                    "credit": 0,
+                })
+        
+        # Sort chronologically
+        transactions.sort(key=lambda x: (x.get("date") or "", x.get("type") or ""))
+        
+        # Calculate running balance and build ledger rows
+        running_balance = 0.0
+        ledger_rows = ""
+        for t in transactions:
+            running_balance += t["debit"] - t["credit"]
+            _debit_disp = f"R{t['debit']:,.2f}" if t["debit"] else "-"
+            _credit_disp = f"R{t['credit']:,.2f}" if t["credit"] else "-"
+            ledger_rows += f'''
             <tr>
-                <td style="padding: 5px 8px; border-bottom: 1px solid #eee; font-size:12px;">{safe(inv.get("invoice_number", "-"))}</td>
-                <td style="padding: 5px 8px; border-bottom: 1px solid #eee; font-size:12px;">{safe(inv.get("date", "-"))}</td>
-                <td style="padding: 5px 8px; border-bottom: 1px solid #eee; text-align: right; font-size:12px;">R{float(inv.get("total", 0)):,.2f}</td>
-                <td style="padding: 5px 8px; border-bottom: 1px solid #eee; font-size:11px;"><span style="color:{status_color};font-weight:bold;">{status.upper()}</span></td>
+                <td style="padding:5px 8px;border-bottom:1px solid #e5e7eb;font-size:11px;white-space:nowrap;">{safe(t["date"] or "-")}</td>
+                <td style="padding:5px 8px;border-bottom:1px solid #e5e7eb;font-size:11px;">{t["type"]}</td>
+                <td style="padding:5px 8px;border-bottom:1px solid #e5e7eb;font-size:11px;font-weight:600;">{safe(t.get("reference") or "-")}</td>
+                <td style="padding:5px 8px;border-bottom:1px solid #e5e7eb;font-size:11px;text-align:right;white-space:nowrap;">{_debit_disp}</td>
+                <td style="padding:5px 8px;border-bottom:1px solid #e5e7eb;font-size:11px;text-align:right;color:#16a34a;white-space:nowrap;">{_credit_disp}</td>
+                <td style="padding:5px 8px;border-bottom:1px solid #e5e7eb;font-size:11px;text-align:right;font-weight:600;white-space:nowrap;">R{running_balance:,.2f}</td>
             </tr>
             '''
         
-        if not invoice_rows:
-            invoice_rows = '<tr><td colspan="4" style="padding:12px;text-align:center;color:#888;font-size:12px;">No invoices on record</td></tr>'
+        if not ledger_rows:
+            ledger_rows = '<tr><td colspan="6" style="padding:14px;text-align:center;color:#888;font-size:11px;">No transactions on record</td></tr>'
+        
+        final_balance = running_balance
+        
+        # ════════════════════════════════════════════════════════════════
+        # AGING BUCKETS (current / 30 / 60 / 90 / 120+ days) — Sage benchmark
+        # ════════════════════════════════════════════════════════════════
+        from datetime import datetime as _dt, date as _date
+        _today_obj = _date.today()
+        aging = {"current": 0.0, "30": 0.0, "60": 0.0, "90": 0.0, "120": 0.0}
+        for inv in invoices:
+            if (inv.get("status") or "").lower() in ("reversed", "credited", "paid"):
+                continue
+            try:
+                inv_total = float(inv.get("total", 0) or 0)
+                inv_paid = float(inv.get("amount_paid", 0) or 0)
+                outstanding = inv_total - inv_paid
+                if outstanding <= 0.01:
+                    continue
+                _date_str = inv.get("date") or ""
+                try:
+                    inv_date = _dt.strptime(_date_str[:10], "%Y-%m-%d").date()
+                except Exception:
+                    continue
+                days_old = (_today_obj - inv_date).days
+                if days_old <= 30:
+                    aging["current"] += outstanding
+                elif days_old <= 60:
+                    aging["30"] += outstanding
+                elif days_old <= 90:
+                    aging["60"] += outstanding
+                elif days_old <= 120:
+                    aging["90"] += outstanding
+                else:
+                    aging["120"] += outstanding
+            except Exception:
+                continue
         
         subject = f"Statement of Account - {biz_name}"
+        cust_code = safe(customer.get("code", "") or customer.get("account_code", ""))
         
-        # Build bank details section — COMPACT
+        # Bank details section — compact
         bank_section = ""
         if bank_name and bank_account:
             bank_section = f'''
-            <div style="background:#f0fdf4;padding:10px 12px;border-radius:6px;margin:12px 0;">
-                <h4 style="margin:0 0 6px 0;color:#166534;font-size:13px;">Banking Details for Payment:</h4>
-                <table style="font-size:12px;">
-                    <tr><td style="padding:2px 12px 2px 0;color:#666;">Bank:</td><td><strong>{bank_name}</strong></td></tr>
-                    <tr><td style="padding:2px 12px 2px 0;color:#666;">Account:</td><td><strong>{bank_account}</strong></td></tr>
-                    {f'<tr><td style="padding:2px 12px 2px 0;color:#666;">Branch:</td><td>{bank_branch}</td></tr>' if bank_branch else ''}
-                    <tr><td style="padding:2px 12px 2px 0;color:#666;">Reference:</td><td><strong>{customer.get("code", name[:10])}</strong></td></tr>
+            <div style="background:#f0fdf4;padding:10px 12px;border-radius:6px;margin:12px 0;border-left:3px solid #16a34a;">
+                <div style="font-size:11px;font-weight:700;color:#166534;margin-bottom:6px;text-transform:uppercase;letter-spacing:0.5px;">Banking Details for Payment</div>
+                <table style="font-size:12px;border-collapse:collapse;">
+                    <tr><td style="padding:2px 14px 2px 0;color:#6b7280;">Bank:</td><td><strong>{safe(bank_name)}</strong></td></tr>
+                    <tr><td style="padding:2px 14px 2px 0;color:#6b7280;">Account:</td><td><strong>{safe(bank_account)}</strong></td></tr>
+                    {f'<tr><td style="padding:2px 14px 2px 0;color:#6b7280;">Branch:</td><td>{safe(bank_branch)}</td></tr>' if bank_branch else ''}
+                    <tr><td style="padding:2px 14px 2px 0;color:#6b7280;">Reference:</td><td><strong>{cust_code or name[:15]}</strong></td></tr>
                 </table>
             </div>
             '''
         
+        # Aging summary table
+        aging_html = f'''
+        <table style="width:100%;border-collapse:collapse;margin:14px 0 8px 0;font-size:11px;">
+            <thead>
+                <tr style="background:#f3f4f6;">
+                    <th style="padding:6px 8px;text-align:right;border:1px solid #e5e7eb;color:#4b5563;font-weight:600;text-transform:uppercase;font-size:10px;">Current</th>
+                    <th style="padding:6px 8px;text-align:right;border:1px solid #e5e7eb;color:#4b5563;font-weight:600;text-transform:uppercase;font-size:10px;">30 Days</th>
+                    <th style="padding:6px 8px;text-align:right;border:1px solid #e5e7eb;color:#4b5563;font-weight:600;text-transform:uppercase;font-size:10px;">60 Days</th>
+                    <th style="padding:6px 8px;text-align:right;border:1px solid #e5e7eb;color:#4b5563;font-weight:600;text-transform:uppercase;font-size:10px;">90 Days</th>
+                    <th style="padding:6px 8px;text-align:right;border:1px solid #e5e7eb;color:#4b5563;font-weight:600;text-transform:uppercase;font-size:10px;">120+ Days</th>
+                    <th style="padding:6px 8px;text-align:right;border:1px solid #e5e7eb;background:#fef2f2;color:#991b1b;font-weight:700;text-transform:uppercase;font-size:10px;">Total Due</th>
+                </tr>
+            </thead>
+            <tbody>
+                <tr>
+                    <td style="padding:7px 8px;text-align:right;border:1px solid #e5e7eb;">R{aging["current"]:,.2f}</td>
+                    <td style="padding:7px 8px;text-align:right;border:1px solid #e5e7eb;">R{aging["30"]:,.2f}</td>
+                    <td style="padding:7px 8px;text-align:right;border:1px solid #e5e7eb;">R{aging["60"]:,.2f}</td>
+                    <td style="padding:7px 8px;text-align:right;border:1px solid #e5e7eb;">R{aging["90"]:,.2f}</td>
+                    <td style="padding:7px 8px;text-align:right;border:1px solid #e5e7eb;">R{aging["120"]:,.2f}</td>
+                    <td style="padding:7px 8px;text-align:right;border:1px solid #e5e7eb;background:#fef2f2;color:#991b1b;font-weight:700;">R{final_balance:,.2f}</td>
+                </tr>
+            </tbody>
+        </table>
+        '''
+        
+        # Customer block lines
+        cust_address = safe(customer.get("address", "")).replace(chr(10), "<br>")
+        cust_phone_html = f'<div style="font-size:11px;color:#4b5563;margin-top:2px;">Tel: {safe(customer.get("phone",""))}</div>' if customer.get("phone") else ""
+        cust_email_html = f'<div style="font-size:11px;color:#4b5563;">{safe(customer.get("email",""))}</div>' if customer.get("email") else ""
+        cust_addr_html = f'<div style="font-size:11px;color:#4b5563;margin-top:2px;">{cust_address}</div>' if cust_address else ""
+        cust_vat_html = f'<div style="font-size:11px;color:#4b5563;margin-top:2px;">VAT: {safe(customer.get("vat_number",""))}</div>' if customer.get("vat_number") else ""
+        
+        # Balance colours
+        _bal_bg = "#fef2f2" if final_balance > 0 else "#f0fdf4"
+        _bal_color = "#dc2626" if final_balance > 0 else "#16a34a"
+        
         body_html = f'''
         <html>
-        <body style="font-family: Arial, sans-serif; padding: 10px; background: #f5f5f5; margin:0;">
-            <div style="max-width: 650px; margin: 0 auto; background: white; padding: 18px 20px; border-radius: 8px; box-shadow: 0 2px 10px rgba(0,0,0,0.1);">
-                <!-- Header with Business Details -->
-                <div style="border-bottom: 2px solid #333; padding-bottom: 10px; margin-bottom: 12px;">
-                    <h1 style="color: #333; margin: 0; font-size: 20px;">{biz_name}</h1>
-                    {f'<p style="color:#666;margin:3px 0;font-size:11px;">{biz_address}</p>' if biz_address else ''}
-                    {f'<p style="color:#666;margin:3px 0;font-size:11px;">Tel: {biz_phone}</p>' if biz_phone else ''}
-                    {f'<p style="color:#666;margin:3px 0;font-size:11px;">Email: {biz_email}</p>' if biz_email else ''}
-                    {f'<p style="color:#666;margin:3px 0;font-size:11px;">VAT No: {biz_vat}</p>' if biz_vat else ''}
+        <body style="font-family: Arial, Helvetica, sans-serif; padding: 10px; background: #f3f4f6; margin:0;">
+            <div style="max-width: 760px; margin: 0 auto; background: white; padding: 20px 24px; border-radius: 8px; box-shadow: 0 2px 10px rgba(0,0,0,0.08);">
+                
+                <!-- Header: Business info LEFT, Statement title RIGHT -->
+                <div style="display:flex;justify-content:space-between;align-items:flex-start;border-bottom: 2px solid #1f2937; padding-bottom: 10px; margin-bottom: 14px;">
+                    <div style="flex:1;">
+                        <h1 style="color: #1f2937; margin: 0; font-size: 20px;">{biz_name}</h1>
+                        {f'<p style="color:#6b7280;margin:2px 0;font-size:11px;">{biz_address}</p>' if biz_address else ''}
+                        {f'<p style="color:#6b7280;margin:2px 0;font-size:11px;">Tel: {biz_phone}</p>' if biz_phone else ''}
+                        {f'<p style="color:#6b7280;margin:2px 0;font-size:11px;">Email: {biz_email}</p>' if biz_email else ''}
+                        {f'<p style="color:#6b7280;margin:2px 0;font-size:11px;">VAT No: {biz_vat}</p>' if biz_vat else ''}
+                    </div>
+                    <div style="text-align:right;">
+                        <h2 style="color: #1f2937; margin:0; font-size: 22px; letter-spacing:2px;">STATEMENT</h2>
+                        <div style="font-size:11px;color:#6b7280;margin-top:4px;">Date: <strong style="color:#1f2937;">{today()}</strong></div>
+                        {f'<div style="font-size:11px;color:#6b7280;">Account: <strong style="color:#1f2937;">{cust_code}</strong></div>' if cust_code else ''}
+                    </div>
                 </div>
                 
-                <h2 style="color: #333; text-align:center; margin:8px 0 12px 0; font-size:18px;">STATEMENT OF ACCOUNT</h2>
+                <!-- Customer block + Balance Due side-by-side -->
+                <table style="width:100%;border-collapse:collapse;margin-bottom:14px;">
+                    <tr>
+                        <td style="vertical-align:top;width:55%;padding:0 14px 0 0;">
+                            <div style="font-size:9px;color:#6b7280;text-transform:uppercase;letter-spacing:0.5px;font-weight:600;margin-bottom:3px;">Statement To</div>
+                            <div style="font-size:14px;font-weight:700;color:#1f2937;">{name}</div>
+                            {cust_addr_html}
+                            {cust_phone_html}
+                            {cust_email_html}
+                            {cust_vat_html}
+                        </td>
+                        <td style="vertical-align:top;width:45%;text-align:right;background:{_bal_bg};padding:10px 14px;border-radius:6px;">
+                            <div style="font-size:10px;color:#6b7280;text-transform:uppercase;letter-spacing:0.5px;font-weight:600;">Balance Due</div>
+                            <div style="font-size:24px;font-weight:700;color:{_bal_color};margin-top:3px;">R{final_balance:,.2f}</div>
+                        </td>
+                    </tr>
+                </table>
                 
-                <!-- Customer Details -->
-                <div style="background:#f8f9fa;padding:10px 12px;border-radius:6px;margin-bottom:12px;">
-                    <p style="margin:0;font-size:10px;color:#666;text-transform:uppercase;">Statement To:</p>
-                    <p style="margin:3px 0 0 0;font-size:15px;font-weight:bold;">{name}</p>
-                    {f'<p style="margin:3px 0 0 0;color:#666;font-size:12px;">{safe(customer.get("address", "")).replace(chr(10), ", ")}</p>' if customer.get("address") else ''}
-                    <p style="margin:6px 0 0 0;font-size:12px;">Statement Date: <strong>{today()}</strong></p>
-                </div>
-                
-                <!-- Invoices Table -->
-                <table style="width: 100%; border-collapse: collapse; margin: 10px 0;">
+                <!-- Full transaction ledger -->
+                <table style="width:100%;border-collapse:collapse;margin:6px 0;">
                     <thead>
-                        <tr style="background: #333; color: white;">
-                            <th style="padding: 7px 8px; text-align: left; font-size:11px;">Invoice #</th>
-                            <th style="padding: 7px 8px; text-align: left; font-size:11px;">Date</th>
-                            <th style="padding: 7px 8px; text-align: right; font-size:11px;">Amount</th>
-                            <th style="padding: 7px 8px; text-align: left; font-size:11px;">Status</th>
+                        <tr style="background: #1f2937; color: white;">
+                            <th style="padding: 7px 8px; text-align: left; font-size:10px;font-weight:600;text-transform:uppercase;letter-spacing:0.5px;">Date</th>
+                            <th style="padding: 7px 8px; text-align: left; font-size:10px;font-weight:600;text-transform:uppercase;letter-spacing:0.5px;">Type</th>
+                            <th style="padding: 7px 8px; text-align: left; font-size:10px;font-weight:600;text-transform:uppercase;letter-spacing:0.5px;">Reference</th>
+                            <th style="padding: 7px 8px; text-align: right; font-size:10px;font-weight:600;text-transform:uppercase;letter-spacing:0.5px;">Debit</th>
+                            <th style="padding: 7px 8px; text-align: right; font-size:10px;font-weight:600;text-transform:uppercase;letter-spacing:0.5px;">Credit</th>
+                            <th style="padding: 7px 8px; text-align: right; font-size:10px;font-weight:600;text-transform:uppercase;letter-spacing:0.5px;">Balance</th>
                         </tr>
                     </thead>
                     <tbody>
-                        {invoice_rows}
+                        {ledger_rows}
                     </tbody>
                 </table>
                 
-                <!-- Balance Due -->
-                <div style="text-align: right; padding: 10px 14px; background: {'#fef2f2' if balance > 0 else '#f0fdf4'}; border-radius: 6px; margin: 10px 0;">
-                    <p style="font-size: 12px; color: #666; margin: 0;">Balance Due:</p>
-                    <p style="font-size: 24px; font-weight: bold; color: {'#dc2626' if balance > 0 else '#16a34a'}; margin: 3px 0;">
-                        R{balance:,.2f}
-                    </p>
-                </div>
+                <!-- Aging summary -->
+                {aging_html}
                 
+                <!-- Bank details for payment -->
                 {bank_section}
                 
-                <hr style="border: none; border-top: 1px solid #eee; margin: 10px 0;">
+                <hr style="border: none; border-top: 1px solid #e5e7eb; margin: 14px 0 8px 0;">
                 
-                <p style="color: #888; font-size: 10px; text-align:center; margin:6px 0;">
+                <p style="color: #9ca3af; font-size: 10px; text-align:center; margin:6px 0;">
                     This statement was generated automatically by {biz_name}<br>
                     {today()} • Powered by Click AI
                 </p>
@@ -2819,7 +3012,36 @@ Thank you for your business!
         </html>
         '''
         
-        return Email.send(email, subject, body_html, business=business, cc=cc)
+        # ════════════════════════════════════════════════════════════════
+        # Generate PDF attachment using the same transaction ledger data.
+        # The PDF mirrors the HTML email body so the recipient gets both
+        # the inline view AND a professional PDF they can save or forward.
+        # ════════════════════════════════════════════════════════════════
+        pdf_attachments = []
+        try:
+            pdf_bytes = render_statement_pdf(
+                customer=customer,
+                business=business,
+                transactions=transactions,
+                aging=aging,
+                final_balance=final_balance,
+            )
+            # Build a friendly filename: Statement_<CustomerName>_<YYYY-MM-DD>.pdf
+            _safe_cust = "".join(c if c.isalnum() or c in "_- " else "_" for c in (customer.get("name") or "Customer")).strip().replace(" ", "_")[:50]
+            pdf_filename = f"Statement_{_safe_cust}_{today()}.pdf"
+            pdf_attachments.append({
+                "filename": pdf_filename,
+                "content": pdf_bytes,
+                "content_type": "application/pdf",
+            })
+            logger.info(f"[EMAIL STMT] PDF attachment generated: {pdf_filename} ({len(pdf_bytes)} bytes)")
+        except Exception as _pdf_err:
+            # If PDF generation fails for any reason, still send the HTML
+            # email — the inline statement is fully self-contained.
+            logger.error(f"[EMAIL STMT] PDF generation failed: {_pdf_err}")
+            pdf_attachments = None
+        
+        return Email.send(email, subject, body_html, business=business, attachments=pdf_attachments, cc=cc)
 
 
 # 
@@ -3220,6 +3442,267 @@ def render_document_pdf(doc_type: str, doc: dict, business: dict, party: dict = 
     if footer_bits:
         elements.append(Paragraph(" &nbsp;|&nbsp; ".join(footer_bits), s_footer))
     elements.append(Paragraph("Generated by Click AI", s_footer))
+    
+    pdf.build(elements)
+    pdf_bytes = buf.getvalue()
+    buf.close()
+    return pdf_bytes
+
+
+def render_statement_pdf(customer: dict, business: dict, transactions: list,
+                          aging: dict, final_balance: float) -> bytes:
+    """
+    Render a professional PDF customer statement of account.
+    
+    Same Sage-style ledger layout as the on-screen statement and the
+    /statement/<id>/print view: Date | Type | Reference | Debit | Credit | Balance
+    with an aging summary (current / 30 / 60 / 90 / 120+ days) and bank details
+    for payment at the bottom.
+    
+    transactions: list of {date, type, reference, debit, credit} dicts
+                  (running balance is calculated here)
+    aging:        {'current', '30', '60', '90', '120'} floats
+    Returns raw PDF bytes — caller attaches it to the email.
+    """
+    from reportlab.lib.pagesizes import A4
+    from reportlab.lib.units import mm
+    from reportlab.lib import colors as _rl_colors
+    from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+    from reportlab.lib.enums import TA_RIGHT, TA_CENTER, TA_LEFT
+    from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, KeepTogether
+    
+    def _money(v):
+        try:
+            return f"R {float(v):,.2f}"
+        except Exception:
+            return "R 0.00"
+    
+    buf = io.BytesIO()
+    pdf = SimpleDocTemplate(
+        buf, pagesize=A4,
+        topMargin=12*mm, bottomMargin=14*mm,
+        leftMargin=14*mm, rightMargin=14*mm,
+        title=f"Statement - {customer.get('name', '')}",
+    )
+    
+    styles = getSampleStyleSheet()
+    s_biz_name = ParagraphStyle('biz_name', parent=styles['Normal'], fontSize=14, leading=16,
+                                 textColor=_rl_colors.HexColor("#1F2937"), fontName="Helvetica-Bold")
+    s_biz_line = ParagraphStyle('biz_line', parent=styles['Normal'], fontSize=8, leading=10,
+                                 textColor=_rl_colors.HexColor("#6B7280"))
+    s_stmt_title = ParagraphStyle('stmt_title', parent=styles['Normal'], fontSize=18, leading=20,
+                                   textColor=_rl_colors.HexColor("#1F2937"), fontName="Helvetica-Bold",
+                                   alignment=TA_RIGHT)
+    s_stmt_meta = ParagraphStyle('stmt_meta', parent=styles['Normal'], fontSize=8, leading=10,
+                                  textColor=_rl_colors.HexColor("#6B7280"), alignment=TA_RIGHT)
+    s_label = ParagraphStyle('lbl', parent=styles['Normal'], fontSize=7, leading=9,
+                              textColor=_rl_colors.HexColor("#6B7280"), fontName="Helvetica-Bold")
+    s_cust_name = ParagraphStyle('cust', parent=styles['Normal'], fontSize=11, leading=13,
+                                  textColor=_rl_colors.HexColor("#1F2937"), fontName="Helvetica-Bold")
+    s_cust_line = ParagraphStyle('cust_line', parent=styles['Normal'], fontSize=8, leading=10,
+                                  textColor=_rl_colors.HexColor("#4B5563"))
+    s_balance_big = ParagraphStyle('bal_big', parent=styles['Normal'], fontSize=18, leading=20,
+                                    textColor=_rl_colors.HexColor("#DC2626") if final_balance > 0 else _rl_colors.HexColor("#16A34A"),
+                                    fontName="Helvetica-Bold", alignment=TA_RIGHT)
+    s_balance_lbl = ParagraphStyle('bal_lbl', parent=styles['Normal'], fontSize=7, leading=9,
+                                    textColor=_rl_colors.HexColor("#6B7280"), fontName="Helvetica-Bold",
+                                    alignment=TA_RIGHT)
+    s_footer = ParagraphStyle('footer', parent=styles['Normal'], fontSize=7, leading=9,
+                               textColor=_rl_colors.HexColor("#9CA3AF"), alignment=TA_CENTER)
+    s_bank_title = ParagraphStyle('bank_title', parent=styles['Normal'], fontSize=8, leading=10,
+                                   textColor=_rl_colors.HexColor("#166534"), fontName="Helvetica-Bold")
+    s_bank_line = ParagraphStyle('bank_line', parent=styles['Normal'], fontSize=8, leading=10,
+                                  textColor=_rl_colors.HexColor("#1F2937"))
+    
+    elements = []
+    
+    # ── Business info & Statement title ──
+    biz_name = safe_string(business.get("name", "Business")) if business else "Business"
+    biz_address = safe_string(business.get("address", "")).replace("\n", "<br/>") if business else ""
+    biz_phone = safe_string(business.get("phone", "")) if business else ""
+    biz_email = safe_string(business.get("email", "")) if business else ""
+    biz_vat = safe_string(business.get("vat_number", "")) if business else ""
+    
+    biz_block = [Paragraph(biz_name, s_biz_name)]
+    if biz_address:
+        biz_block.append(Paragraph(biz_address, s_biz_line))
+    if biz_phone:
+        biz_block.append(Paragraph(f"Tel: {biz_phone}", s_biz_line))
+    if biz_email:
+        biz_block.append(Paragraph(f"Email: {biz_email}", s_biz_line))
+    if biz_vat:
+        biz_block.append(Paragraph(f"VAT No: {biz_vat}", s_biz_line))
+    
+    cust_code = safe_string(customer.get("code", "") or customer.get("account_code", ""))
+    stmt_block = [Paragraph("STATEMENT", s_stmt_title),
+                  Paragraph(f"Date: <b>{today()}</b>", s_stmt_meta)]
+    if cust_code:
+        stmt_block.append(Paragraph(f"Account: <b>{cust_code}</b>", s_stmt_meta))
+    
+    header_tbl = Table([[biz_block, stmt_block]], colWidths=[110*mm, 70*mm])
+    header_tbl.setStyle(TableStyle([
+        ('VALIGN', (0, 0), (-1, -1), 'TOP'),
+        ('LINEBELOW', (0, 0), (-1, -1), 1.5, _rl_colors.HexColor("#1F2937")),
+        ('BOTTOMPADDING', (0, 0), (-1, -1), 6),
+    ]))
+    elements.append(header_tbl)
+    elements.append(Spacer(1, 6*mm))
+    
+    # ── Customer block + Balance Due side-by-side ──
+    cust_name = safe_string(customer.get("name", "-"))
+    cust_address = safe_string(customer.get("address", "")).replace("\n", "<br/>")
+    cust_phone_str = safe_string(customer.get("phone", ""))
+    cust_email_str = safe_string(customer.get("email", ""))
+    cust_vat_str = safe_string(customer.get("vat_number", ""))
+    
+    cust_block = [Paragraph("STATEMENT TO", s_label), Paragraph(cust_name, s_cust_name)]
+    if cust_address:
+        cust_block.append(Paragraph(cust_address, s_cust_line))
+    if cust_phone_str:
+        cust_block.append(Paragraph(f"Tel: {cust_phone_str}", s_cust_line))
+    if cust_email_str:
+        cust_block.append(Paragraph(cust_email_str, s_cust_line))
+    if cust_vat_str:
+        cust_block.append(Paragraph(f"VAT: {cust_vat_str}", s_cust_line))
+    
+    bal_block = [
+        Paragraph("BALANCE DUE", s_balance_lbl),
+        Spacer(1, 2*mm),
+        Paragraph(_money(final_balance), s_balance_big),
+    ]
+    
+    cust_tbl = Table([[cust_block, bal_block]], colWidths=[110*mm, 70*mm])
+    _bal_bg = _rl_colors.HexColor("#FEF2F2") if final_balance > 0 else _rl_colors.HexColor("#F0FDF4")
+    cust_tbl.setStyle(TableStyle([
+        ('VALIGN', (0, 0), (-1, -1), 'TOP'),
+        ('BACKGROUND', (1, 0), (1, 0), _bal_bg),
+        ('LEFTPADDING', (1, 0), (1, 0), 8),
+        ('RIGHTPADDING', (1, 0), (1, 0), 8),
+        ('TOPPADDING', (1, 0), (1, 0), 8),
+        ('BOTTOMPADDING', (1, 0), (1, 0), 8),
+    ]))
+    elements.append(cust_tbl)
+    elements.append(Spacer(1, 5*mm))
+    
+    # ── Transaction ledger ──
+    # Header row
+    ledger_data = [["Date", "Type", "Reference", "Debit", "Credit", "Balance"]]
+    
+    running = 0.0
+    for t in transactions:
+        running += float(t.get("debit", 0) or 0) - float(t.get("credit", 0) or 0)
+        debit_disp = _money(t["debit"]) if t.get("debit") else "-"
+        credit_disp = _money(t["credit"]) if t.get("credit") else "-"
+        ledger_data.append([
+            safe_string(t.get("date") or "-"),
+            safe_string(t.get("type") or "-"),
+            safe_string(t.get("reference") or "-"),
+            debit_disp,
+            credit_disp,
+            _money(running),
+        ])
+    
+    if len(ledger_data) == 1:
+        ledger_data.append(["", "", "No transactions on record", "", "", ""])
+    
+    # Column widths (total 182mm = A4 portrait 210 - 14*2 margins)
+    ledger_tbl = Table(ledger_data, colWidths=[22*mm, 28*mm, 50*mm, 28*mm, 28*mm, 26*mm], repeatRows=1)
+    ledger_tbl.setStyle(TableStyle([
+        # Header
+        ('BACKGROUND', (0, 0), (-1, 0), _rl_colors.HexColor("#1F2937")),
+        ('TEXTCOLOR', (0, 0), (-1, 0), _rl_colors.white),
+        ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+        ('FONTSIZE', (0, 0), (-1, 0), 8),
+        ('ALIGN', (0, 0), (2, 0), 'LEFT'),
+        ('ALIGN', (3, 0), (-1, 0), 'RIGHT'),
+        ('TOPPADDING', (0, 0), (-1, 0), 5),
+        ('BOTTOMPADDING', (0, 0), (-1, 0), 5),
+        # Body
+        ('FONTSIZE', (0, 1), (-1, -1), 8),
+        ('TEXTCOLOR', (0, 1), (2, -1), _rl_colors.HexColor("#1F2937")),
+        ('TEXTCOLOR', (3, 1), (3, -1), _rl_colors.HexColor("#1F2937")),    # debit
+        ('TEXTCOLOR', (4, 1), (4, -1), _rl_colors.HexColor("#16A34A")),    # credit
+        ('FONTNAME', (5, 1), (5, -1), 'Helvetica-Bold'),                    # balance bold
+        ('TEXTCOLOR', (5, 1), (5, -1), _rl_colors.HexColor("#1F2937")),    # balance
+        ('FONTNAME', (2, 1), (2, -1), 'Helvetica-Bold'),                    # reference bold
+        ('ALIGN', (0, 1), (2, -1), 'LEFT'),
+        ('ALIGN', (3, 1), (-1, -1), 'RIGHT'),
+        ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
+        ('LINEBELOW', (0, 0), (-1, -1), 0.4, _rl_colors.HexColor("#E5E7EB")),
+        ('TOPPADDING', (0, 1), (-1, -1), 3),
+        ('BOTTOMPADDING', (0, 1), (-1, -1), 3),
+        ('LEFTPADDING', (0, 0), (-1, -1), 4),
+        ('RIGHTPADDING', (0, 0), (-1, -1), 4),
+    ]))
+    elements.append(ledger_tbl)
+    elements.append(Spacer(1, 5*mm))
+    
+    # ── Aging summary ──
+    aging_data = [
+        ["Current", "30 Days", "60 Days", "90 Days", "120+ Days", "Total Due"],
+        [_money(aging.get("current", 0)), _money(aging.get("30", 0)), _money(aging.get("60", 0)),
+         _money(aging.get("90", 0)), _money(aging.get("120", 0)), _money(final_balance)],
+    ]
+    col_w = 30*mm
+    aging_tbl = Table(aging_data, colWidths=[col_w, col_w, col_w, col_w, col_w, col_w])
+    aging_tbl.setStyle(TableStyle([
+        # Header
+        ('BACKGROUND', (0, 0), (-1, 0), _rl_colors.HexColor("#F3F4F6")),
+        ('TEXTCOLOR', (0, 0), (-1, 0), _rl_colors.HexColor("#4B5563")),
+        ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+        ('FONTSIZE', (0, 0), (-1, 0), 7),
+        # Total Due column highlight
+        ('BACKGROUND', (5, 0), (5, 1), _rl_colors.HexColor("#FEF2F2")),
+        ('TEXTCOLOR', (5, 0), (5, -1), _rl_colors.HexColor("#991B1B")),
+        ('FONTNAME', (5, 1), (5, 1), 'Helvetica-Bold'),
+        # Body
+        ('FONTSIZE', (0, 1), (-1, -1), 9),
+        ('ALIGN', (0, 0), (-1, -1), 'RIGHT'),
+        ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
+        ('GRID', (0, 0), (-1, -1), 0.5, _rl_colors.HexColor("#E5E7EB")),
+        ('TOPPADDING', (0, 0), (-1, -1), 5),
+        ('BOTTOMPADDING', (0, 0), (-1, -1), 5),
+    ]))
+    elements.append(KeepTogether(aging_tbl))
+    elements.append(Spacer(1, 4*mm))
+    
+    # ── Bank details for payment (if available) ──
+    bank_name = business.get("bank_name", "") if business else ""
+    bank_account = business.get("bank_account", "") if business else ""
+    bank_branch = business.get("bank_branch", "") if business else ""
+    if bank_name and bank_account:
+        bank_inner = [
+            [Paragraph("BANKING DETAILS FOR PAYMENT", s_bank_title), ""],
+            [Paragraph(f"<b>Bank:</b> {safe_string(bank_name)}", s_bank_line),
+             Paragraph(f"<b>Account:</b> {safe_string(bank_account)}", s_bank_line)],
+        ]
+        if bank_branch:
+            bank_inner.append([
+                Paragraph(f"<b>Branch:</b> {safe_string(bank_branch)}", s_bank_line),
+                Paragraph(f"<b>Reference:</b> {cust_code or cust_name[:15]}", s_bank_line),
+            ])
+        else:
+            bank_inner.append([
+                Paragraph(f"<b>Reference:</b> {cust_code or cust_name[:15]}", s_bank_line),
+                "",
+            ])
+        bank_tbl = Table(bank_inner, colWidths=[90*mm, 90*mm])
+        bank_tbl.setStyle(TableStyle([
+            ('BACKGROUND', (0, 0), (-1, -1), _rl_colors.HexColor("#F0FDF4")),
+            ('VALIGN', (0, 0), (-1, -1), 'TOP'),
+            ('LEFTPADDING', (0, 0), (-1, -1), 8),
+            ('RIGHTPADDING', (0, 0), (-1, -1), 8),
+            ('TOPPADDING', (0, 0), (-1, -1), 5),
+            ('BOTTOMPADDING', (0, 0), (-1, -1), 5),
+            ('LINEBEFORE', (0, 0), (0, -1), 3, _rl_colors.HexColor("#16A34A")),
+            ('SPAN', (0, 0), (-1, 0)),
+        ]))
+        elements.append(KeepTogether(bank_tbl))
+        elements.append(Spacer(1, 4*mm))
+    
+    # ── Footer ──
+    elements.append(Spacer(1, 4*mm))
+    elements.append(Paragraph(f"Generated by {biz_name} • {today()} • Powered by Click AI", s_footer))
     
     pdf.build(elements)
     pdf_bytes = buf.getvalue()
