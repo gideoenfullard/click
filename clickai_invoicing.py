@@ -4631,16 +4631,35 @@ def register_invoicing_routes(app, db, login_required, Auth, render_page,
                 margin: 12mm 14mm 14mm 14mm;
             }}
             /* hide every nav/button/header that render_page adds */
-            body > *:not(.dn-print-wrap),
             .no-print,
             nav, header, footer,
-            .sidebar, .topbar,
+            .sidebar, .topbar, .top-bar, .side-bar,
             .flash-messages {{
                 display: none !important;
             }}
+            /* Walk up the DOM: every ancestor of .dn-print-wrap must be visible,
+               and any sibling of those ancestors must be hidden. This isolates
+               the printable card without breaking when render_page nests it
+               inside a sidebar/content wrapper. */
+            html, body {{
+                background: white !important;
+                margin: 0 !important;
+                padding: 0 !important;
+            }}
+            body * {{
+                visibility: hidden;
+            }}
+            .dn-print-wrap, .dn-print-wrap * {{
+                visibility: visible;
+            }}
             .dn-print-wrap {{
+                position: absolute;
+                left: 0;
+                top: 0;
+                width: 100%;
                 max-width: 100%;
                 margin: 0;
+                padding: 0;
             }}
             /* make sure the card fills the A4 width */
             .dn-card {{
