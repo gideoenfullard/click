@@ -54932,6 +54932,29 @@ def scan_inbox_page():
                     </select>
                     <div style="font-size:11px;color:var(--text-muted);margin-top:4px;">Default: Zane's suggestion. Override here to book against a specific GL code (e.g. 5500 Brushing Expense).</div>
                 </div>
+                
+                <!-- GRV: Receive Stock — opt-in. When OFF, items are NEVER booked into stock
+                     and NO stock codes are auto-created. When ON, per-line tickboxes appear
+                     so you can do partial receives (only tick the lines that actually arrived). -->
+                <div style="padding:12px;background:rgba(34,197,94,0.06);border:1px solid rgba(34,197,94,0.3);border-radius:8px;margin-bottom:15px;">
+                    <label style="display:flex;align-items:center;gap:10px;cursor:pointer;user-select:none;">
+                        <input type="checkbox" id="grvToggle" onchange="onGrvToggleChange()" style="width:20px;height:20px;cursor:pointer;accent-color:#16a34a;">
+                        <div style="flex:1;">
+                            <div style="font-size:14px;font-weight:600;color:#16a34a;">📦 GRV — Receive into Stock</div>
+                            <div style="font-size:11px;color:var(--text-muted);margin-top:2px;">Tick this ONLY when stock items are physically received. Leave OFF for service / expense invoices (no stock codes will be created).</div>
+                        </div>
+                    </label>
+                    <div id="grvLineList" style="display:none;margin-top:12px;padding-top:10px;border-top:1px dashed rgba(34,197,94,0.3);">
+                        <div style="font-size:11px;color:var(--text-muted);margin-bottom:8px;font-weight:600;">Tick the lines being received (untick for partial GRVs):</div>
+                        <div id="grvLineRows" style="display:flex;flex-direction:column;gap:5px;max-height:200px;overflow-y:auto;"></div>
+                        <div style="margin-top:8px;display:flex;gap:8px;font-size:11px;">
+                            <button type="button" onclick="grvToggleAll(true)" style="padding:4px 10px;background:rgba(34,197,94,0.15);border:1px solid rgba(34,197,94,0.4);border-radius:4px;color:#16a34a;cursor:pointer;font-weight:600;">✓ All</button>
+                            <button type="button" onclick="grvToggleAll(false)" style="padding:4px 10px;background:rgba(0,0,0,0.1);border:1px solid var(--border);border-radius:4px;color:var(--text-muted);cursor:pointer;font-weight:600;">✗ None</button>
+                            <div id="grvCount" style="margin-left:auto;color:var(--text-muted);align-self:center;"></div>
+                        </div>
+                    </div>
+                </div>
+                
                 <div style="display:grid;grid-template-columns:1fr 1fr;gap:15px;">
                     <!-- LEFT: Book as Expense (paid now) -->
                     <div style="padding:12px;background:rgba(249,115,22,0.08);border:1px solid rgba(249,115,22,0.3);border-radius:8px;">
@@ -55664,6 +55687,90 @@ def scan_inbox_page():
         if (tag) tag.textContent = '';
     }}
     
+    // ─── GRV (Receive Stock) helpers ───────────────────────────────────
+    // Toggle the per-line list visible when GRV is ticked
+    function onGrvToggleChange() {{
+        var cb = document.getElementById('grvToggle');
+        var list = document.getElementById('grvLineList');
+        if (!cb || !list) return;
+        if (cb.checked) {{
+            list.style.display = 'block';
+            populateGrvLineList();
+        }} else {{
+            list.style.display = 'none';
+        }}
+    }}
+    
+    // Build per-line tickboxes from the current invoice items
+    function populateGrvLineList() {{
+        var holder = document.getElementById('grvLineRows');
+        if (!holder) return;
+        var items = (currentItemData && (currentItemData.items
+                    || (currentItemData.extracted && currentItemData.extracted.items))) || [];
+        if (!items.length) {{
+            holder.innerHTML = '<div style="color:var(--text-muted);font-size:11px;font-style:italic;">No line items extracted from this document.</div>';
+            updateGrvCount();
+            return;
+        }}
+        var html = '';
+        for (var i = 0; i < items.length; i++) {{
+            var it = items[i];
+            var desc = (it.description || it.item || it.product || '(no description)').toString();
+            var qty = (it.quantity != null ? it.quantity : (it.qty != null ? it.qty : 1));
+            var safeDesc = desc.replace(/</g, '&lt;').replace(/"/g, '&quot;');
+            html += '<label style="display:flex;align-items:center;gap:8px;padding:6px 8px;background:rgba(0,0,0,0.05);border-radius:4px;cursor:pointer;font-size:12px;">'
+                  + '<input type="checkbox" class="grv-line-cb" data-idx="' + i + '" checked onchange="updateGrvCount()" style="cursor:pointer;accent-color:#16a34a;flex-shrink:0;">'
+                  + '<span style="flex:1;color:var(--text);">' + safeDesc + '</span>'
+                  + '<span style="color:var(--text-muted);font-size:11px;white-space:nowrap;">Qty: ' + qty + '</span>'
+                  + '</label>';
+        }}
+        holder.innerHTML = html;
+        updateGrvCount();
+    }}
+    
+    function updateGrvCount() {{
+        var cbs = document.querySelectorAll('.grv-line-cb');
+        var total = cbs.length;
+        var checked = 0;
+        cbs.forEach(function(c) {{ if (c.checked) checked++; }});
+        var counter = document.getElementById('grvCount');
+        if (counter) {{
+            if (total === 0) {{
+                counter.textContent = '';
+            }} else if (checked === total) {{
+                counter.textContent = 'All ' + total + ' lines selected';
+                counter.style.color = '#16a34a';
+            }} else if (checked === 0) {{
+                counter.textContent = 'No lines selected';
+                counter.style.color = 'var(--red)';
+            }} else {{
+                counter.textContent = checked + ' of ' + total + ' selected (partial)';
+                counter.style.color = '#f59e0b';
+            }}
+        }}
+    }}
+    
+    function grvToggleAll(state) {{
+        var cbs = document.querySelectorAll('.grv-line-cb');
+        cbs.forEach(function(c) {{ c.checked = state; }});
+        updateGrvCount();
+    }}
+    
+    // Read GRV state for the payload
+    function getGrvState() {{
+        var cb = document.getElementById('grvToggle');
+        var enabled = !!(cb && cb.checked);
+        if (!enabled) return {{ enabled: false, line_indices: [] }};
+        var checked = [];
+        document.querySelectorAll('.grv-line-cb').forEach(function(c) {{
+            if (c.checked) {{
+                var idx = parseInt(c.getAttribute('data-idx'), 10);
+                if (!isNaN(idx)) checked.push(idx);
+            }}
+        }});
+        return {{ enabled: true, line_indices: checked }};
+    }}
+    
     async function processAs(saveType) {{
         let payload = {{}};
         let endpoint = '';
@@ -55796,6 +55903,9 @@ def scan_inbox_page():
                 }});
             }}
             
+            // GRV state — when OFF, backend must NOT create stock codes or book stock movements
+            const grvState = getGrvState();
+            
             payload = {{
                 supplier_name: document.getElementById('m_supplier')?.value || 'Unknown',
                 supplier_phone: document.getElementById('m_phone')?.value || '',
@@ -55815,7 +55925,11 @@ def scan_inbox_page():
                 po_number: (currentItemData.extracted && currentItemData.extracted._matched_po_number) || currentItemData._matched_po_number || '',
                 // Allocation intent: stock=DR 1300, cos=DR 5000, split=per-item
                 allocation_intent: allocIntent,
-                item_allocations: itemAllocations
+                item_allocations: itemAllocations,
+                // ── GRV opt-in. If false → NO stock codes created, NO stock booked.
+                //    If true → only the ticked line indices are received into stock.
+                grv_enabled: grvState.enabled,
+                grv_line_indices: grvState.line_indices
             }};
             // ═══ MULTI-GL: Read split amounts from UI if Zane suggested a split ═══
             if (window._zaneSplits && currentZaneCategory === 'Split') {{
@@ -56944,6 +57058,29 @@ def api_scan_save_supplier_invoice():
         expenses_booked = 0
         stock_snapshots = []  # Captures old_qty/cost/sell + delta per affected stock item — enables reliable reversal on edit/credit/delete
         
+        # ════════════════════════════════════════════════════════════════
+        # GRV OPT-IN: only book into stock when the user explicitly ticks
+        # "GRV — Receive into Stock" on the scan modal. When OFF (default),
+        # NO stock codes are created and NO stock movements are booked —
+        # this is the correct behaviour for service/expense supplier invoices
+        # (labour, callouts, rentals, etc.) which must never be added to stock.
+        # When ON, grv_line_indices restricts which lines are received
+        # (enables partial GRVs — only ticked lines go to stock).
+        # ════════════════════════════════════════════════════════════════
+        grv_enabled = bool(data.get("grv_enabled", False))
+        grv_line_indices = data.get("grv_line_indices") or []
+        try:
+            grv_line_indices = set(int(i) for i in grv_line_indices)
+        except (TypeError, ValueError):
+            grv_line_indices = set()
+        
+        if not grv_enabled:
+            logger.info(f"[SCAN SAVE] GRV not ticked — items will NOT be booked into stock. No stock codes will be created.")
+        elif grv_line_indices:
+            logger.info(f"[SCAN SAVE] GRV enabled, partial receive: {len(grv_line_indices)} of {len(items)} line(s) selected.")
+        else:
+            logger.info(f"[SCAN SAVE] GRV enabled, full receive: all {len(items)} line(s).")
+        
         # Keywords that indicate EXPENSE not STOCK
         expense_keywords = [
             "LABOUR", "LABOR", "SERVICE", "REPAIR", "MAINTENANCE",
@@ -56955,7 +57092,7 @@ def api_scan_save_supplier_invoice():
             "DISPOSAL", "WASTE", "CLEANING", "SUNDRY", "MISC"
         ]
         
-        if items:
+        if items and grv_enabled:
             # Get existing stock from BOTH tables (stock and stock_items)
             all_stock = db.get_all_stock(biz_id)
             
@@ -56980,7 +57117,13 @@ def api_scan_save_supplier_invoice():
             invoice_date = data.get("date", today())
             invoice_num = data.get("invoice_number", "")
             
-            for item in items:
+            for _grv_idx, item in enumerate(items):
+                # Partial GRV: if specific line indices were ticked, skip the un-ticked ones.
+                # When grv_line_indices is empty AND grv is enabled, treat as "all lines" (full receive).
+                if grv_enabled and grv_line_indices and _grv_idx not in grv_line_indices:
+                    logger.info(f"[SCAN SAVE] GRV skipping un-ticked line {_grv_idx}: {item.get('description','')[:50]}")
+                    continue
+                
                 desc = item.get("description", "").strip()
                 qty = float(item.get("qty", item.get("quantity", 1)) or 1)
                 unit_price = float(item.get("unit_price", item.get("price", 0)) or 0)
@@ -57402,16 +57545,33 @@ def api_scan_save_supplier_invoice():
         # GRV + PO UPDATE — equivalent to manual "PO Receive" flow
         # If a PO was linked (via dropdown or auto-match), update its qty_received
         # per item and set status to received/partial. Also create a GRV record.
+        # 
+        # GUARD: only runs when grv_enabled is True. If the user didn't tick
+        # "GRV — Receive into Stock", we MUST NOT create a GRV record or update
+        # PO received quantities — that would be wrong for service/expense invoices.
         # ════════════════════════════════════════════════════════════════════
+        # Sentinel exception used to bail out of the GRV try-block cleanly when
+        # the user did not tick GRV. Defined inline so it's local to this scope.
+        class _GrvSkipException(Exception):
+            pass
+        
         grv_id_created = None
         grv_number_created = None
+        if not grv_enabled:
+            logger.info(f"[SCAN SAVE] Skipping GRV/PO update (grv_enabled=False)")
         try:
+            if not grv_enabled:
+                # User did NOT tick GRV — skip GRV record creation and PO updates entirely.
+                raise _GrvSkipException()
             _scan_po_id = (data.get("po_id") or "").strip()
             _scan_po_number = (data.get("po_number") or "").strip()
             
             # Build received_items list from the invoice items that touched stock
             received_items = []
-            for item in items:
+            for _grv_idx2, item in enumerate(items):
+                # Honour partial-receive ticks: skip un-ticked lines
+                if grv_line_indices and _grv_idx2 not in grv_line_indices:
+                    continue
                 _desc = (item.get("description") or "").strip()
                 _qty = float(item.get("qty", item.get("quantity", 0)) or 0)
                 _pack = int(item.get("pack_size", 1) or 1)
@@ -57544,6 +57704,9 @@ def api_scan_save_supplier_invoice():
                             ))
                     except Exception as _mv_err:
                         logger.warning(f"[SCAN GRV] Movement log failed for {_ri.get('code')}: {_mv_err}")
+        except _GrvSkipException:
+            # Clean exit when GRV wasn't enabled — already logged above.
+            pass
         except Exception as _grv_block_err:
             # Never let GRV failures break the invoice save
             logger.error(f"[SCAN GRV] Block failed (non-fatal): {_grv_block_err}")
