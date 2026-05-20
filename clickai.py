@@ -53275,6 +53275,41 @@ def scan_inbox_page():
         if desc or code:
             stock_lookup.append({"d": desc.upper(), "c": code.upper()})
     
+    # ── Build GL accounts list for the manual-override picker on the scan
+    # ── process modal. Same source order as the manual Capture Invoice modal
+    # ── in clickai_purchases.py: accounts table → chart_of_accounts → defaults.
+    _scan_gl_json = []
+    _scan_src_accounts = db.get("accounts", {"business_id": biz_id}) if biz_id else []
+    if _scan_src_accounts:
+        for acc in sorted(_scan_src_accounts, key=lambda x: x.get("code", "")):
+            _code = (acc.get("code") or "").strip()
+            _name = (acc.get("name") or "").strip()
+            if _code and _name:
+                _scan_gl_json.append({"code": _code, "name": _name})
+    _scan_src_coa = db.get("chart_of_accounts", {"business_id": biz_id}) if biz_id else []
+    if _scan_src_coa:
+        _scan_existing_codes = {a["code"] for a in _scan_gl_json}
+        for acc in sorted(_scan_src_coa, key=lambda x: x.get("account_code", "")):
+            _code = (acc.get("account_code") or "").strip()
+            _name = (acc.get("account_name") or "").strip()
+            _source = acc.get("source", "")
+            if _code and _name and _code not in _scan_existing_codes and _source != "System Account":
+                _scan_gl_json.append({"code": _code, "name": _name})
+                _scan_existing_codes.add(_code)
+    if not _scan_gl_json:
+        for _da in [
+            ("4000", "Sales"), ("4100", "Services Income"),
+            ("5000", "Cost of Sales"), ("5100", "Purchases"),
+            ("6000", "Salaries & Wages"), ("6100", "Rent"), ("6200", "Electricity"),
+            ("6300", "Telephone"), ("6400", "Insurance"), ("6500", "Fuel"),
+            ("6600", "Repairs & Maintenance"), ("6700", "Bank Charges"),
+            ("6800", "Advertising"), ("6900", "Depreciation"),
+            ("7000", "General Expenses"), ("7900", "Sundry Expenses"),
+        ]:
+            _scan_gl_json.append({"code": _da[0], "name": _da[1]})
+    _scan_gl_json = sorted(_scan_gl_json, key=lambda x: x["code"])
+    _scan_gl_json_str = json.dumps(_scan_gl_json)
+    
     # Count by type
     type_counts = {}
     for item in inbox_items:
@@ -53441,6 +53476,10 @@ def scan_inbox_page():
     
     const inboxData = {json.dumps({item.get("id"): {"type": item.get("type", "other"), "data": item.get("data", "{}")} for item in inbox_items})};
     const existingStock = {json.dumps(stock_lookup)};
+    // GL accounts for the manual-override picker on the scan process modal
+    const scanGLAccounts = {_scan_gl_json_str};
+    // User's manual GL override (when set, takes precedence over Zane's suggestion)
+    let manualGLOverride = null;
     
     // Match scanned item description to existing stock
     // Stricter fuzzy matching: handles spelling errors (MASONRY/MASONARY),
@@ -54394,6 +54433,22 @@ def scan_inbox_page():
             `;
             
             saveHtml = `
+                <!-- GL Account Override — applies to BOTH expense and supplier invoice flows -->
+                <div style="padding:12px;background:rgba(139,92,246,0.06);border:1px solid rgba(139,92,246,0.25);border-radius:8px;margin-bottom:15px;">
+                    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;">
+                        <div style="font-size:13px;font-weight:600;color:#8b5cf6;">GL Account (Expense Type)</div>
+                        <div id="scanGLZaneTag" style="font-size:11px;color:var(--text-muted);"></div>
+                    </div>
+                    <div style="display:flex;gap:6px;">
+                        <input type="text" id="scanGLSearch" placeholder="Type to filter (e.g. brushing, fuel, repairs)..." oninput="filterScanGLDropdown(this.value)"
+                               style="flex:1;padding:8px 10px;border:1px solid var(--border);border-radius:6px;background:var(--bg);color:var(--text);font-size:13px;">
+                        <button type="button" onclick="resetScanGLOverride()" id="scanGLResetBtn" style="padding:7px 12px;background:var(--card);color:var(--text);border:1px solid var(--border);border-radius:6px;cursor:pointer;font-size:12px;font-weight:600;white-space:nowrap;">↺ Use Zane</button>
+                    </div>
+                    <select id="scanGLSelect" onchange="onScanGLSelectChange()" style="width:100%;padding:8px 10px;border:1px solid var(--border);border-radius:6px;background:var(--bg);color:var(--text);margin-top:6px;font-size:13px;">
+                        ${{buildScanGLOptions(currentZaneCategory)}}
+                    </select>
+                    <div style="font-size:11px;color:var(--text-muted);margin-top:4px;">Default: Zane's suggestion. Override here to book against a specific GL code (e.g. 5500 Brushing Expense).</div>
+                </div>
                 <div style="display:grid;grid-template-columns:1fr 1fr;gap:15px;">
                     <!-- LEFT: Book as Expense (paid now) -->
                     <div style="padding:12px;background:rgba(249,115,22,0.08);border:1px solid rgba(249,115,22,0.3);border-radius:8px;">
@@ -55036,6 +55091,96 @@ def scan_inbox_page():
         }}
     }}
     
+    // ── Scan modal GL Account picker helpers ──
+    // Build <option> HTML for the dropdown. If zaneCategory matches an account
+    // (by exact name OR code), that one is preselected; otherwise no preselection.
+    function buildScanGLOptions(zaneCategory) {{
+        var preselectCode = '';
+        var zc = (zaneCategory || '').toString().trim().toLowerCase();
+        if (zc) {{
+            // First try exact name match
+            for (var i = 0; i < scanGLAccounts.length; i++) {{
+                if ((scanGLAccounts[i].name || '').toLowerCase() === zc) {{
+                    preselectCode = scanGLAccounts[i].code;
+                    break;
+                }}
+            }}
+            // Then try partial match (Zane's category contained in account name or vice versa)
+            if (!preselectCode) {{
+                for (var i = 0; i < scanGLAccounts.length; i++) {{
+                    var an = (scanGLAccounts[i].name || '').toLowerCase();
+                    if (an && (an.indexOf(zc) >= 0 || zc.indexOf(an) >= 0)) {{
+                        preselectCode = scanGLAccounts[i].code;
+                        break;
+                    }}
+                }}
+            }}
+        }}
+        var html = '<option value="">— Use Zane\\'s suggestion —</option>';
+        for (var i = 0; i < scanGLAccounts.length; i++) {{
+            var sel = (scanGLAccounts[i].code === preselectCode) ? ' selected' : '';
+            var safeName = (scanGLAccounts[i].name || '').replace(/</g, '&lt;');
+            html += '<option value="' + scanGLAccounts[i].code + '" data-name="' + safeName + '"' + sel + '>' + scanGLAccounts[i].code + ' — ' + safeName + '</option>';
+        }}
+        return html;
+    }}
+    
+    // Filter dropdown options by search term (typed into the search input).
+    // Matches against both code and name.
+    function filterScanGLDropdown(searchTerm) {{
+        var sel = document.getElementById('scanGLSelect');
+        if (!sel) return;
+        var term = (searchTerm || '').toLowerCase().trim();
+        var preselect = manualGLOverride ? manualGLOverride.code : '';
+        var html = '<option value="">— Use Zane\\'s suggestion —</option>';
+        var matchCount = 0;
+        for (var i = 0; i < scanGLAccounts.length; i++) {{
+            var acc = scanGLAccounts[i];
+            var name = (acc.name || '').toLowerCase();
+            var code = (acc.code || '').toLowerCase();
+            if (!term || name.indexOf(term) >= 0 || code.indexOf(term) >= 0) {{
+                var safeName = (acc.name || '').replace(/</g, '&lt;');
+                var sFlag = (acc.code === preselect) ? ' selected' : '';
+                html += '<option value="' + acc.code + '" data-name="' + safeName + '"' + sFlag + '>' + acc.code + ' — ' + safeName + '</option>';
+                matchCount++;
+            }}
+        }}
+        sel.innerHTML = html;
+        // Highlight the tag
+        var tag = document.getElementById('scanGLZaneTag');
+        if (tag && term) tag.textContent = matchCount + ' match' + (matchCount === 1 ? '' : 'es');
+        else if (tag) tag.textContent = '';
+    }}
+    
+    // When user picks from dropdown, store the override
+    function onScanGLSelectChange() {{
+        var sel = document.getElementById('scanGLSelect');
+        if (!sel) return;
+        var code = sel.value;
+        if (!code) {{
+            manualGLOverride = null;
+        }} else {{
+            var opt = sel.options[sel.selectedIndex];
+            manualGLOverride = {{
+                code: code,
+                name: opt ? (opt.getAttribute('data-name') || '') : ''
+            }};
+        }}
+        var tag = document.getElementById('scanGLZaneTag');
+        if (tag) tag.textContent = manualGLOverride ? 'OVERRIDE: ' + manualGLOverride.code : '';
+    }}
+    
+    // Reset to Zane's suggestion
+    function resetScanGLOverride() {{
+        manualGLOverride = null;
+        var sel = document.getElementById('scanGLSelect');
+        var search = document.getElementById('scanGLSearch');
+        if (search) search.value = '';
+        if (sel) sel.innerHTML = buildScanGLOptions(currentZaneCategory);
+        var tag = document.getElementById('scanGLZaneTag');
+        if (tag) tag.textContent = '';
+    }}
+    
     async function processAs(saveType) {{
         let payload = {{}};
         let endpoint = '';
@@ -55180,7 +55325,8 @@ def scan_inbox_page():
                 items: editedItems.length > 0 ? editedItems : (currentItemData.items || []),
                 paid: saveType === 'expense',  // expenses paid now; supplier invoices = on credit (unpaid)
                 payment_method: payMethod,
-                category: currentZaneCategory || '',  // Zane's AI-picked specific category
+                category: (manualGLOverride ? manualGLOverride.name : (currentZaneCategory || '')),  // GL override wins over Zane
+                gl_code_override: manualGLOverride ? manualGLOverride.code : '',  // Backend uses this directly if set — skips category→GL lookup
                 // PO linkage so backend can create GRV + update PO qty_received
                 po_id: (currentItemData.extracted && currentItemData.extracted._matched_po_id) || currentItemData._matched_po_id || '',
                 po_number: (currentItemData.extracted && currentItemData.extracted._matched_po_number) || currentItemData._matched_po_number || '',
@@ -56741,10 +56887,19 @@ def api_scan_save_supplier_invoice():
         
         # Build journal lines
         journal_lines = []
-        if stock_dr > 0:
-            journal_lines.append({"account_code": gl(biz_id, "stock"), "debit": round(stock_dr, 2), "credit": 0})  # Stock asset
-        if cos_dr > 0:
-            journal_lines.append({"account_code": gl(biz_id, "cogs"), "debit": round(cos_dr, 2), "credit": 0})    # Cost of Sales
+        # Manual GL override: if the user picked a specific GL code on the scan
+        # modal, send the WHOLE net amount to that account instead of the
+        # stock/cos/purchases default. This handles cases like "Brushing
+        # Expense" or any custom expense GL that doesn't fit stock or COS.
+        _si_gl_override = (data.get("gl_code_override") or "").strip()
+        if _si_gl_override:
+            journal_lines.append({"account_code": _si_gl_override, "debit": round(net_amount, 2), "credit": 0})
+            logger.info(f"[SCAN SAVE] Supplier invoice GL override: net R{net_amount:.2f} -> {_si_gl_override}")
+        else:
+            if stock_dr > 0:
+                journal_lines.append({"account_code": gl(biz_id, "stock"), "debit": round(stock_dr, 2), "credit": 0})  # Stock asset
+            if cos_dr > 0:
+                journal_lines.append({"account_code": gl(biz_id, "cogs"), "debit": round(cos_dr, 2), "credit": 0})    # Cost of Sales
         if vat_amount > 0:
             journal_lines.append({"account_code": gl(biz_id, "vat_input"), "debit": round(vat_amount, 2), "credit": 0})
         # Credit side: bank if paid, creditors if on account
@@ -57161,8 +57316,15 @@ def api_scan_save_expense():
         total_amount = float(data.get("total", 0))
         payment_method = data.get("payment_method", "cash")
         
-        # Get GL code from comprehensive lookup
-        expense_account = IndustryKnowledge.get_gl_code(category, business_id=biz_id)
+        # Get GL code: user manual override > category lookup
+        # If the user picked a specific GL code on the scan modal, honour that
+        # directly and skip the IndustryKnowledge.get_gl_code() lookup.
+        _gl_override = (data.get("gl_code_override") or "").strip()
+        if _gl_override:
+            expense_account = _gl_override
+            logger.info(f"[SCAN SAVE EXPENSE] GL override used: {_gl_override} (category text: {category})")
+        else:
+            expense_account = IndustryKnowledge.get_gl_code(category, business_id=biz_id)
         
         user = Auth.get_current_user()
         
@@ -57170,15 +57332,18 @@ def api_scan_save_expense():
         splits = data.get("splits")  # Multi-GL split from Zane
         
         # If split transaction, derive a meaningful category from the splits
-        # instead of using the literal "Split" which resolves to fallback 7999
+        # instead of using the literal "Split" which resolves to fallback 7999.
+        # IMPORTANT: never overwrite expense_account when the user supplied a
+        # manual GL override — their choice always wins.
         if splits and len(splits) > 1 and (not category or category == "Split"):
             # Use the largest split's category as the main category
             _sorted_splits = sorted(splits, key=lambda s: float(s.get("amount", 0)), reverse=True)
             _primary_cat = _sorted_splits[0].get("category", "")
             if _primary_cat:
                 category = _primary_cat
-                # Recalculate GL code with the real category
-                expense_account = IndustryKnowledge.get_gl_code(category, business_id=biz_id)
+                # Recalculate GL code with the real category ONLY if no override
+                if not _gl_override:
+                    expense_account = IndustryKnowledge.get_gl_code(category, business_id=biz_id)
         
         expense = RecordFactory.expense(
             business_id=biz_id,
