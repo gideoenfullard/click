@@ -2703,10 +2703,15 @@ Thank you for your business!
         return Email.send(email, subject, body_html, body_text, business=business)
     
     @staticmethod
-    def send_statement(customer: dict, invoices: list, business: dict) -> bool:
-        """Send statement to customer"""
+    def send_statement(customer: dict, invoices: list, business: dict, to_email: str = None, cc=None) -> bool:
+        """Send statement to customer.
         
-        email = customer.get("email")
+        to_email: optional override for recipient (defaults to customer.email)
+        cc: optional CC list/string (carbon copy)
+        """
+        
+        # Allow caller to override the recipient; fall back to customer record
+        email = to_email or customer.get("email")
         if not email:
             return False
         
@@ -2721,71 +2726,71 @@ Thank you for your business!
         bank_account = business.get("bank_account", "") if business else ""
         bank_branch = business.get("bank_branch", "") if business else ""
         
-        # Build invoice list
+        # Build invoice list — COMPACT rows
         invoice_rows = ""
         for inv in invoices:
             status = inv.get("status", "outstanding")
             status_color = "#10b981" if status == "paid" else "#f59e0b"
             invoice_rows += f'''
             <tr>
-                <td style="padding: 10px; border-bottom: 1px solid #eee;">{safe(inv.get("invoice_number", "-"))}</td>
-                <td style="padding: 10px; border-bottom: 1px solid #eee;">{safe(inv.get("date", "-"))}</td>
-                <td style="padding: 10px; border-bottom: 1px solid #eee; text-align: right;">R{float(inv.get("total", 0)):,.2f}</td>
-                <td style="padding: 10px; border-bottom: 1px solid #eee;"><span style="color:{status_color};font-weight:bold;">{status.upper()}</span></td>
+                <td style="padding: 5px 8px; border-bottom: 1px solid #eee; font-size:12px;">{safe(inv.get("invoice_number", "-"))}</td>
+                <td style="padding: 5px 8px; border-bottom: 1px solid #eee; font-size:12px;">{safe(inv.get("date", "-"))}</td>
+                <td style="padding: 5px 8px; border-bottom: 1px solid #eee; text-align: right; font-size:12px;">R{float(inv.get("total", 0)):,.2f}</td>
+                <td style="padding: 5px 8px; border-bottom: 1px solid #eee; font-size:11px;"><span style="color:{status_color};font-weight:bold;">{status.upper()}</span></td>
             </tr>
             '''
         
         if not invoice_rows:
-            invoice_rows = '<tr><td colspan="4" style="padding:20px;text-align:center;color:#888;">No invoices on record</td></tr>'
+            invoice_rows = '<tr><td colspan="4" style="padding:12px;text-align:center;color:#888;font-size:12px;">No invoices on record</td></tr>'
         
         subject = f"Statement of Account - {biz_name}"
         
-        # Build bank details section
+        # Build bank details section — COMPACT
         bank_section = ""
         if bank_name and bank_account:
             bank_section = f'''
-            <div style="background:#f0fdf4;padding:15px;border-radius:8px;margin:20px 0;">
-                <h4 style="margin:0 0 10px 0;color:#166534;">Banking Details for Payment:</h4>
-                <table style="font-size:14px;">
-                    <tr><td style="padding:3px 15px 3px 0;color:#666;">Bank:</td><td><strong>{bank_name}</strong></td></tr>
-                    <tr><td style="padding:3px 15px 3px 0;color:#666;">Account:</td><td><strong>{bank_account}</strong></td></tr>
-                    {f'<tr><td style="padding:3px 15px 3px 0;color:#666;">Branch:</td><td>{bank_branch}</td></tr>' if bank_branch else ''}
-                    <tr><td style="padding:3px 15px 3px 0;color:#666;">Reference:</td><td><strong>{customer.get("code", name[:10])}</strong></td></tr>
+            <div style="background:#f0fdf4;padding:10px 12px;border-radius:6px;margin:12px 0;">
+                <h4 style="margin:0 0 6px 0;color:#166534;font-size:13px;">Banking Details for Payment:</h4>
+                <table style="font-size:12px;">
+                    <tr><td style="padding:2px 12px 2px 0;color:#666;">Bank:</td><td><strong>{bank_name}</strong></td></tr>
+                    <tr><td style="padding:2px 12px 2px 0;color:#666;">Account:</td><td><strong>{bank_account}</strong></td></tr>
+                    {f'<tr><td style="padding:2px 12px 2px 0;color:#666;">Branch:</td><td>{bank_branch}</td></tr>' if bank_branch else ''}
+                    <tr><td style="padding:2px 12px 2px 0;color:#666;">Reference:</td><td><strong>{customer.get("code", name[:10])}</strong></td></tr>
                 </table>
             </div>
             '''
         
         body_html = f'''
         <html>
-        <body style="font-family: Arial, sans-serif; padding: 20px; background: #f5f5f5;">
-            <div style="max-width: 650px; margin: 0 auto; background: white; padding: 30px; border-radius: 10px; box-shadow: 0 2px 10px rgba(0,0,0,0.1);">
+        <body style="font-family: Arial, sans-serif; padding: 10px; background: #f5f5f5; margin:0;">
+            <div style="max-width: 650px; margin: 0 auto; background: white; padding: 18px 20px; border-radius: 8px; box-shadow: 0 2px 10px rgba(0,0,0,0.1);">
                 <!-- Header with Business Details -->
-                <div style="border-bottom: 2px solid #333; padding-bottom: 20px; margin-bottom: 20px;">
-                    <h1 style="color: #333; margin: 0; font-size: 28px;">{biz_name}</h1>
-                    {f'<p style="color:#666;margin:5px 0;font-size:13px;">{biz_address}</p>' if biz_address else ''}
-                    {f'<p style="color:#666;margin:5px 0;font-size:13px;">Tel: {biz_phone}</p>' if biz_phone else ''}
-                    {f'<p style="color:#666;margin:5px 0;font-size:13px;">Email: {biz_email}</p>' if biz_email else ''}
-                    {f'<p style="color:#666;margin:5px 0;font-size:13px;">VAT No: {biz_vat}</p>' if biz_vat else ''}
+                <div style="border-bottom: 2px solid #333; padding-bottom: 10px; margin-bottom: 12px;">
+                    <h1 style="color: #333; margin: 0; font-size: 20px;">{biz_name}</h1>
+                    {f'<p style="color:#666;margin:3px 0;font-size:11px;">{biz_address}</p>' if biz_address else ''}
+                    {f'<p style="color:#666;margin:3px 0;font-size:11px;">Tel: {biz_phone}</p>' if biz_phone else ''}
+                    {f'<p style="color:#666;margin:3px 0;font-size:11px;">Email: {biz_email}</p>' if biz_email else ''}
+                    {f'<p style="color:#666;margin:3px 0;font-size:11px;">VAT No: {biz_vat}</p>' if biz_vat else ''}
                 </div>
                 
-                <h2 style="color: #333; text-align:center; margin-bottom:20px;">STATEMENT OF ACCOUNT</h2>
+                <h2 style="color: #333; text-align:center; margin:8px 0 12px 0; font-size:18px;">STATEMENT OF ACCOUNT</h2>
                 
                 <!-- Customer Details -->
-                <div style="background:#f8f9fa;padding:15px;border-radius:8px;margin-bottom:20px;">
-                    <p style="margin:0;font-size:12px;color:#666;text-transform:uppercase;">Statement To:</p>
-                    <p style="margin:5px 0 0 0;font-size:18px;font-weight:bold;">{name}</p>
-                    {f'<p style="margin:5px 0 0 0;color:#666;">{safe(customer.get("address", "")).replace(chr(10), ", ")}</p>' if customer.get("address") else ''}
-                    <p style="margin:10px 0 0 0;font-size:14px;">Statement Date: <strong>{today()}</strong></p>
+                <div style="background:#f8f9fa;padding:10px 12px;border-radius:6px;margin-bottom:12px;">
+                    <p style="margin:0;font-size:10px;color:#666;text-transform:uppercase;">Statement To:</p>
+                    <p style="margin:3px 0 0 0;font-size:15px;font-weight:bold;">{name}</p>
+                    {f'<p style="margin:3px 0 0 0;color:#666;font-size:12px;">{safe(customer.get("address", "")).replace(chr(10), ", ")}</p>' if customer.get("address") else ''}
+                    <p style="margin:6px 0 0 0;font-size:12px;">Statement Date: <strong>{today()}</strong></p>
                 </div>
                 
                 <!-- Invoices Table -->
-                <table style="width: 100%; border-collapse: collapse; margin: 20px 0;">
+                <table style="width: 100%; border-collapse: collapse; margin: 10px 0;">
                     <thead>
                         <tr style="background: #333; color: white;">
-                            <th style="padding: 12px; text-align: left;">Invoice #</th>
-                            <th style="padding: 12px; text-align: left;">Date</th>
-                            <th style="padding: 12px; text-align: right;">Amount</th>
-                            <th style="padding: 12px; text-align: left;">Status</th>
+                            <th style="padding: 7px 8px; text-align: left; font-size:11px;">Invoice #</th>
+                            <th style="padding: 7px 8px; text-align: left; font-size:11px;">Date</th>
+                            <th style="padding: 7px 8px; text-align: right; font-size:11px;">Amount</th>
+                            <th style="padding: 7px 8px; text-align: left; font-size:11px;">Status</th>
                         </tr>
                     </thead>
                     <tbody>
@@ -2794,18 +2799,18 @@ Thank you for your business!
                 </table>
                 
                 <!-- Balance Due -->
-                <div style="text-align: right; padding: 20px; background: {'#fef2f2' if balance > 0 else '#f0fdf4'}; border-radius: 8px; margin: 20px 0;">
-                    <p style="font-size: 14px; color: #666; margin: 0;">Balance Due:</p>
-                    <p style="font-size: 32px; font-weight: bold; color: {'#dc2626' if balance > 0 else '#16a34a'}; margin: 5px 0;">
+                <div style="text-align: right; padding: 10px 14px; background: {'#fef2f2' if balance > 0 else '#f0fdf4'}; border-radius: 6px; margin: 10px 0;">
+                    <p style="font-size: 12px; color: #666; margin: 0;">Balance Due:</p>
+                    <p style="font-size: 24px; font-weight: bold; color: {'#dc2626' if balance > 0 else '#16a34a'}; margin: 3px 0;">
                         R{balance:,.2f}
                     </p>
                 </div>
                 
                 {bank_section}
                 
-                <hr style="border: none; border-top: 1px solid #eee; margin: 20px 0;">
+                <hr style="border: none; border-top: 1px solid #eee; margin: 10px 0;">
                 
-                <p style="color: #888; font-size: 12px; text-align:center;">
+                <p style="color: #888; font-size: 10px; text-align:center; margin:6px 0;">
                     This statement was generated automatically by {biz_name}<br>
                     {today()} • Powered by Click AI
                 </p>
@@ -2814,7 +2819,7 @@ Thank you for your business!
         </html>
         '''
         
-        return Email.send(email, subject, body_html, business=business)
+        return Email.send(email, subject, body_html, business=business, cc=cc)
 
 
 # 
@@ -31685,6 +31690,22 @@ def customer_statement(customer_id):
     biz_name = business.get("name", "Business") if business else "Business"
     final_balance = running_balance  # Calculated from source documents above
     cust_email = customer.get("email", "")
+    cust_cc_emails = (customer.get("cc_emails") or customer.get("email_cc") or "").strip()
+    
+    # Build list of known email addresses for this customer (dedup, preserve order)
+    _known_emails = []
+    _seen_lower = set()
+    for _e in [cust_email] + [x.strip() for x in cust_cc_emails.split(",") if x.strip()]:
+        _e_clean = (_e or "").strip()
+        if _e_clean and "@" in _e_clean and _e_clean.lower() not in _seen_lower:
+            _known_emails.append(_e_clean)
+            _seen_lower.add(_e_clean.lower())
+    
+    # Build dropdown options HTML
+    _email_options_html = ""
+    for _e in _known_emails:
+        _email_options_html += f'<option value="{_e}">{_e}</option>'
+    _email_options_html += '<option value="__custom__">+ Enter different email…</option>'
     
     content = f'''
     <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:20px;">
@@ -31697,12 +31718,22 @@ def customer_statement(customer_id):
     
     <!-- EMAIL MODAL -->
     <div id="emailModal" style="display:none;position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.7);z-index:9999;align-items:center;justify-content:center;">
-        <div style="background:var(--card);padding:30px;border-radius:12px;width:90%;max-width:450px;">
+        <div style="background:var(--card);padding:30px;border-radius:12px;width:90%;max-width:500px;">
             <h3 style="margin-top:0;">Email Statement</h3>
-            <p style="color:var(--text-muted);margin-bottom:20px;">Send statement to <strong>{safe_string(customer.get("name", ""))}</strong>:</p>
+            <p style="color:var(--text-muted);margin-bottom:15px;">Send statement to <strong>{safe_string(customer.get("name", ""))}</strong>:</p>
             
-            <input type="email" id="emailTo" value="{cust_email}" placeholder="customer@email.com" 
-                   style="width:100%;padding:12px;border-radius:8px;border:1px solid var(--border);background:var(--bg);color:var(--text);font-size:16px;margin-bottom:15px;">
+            <label style="display:block;font-size:12px;color:var(--text-muted);margin-bottom:4px;text-transform:uppercase;letter-spacing:0.5px;">Send To</label>
+            <select id="emailToSelect" onchange="onEmailSelectChange()"
+                    style="width:100%;padding:10px;border-radius:8px;border:1px solid var(--border);background:var(--bg);color:var(--text);font-size:15px;margin-bottom:10px;">
+                {_email_options_html}
+            </select>
+            
+            <input type="email" id="emailToCustom" placeholder="Enter email address" 
+                   style="display:none;width:100%;padding:10px;border-radius:8px;border:1px solid var(--border);background:var(--bg);color:var(--text);font-size:15px;margin-bottom:10px;">
+            
+            <label style="display:block;font-size:12px;color:var(--text-muted);margin-bottom:4px;text-transform:uppercase;letter-spacing:0.5px;">CC <span style="text-transform:none;font-size:11px;">(optional, comma separated)</span></label>
+            <input type="text" id="emailCc" value="" placeholder="copy@email.com, manager@email.com"
+                   style="width:100%;padding:10px;border-radius:8px;border:1px solid var(--border);background:var(--bg);color:var(--text);font-size:14px;margin-bottom:18px;">
             
             <div style="display:flex;gap:10px;justify-content:flex-end;">
                 <button onclick="closeEmailModal()" class="btn btn-secondary">Cancel</button>
@@ -31712,7 +31743,21 @@ def customer_statement(customer_id):
     </div>
     
     <style>
-    @media print {{ .stmt-link {{ color: #333 !important; text-decoration: none !important; pointer-events: none; }} }}
+    @media print {{
+        .stmt-link {{ color: #333 !important; text-decoration: none !important; pointer-events: none; }}
+        /* COMPACT print: shrink padding, font, header so more rows fit per page */
+        #statementPrint {{ padding: 8px 14px !important; }}
+        #statementPrint h1 {{ font-size: 18px !important; margin:0 !important; }}
+        #statementPrint h2 {{ font-size: 14px !important; margin:2px 0 0 0 !important; }}
+        #statementPrint h3 {{ font-size: 14px !important; }}
+        #statementPrint, #statementPrint * {{ font-size: 11px; line-height: 1.25; }}
+        #statementPrint table th,
+        #statementPrint table td {{ padding: 3px 6px !important; }}
+        #statementPrint table thead {{ display: table-header-group; }}
+        #statementPrint table tr {{ page-break-inside: avoid; }}
+        #statementPrint > div {{ margin-bottom: 8px !important; padding: 8px !important; }}
+        @page {{ size: A4 portrait; margin: 10mm 12mm; }}
+    }}
     @media screen {{ .stmt-link:hover {{ text-decoration: underline !important; }} }}
     </style>
     <div class="card" id="statementPrint" style="background:white;color:#333;">
@@ -31764,15 +31809,31 @@ def customer_statement(customer_id):
     <script>
     function showEmailModal() {{
         document.getElementById('emailModal').style.display = 'flex';
-        document.getElementById('emailTo').focus();
+        document.getElementById('emailToSelect').focus();
     }}
     
     function closeEmailModal() {{
         document.getElementById('emailModal').style.display = 'none';
     }}
     
+    function onEmailSelectChange() {{
+        var sel = document.getElementById('emailToSelect');
+        var custom = document.getElementById('emailToCustom');
+        if (sel.value === '__custom__') {{
+            custom.style.display = 'block';
+            custom.focus();
+        }} else {{
+            custom.style.display = 'none';
+            custom.value = '';
+        }}
+    }}
+    
     async function sendStatementEmail() {{
-        const email = document.getElementById('emailTo').value.trim();
+        var sel = document.getElementById('emailToSelect');
+        var customInput = document.getElementById('emailToCustom');
+        var email = sel.value === '__custom__' ? customInput.value.trim() : sel.value;
+        var cc = document.getElementById('emailCc').value.trim();
+        
         if (!email || !email.includes('@')) {{
             alert('Please enter a valid email address');
             return;
@@ -31786,17 +31847,17 @@ def customer_statement(customer_id):
             const response = await fetch('/api/statement/{customer_id}/email', {{
                 method: 'POST',
                 headers: {{'Content-Type': 'application/json'}},
-                body: JSON.stringify({{to_email: email}})
+                body: JSON.stringify({{to_email: email, cc: cc}})
             }});
             const result = await response.json();
             if (result.success) {{
-                alert('✅ Statement emailed to ' + email);
+                alert('GOOD: Statement emailed to ' + email + (cc ? ' (CC: ' + cc + ')' : ''));
                 closeEmailModal();
             }} else {{
-                alert('❌ ' + (result.error || 'Failed to send email'));
+                alert('FAILED: ' + (result.error || 'Failed to send email'));
             }}
         }} catch (err) {{
-            alert('❌ Error: ' + err.message);
+            alert('Error: ' + err.message);
         }} finally {{
             btn.disabled = false;
             btn.textContent = 'Send Email';
@@ -31824,6 +31885,7 @@ def api_statement_email(customer_id):
     try:
         data = request.get_json()
         to_email = data.get("to_email", "").strip()
+        cc = data.get("cc", "").strip()
         
         if not to_email or "@" not in to_email:
             return jsonify({"success": False, "error": "Valid email address required"})
@@ -31839,19 +31901,19 @@ def api_statement_email(customer_id):
         all_invoices = db.get("invoices", {"business_id": biz_id}) or []
         cust_invoices = [inv for inv in all_invoices if inv.get("customer_id") == customer_id]
         
-        # Use existing Email.send_statement method
+        # Use Email.send_statement with explicit to_email + cc (no customer record mutation)
         try:
-            # Temporarily override customer email for this send
-            original_email = customer.get("email")
-            customer["email"] = to_email
-            
-            success = Email.send_statement(customer, cust_invoices, business)
-            
-            # Restore original email
-            customer["email"] = original_email
+            success = Email.send_statement(
+                customer,
+                cust_invoices,
+                business,
+                to_email=to_email,
+                cc=cc if cc else None,
+            )
             
             if success:
-                logger.info(f"[EMAIL] Statement sent to {customer.get('name')} ({to_email})")
+                _cc_log = f" (cc: {cc})" if cc else ""
+                logger.info(f"[EMAIL] Statement sent to {customer.get('name')} ({to_email}){_cc_log}")
                 return jsonify({"success": True, "message": f"Statement sent to {to_email}"})
             else:
                 return jsonify({"success": False, "error": "Failed to send email. Check SMTP settings."})
