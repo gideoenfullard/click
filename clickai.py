@@ -31253,12 +31253,23 @@ def bulk_statements_page():
     customers = db.get("customers", {"business_id": biz_id}) or []
     _all_bals = calc_all_customer_balances(biz_id)
     
+    # Helper: a customer is "emailable" if they have either an accounts contact
+    # email OR a primary email. Bulk statements ALWAYS prefer accounts over primary.
+    def _effective_email(c):
+        ace = (c.get("accounts_contact_email") or "").strip()
+        if ace and "@" in ace:
+            return ace
+        pe = (c.get("email") or "").strip()
+        if pe and "@" in pe:
+            return pe
+        return ""
+    
     total_customers = len(customers)
-    customers_with_email = len([c for c in customers if c.get("email") and "@" in c.get("email", "")])
-    debtors = [c for c in customers if _all_bals.get(c.get("id"), 0) > 0 and c.get("email") and "@" in c.get("email", "")]
+    customers_with_email = len([c for c in customers if _effective_email(c)])
+    debtors = [c for c in customers if _all_bals.get(c.get("id"), 0) > 0 and _effective_email(c)]
     debtors_count = len(debtors)
-    zero_balance = len([c for c in customers if _all_bals.get(c.get("id"), 0) == 0 and c.get("email") and "@" in c.get("email", "")])
-    credit_balance = len([c for c in customers if _all_bals.get(c.get("id"), 0) < 0 and c.get("email") and "@" in c.get("email", "")])
+    zero_balance = len([c for c in customers if _all_bals.get(c.get("id"), 0) == 0 and _effective_email(c)])
+    credit_balance = len([c for c in customers if _all_bals.get(c.get("id"), 0) < 0 and _effective_email(c)])
     
     total_debtors_balance = sum(v for v in _all_bals.values() if v > 0)
     
@@ -31269,19 +31280,26 @@ def bulk_statements_page():
             settings = json.loads(settings)
         except:
             settings = {}
+    # Guard: business may explicitly store NULL in DB → .get() returns None, not {}
+    if not isinstance(settings, dict):
+        settings = {}
     
     schedule_1st = settings.get("send_1st", False)
     schedule_15th = settings.get("send_15th", False)
     schedule_mode = settings.get("mode", "debtors")
     last_sent = settings.get("last_sent", "Never")
     
-    # Build debtors preview HTML separately to avoid f-string nesting issues
+    # Build debtors preview HTML separately to avoid f-string nesting issues.
+    # Show the email that WILL be used + a small tag indicating accounts vs primary.
     debtors_preview = ""
     sorted_debtors = sorted(debtors, key=lambda x: _all_bals.get(x.get("id"), 0), reverse=True)[:20]
     for c in sorted_debtors:
+        _eff = _effective_email(c)
+        _is_accounts = (c.get("accounts_contact_email") or "").strip().lower() == _eff.lower()
+        _tag = '<span style="background:#10b981;color:white;padding:1px 6px;border-radius:8px;font-size:10px;margin-left:6px;">ACCOUNTS</span>' if _is_accounts else '<span style="background:#6b7280;color:white;padding:1px 6px;border-radius:8px;font-size:10px;margin-left:6px;">PRIMARY</span>'
         debtors_preview += f'''<tr>
             <td>{safe_string(c.get("name", "-"))}</td>
-            <td style="color:var(--text-muted);">{safe_string(c.get("email", "-"))}</td>
+            <td style="color:var(--text-muted);">{safe_string(_eff)}{_tag}</td>
             <td style="text-align:right;color:var(--orange);font-weight:bold;">{money(_all_bals.get(c.get("id"), 0))}</td>
         </tr>'''
     
@@ -33546,7 +33564,12 @@ def api_supplier_quick_add():
 @app.route("/api/bulk-statements", methods=["POST"])
 @login_required
 def api_bulk_statements():
-    """Send statements to all customers with outstanding balances"""
+    """Send statements to all customers with outstanding balances.
+    
+    Email routing priority:
+    1. accounts_contact_email (the customer's Accounts Department contact) - ALWAYS preferred
+    2. email (primary contact) - fallback only when no accounts email is set
+    """
     
     user = Auth.get_current_user()
     business = Auth.get_current_business()
@@ -33569,20 +33592,25 @@ def api_bulk_statements():
         no_email_count = 0
         
         for customer in debtors:
-            email = customer.get("email", "")
+            # ALWAYS prefer the Accounts Department contact email; only fall back
+            # to the primary contact email if no accounts email is on file.
+            accounts_email = (customer.get("accounts_contact_email") or "").strip()
+            primary_email = (customer.get("email") or "").strip()
+            email = accounts_email if (accounts_email and "@" in accounts_email) else primary_email
             
-            if not email:
+            if not email or "@" not in email:
                 no_email_count += 1
                 continue
             
             # Get invoices for this customer
             cust_invoices = [inv for inv in all_invoices if inv.get("customer_id") == customer.get("id") and inv.get("status") != "paid"]
             
-            # Send statement
+            # Send statement using accounts email (override default customer.email)
             try:
-                success = EmailService.send_statement(customer, cust_invoices, business)
+                success = Email.send_statement(customer, cust_invoices, business, to_email=email)
                 if success:
                     sent_count += 1
+                    logger.info(f"[BULK STMT] Sent to {customer.get('name')} -> {email} ({'accounts' if email == accounts_email else 'primary'})")
                 else:
                     failed_count += 1
             except Exception as e:
