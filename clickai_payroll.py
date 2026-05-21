@@ -264,6 +264,11 @@ def register_payroll_routes(app, db, login_required, Auth, render_page,
             except:
                 other_deduction = 0
             
+            try:
+                provident_fund_amount = float(request.form.get("provident_fund_amount", 0) or 0)
+            except:
+                provident_fund_amount = 0
+            
             # Industry fund (MIBFA/CETA)
             provident_fund = request.form.get("provident_fund", "off")
             if provident_fund == "mibfa":
@@ -319,6 +324,7 @@ def register_payroll_routes(app, db, login_required, Auth, render_page,
                     bank_account=bank_account,
                     bank_branch=bank_branch
                 )
+                employee["provident_fund_amount"] = provident_fund_amount
                 emp_id = employee["id"]
                 
                 # Save via db helper (logs + auto-handles unknown columns)
@@ -414,9 +420,15 @@ def register_payroll_routes(app, db, login_required, Auth, render_page,
                 </div>
                 <div style="display:grid;grid-template-columns:1fr 1fr;gap:15px;margin-bottom:15px;">
                     <div>
+                        <label style="display:block;margin-bottom:5px;font-weight:500;">Provident Fund (R)</label>
+                        <input type="number" name="provident_fund_amount" step="0.01" value="0" style="width:100%;padding:10px;border-radius:6px;border:1px solid var(--border);background:var(--card);color:var(--text);">
+                    </div>
+                    <div>
                         <label style="display:block;margin-bottom:5px;font-weight:500;">Loan Repayment (R)</label>
                         <input type="number" name="loan_deduction" step="0.01" value="0" style="width:100%;padding:10px;border-radius:6px;border:1px solid var(--border);background:var(--card);color:var(--text);">
                     </div>
+                </div>
+                <div style="display:grid;grid-template-columns:1fr 1fr;gap:15px;margin-bottom:15px;">
                     <div>
                         <label style="display:block;margin-bottom:5px;font-weight:500;">Other Deduction (R)</label>
                         <input type="number" name="other_deduction" step="0.01" value="0" style="width:100%;padding:10px;border-radius:6px;border:1px solid var(--border);background:var(--card);color:var(--text);">
@@ -532,6 +544,11 @@ def register_payroll_routes(app, db, login_required, Auth, render_page,
             existing_payslips = db.get("payslips", {"business_id": biz_id, "date": pay_date}) if biz_id else []
             existing_emp_ids = {p.get("employee_id") for p in existing_payslips}
             
+            # SDL is only payable if the total annual payroll exceeds R500,000.
+            # Below that threshold the employer is exempt — SDL must be R0.
+            _total_annual_payroll = sum(safe_float(e.get("basic_salary", 0)) * 12 for e in employees)
+            _sdl_applies = _total_annual_payroll > 500000
+            
             for emp in employees:
                 # Skip if payslip already exists for this employee + date
                 if emp.get("id") in existing_emp_ids:
@@ -550,38 +567,49 @@ def register_payroll_routes(app, db, login_required, Auth, render_page,
                 other_ded = safe_float(emp.get("other_deduction", 0))
                 pension_employer = safe_float(emp.get("pension_employer", 0))
                 
-                # PAYE calculation (2025/26 tax tables simplified)
+                # PAYE calculation — SARS 2026/27 tax tables
+                # (Year of assessment 2027: 1 March 2026 – 28 February 2027)
                 annual = basic * 12
-                if annual <= 237100:
+                if annual <= 245100:
                     paye = (annual * 0.18) / 12
-                elif annual <= 370500:
-                    paye = (42678 + (annual - 237100) * 0.26) / 12
-                elif annual <= 512800:
-                    paye = (77362 + (annual - 370500) * 0.31) / 12
-                elif annual <= 673000:
-                    paye = (121475 + (annual - 512800) * 0.36) / 12
-                elif annual <= 857900:
-                    paye = (179147 + (annual - 673000) * 0.39) / 12
-                elif annual <= 1817000:
-                    paye = (251258 + (annual - 857900) * 0.41) / 12
+                elif annual <= 383100:
+                    paye = (44118 + (annual - 245100) * 0.26) / 12
+                elif annual <= 530200:
+                    paye = (79998 + (annual - 383100) * 0.31) / 12
+                elif annual <= 695800:
+                    paye = (125599 + (annual - 530200) * 0.36) / 12
+                elif annual <= 887000:
+                    paye = (185215 + (annual - 695800) * 0.39) / 12
+                elif annual <= 1878600:
+                    paye = (259783 + (annual - 887000) * 0.41) / 12
                 else:
-                    paye = (644489 + (annual - 1817000) * 0.45) / 12
+                    paye = (666339 + (annual - 1878600) * 0.45) / 12
                 
-                # Apply rebates (primary rebate for < 65 years)
-                paye = max(0, paye - (17235 / 12))  # R17,235 primary rebate
+                # Rebates — primary for all; secondary 65+; tertiary 75+
+                # 2026/27: primary R17 820, secondary R9 765, tertiary R3 249
+                _emp_age = safe_float(emp.get("age", 0))
+                annual_rebate = 17820
+                if _emp_age >= 75:
+                    annual_rebate += 9765 + 3249
+                elif _emp_age >= 65:
+                    annual_rebate += 9765
+                paye = max(0, paye - (annual_rebate / 12))
                 
                 # UIF - 1% capped at R177.12
                 uif = min(basic * 0.01, 177.12)
                 uif_employer = uif  # Employer matches
                 
-                # SDL - 1% (employer only, but track it)
-                sdl = basic * 0.01
+                # SDL - 1% (employer only) — only if total payroll over R500k threshold
+                sdl = basic * 0.01 if _sdl_applies else 0
                 
                 # COIDA - ~1% (employer only)
                 coida = basic * 0.01
                 
+                # Provident fund — separate employee deduction (apart from pension)
+                provident = safe_float(emp.get("provident_fund_amount", 0))
+                
                 # Total deductions from employee
-                total_ded = paye + uif + medical + union_fees + pension + loan + other_ded
+                total_ded = paye + uif + medical + union_fees + pension + provident + loan + other_ded
                 net = basic - total_ded
                 
                 # Employer contributions
@@ -606,6 +634,7 @@ def register_payroll_routes(app, db, login_required, Auth, render_page,
                     "pension": round(pension, 2),
                     "pension_employee": round(pension, 2),
                     "pension_employer": round(pension_employer, 2),
+                    "provident_fund": round(provident, 2),
                     "loan_deduction": round(loan, 2),
                     "other_deduction": round(other_ded, 2),
                     "sdl": round(sdl, 2),
@@ -642,7 +671,7 @@ def register_payroll_routes(app, db, login_required, Auth, render_page,
                         # Must be balanced: Total Debits = Total Credits
                         payroll_entries = [
                             # EXPENSE SIDE (Debits)
-                            {"account_code": gl(biz_id, "electricity"), "debit": round(basic, 2), "credit": 0},           # Salary expense
+                            {"account_code": gl(biz_id, "salaries"), "debit": round(basic, 2), "credit": 0},           # Salary expense
                         ]
                         
                         # Employer contributions as expense
@@ -660,8 +689,8 @@ def register_payroll_routes(app, db, login_required, Auth, render_page,
                         if employer_sdl_amount > 0:
                             payroll_entries.append({"account_code": "2220", "debit": 0, "credit": round(employer_sdl_amount, 2)})  # SDL Payable
                         
-                        # Other deductions as liabilities (medical, pension, union, loan)
-                        other_deduction_total = round(medical + union_fees + pension + loan + other_ded, 2)
+                        # Other deductions as liabilities (medical, pension, provident, union, loan)
+                        other_deduction_total = round(medical + union_fees + pension + provident + loan + other_ded, 2)
                         if other_deduction_total > 0:
                             payroll_entries.append({"account_code": gl(biz_id, "loan"), "debit": 0, "credit": round(other_deduction_total, 2)})  # Other payroll deductions payable
                         
@@ -700,22 +729,38 @@ def register_payroll_routes(app, db, login_required, Auth, render_page,
             if already_exists:
                 existing_count += 1
             
+            # PAYE calculation — SARS 2026/27 tax tables (same as payroll_run)
             annual = basic * 12
-            if annual <= 237100:
+            if annual <= 245100:
                 paye = (annual * 0.18) / 12
-            elif annual <= 370500:
-                paye = (42678 + (annual - 237100) * 0.26) / 12
+            elif annual <= 383100:
+                paye = (44118 + (annual - 245100) * 0.26) / 12
+            elif annual <= 530200:
+                paye = (79998 + (annual - 383100) * 0.31) / 12
+            elif annual <= 695800:
+                paye = (125599 + (annual - 530200) * 0.36) / 12
+            elif annual <= 887000:
+                paye = (185215 + (annual - 695800) * 0.39) / 12
+            elif annual <= 1878600:
+                paye = (259783 + (annual - 887000) * 0.41) / 12
             else:
-                paye = (77362 + (annual - 370500) * 0.31) / 12
+                paye = (666339 + (annual - 1878600) * 0.45) / 12
             
-            paye = max(0, paye - (17235 / 12))
+            _emp_age = safe_float(emp.get("age", 0))
+            annual_rebate = 17820
+            if _emp_age >= 75:
+                annual_rebate += 9765 + 3249
+            elif _emp_age >= 65:
+                annual_rebate += 9765
+            paye = max(0, paye - (annual_rebate / 12))
             uif = min(basic * 0.01, 177.12)
             medical = safe_float(emp.get("medical_aid", 0))
             union_fees = safe_float(emp.get("union_fees", 0))
             pension = safe_float(emp.get("pension", 0))
+            provident = safe_float(emp.get("provident_fund_amount", 0))
             other = safe_float(emp.get("loan_deduction", 0)) + safe_float(emp.get("other_deduction", 0))
             
-            total_ded = paye + uif + medical + union_fees + pension + other
+            total_ded = paye + uif + medical + union_fees + pension + provident + other
             net = basic - total_ded
             total_gross += basic
             total_net += net
@@ -729,7 +774,7 @@ def register_payroll_routes(app, db, login_required, Auth, render_page,
                 <td>{money(basic)}</td>
                 <td style="color:var(--red);">-{money(paye)}</td>
                 <td style="color:var(--red);">-{money(uif)}</td>
-                <td style="color:var(--red);">-{money(medical + union_fees + pension + other)}</td>
+                <td style="color:var(--red);">-{money(medical + union_fees + pension + provident + other)}</td>
                 <td style="color:var(--green);font-weight:bold;">{money(net)}</td>
             </tr>
             '''
@@ -855,6 +900,10 @@ def register_payroll_routes(app, db, login_required, Auth, render_page,
                     <p style="margin:3px 0;color:var(--red);">{money(employee.get("pension", 0))}</p>
                 </div>
                 <div>
+                    <p style="color:var(--text-muted);margin:0;font-size:11px;">Provident Fund</p>
+                    <p style="margin:3px 0;color:var(--red);">{money(employee.get("provident_fund_amount", 0))}</p>
+                </div>
+                <div>
                     <p style="color:var(--text-muted);margin:0;font-size:11px;">Loan</p>
                     <p style="margin:3px 0;color:var(--red);">{money(employee.get("loan_deduction", 0))}</p>
                 </div>
@@ -942,6 +991,7 @@ def register_payroll_routes(app, db, login_required, Auth, render_page,
             union_fees = safe_float(request.form.get("union_fees", 0))
             loan_deduction = safe_float(request.form.get("loan_deduction", 0))
             other_deduction = safe_float(request.form.get("other_deduction", 0))
+            provident_fund_amount = safe_float(request.form.get("provident_fund_amount", 0))
             
             provident_fund = request.form.get("provident_fund", "off")
             if provident_fund == "mibfa":
@@ -977,6 +1027,7 @@ def register_payroll_routes(app, db, login_required, Auth, render_page,
                 "provident_fund": provident_fund,
                 "pension": pension,
                 "pension_employer": pension_employer,
+                "provident_fund_amount": provident_fund_amount,
                 "loan_deduction": loan_deduction,
                 "loan_total": safe_float(request.form.get("loan_total", 0)),
                 "loan_balance": safe_float(request.form.get("loan_balance", 0)),
@@ -1133,6 +1184,10 @@ def register_payroll_routes(app, db, login_required, Auth, render_page,
                 </div>
                 
                 <div style="display:grid;grid-template-columns:repeat(auto-fit, minmax(150px, 1fr));gap:15px;margin-bottom:15px;">
+                    <div>
+                        <label style="display:block;margin-bottom:5px;font-weight:500;">Provident Fund (R)</label>
+                        <input type="number" name="provident_fund_amount" step="0.01" value="{safe_float(employee.get('provident_fund_amount', 0))}" style="width:100%;padding:10px;border-radius:6px;border:1px solid var(--border);background:var(--card);color:var(--text);">
+                    </div>
                     <div>
                         <label style="display:block;margin-bottom:5px;font-weight:500;">Other Deduction (R)</label>
                         <input type="number" name="other_deduction" step="0.01" value="{safe_float(employee.get('other_deduction', 0))}" style="width:100%;padding:10px;border-radius:6px;border:1px solid var(--border);background:var(--card);color:var(--text);">
