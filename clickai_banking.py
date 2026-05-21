@@ -327,10 +327,16 @@ def register_banking_routes(app, db, login_required, Auth, render_page,
                 <a href="/subscriptions" class="btn btn-secondary">📦 Recurring Expenses</a>
                 <button class="btn btn-secondary" style="background:rgba(245,158,11,0.15);border-color:#f59e0b;color:#f59e0b;" onclick="resetPatterns()">Reset Learned Patterns</button>
                 <button class="btn btn-secondary" style="background:rgba(239,68,68,0.15);border-color:#ef4444;color:#ef4444;" onclick="deleteAllTransactions()">🗑️ Delete All</button>
-                <label class="btn btn-primary" style="cursor:pointer;">
-                    📥 Import Statement
-                    <input type="file" accept=".csv,.pdf" style="display:none;" onchange="uploadStatement(this.files[0])">
-                </label>
+                <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;background:rgba(99,102,241,0.08);border:1px solid rgba(99,102,241,0.25);border-radius:8px;padding:6px 10px;">
+                    <span style="font-size:11px;color:var(--text-muted);">Import range (optional):</span>
+                    <input type="date" id="importDateFrom" title="From date" style="padding:5px 8px;border-radius:6px;border:1px solid var(--border);background:var(--card);color:var(--text);font-size:12px;">
+                    <span style="font-size:11px;color:var(--text-muted);">to</span>
+                    <input type="date" id="importDateTo" title="To date" style="padding:5px 8px;border-radius:6px;border:1px solid var(--border);background:var(--card);color:var(--text);font-size:12px;">
+                    <label class="btn btn-primary" style="cursor:pointer;margin:0;">
+                        📥 Import Statement
+                        <input type="file" accept=".csv,.pdf" style="display:none;" onchange="uploadStatement(this.files[0])">
+                    </label>
+                </div>
             </div>
         </div>
         
@@ -1203,6 +1209,11 @@ def register_banking_routes(app, db, login_required, Auth, render_page,
             const formData = new FormData();
             formData.append('file', file);
             
+            const dFrom = document.getElementById('importDateFrom');
+            const dTo = document.getElementById('importDateTo');
+            if (dFrom && dFrom.value) formData.append('date_from', dFrom.value);
+            if (dTo && dTo.value) formData.append('date_to', dTo.value);
+            
             // Show loading
             const btn = event.target.closest('label');
             const originalText = btn.innerHTML;
@@ -1219,10 +1230,14 @@ def register_banking_routes(app, db, login_required, Auth, render_page,
                 
                 if (data.success) {{
                     const stats = data.stats || {{}};
-                    alert(`✅ Imported ${{stats.total || 0}} transactions!\\n\\n` +
+                    let msg = `✅ Imported ${{stats.total || 0}} transactions!\\n\\n` +
                           `🤖 Auto-matched: ${{stats.auto_matched || 0}}\\n` +
                           `💡 Suggested: ${{stats.suggested || 0}}\\n` +
-                          `❓ Needs you: ${{stats.needs_attention || 0}}`);
+                          `❓ Needs you: ${{stats.needs_attention || 0}}`;
+                    if (stats.out_of_range_skipped) {{
+                        msg += `\\n📅 Skipped (outside date range): ${{stats.out_of_range_skipped}}`;
+                    }}
+                    alert(msg);
                     location.reload();
                 }} else {{
                     alert('❌ ' + data.error);
@@ -1591,6 +1606,14 @@ def register_banking_routes(app, db, login_required, Auth, render_page,
             file = request.files.get("file")
             if not file:
                 return jsonify({"success": False, "error": "No file uploaded"})
+            
+            # ═══ OPTIONAL DATE RANGE FILTER ═══
+            # If supplied, only transactions within [import_date_from, import_date_to]
+            # are imported. Blank = import everything (original behaviour).
+            import_date_from = (request.form.get("date_from") or "").strip()
+            import_date_to = (request.form.get("date_to") or "").strip()
+            if import_date_from or import_date_to:
+                logger.info(f"[BANK IMPORT] Date range filter: from='{import_date_from or 'any'}' to='{import_date_to or 'any'}'")
             
             filename = file.filename.lower()
             logger.info(f"[BANK IMPORT] === START === File: {filename}, Size: {request.content_length or 'unknown'} bytes")
@@ -2162,6 +2185,7 @@ Return ONLY the JSON array. No markdown, no explanation."""
             auto_matched = 0
             suggested = 0
             skipped_dupes = 0
+            skipped_out_of_range = 0
             
             # ═══════════════════════════════════════════════════════════════
             # DEDUP: Build fingerprint set of existing transactions
@@ -2288,6 +2312,17 @@ Return ONLY the JSON array. No markdown, no explanation."""
                         txn_date = today()
                     else:
                         txn_date = _parsed_date.strftime("%Y-%m-%d")
+                    
+                    # ═══ DATE RANGE FILTER ═══
+                    # txn_date is now a clean YYYY-MM-DD string — ISO strings compare
+                    # correctly as plain text. Skip anything outside the chosen range.
+                    _txn_ymd = str(txn_date)[:10]
+                    if import_date_from and _txn_ymd < import_date_from:
+                        skipped_out_of_range += 1
+                        continue
+                    if import_date_to and _txn_ymd > import_date_to:
+                        skipped_out_of_range += 1
+                        continue
                     
                     if amount_col is not None:
                         amt_str = str(row[amount_col] or "").replace(",", "").replace("R", "").replace(" ", "").strip()
@@ -2722,17 +2757,19 @@ Return ONLY the JSON array. No markdown, no explanation."""
             needs_attention = imported - auto_matched - suggested
             
             dupe_msg = f" ({skipped_dupes} duplicates skipped)" if skipped_dupes > 0 else ""
-            logger.info(f"[BANK IMPORT] Done: {imported} imported, {skipped_dupes} dupes skipped, {auto_matched} auto-matched, {suggested} suggested")
+            range_msg = f" ({skipped_out_of_range} outside date range)" if skipped_out_of_range > 0 else ""
+            logger.info(f"[BANK IMPORT] Done: {imported} imported, {skipped_dupes} dupes skipped, {skipped_out_of_range} out-of-range skipped, {auto_matched} auto-matched, {suggested} suggested")
             
             return jsonify({
                 "success": True, 
-                "message": f"Imported {imported} transactions{dupe_msg}",
+                "message": f"Imported {imported} transactions{dupe_msg}{range_msg}",
                 "stats": {
                     "total": imported,
                     "auto_matched": auto_matched,
                     "suggested": suggested,
                     "needs_attention": max(0, needs_attention),
-                    "duplicates_skipped": skipped_dupes
+                    "duplicates_skipped": skipped_dupes,
+                    "out_of_range_skipped": skipped_out_of_range
                 }
             })
             
