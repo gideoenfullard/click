@@ -321,19 +321,13 @@ def register_payroll_routes(app, db, login_required, Auth, render_page,
                 )
                 emp_id = employee["id"]
                 
-                # Direct POST 
+                # Save via db helper (logs + auto-handles unknown columns)
                 try:
-                    url = f"{db.url}/rest/v1/employees"
-                    response = requests.post(
-                        url,
-                        headers={**db.headers, "Prefer": "return=representation"},
-                        json=employee,
-                        timeout=30
-                    )
-                    if response.status_code in (200, 201):
+                    ok, result = db.save("employees", employee)
+                    if ok:
                         return redirect("/payroll")
                     else:
-                        logger.error(f"[EMPLOYEE] Save failed: {response.text[:200]}")
+                        logger.error(f"[EMPLOYEE] Save failed: {result}")
                 except Exception as e:
                     logger.error(f"[EMPLOYEE] Save error: {e}")
         
@@ -995,18 +989,14 @@ def register_payroll_routes(app, db, login_required, Auth, render_page,
             }
             
             try:
-                url = f"{db.url}/rest/v1/employees?id=eq.{emp_id}"
-                response = requests.patch(
-                    url,
-                    headers={**db.headers, "Prefer": "return=representation"},
-                    json=updates,
-                    timeout=30
-                )
-                if response.status_code in (200, 204):
+                ok = db.update("employees", emp_id, updates)
+                if ok:
                     flash("Employee updated", "success")
                 else:
-                    flash(f"Failed to save: {response.text[:100]}", "error")
+                    logger.error(f"[EMPLOYEE] Update did not change row id={emp_id}")
+                    flash("Failed to save employee changes", "error")
             except Exception as e:
+                logger.error(f"[EMPLOYEE] Update error id={emp_id}: {e}")
                 flash(f"Error: {e}", "error")
             
             return redirect(f"/employee/{emp_id}")
