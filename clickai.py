@@ -53031,16 +53031,21 @@ IMPORTANT: Read ALL numbers exactly as printed on the document. Do NOT calculate
             
             if employees_data:
                 payroll_settings = PayrollSettings.get(biz_id)
+                # Honour the per-business "Split overtime" toggle: when it is off,
+                # all worked hours count as normal (no OT split).
+                if business and not business.get("split_overtime"):
+                    payroll_settings = {**payroll_settings, "ot_enabled": False}
                 logger.info(f"[SCAN] Using payroll settings: {payroll_settings}")
                 
                 def parse_time(t):
                     if not t or t == "-" or t == "":
                         return None
-                    t = str(t).strip().replace(".", ":").replace(",", ":")
+                    t = str(t).strip().lower().replace(".", ":").replace(",", ":").replace("h", ":")
                     try:
                         if ":" in t:
                             parts = t.split(":")
-                            return int(parts[0]) * 60 + int(parts[1] if len(parts) > 1 else 0)
+                            mins = int(parts[1]) if len(parts) > 1 and parts[1] != "" else 0
+                            return int(parts[0]) * 60 + mins
                         return int(t) * 60
                     except:
                         return None
