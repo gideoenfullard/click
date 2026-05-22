@@ -458,6 +458,24 @@ def register_settings_routes(app, db, login_required, Auth, render_page,
             </form>
         </div>
         
+        <div class="card" style="margin-top:20px;">
+            <h3 style="margin-bottom:15px;">Payroll Settings</h3>
+            <p style="color:var(--text-muted);margin-bottom:15px;">Configure how timesheet hours are calculated</p>
+            
+            <form action="/api/settings/payroll" method="POST">
+                <div style="display:grid;gap:15px;">
+                    <label style="display:flex;align-items:center;gap:10px;cursor:pointer;padding:10px;background:var(--bg);border-radius:8px;">
+                        <input type="checkbox" name="split_overtime" value="1" style="width:20px;height:20px;" {"checked" if business and business.get("split_overtime") else ""}>
+                        <div>
+                            <strong>Split overtime on timesheets</strong>
+                            <div style="color:var(--text-muted);font-size:12px;">When on, hours worked over 8 per day are recorded as overtime. When off, all hours worked count as normal hours.</div>
+                        </div>
+                    </label>
+                </div>
+                <button type="submit" class="btn btn-secondary" style="margin-top:15px;">💾 Save Payroll Settings</button>
+            </form>
+        </div>
+        
         <h3 style="margin:30px 0 15px 0;">More Settings</h3>
         <div class="stats-grid">
             <div class="card" style="cursor:pointer;border-left:4px solid var(--primary);" onclick="window.location='/settings/invoice-template'">
@@ -675,6 +693,20 @@ def register_settings_routes(app, db, login_required, Auth, render_page,
             content = JARVIS_HUD_CSS + THEME_REACTOR_SKINS + _hud + content + jarvis_techline("SETTINGS <b>LOADED</b>")
         
         return render_page("Settings", content, user, "settings")
+    
+    
+    @app.route("/api/settings/payroll", methods=["POST"])
+    @login_required
+    def api_settings_payroll():
+        """Save payroll settings (timesheet overtime handling)"""
+        user = Auth.get_current_user()
+        biz_id = session.get("business_id")
+        user_id = user.get("id", "") if user else ""
+        if biz_id:
+            db.update_business(biz_id, user_id, {
+                "split_overtime": request.form.get("split_overtime") == "1"
+            })
+        return redirect("/settings")
     
     
     @app.route("/settings/business-groups")

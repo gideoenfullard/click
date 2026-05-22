@@ -1032,16 +1032,19 @@ def register_timesheet_routes(app, db, login_required, Auth, render_page,
             # ═══════════════════════════════════════════════════════════════════════
             # FLASK CALCULATES HOURS - Not Claude!
             # ═══════════════════════════════════════════════════════════════════════
+            # Per-business setting: when off, all worked hours count as normal (no OT split)
+            split_overtime = bool(business.get("split_overtime")) if business else False
+            
             def parse_time(t):
                 """Convert time string to minutes since midnight"""
                 if not t or t == "-":
                     return None
-                t = str(t).strip().replace(".", ":").replace(",", ":")
+                t = str(t).strip().lower().replace(".", ":").replace(",", ":").replace("h", ":")
                 try:
                     if ":" in t:
                         parts = t.split(":")
                         h = int(parts[0])
-                        m = int(parts[1]) if len(parts) > 1 else 0
+                        m = int(parts[1]) if len(parts) > 1 and parts[1] != "" else 0
                     else:
                         h = int(t)
                         m = 0
@@ -1074,9 +1077,14 @@ def register_timesheet_routes(app, db, login_required, Auth, render_page,
                 
                 worked_hours = worked_minutes / 60
                 
-                # Overtime is anything over 8 hours
-                normal = min(worked_hours, 8)
-                overtime = max(0, worked_hours - 8)
+                # Overtime split is controlled per-business.
+                # When split_overtime is off, all worked hours count as normal.
+                if split_overtime:
+                    normal = min(worked_hours, 8)
+                    overtime = max(0, worked_hours - 8)
+                else:
+                    normal = worked_hours
+                    overtime = 0
                 
                 return round(normal, 1), round(overtime, 1)
             
