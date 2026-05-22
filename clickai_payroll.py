@@ -776,6 +776,7 @@ def register_payroll_routes(app, db, login_required, Auth, render_page,
                 <td style="color:var(--red);">-{money(uif)}</td>
                 <td style="color:var(--red);">-{money(medical + union_fees + pension + provident + other)}</td>
                 <td style="color:var(--green);font-weight:bold;">{money(net)}</td>
+                <td><a href="/payroll/payslip-preview/{emp.get("id")}" target="_blank" style="color:var(--accent);text-decoration:none;">View</a></td>
             </tr>
             '''
         
@@ -796,7 +797,7 @@ def register_payroll_routes(app, db, login_required, Auth, render_page,
                 <h3 style="margin-bottom:15px;">Preview ({len(employees)} employees)</h3>
                 <table class="table">
                     <thead>
-                        <tr><th>Employee</th><th>Gross</th><th>PAYE</th><th>UIF</th><th>Other</th><th>Net Pay</th></tr>
+                        <tr><th>Employee</th><th>Gross</th><th>PAYE</th><th>UIF</th><th>Other</th><th>Net Pay</th><th></th></tr>
                     </thead>
                     <tbody>
                         {preview_rows}
@@ -809,6 +810,7 @@ def register_payroll_routes(app, db, login_required, Auth, render_page,
                             <td></td>
                             <td></td>
                             <td style="color:var(--green);">{money(total_net)}</td>
+                            <td></td>
                         </tr>
                     </tfoot>
                 </table>
@@ -822,6 +824,117 @@ def register_payroll_routes(app, db, login_required, Auth, render_page,
         '''
         
         return render_page("Run Payroll", content, user, "payroll")
+    
+    
+    @app.route("/payroll/payslip-preview/<emp_id>")
+    @login_required
+    def payslip_preview(emp_id):
+        """Pre-process payslip preview for one employee, with timesheet hours as a check"""
+        user = Auth.get_current_user()
+        business = Auth.get_current_business()
+        biz_id = business.get("id") if business else None
+        
+        emp = db.get_one("employees", emp_id)
+        if not emp:
+            return redirect("/payroll")
+        
+        basic = safe_float(emp.get("basic_salary", 0))
+        
+        # PAYE — SARS 2026/27 tax tables (same calculation as payroll_run)
+        annual = basic * 12
+        if annual <= 245100:
+            paye = (annual * 0.18) / 12
+        elif annual <= 383100:
+            paye = (44118 + (annual - 245100) * 0.26) / 12
+        elif annual <= 530200:
+            paye = (79998 + (annual - 383100) * 0.31) / 12
+        elif annual <= 695800:
+            paye = (125599 + (annual - 530200) * 0.36) / 12
+        elif annual <= 887000:
+            paye = (185215 + (annual - 695800) * 0.39) / 12
+        elif annual <= 1878600:
+            paye = (259783 + (annual - 887000) * 0.41) / 12
+        else:
+            paye = (666339 + (annual - 1878600) * 0.45) / 12
+        
+        _emp_age = safe_float(emp.get("age", 0))
+        annual_rebate = 17820
+        if _emp_age >= 75:
+            annual_rebate += 9765 + 3249
+        elif _emp_age >= 65:
+            annual_rebate += 9765
+        paye = max(0, paye - (annual_rebate / 12))
+        
+        uif = min(basic * 0.01, 177.12)
+        medical = safe_float(emp.get("medical_aid", 0))
+        union_fees = safe_float(emp.get("union_fees", 0))
+        pension = safe_float(emp.get("pension", 0))
+        provident = safe_float(emp.get("provident_fund_amount", 0))
+        loan = safe_float(emp.get("loan_deduction", 0))
+        other_ded = safe_float(emp.get("other_deduction", 0))
+        total_ded = paye + uif + medical + union_fees + pension + provident + loan + other_ded
+        net = basic - total_ded
+        
+        # Timesheet hours for the current month (a check, not used in the calculation)
+        ts_month = today()[:7]
+        entries = db.get("timesheet_entries", {"business_id": biz_id, "employee_id": emp_id}) if biz_id else []
+        month_entries = [e for e in entries if str(e.get("date", "")).startswith(ts_month)]
+        ts_normal = sum(safe_float(e.get("normal_hours", e.get("hours", 0))) for e in month_entries)
+        ts_ot = sum(safe_float(e.get("overtime", 0)) for e in month_entries)
+        ts_total = ts_normal + ts_ot
+        
+        def ded_row(label, amount):
+            if amount <= 0:
+                return ""
+            return f'<tr><td style="padding:6px 0;">{label}</td><td style="text-align:right;color:var(--red);">-{money(amount)}</td></tr>'
+        
+        ts_note = ""
+        if month_entries:
+            ts_note = f'''
+            <div class="card" style="margin-top:15px;">
+                <h3 style="margin-bottom:10px;">Timesheet Hours — {ts_month}</h3>
+                <p style="color:var(--text-muted);font-size:12px;margin-bottom:10px;">Captured hours for this month, shown as a check.</p>
+                <table style="width:100%;">
+                    <tr><td style="padding:6px 0;">Normal hours</td><td style="text-align:right;">{ts_normal:.1f}</td></tr>
+                    <tr><td style="padding:6px 0;">Overtime hours</td><td style="text-align:right;">{ts_ot:.1f}</td></tr>
+                    <tr style="font-weight:bold;border-top:1px solid var(--border);"><td style="padding:6px 0;">Total hours</td><td style="text-align:right;">{ts_total:.1f}</td></tr>
+                </table>
+            </div>
+            '''
+        else:
+            ts_note = '<div class="card" style="margin-top:15px;"><p style="color:var(--text-muted);">No timesheet hours captured for this month.</p></div>'
+        
+        content = f'''
+        <div class="card">
+            <h2 style="margin-bottom:5px;">Payslip Preview</h2>
+            <p style="color:var(--text-muted);margin-bottom:20px;">{safe_string(emp.get("name", "-"))} — {safe_string(emp.get("position", ""))}</p>
+            <table style="width:100%;">
+                <tr style="font-weight:bold;border-bottom:2px solid var(--border);">
+                    <td style="padding:8px 0;">Gross Salary</td>
+                    <td style="text-align:right;">{money(basic)}</td>
+                </tr>
+                {ded_row("PAYE", paye)}
+                {ded_row("UIF", uif)}
+                {ded_row("Medical Aid", medical)}
+                {ded_row("Union Fees", union_fees)}
+                {ded_row("Pension", pension)}
+                {ded_row("Provident Fund", provident)}
+                {ded_row("Loan Repayment", loan)}
+                {ded_row("Other Deduction", other_ded)}
+                <tr style="font-weight:bold;border-top:2px solid var(--border);">
+                    <td style="padding:8px 0;">Total Deductions</td>
+                    <td style="text-align:right;color:var(--red);">-{money(total_ded)}</td>
+                </tr>
+                <tr style="font-weight:bold;font-size:1.1em;">
+                    <td style="padding:8px 0;">Net Pay</td>
+                    <td style="text-align:right;color:var(--green);">{money(net)}</td>
+                </tr>
+            </table>
+        </div>
+        {ts_note}
+        '''
+        
+        return render_page("Payslip Preview", content, user, "payroll")
     
     
     @app.route("/employee/<emp_id>")
