@@ -666,7 +666,8 @@ def register_timesheet_routes(app, db, login_required, Auth, render_page,
             {cards_html}
             
             <div style="display:flex;flex-wrap:wrap;gap:10px;margin-top:20px;padding-bottom:30px;">
-                <button type="submit" class="btn btn-primary" style="padding:14px 24px;flex:1;min-width:200px;">GOOD: Approve & Save</button>
+                <button type="submit" formaction="/timesheets/payslip-preview/{batch_id}" class="btn btn-primary" style="padding:14px 24px;flex:1;min-width:200px;">📄 Approve &amp; Build Payslips</button>
+                <button type="submit" class="btn btn-secondary" style="padding:14px 24px;">Approve &amp; Save (hours only)</button>
                 <a href="/timesheets" class="btn btn-secondary" style="padding:14px 20px;">← Back</a>
                 <a href="/timesheets/discard/{batch_id}" class="btn" style="background:var(--red);color:white;padding:14px 20px;" onclick="return confirm('Discard this timesheet scan?')">🗑</a>
             </div>
@@ -676,6 +677,132 @@ def register_timesheet_routes(app, db, login_required, Auth, render_page,
         '''
         
         return render_page("Review Timesheet", content, user, "timesheets")
+    
+    
+    @app.route("/timesheets/payslip-preview/<batch_id>", methods=["POST"])
+    @login_required
+    def timesheets_payslip_preview(batch_id):
+        """Build payslip previews from a reviewed timesheet using each
+        employee's pay conditions. Shows the deviation lines before posting."""
+        user = Auth.get_current_user()
+        business = Auth.get_current_business()
+        biz_id = business.get("id") if business else None
+
+        batch = db.get_one("timesheet_batches", batch_id)
+        if not batch:
+            flash("Timesheet batch not found", "error")
+            return redirect("/timesheets")
+
+        # Pay-conditions engine (try/except so a missing module never crashes payroll)
+        try:
+            from clickai_pay_conditions import calculate_pay_from_timesheet
+        except Exception as e:
+            logger.error(f"[TIMESHEET PREVIEW] pay conditions module not available: {e}")
+            flash("Pay conditions module not loaded — using Approve & Save instead", "error")
+            return redirect(f"/timesheets/review/{batch_id}")
+
+        raw_data = batch.get("data", "{}")
+        parsed = json.loads(raw_data) if isinstance(raw_data, str) else raw_data
+        if isinstance(parsed, list):
+            employees_data = parsed
+            period = batch.get("period", "") or today()[:7]
+        else:
+            employees_data = parsed.get("employees", [])
+            period = parsed.get("period", "") or batch.get("period", "") or today()[:7]
+        # period must be YYYY-MM
+        period = str(period)[:7] if len(str(period)) >= 7 else today()[:7]
+
+        count = int(request.form.get("count", 0))
+        cards = ""
+
+        for i in range(count):
+            emp_id = request.form.get(f"emp_{i}", "")
+            if not emp_id:
+                continue
+            emp = db.get_one("employees", emp_id)
+            if not emp:
+                continue
+
+            # Build timesheet entries (date + clock times) from the scanned days
+            days = employees_data[i].get("days", []) if i < len(employees_data) else []
+            entries = []
+            for d in days:
+                d_date = str(d.get("date", "")).strip()
+                # normalise to YYYY-MM-DD where possible
+                if len(d_date) >= 10 and d_date[4] == "-":
+                    iso = d_date[:10]
+                else:
+                    iso = d_date
+                entries.append({"date": iso, "in": d.get("in"), "out": d.get("out")})
+
+            result = calculate_pay_from_timesheet(emp, entries, period)
+
+            # Build the line rows
+            if not result["is_setup"]:
+                lines_html = ('<tr><td colspan="3" style="color:var(--text-muted);padding:8px 0;">'
+                              'No pay conditions set up — using basic salary. '
+                              f'<a href="/employee/{emp_id}/pay-conditions" style="color:var(--accent);">Set up now</a></td></tr>')
+            elif not result["lines"]:
+                lines_html = '<tr><td colspan="3" style="color:var(--text-muted);padding:8px 0;">No deviations — worked exactly to schedule.</td></tr>'
+            else:
+                lines_html = ""
+                for ln in result["lines"]:
+                    colour = "var(--green)" if ln["amount"] >= 0 else "var(--red)"
+                    sign = "+" if ln["amount"] >= 0 else "-"
+                    lines_html += f'''
+                    <tr>
+                        <td style="padding:6px 0;">{ln["date"]}</td>
+                        <td>{safe_string(ln["label"])}</td>
+                        <td style="text-align:right;color:{colour};">{sign}{money(abs(ln["amount"]))}</td>
+                    </tr>'''
+
+            rate_note = ""
+            if result["is_setup"]:
+                rate_note = (f'Rate {money(result["hourly_rate"])}/h · '
+                             f'{result["agreed_hours"]:.1f} agreed hours · '
+                             f'base {money(result["base_pay"])}')
+
+            cards += f'''
+            <div class="card" style="margin-bottom:16px;">
+                <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">
+                    <div>
+                        <div style="font-size:18px;font-weight:bold;">{safe_string(emp.get("name", "-"))}</div>
+                        <div style="font-size:12px;color:var(--text-muted);">{rate_note}</div>
+                    </div>
+                    <div style="text-align:right;">
+                        <div style="font-size:12px;color:var(--text-muted);">GROSS</div>
+                        <div style="font-size:24px;font-weight:bold;color:var(--green);">{money(result["gross"])}</div>
+                    </div>
+                </div>
+                <table style="width:100%;font-size:13px;">
+                    <thead><tr style="border-bottom:1px solid var(--border);">
+                        <th style="text-align:left;padding:4px 0;">Date</th>
+                        <th style="text-align:left;">Adjustment</th>
+                        <th style="text-align:right;">Amount</th>
+                    </tr></thead>
+                    <tbody>{lines_html}</tbody>
+                </table>
+                <div style="margin-top:12px;">
+                    <a href="/payroll/payslip-preview/{emp_id}" class="btn btn-secondary" style="padding:8px 16px;font-size:13px;">Open payslip preview →</a>
+                </div>
+            </div>'''
+
+        if not cards:
+            flash("No employees matched — select employees on the review page first", "error")
+            return redirect(f"/timesheets/review/{batch_id}")
+
+        content = f'''
+        <div class="card">
+            <h2 style="margin-bottom:5px;">Payslip Preview — {period}</h2>
+            <p style="color:var(--text-muted);margin-bottom:10px;">Hours approved. Each adjustment is shown against the employee's agreed schedule. Check the figures, then create the payslips.</p>
+        </div>
+        {cards}
+        <div class="card">
+            <p style="color:var(--text-muted);font-size:13px;">To post a payslip, open its preview above and use <strong>Create &amp; Post Payslip</strong>. This keeps every payslip a deliberate, checked action.</p>
+            <a href="/timesheets/review/{batch_id}" class="btn btn-secondary" style="padding:10px 18px;">← Back to review</a>
+        </div>
+        '''
+        return render_page("Payslip Preview", content, user, "timesheets")
     
     
     @app.route("/timesheets/process/<batch_id>", methods=["POST"])

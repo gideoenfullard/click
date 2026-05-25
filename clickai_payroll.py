@@ -1170,6 +1170,7 @@ def register_payroll_routes(app, db, login_required, Auth, render_page,
         <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:20px;flex-wrap:wrap;gap:10px;">
             <a href="/payroll" style="color:var(--text-muted);">← Back to Payroll</a>
             <a href="/employee/{emp_id}/edit" class="btn btn-secondary">✏️ Edit Employee</a>
+            <a href="/employee/{emp_id}/pay-conditions" class="btn btn-secondary">📋 Pay Conditions</a>
         </div>
         
         <div class="card">
