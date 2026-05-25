@@ -344,7 +344,32 @@ def register_payroll_routes(app, db, login_required, Auth, render_page,
                 )
                 employee["provident_fund_amount"] = provident_fund_amount
                 emp_id = employee["id"]
-                
+
+                # Pay Conditions — only attach if the schedule was filled in
+                _pc_mt_in = request.form.get("pc_mon_thu_in", "").strip()
+                _pc_mt_out = request.form.get("pc_mon_thu_out", "").strip()
+                if _pc_mt_in and _pc_mt_out:
+                    _pc = {
+                        "is_setup": True,
+                        "rate_method": request.form.get("pc_rate_method", "monthly"),
+                        "schedule": {
+                            "mon_thu_in": _pc_mt_in,
+                            "mon_thu_out": _pc_mt_out,
+                            "fri_in": request.form.get("pc_fri_in", "").strip(),
+                            "fri_out": request.form.get("pc_fri_out", "").strip(),
+                            "sat_in": request.form.get("pc_sat_in", "").strip(),
+                            "sat_out": request.form.get("pc_sat_out", "").strip(),
+                            "lunch_minutes": safe_float(request.form.get("pc_lunch_minutes", 0)),
+                            "lunch_deducted": request.form.get("pc_lunch_deducted") == "on",
+                        },
+                        "ot_paid": request.form.get("pc_ot_paid") == "on",
+                        "ot_multiplier": safe_float(request.form.get("pc_ot_multiplier", 1.5)) or 1.5,
+                        "sat_outside_multiplier": safe_float(request.form.get("pc_sat_outside_multiplier", 1.5)) or 1.5,
+                        "sunday_multiplier": safe_float(request.form.get("pc_sunday_multiplier", 2.0)) or 2.0,
+                        "public_holiday_paid": request.form.get("pc_public_holiday_paid") == "on",
+                    }
+                    employee["pay_conditions"] = json.dumps(_pc)
+
                 # Save via db helper (logs + auto-handles unknown columns)
                 try:
                     ok, result = db.save("employees", employee)
@@ -476,6 +501,61 @@ def register_payroll_routes(app, db, login_required, Auth, render_page,
                     </div>
                 </div>
                 
+                <details style="margin-top:20px;border:1px solid var(--border);border-radius:8px;padding:0;">
+                    <summary style="cursor:pointer;padding:14px 16px;font-weight:600;color:var(--text-muted);font-size:14px;list-style:none;">📋 PAY CONDITIONS (optional — set up the work agreement)</summary>
+                    <div style="padding:0 16px 16px;">
+                        <p style="color:var(--text-muted);font-size:12px;margin:0 0 15px;">Leave blank to skip — you can set this up later from the employee page. If filled in, the payslip is built from the schedule below.</p>
+
+                        <label style="display:block;margin-bottom:5px;font-weight:500;">How is the rate set?</label>
+                        <select name="pc_rate_method" style="width:100%;max-width:360px;padding:10px;border-radius:6px;border:1px solid var(--border);background:var(--card);color:var(--text);margin-bottom:15px;">
+                            <option value="monthly">Monthly amount (rate derived from hours)</option>
+                            <option value="hourly">Hourly rate (entered directly)</option>
+                        </select>
+
+                        <h4 style="margin:10px 0;color:var(--text-muted);">Work schedule</h4>
+                        <table style="width:100%;max-width:480px;">
+                            <tr><td style="padding:6px 0;">Mon–Thu</td>
+                                <td><input type="time" name="pc_mon_thu_in" style="padding:8px;border-radius:6px;border:1px solid var(--border);background:var(--card);color:var(--text);"></td>
+                                <td><input type="time" name="pc_mon_thu_out" style="padding:8px;border-radius:6px;border:1px solid var(--border);background:var(--card);color:var(--text);"></td></tr>
+                            <tr><td style="padding:6px 0;">Friday</td>
+                                <td><input type="time" name="pc_fri_in" style="padding:8px;border-radius:6px;border:1px solid var(--border);background:var(--card);color:var(--text);"></td>
+                                <td><input type="time" name="pc_fri_out" style="padding:8px;border-radius:6px;border:1px solid var(--border);background:var(--card);color:var(--text);"></td></tr>
+                            <tr><td style="padding:6px 0;">Saturday</td>
+                                <td><input type="time" name="pc_sat_in" style="padding:8px;border-radius:6px;border:1px solid var(--border);background:var(--card);color:var(--text);"></td>
+                                <td><input type="time" name="pc_sat_out" style="padding:8px;border-radius:6px;border:1px solid var(--border);background:var(--card);color:var(--text);"></td></tr>
+                        </table>
+                        <p style="color:var(--text-muted);font-size:12px;margin:6px 0 12px;">Leave Saturday blank if there is no Saturday agreement.</p>
+
+                        <div style="margin-bottom:12px;">
+                            <label>Lunch minutes
+                                <input type="number" name="pc_lunch_minutes" value="0" style="width:80px;padding:8px;border-radius:6px;border:1px solid var(--border);background:var(--card);color:var(--text);">
+                            </label>
+                            <label style="margin-left:15px;">
+                                <input type="checkbox" name="pc_lunch_deducted"> Deduct lunch from hours
+                            </label>
+                        </div>
+
+                        <h4 style="margin:10px 0;color:var(--text-muted);">Overtime &amp; premium days</h4>
+                        <label style="display:block;margin-bottom:8px;">
+                            <input type="checkbox" name="pc_ot_paid"> Pay overtime when worked past the out-time
+                        </label>
+                        <div style="display:flex;gap:20px;flex-wrap:wrap;margin-bottom:10px;">
+                            <label>OT multiplier
+                                <input type="number" step="0.1" name="pc_ot_multiplier" value="1.5" style="width:80px;padding:8px;border-radius:6px;border:1px solid var(--border);background:var(--card);color:var(--text);">
+                            </label>
+                            <label>Saturday (outside)
+                                <input type="number" step="0.1" name="pc_sat_outside_multiplier" value="1.5" style="width:80px;padding:8px;border-radius:6px;border:1px solid var(--border);background:var(--card);color:var(--text);">
+                            </label>
+                            <label>Sunday
+                                <input type="number" step="0.1" name="pc_sunday_multiplier" value="2.0" style="width:80px;padding:8px;border-radius:6px;border:1px solid var(--border);background:var(--card);color:var(--text);">
+                            </label>
+                        </div>
+                        <label style="display:block;">
+                            <input type="checkbox" name="pc_public_holiday_paid" checked> Paid for public holidays
+                        </label>
+                    </div>
+                </details>
+
                 <div style="display:flex;gap:10px;margin-top:25px;">
                     <button type="submit" class="btn btn-primary" style="padding:12px 24px;">GOOD: Save Employee</button>
                     <a href="/payroll" class="btn btn-secondary">Cancel</a>
@@ -1334,6 +1414,7 @@ def register_payroll_routes(app, db, login_required, Auth, render_page,
                 "loan_period_months": int(request.form.get("loan_period_months", 0) or 0),
                 "loan_start_date": request.form.get("loan_start_date", ""),
                 "other_deduction": other_deduction,
+                "employee_code": request.form.get("employee_code", "").strip(),
                 "bank_name": bank_name,
                 "bank_account": bank_account,
                 "bank_branch": bank_branch
@@ -1380,6 +1461,16 @@ def register_payroll_routes(app, db, login_required, Auth, render_page,
                     <div>
                         <label style="display:block;margin-bottom:5px;font-weight:500;">Tax Number</label>
                         <input type="text" name="tax_number" value="{safe_string(employee.get('tax_number', ''))}" style="width:100%;padding:10px;border-radius:6px;border:1px solid var(--border);background:var(--card);color:var(--text);">
+                    </div>
+                </div>
+                <div style="display:grid;grid-template-columns:repeat(auto-fit, minmax(200px, 1fr));gap:15px;margin-bottom:15px;">
+                    <div>
+                        <label style="display:block;margin-bottom:5px;font-weight:500;">Employee Code</label>
+                        <input type="text" name="employee_code" value="{safe_string(employee.get('employee_code', ''))}" placeholder="e.g., DAP001" style="width:100%;padding:10px;border-radius:6px;border:1px solid var(--border);background:var(--card);color:var(--text);">
+                    </div>
+                    <div>
+                        <label style="display:block;margin-bottom:5px;font-weight:500;">Leave Balance (days)</label>
+                        <input type="number" step="0.0001" name="leave_balance" value="{safe_float(employee.get('leave_balance', 0))}" style="width:100%;padding:10px;border-radius:6px;border:1px solid var(--border);background:var(--card);color:var(--text);">
                     </div>
                 </div>
                 
@@ -1605,7 +1696,33 @@ def register_payroll_routes(app, db, login_required, Auth, render_page,
             deduction_rows += f'<tr style="border-bottom:1px solid #eee;"><td style="padding:8px 0;color:#666;">Loan Repayment{loan_info}</td><td style="padding:8px 0;text-align:right;color:#ef4444;">-{money(loan)}</td></tr>'
         if other_ded > 0:
             deduction_rows += f'<tr style="border-bottom:1px solid #eee;"><td style="padding:8px 0;color:#666;">Other Deductions</td><td style="padding:8px 0;text-align:right;color:#ef4444;">-{money(other_ded)}</td></tr>'
-        
+
+        # --- Sage-style payslip data ----------------------------------------
+        _emp = db.get_one("employees", payslip.get("employee_id")) if payslip.get("employee_id") else None
+        _emp = _emp or {}
+        biz_addr = business.get("address", "") if business else ""
+        emp_code = _emp.get("employee_code", "") or _emp.get("code", "") or "-"
+        emp_id_num = _emp.get("id_number", "-")
+        emp_position = _emp.get("position", "") or payslip.get("position", "")
+        emp_started = _emp.get("start_date", "") or _emp.get("employed_from", "") or "-"
+        emp_rate = safe_float(_emp.get("hourly_rate", 0))
+        leave_balance = safe_float(_emp.get("leave_balance", 0))
+
+        # YTD totals — sum this employee's payslips in the same tax year
+        ytd_gross = ytd_paye = ytd_uif = ytd_net = 0.0
+        try:
+            _pdate = str(payslip.get("date", ""))
+            _pyear = _pdate[:4] if len(_pdate) >= 4 else ""
+            _all_ps = db.get("payslips", {"employee_id": payslip.get("employee_id")}) if payslip.get("employee_id") else []
+            for _p in _all_ps:
+                if str(_p.get("date", ""))[:4] == _pyear:
+                    ytd_gross += safe_float(_p.get("gross", 0)) or safe_float(_p.get("basic", 0))
+                    ytd_paye += safe_float(_p.get("paye", 0))
+                    ytd_uif += safe_float(_p.get("uif", 0)) or safe_float(_p.get("uif_employee", 0))
+                    ytd_net += safe_float(_p.get("net", 0))
+        except Exception as _e:
+            logger.error(f"[PAYSLIP] YTD calc failed: {_e}")
+
         content = f'''
         <style>
             @media print {{ .no-print {{ display: none !important; }} }}
@@ -1620,60 +1737,92 @@ def register_payroll_routes(app, db, login_required, Auth, render_page,
             </div>
         </div>
         
-        <div class="card" id="payslipPrint" style="background:white;color:#333;max-width:600px;margin:0 auto;">
-            <div style="display:flex;justify-content:space-between;margin-bottom:25px;padding-bottom:15px;border-bottom:2px solid #333;">
+        <div class="card" id="payslipPrint" style="background:white;color:#333;max-width:720px;margin:0 auto;padding:30px;">
+            <div style="display:flex;justify-content:space-between;margin-bottom:20px;padding-bottom:12px;border-bottom:2px solid #333;">
                 <div>
-                    <h1 style="color:#333;margin:0;font-size:22px;">PAYSLIP</h1>
-                    <p style="color:#666;margin:5px 0 0 0;font-size:14px;">{payslip.get("date", "-")}</p>
+                    <h2 style="color:#333;margin:0;font-size:17px;">{safe_string(biz_name)}</h2>
+                    <p style="color:#666;margin:4px 0 0;font-size:12px;">{safe_string(biz_addr)}</p>
                 </div>
                 <div style="text-align:right;">
-                    <h2 style="color:#333;margin:0;font-size:18px;">{safe_string(biz_name)}</h2>
+                    <h1 style="color:#333;margin:0;font-size:20px;">PAYSLIP</h1>
+                    <p style="color:#666;margin:4px 0 0;font-size:12px;">Pay Date: {payslip.get("date", "-")}</p>
                 </div>
             </div>
-            
-            <div style="background:#f5f5f5;padding:15px;border-radius:8px;margin-bottom:20px;">
-                <h3 style="margin:0;color:#333;font-size:16px;">{safe_string(payslip.get("employee_name", "-"))}</h3>
-            </div>
-            
-            <h4 style="color:#333;margin:20px 0 10px 0;font-size:13px;">EARNINGS</h4>
-            <table style="width:100%;border-collapse:collapse;margin-bottom:15px;">
-                <tr style="border-bottom:1px solid #eee;">
-                    <td style="padding:8px 0;color:#666;">Basic Salary</td>
-                    <td style="padding:8px 0;text-align:right;color:#333;">{money(basic)}</td>
+
+            <table style="width:100%;font-size:12px;color:#444;margin-bottom:20px;">
+                <tr>
+                    <td style="padding:3px 0;width:50%;"><strong>Employee:</strong> {safe_string(payslip.get("employee_name", "-"))}</td>
+                    <td style="padding:3px 0;"><strong>Employee Code:</strong> {safe_string(emp_code)}</td>
                 </tr>
-                <tr style="border-bottom:2px solid #333;background:#f9f9f9;">
-                    <td style="padding:10px 0;color:#333;font-weight:bold;">GROSS PAY</td>
-                    <td style="padding:10px 0;text-align:right;color:#333;font-weight:bold;">{money(gross)}</td>
+                <tr>
+                    <td style="padding:3px 0;"><strong>Job Title:</strong> {safe_string(emp_position) or "-"}</td>
+                    <td style="padding:3px 0;"><strong>ID Number:</strong> {safe_string(emp_id_num)}</td>
                 </tr>
-            </table>
-            
-            <h4 style="color:#333;margin:20px 0 10px 0;font-size:13px;">DEDUCTIONS</h4>
-            <table style="width:100%;border-collapse:collapse;margin-bottom:15px;">
-                {deduction_rows}
-                <tr style="border-bottom:2px solid #333;background:#fef2f2;">
-                    <td style="padding:10px 0;color:#333;font-weight:bold;">TOTAL DEDUCTIONS</td>
-                    <td style="padding:10px 0;text-align:right;color:#ef4444;font-weight:bold;">-{money(total_ded)}</td>
+                <tr>
+                    <td style="padding:3px 0;"><strong>Employed From:</strong> {safe_string(emp_started)}</td>
+                    <td style="padding:3px 0;"><strong>Rate per Hour:</strong> {money(emp_rate) if emp_rate > 0 else "-"}</td>
                 </tr>
             </table>
-            
-            <div style="display:flex;justify-content:space-between;align-items:center;padding:20px;background:#10b981;border-radius:8px;color:white;">
-                <span style="font-size:18px;font-weight:bold;">NET PAY</span>
-                <span style="font-size:26px;font-weight:bold;">{money(net)}</span>
-            </div>
-            
-            <div style="margin-top:20px;padding:15px;background:#f5f5f5;border-radius:8px;">
-                <h4 style="margin:0 0 10px 0;color:#888;font-size:11px;">EMPLOYER CONTRIBUTIONS (Company Cost)</h4>
-                <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;font-size:12px;color:#666;">
-                    <div>UIF: {money(uif_employer)}</div>
-                    <div>SDL: {money(sdl)}</div>
-                    <div>COIDA: {money(coida)}</div>
-                    {f"<div>Provident Fund (Employer): {money(pension_employer)}</div>" if pension_employer > 0 else ""}
+
+            <div style="display:flex;gap:20px;flex-wrap:wrap;">
+                <div style="flex:1;min-width:260px;">
+                    <h4 style="color:#333;margin:10px 0 6px;font-size:12px;border-bottom:1px solid #ccc;padding-bottom:3px;">EARNINGS</h4>
+                    <table style="width:100%;border-collapse:collapse;font-size:12px;">
+                        <tr style="border-bottom:1px solid #eee;">
+                            <td style="padding:6px 0;color:#666;">Basic Salary</td>
+                            <td style="padding:6px 0;text-align:right;color:#333;">{money(basic)}</td>
+                        </tr>
+                        <tr style="border-bottom:2px solid #333;background:#f9f9f9;">
+                            <td style="padding:7px 0;color:#333;font-weight:bold;">TOTAL EARNINGS</td>
+                            <td style="padding:7px 0;text-align:right;color:#333;font-weight:bold;">{money(gross)}</td>
+                        </tr>
+                    </table>
                 </div>
-                <p style="margin:10px 0 0 0;font-size:13px;color:#333;font-weight:bold;">Total Cost to Company: {money(total_cost)}</p>
+                <div style="flex:1;min-width:260px;">
+                    <h4 style="color:#333;margin:10px 0 6px;font-size:12px;border-bottom:1px solid #ccc;padding-bottom:3px;">DEDUCTIONS</h4>
+                    <table style="width:100%;border-collapse:collapse;font-size:12px;">
+                        {deduction_rows}
+                        <tr style="border-bottom:2px solid #333;background:#fef2f2;">
+                            <td style="padding:7px 0;color:#333;font-weight:bold;">TOTAL DEDUCTIONS</td>
+                            <td style="padding:7px 0;text-align:right;color:#ef4444;font-weight:bold;">-{money(total_ded)}</td>
+                        </tr>
+                    </table>
+                </div>
             </div>
-            
-            <div style="margin-top:25px;text-align:center;color:#888;font-size:11px;">
-                Generated by ClickAI | Computer-generated payslip
+
+            <div style="display:flex;justify-content:space-between;align-items:center;padding:14px 18px;background:#10b981;border-radius:8px;color:white;margin-top:18px;">
+                <span style="font-size:16px;font-weight:bold;">NETT PAY</span>
+                <span style="font-size:24px;font-weight:bold;">{money(net)}</span>
+            </div>
+
+            <div style="display:flex;gap:20px;flex-wrap:wrap;margin-top:18px;">
+                <div style="flex:1;min-width:260px;padding:14px;background:#f5f5f5;border-radius:8px;">
+                    <h4 style="margin:0 0 8px;color:#888;font-size:11px;">COMPANY CONTRIBUTIONS</h4>
+                    <table style="width:100%;font-size:12px;color:#555;">
+                        <tr><td style="padding:3px 0;">UIF</td><td style="text-align:right;">{money(uif_employer)}</td></tr>
+                        <tr><td style="padding:3px 0;">SDL (Skills Levy)</td><td style="text-align:right;">{money(sdl)}</td></tr>
+                        <tr><td style="padding:3px 0;">COIDA</td><td style="text-align:right;">{money(coida)}</td></tr>
+                        {f'<tr><td style="padding:3px 0;">Provident (Employer)</td><td style="text-align:right;">{money(pension_employer)}</td></tr>' if pension_employer > 0 else ""}
+                        <tr style="border-top:1px solid #ccc;font-weight:bold;color:#333;"><td style="padding:5px 0;">Total Cost to Company</td><td style="text-align:right;">{money(total_cost)}</td></tr>
+                    </table>
+                </div>
+                <div style="flex:1;min-width:260px;padding:14px;background:#f5f5f5;border-radius:8px;">
+                    <h4 style="margin:0 0 8px;color:#888;font-size:11px;">YEAR-TO-DATE TOTALS</h4>
+                    <table style="width:100%;font-size:12px;color:#555;">
+                        <tr><td style="padding:3px 0;">Taxable Earnings</td><td style="text-align:right;">{money(ytd_gross)}</td></tr>
+                        <tr><td style="padding:3px 0;">PAYE Paid</td><td style="text-align:right;">{money(ytd_paye)}</td></tr>
+                        <tr><td style="padding:3px 0;">UIF Paid</td><td style="text-align:right;">{money(ytd_uif)}</td></tr>
+                        <tr style="border-top:1px solid #ccc;font-weight:bold;color:#333;"><td style="padding:5px 0;">Nett Paid YTD</td><td style="text-align:right;">{money(ytd_net)}</td></tr>
+                    </table>
+                </div>
+            </div>
+
+            <div style="margin-top:14px;padding:10px 14px;background:#f5f5f5;border-radius:8px;font-size:12px;color:#555;">
+                <strong>Leave Type:</strong> Annual Leave &nbsp;·&nbsp; <strong>Closing Balance:</strong> {leave_balance:.4f} days
+            </div>
+
+            <div style="margin-top:20px;text-align:center;color:#999;font-size:10px;">
+                Generated by ClickAI · Computer-generated payslip · {payslip.get("date", "-")}
             </div>
         </div>
         '''
