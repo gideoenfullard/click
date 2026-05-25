@@ -3756,7 +3756,7 @@ def register_purchases_routes(app, db, login_required, Auth, render_page,
         
         // ═════════════ Edit / Credit Note / Delete handlers ═════════════
         const _invId = ''' + f"'{invoice_id}'" + ''';
-        const _invCurrent = ''' + f'{json.dumps({"invoice_number": invoice.get("invoice_number",""), "date": invoice.get("date","") or "", "subtotal": float(invoice.get("subtotal",0) or 0), "vat": float(invoice.get("vat",0) or 0), "total": float(invoice.get("total",0) or 0), "items": (json.loads(invoice.get("items","[]")) if isinstance(invoice.get("items"),str) else (invoice.get("items") or []))})};' + '''
+        const _invCurrent = ''' + f'{json.dumps({"invoice_number": invoice.get("invoice_number",""), "date": invoice.get("date","") or "", "subtotal": float(invoice.get("subtotal",0) or 0), "vat": float(invoice.get("vat",0) or 0), "total": float(invoice.get("total",0) or 0), "items": (raw_items if isinstance(raw_items, list) else [])})};' + '''
         
         function renderEditLine(item, idx) {
             const desc = (item.description || item.desc || '').replace(/"/g, '&quot;');
