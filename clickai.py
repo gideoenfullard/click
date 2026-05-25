@@ -227,6 +227,12 @@ except ImportError:
     TIMESHEETS_ROUTES_LOADED = False
 
 try:
+    from clickai_pay_conditions import register_pay_conditions_routes
+    PAY_CONDITIONS_LOADED = True
+except ImportError:
+    PAY_CONDITIONS_LOADED = False
+
+try:
     from clickai_settings import register_settings_routes
     SETTINGS_ROUTES_LOADED = True
 except ImportError:
@@ -62924,6 +62930,17 @@ try:
         logger.info("[TIMESHEETS] Routes registered ✓")
 except Exception as e:
     logger.error(f"[TIMESHEETS] Failed to register routes: {e}")
+
+# Register Pay Conditions routes (separate module)
+try:
+    if PAY_CONDITIONS_LOADED:
+        register_pay_conditions_routes(
+            app, db, login_required, Auth, render_page,
+            safe_string, today
+        )
+        logger.info("[PAY-COND] Routes registered ✓")
+except Exception as e:
+    logger.error(f"[PAY-COND] Failed to register routes: {e}")
 
 # Register Settings routes (separate module)
 try:
