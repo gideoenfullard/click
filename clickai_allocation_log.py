@@ -289,8 +289,7 @@ PAY_BADGES = {
 }
 
 
-def register_ledger_routes(app, db, login_required, Auth, generate_id, now_fn, today_fn,
-                           create_journal_entry=None, money_fn=None):
+def register_ledger_routes(app, db, login_required, Auth, generate_id, now_fn, today_fn):
     """Register the /ledger page and API routes"""
     
     global _db, _generate_id, _now, _today
@@ -298,8 +297,6 @@ def register_ledger_routes(app, db, login_required, Auth, generate_id, now_fn, t
     _generate_id = generate_id
     _now = now_fn
     _today = today_fn
-    
-    _money = money_fn if money_fn else (lambda v: f"R{float(v or 0):,.2f}")
     
     
     def _build_gl_detail(a, money_fn):
@@ -645,6 +642,7 @@ def register_ledger_routes(app, db, login_required, Auth, generate_id, now_fn, t
         import clickai as _ck
         render_page = _ck.render_page
         safe_string = _ck.safe_string
+        money = _ck.money
 
         business = Auth.get_current_business()
         biz_id = business.get("id") if business else None
@@ -690,12 +688,12 @@ def register_ledger_routes(app, db, login_required, Auth, generate_id, now_fn, t
                     <tr style="border-bottom:1px solid var(--border);">
                         <td style="padding:8px;">{desc} {keep_badge}</td>
                         <td style="padding:8px;">{who}</td>
-                        <td style="padding:8px;text-align:right;">{_money(a.get("amount", 0))}</td>
+                        <td style="padding:8px;text-align:right;">{money(a.get("amount", 0))}</td>
                         <td style="padding:8px;text-align:right;">{action}</td>
                     </tr>'''
                 body += f'''
                 <div class="card" style="margin-bottom:12px;">
-                    <div style="font-weight:600;margin-bottom:8px;">Amount {_money(amt)} · Date {tdate or "-"} · Ref {ref or "-"} — appears {len(items)}×</div>
+                    <div style="font-weight:600;margin-bottom:8px;">Amount {money(amt)} · Date {tdate or "-"} · Ref {ref or "-"} — appears {len(items)}×</div>
                     <table style="width:100%;border-collapse:collapse;font-size:13px;">
                         <thead><tr style="border-bottom:2px solid var(--border);">
                             <th style="text-align:left;padding:8px;">Allocation</th>
@@ -725,6 +723,7 @@ def register_ledger_routes(app, db, login_required, Auth, generate_id, now_fn, t
         adjust the customer/supplier balance back, and mark the original
         as reversed. The original record is kept for audit."""
         import clickai as _ck
+        _create_journal_entry = getattr(_ck, "create_journal_entry", None)
 
         user = Auth.get_current_user()
         business = Auth.get_current_business()
@@ -756,9 +755,9 @@ def register_ledger_routes(app, db, login_required, Auth, generate_id, now_fn, t
             })
 
         ref = alloc.get("reference", "") or alloc_id[:8]
-        if reversed_entries and create_journal_entry:
+        if reversed_entries and _create_journal_entry:
             try:
-                create_journal_entry(
+                _create_journal_entry(
                     biz_id,
                     (_today() if _today else ""),
                     f"REVERSAL — {alloc.get('description', '')[:200]}",
@@ -769,7 +768,7 @@ def register_ledger_routes(app, db, login_required, Auth, generate_id, now_fn, t
                 logger.error(f"[ALLOC REVERSE] Journal failed: {e}")
                 flash("Could not post the reversing journal — nothing was changed", "error")
                 return redirect("/ledger")
-        elif reversed_entries and not create_journal_entry:
+        elif reversed_entries and not _create_journal_entry:
             logger.error("[ALLOC REVERSE] create_journal_entry not available")
             flash("Reversal engine not wired up — contact support", "error")
             return redirect("/ledger")
