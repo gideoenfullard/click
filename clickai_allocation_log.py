@@ -653,18 +653,26 @@ def register_ledger_routes(app, db, login_required, Auth, generate_id, now_fn, t
         # Active only — ignore ones already reversed
         active = [a for a in allocs if a.get("status") != "reversed" and a.get("allocation_type") != "reversal"]
 
-        # Group by a duplicate signature: amount + transaction date + reference
+        # Group by a duplicate signature.
+        # Key = absolute amount + transaction date + the party (customer OR supplier).
+        # The party is what makes this reliable for BOTH sides — reference is
+        # often blank on bank imports, so it is not part of the key.
         groups = {}
         for a in active:
-            amt = round(float(a.get("amount", 0) or 0), 2)
+            amt = round(abs(float(a.get("amount", 0) or 0)), 2)
             xtra = a.get("extra")
             try:
                 xtra = json.loads(xtra) if isinstance(xtra, str) else (xtra or {})
             except Exception:
                 xtra = {}
             tdate = xtra.get("transaction_date", "") or a.get("transaction_date", "")
-            ref = (a.get("reference", "") or "").strip().upper()
-            sig = f"{amt:.2f}|{tdate}|{ref}"
+
+            # The party — customer or supplier — normalised
+            cust = (a.get("customer_name", "") or "").strip().lower()
+            supp = (a.get("supplier_name", "") or "").strip().lower()
+            party = cust or supp or "(none)"
+
+            sig = f"{amt:.2f}|{tdate}|{party}"
             groups.setdefault(sig, []).append(a)
 
         dup_groups = {k: v for k, v in groups.items() if len(v) > 1}
@@ -674,7 +682,11 @@ def register_ledger_routes(app, db, login_required, Auth, generate_id, now_fn, t
         else:
             body = f'<div class="card" style="background:rgba(245,158,11,0.12);border:1px solid #f59e0b;margin-bottom:15px;"><strong>[!] {len(dup_groups)} group(s) of possible duplicates found.</strong> Keep one entry in each group and reverse the rest. Each reversal posts an opposite GL journal so your Trial Balance stays correct.</div>'
             for sig, items in dup_groups.items():
-                amt, tdate, ref = sig.split("|")
+                amt, tdate, party = sig.split("|")
+                # Show party label — title-case, or a fallback
+                party_label = party.title() if party and party != "(none)" else "—"
+                # Pull the reference off the first item just for display
+                _ref0 = (items[0].get("reference", "") or "").strip()
                 rows = ""
                 for idx, a in enumerate(items):
                     who = safe_string(a.get("created_by_name", "") or "-")
@@ -693,7 +705,7 @@ def register_ledger_routes(app, db, login_required, Auth, generate_id, now_fn, t
                     </tr>'''
                 body += f'''
                 <div class="card" style="margin-bottom:12px;">
-                    <div style="font-weight:600;margin-bottom:8px;">Amount {money(amt)} · Date {tdate or "-"} · Ref {ref or "-"} — appears {len(items)}×</div>
+                    <div style="font-weight:600;margin-bottom:8px;">{party_label} · {money(amt)} · Date {tdate or "-"}{f" · Ref {_ref0}" if _ref0 else ""} — appears {len(items)}×</div>
                     <table style="width:100%;border-collapse:collapse;font-size:13px;">
                         <thead><tr style="border-bottom:2px solid var(--border);">
                             <th style="text-align:left;padding:8px;">Allocation</th>

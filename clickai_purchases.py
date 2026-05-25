@@ -3167,11 +3167,17 @@ def register_purchases_routes(app, db, login_required, Auth, render_page,
                 descriptions = request.form.getlist("item_desc[]")
                 quantities = request.form.getlist("item_qty[]")
                 prices = request.form.getlist("item_price[]")
+                item_indexes = request.form.getlist("item_index[]")
+                
+                # Track how much each PO line is being invoiced now
+                invoiced_now = {}  # po_item_index -> qty
                 
                 for i, desc in enumerate(descriptions):
                     if desc.strip():
                         qty = float(quantities[i] or 0)
                         price = float(prices[i] or 0)
+                        if qty <= 0:
+                            continue  # line left out of this invoice
                         line_total = qty * price
                         subtotal += line_total
                         invoice_items.append({
@@ -3180,6 +3186,17 @@ def register_purchases_routes(app, db, login_required, Auth, render_page,
                             "unit_price": price,
                             "line_total": round(line_total, 2)
                         })
+                        # Map back to the PO item index if we have it
+                        if i < len(item_indexes):
+                            try:
+                                _pidx = int(item_indexes[i])
+                                invoiced_now[_pidx] = invoiced_now.get(_pidx, 0) + qty
+                            except (ValueError, TypeError):
+                                pass
+                
+                if not invoice_items:
+                    flash("No items to invoice — enter at least one quantity", "error")
+                    return redirect(f"/api/purchase/{po_id}/create-invoice")
                 
                 vat = round(subtotal * 0.15, 2)
                 total = round(subtotal + vat, 2)
@@ -3213,6 +3230,30 @@ def register_purchases_routes(app, db, login_required, Auth, render_page,
                     except Exception as e:
                         logger.error(f"[PO] GL entry failed: {e}")
                     
+                    # Update qty_invoiced on each PO item and recompute PO status
+                    try:
+                        for _pidx, _qty in invoiced_now.items():
+                            if 0 <= _pidx < len(po_items):
+                                _prev = float(po_items[_pidx].get("qty_invoiced", 0) or 0)
+                                po_items[_pidx]["qty_invoiced"] = round(_prev + _qty, 4)
+                        
+                        # Status: fully_invoiced once every line's invoiced >= ordered
+                        _all_invoiced = True
+                        for _it in po_items:
+                            _ord = float(_it.get("qty") or _it.get("quantity") or 0)
+                            _inv = float(_it.get("qty_invoiced", 0) or 0)
+                            if _inv < _ord:
+                                _all_invoiced = False
+                                break
+                        
+                        _new_status = "received" if _all_invoiced else "partial"
+                        db.update("purchase_orders", po_id, {
+                            "items": json.dumps(po_items),
+                            "status": _new_status
+                        }, biz_id)
+                    except Exception as e:
+                        logger.error(f"[PO] qty_invoiced update failed: {e}")
+                    
                     flash(f"Supplier invoice {inv_number} created - {money(total)}", "success")
                     return redirect("/supplier-invoices")
                 
@@ -3220,20 +3261,39 @@ def register_purchases_routes(app, db, login_required, Auth, render_page,
                 return redirect(f"/purchase/{po_id}")
             
             # GET - show form with items from PO
+            # Manier A: only show what has been RECEIVED but not yet invoiced.
             items_html = ""
+            any_invoiceable = False
             for i, item in enumerate(po_items):
                 desc = item.get("description") or item.get("code") or "-"
-                qty = item.get("qty") or item.get("quantity") or 1
+                qty_ordered = float(item.get("qty") or item.get("quantity") or 0)
+                qty_received = float(item.get("qty_received", 0) or 0)
+                qty_invoiced = float(item.get("qty_invoiced", 0) or 0)
                 price = item.get("price") or item.get("unit_price") or ""
-                
+
+                # Receivable-but-uninvoiced quantity for this line
+                invoiceable = round(qty_received - qty_invoiced, 4)
+                if invoiceable <= 0:
+                    continue  # nothing new to invoice on this line
+                any_invoiceable = True
+
                 items_html += f'''
                 <tr>
-                    <td><input type="text" name="item_desc[]" class="form-input" value="{safe_string(desc)}" style="width:100%;"></td>
-                    <td><input type="number" name="item_qty[]" class="form-input" value="{qty}" step="any" style="width:80px;text-align:center;" onchange="calcTotals()"></td>
+                    <td>
+                        <input type="text" name="item_desc[]" class="form-input" value="{safe_string(desc)}" style="width:100%;">
+                        <input type="hidden" name="item_index[]" value="{i}">
+                        <small style="color:var(--text-muted);">Ordered {qty_ordered:g} · Received {qty_received:g} · Already invoiced {qty_invoiced:g}</small>
+                    </td>
+                    <td><input type="number" name="item_qty[]" class="form-input" value="{invoiceable:g}" max="{invoiceable:g}" step="any" style="width:80px;text-align:center;" onchange="calcTotals()"></td>
                     <td><input type="number" name="item_price[]" class="form-input" value="{price}" step="0.01" placeholder="0.00" style="width:120px;text-align:right;" onchange="calcTotals()"></td>
                     <td style="text-align:right;" class="line-total">R 0.00</td>
                 </tr>
                 '''
+
+            if not any_invoiceable:
+                _msg = "Nothing to invoice yet — no goods have been received on this PO, or everything received is already invoiced."
+                _back = f'<div class="card"><h2>Create Supplier Invoice</h2><p style="color:var(--text-muted);margin:15px 0;">{_msg}</p><a href="/purchase/{po_id}" class="btn btn-secondary">← Back to PO</a></div>'
+                return render_page("Create Supplier Invoice", _back, user, "purchases")
             
             suggested_inv = po.get("po_number", "").replace("PO", "SI").replace("po", "si")
             
