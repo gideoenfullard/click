@@ -2200,15 +2200,15 @@ Return ONLY the JSON array. No markdown, no explanation."""
             for et in existing_txns:
                 _e_date = str(et.get("date", ""))[:10]
                 _e_desc = (et.get("description") or "").strip().upper()[:80]
-                _e_amt = round(float(et.get("amount", 0)), 2)
-                _e_deb = round(float(et.get("debit", 0)), 2)
-                _e_cre = round(float(et.get("credit", 0)), 2)
-                existing_fingerprints.add((_e_date, _e_desc, _e_amt))
-                # Also add debit/credit variant in case amount was stored differently
-                if _e_deb > 0 or _e_cre > 0:
-                    existing_fingerprints.add((_e_date, _e_desc, round(_e_cre - _e_deb, 2)))
-                # Track date+amount combos for fuzzy dedup
-                _da_key = (_e_date, _e_amt)
+                _e_amt = round(float(et.get("amount", 0) or 0), 2)
+                _e_deb = round(float(et.get("debit", 0) or 0), 2)
+                _e_cre = round(float(et.get("credit", 0) or 0), 2)
+                # Robust amount: if 'amount' is 0 but debit/credit have a value, derive it.
+                # Always compare on the ABSOLUTE value so a +/- sign flip never hides a dupe.
+                _e_eff = abs(_e_amt) if _e_amt else abs(_e_cre - _e_deb)
+                existing_fingerprints.add((_e_date, _e_desc, _e_eff))
+                # Track date+abs-amount combos for fuzzy dedup
+                _da_key = (_e_date, _e_eff)
                 existing_date_amount[_da_key] = existing_date_amount.get(_da_key, 0) + 1
             
             # Also track date+amount within current import batch for intra-file dedup
@@ -2374,7 +2374,9 @@ Return ONLY the JSON array. No markdown, no explanation."""
                     # ═══════════════════════════════════════════════════════════════
                     _fp_date = str(txn_date)[:10]
                     _fp_desc = desc_upper.strip()[:80]
-                    _fp_amt = round(amount, 2)
+                    # Robust amount: derive from debit/credit if 'amount' is 0, always absolute
+                    _raw_amt = round(amount, 2)
+                    _fp_amt = abs(_raw_amt) if _raw_amt else abs(round(credit, 2) - round(debit, 2))
                     fingerprint = (_fp_date, _fp_desc, _fp_amt)
                     if fingerprint in existing_fingerprints:
                         skipped_dupes += 1
@@ -3258,7 +3260,9 @@ Return ONLY the JSON array. No markdown, no explanation."""
             
             # === ALLOCATION LOG ===
             try:
-                if log_allocation:
+                # Ignore / Transfer have no GL impact — do NOT log them as allocations,
+                # otherwise they clutter the ledger and show up as false duplicates.
+                if log_allocation and category not in ("Ignore", "Transfer Between Accounts", "Transfer"):
                     _is_expense = debit > 0 or amount < 0
                     log_allocation(
                         business_id=biz_id, allocation_type="bank_categorize", source_table="bank_transactions", source_id=txn_id,
