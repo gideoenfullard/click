@@ -477,10 +477,13 @@ def register_report_routes(app, db, login_required, Auth, render_page,
         content = f'''
         <style>
             @media print {{
-                body * {{ visibility: hidden !important; }}
-                #printArea, #printArea * {{ visibility: visible !important; }}
-                #printArea {{ position: absolute; left: 0; top: 0; width: 100%; }}
                 .no-print {{ display: none !important; }}
+                nav, header, .header, .header-top, .nav-wrapper, .nav, .mobile-nav, .nav-tap-hint, .sidebar {{ display: none !important; }}
+                body {{ background: white !important; color: black !important; }}
+                #printArea {{ display: block !important; }}
+                #printArea .card {{ break-inside: avoid; }}
+                #printArea tr {{ break-inside: avoid; }}
+                @page {{ size: A4; margin: 12mm; }}
             }}
         </style>
         <div class="no-print" style="display:flex;justify-content:space-between;align-items:center;margin-bottom:15px;">
@@ -617,10 +620,13 @@ def register_report_routes(app, db, login_required, Auth, render_page,
         content = f'''
         <style>
             @media print {{
-                body * {{ visibility: hidden !important; }}
-                #printArea, #printArea * {{ visibility: visible !important; }}
-                #printArea {{ position: absolute; left: 0; top: 0; width: 100%; }}
                 .no-print {{ display: none !important; }}
+                nav, header, .header, .header-top, .nav-wrapper, .nav, .mobile-nav, .nav-tap-hint, .sidebar {{ display: none !important; }}
+                body {{ background: white !important; color: black !important; }}
+                #printArea {{ display: block !important; }}
+                #printArea .card {{ break-inside: avoid; }}
+                #printArea tr {{ break-inside: avoid; }}
+                @page {{ size: A4; margin: 12mm; }}
             }}
         </style>
         <div class="no-print" style="display:flex;justify-content:space-between;align-items:center;margin-bottom:15px;">
@@ -671,10 +677,13 @@ def register_report_routes(app, db, login_required, Auth, render_page,
         content = f'''
         <style>
             @media print {{
-                body * {{ visibility: hidden !important; }}
-                #printArea, #printArea * {{ visibility: visible !important; }}
-                #printArea {{ position: absolute; left: 0; top: 0; width: 100%; }}
                 .no-print {{ display: none !important; }}
+                nav, header, .header, .header-top, .nav-wrapper, .nav, .mobile-nav, .nav-tap-hint, .sidebar {{ display: none !important; }}
+                body {{ background: white !important; color: black !important; }}
+                #printArea {{ display: block !important; }}
+                #printArea .card {{ break-inside: avoid; }}
+                #printArea tr {{ break-inside: avoid; }}
+                @page {{ size: A4; margin: 12mm; }}
             }}
         </style>
         <div class="no-print" style="display:flex;justify-content:space-between;align-items:center;margin-bottom:15px;">
@@ -730,10 +739,13 @@ def register_report_routes(app, db, login_required, Auth, render_page,
         content = f'''
         <style>
             @media print {{
-                body * {{ visibility: hidden !important; }}
-                #printArea, #printArea * {{ visibility: visible !important; }}
-                #printArea {{ position: absolute; left: 0; top: 0; width: 100%; }}
                 .no-print {{ display: none !important; }}
+                nav, header, .header, .header-top, .nav-wrapper, .nav, .mobile-nav, .nav-tap-hint, .sidebar {{ display: none !important; }}
+                body {{ background: white !important; color: black !important; }}
+                #printArea {{ display: block !important; }}
+                #printArea .card {{ break-inside: avoid; }}
+                #printArea tr {{ break-inside: avoid; }}
+                @page {{ size: A4; margin: 12mm; }}
             }}
         </style>
         <div class="no-print" style="display:flex;justify-content:space-between;align-items:center;margin-bottom:15px;">
