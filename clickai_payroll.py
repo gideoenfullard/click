@@ -10,6 +10,7 @@
 import json
 import time
 import logging
+import requests
 from collections import defaultdict
 from datetime import datetime, timedelta
 from decimal import Decimal
@@ -888,6 +889,33 @@ def register_payroll_routes(app, db, login_required, Auth, render_page,
                 return ""
             return f'<tr><td style="padding:6px 0;">{label}</td><td style="text-align:right;color:var(--red);">-{money(amount)}</td></tr>'
         
+        # Check if a payslip already exists for this employee today
+        _today = today()
+        _existing = db.get("payslips", {"business_id": biz_id, "employee_id": emp_id, "date": _today}) if biz_id else []
+        _has_payslip = len(_existing) > 0
+
+        if _has_payslip:
+            action_block = f'''
+            <div class="card" style="margin-top:15px;background:rgba(245,158,11,0.15);border:1px solid #f59e0b;">
+                <p style="margin-bottom:10px;"><strong>[!] A payslip already exists for {safe_string(emp.get("name", "-"))} on {_today}.</strong></p>
+                <a href="/payslip/{_existing[0].get("id")}" class="btn btn-primary">View existing payslip</a>
+            </div>
+            '''
+        else:
+            action_block = f'''
+            <div class="card" style="margin-top:15px;">
+                <form method="POST" action="/payroll/payslip-create/{emp_id}">
+                    <label style="display:block;margin-bottom:5px;font-weight:500;">Pay Date</label>
+                    <input type="date" name="pay_date" value="{_today}" style="padding:10px;border-radius:6px;border:1px solid var(--border);background:var(--card);color:var(--text);margin-bottom:15px;">
+                    <div style="display:flex;gap:10px;flex-wrap:wrap;">
+                        <button type="submit" class="btn btn-primary" style="padding:12px 24px;">Create &amp; Post Payslip</button>
+                        <a href="/payroll" class="btn btn-secondary" style="padding:12px 20px;">Cancel</a>
+                    </div>
+                    <p style="color:var(--text-muted);font-size:12px;margin-top:10px;">This creates the payslip and posts it to the GL. You can still edit it afterwards.</p>
+                </form>
+            </div>
+            '''
+
         ts_note = ""
         if month_entries:
             ts_note = f'''
@@ -931,10 +959,177 @@ def register_payroll_routes(app, db, login_required, Auth, render_page,
                 </tr>
             </table>
         </div>
+        {action_block}
         {ts_note}
         '''
         
         return render_page("Payslip Preview", content, user, "payroll")
+    
+    
+    @app.route("/payroll/payslip-create/<emp_id>", methods=["POST"])
+    @login_required
+    def payslip_create(emp_id):
+        """Create a single payslip for one employee and post it to the GL."""
+        user = Auth.get_current_user()
+        business = Auth.get_current_business()
+        biz_id = business.get("id") if business else None
+
+        if not biz_id:
+            flash("Please select a business first", "error")
+            return redirect("/payroll")
+
+        emp = db.get_one("employees", emp_id)
+        if not emp:
+            flash("Employee not found", "error")
+            return redirect("/payroll")
+
+        pay_date = request.form.get("pay_date", today())
+
+        # Guard: don't create a duplicate payslip for the same employee + date
+        existing = db.get("payslips", {"business_id": biz_id, "employee_id": emp_id, "date": pay_date}) if biz_id else []
+        if existing:
+            flash(f"A payslip for {emp.get('name')} on {pay_date} already exists", "error")
+            return redirect(f"/payslip/{existing[0].get('id')}")
+
+        basic = safe_float(emp.get("basic_salary", 0))
+        if basic <= 0:
+            flash(f"{emp.get('name')} has no basic salary set", "error")
+            return redirect(f"/employee/{emp_id}/edit")
+
+        # Deductions from employee
+        medical = safe_float(emp.get("medical_aid", 0))
+        union_fees = safe_float(emp.get("union_fees", 0))
+        pension = safe_float(emp.get("pension", 0))
+        loan = safe_float(emp.get("loan_deduction", 0))
+        other_ded = safe_float(emp.get("other_deduction", 0))
+        pension_employer = safe_float(emp.get("pension_employer", 0))
+        provident = safe_float(emp.get("provident_fund_amount", 0))
+
+        # PAYE — SARS 2026/27 tax tables (same calculation as payroll_run)
+        annual = basic * 12
+        if annual <= 245100:
+            paye = (annual * 0.18) / 12
+        elif annual <= 383100:
+            paye = (44118 + (annual - 245100) * 0.26) / 12
+        elif annual <= 530200:
+            paye = (79998 + (annual - 383100) * 0.31) / 12
+        elif annual <= 695800:
+            paye = (125599 + (annual - 530200) * 0.36) / 12
+        elif annual <= 887000:
+            paye = (185215 + (annual - 695800) * 0.39) / 12
+        elif annual <= 1878600:
+            paye = (259783 + (annual - 887000) * 0.41) / 12
+        else:
+            paye = (666339 + (annual - 1878600) * 0.45) / 12
+
+        _emp_age = safe_float(emp.get("age", 0))
+        annual_rebate = 17820
+        if _emp_age >= 75:
+            annual_rebate += 9765 + 3249
+        elif _emp_age >= 65:
+            annual_rebate += 9765
+        paye = max(0, paye - (annual_rebate / 12))
+
+        # UIF — 1% capped at R177.12
+        uif = min(basic * 0.01, 177.12)
+        uif_employer = uif
+
+        # SDL — only if this business's total annual payroll exceeds R500k
+        _all_emps = db.get("employees", {"business_id": biz_id}) if biz_id else []
+        _total_annual_payroll = sum(safe_float(e.get("basic_salary", 0)) * 12 for e in _all_emps)
+        sdl = basic * 0.01 if _total_annual_payroll > 500000 else 0
+
+        # COIDA — ~1% (employer only)
+        coida = basic * 0.01
+
+        total_ded = paye + uif + medical + union_fees + pension + provident + loan + other_ded
+        net = basic - total_ded
+        total_employer = uif_employer + sdl + coida + pension_employer
+        total_cost = basic + total_employer
+
+        payslip_id = generate_id()
+        payslip = {
+            "id": payslip_id,
+            "business_id": biz_id,
+            "employee_id": emp.get("id"),
+            "employee_name": emp.get("name"),
+            "date": pay_date,
+            "basic": basic,
+            "gross": basic,
+            "paye": round(paye, 2),
+            "uif": round(uif, 2),
+            "uif_employee": round(uif, 2),
+            "uif_employer": round(uif_employer, 2),
+            "medical_aid": round(medical, 2),
+            "union_fees": round(union_fees, 2),
+            "pension": round(pension, 2),
+            "pension_employee": round(pension, 2),
+            "pension_employer": round(pension_employer, 2),
+            "provident_fund": round(provident, 2),
+            "loan_deduction": round(loan, 2),
+            "other_deduction": round(other_ded, 2),
+            "sdl": round(sdl, 2),
+            "coida": round(coida, 2),
+            "total_deductions": round(total_ded, 2),
+            "total_employer": round(total_employer, 2),
+            "total_cost": round(total_cost, 2),
+            "net": round(net, 2)
+        }
+
+        # Direct save (avoids created_at schema-cache issue)
+        try:
+            url = f"{db.url}/rest/v1/payslips"
+            response = requests.post(
+                url,
+                headers={**db.headers, "Prefer": "return=representation"},
+                json=payslip,
+                timeout=30
+            )
+            if response.status_code not in (200, 201):
+                logger.error(f"[PAYROLL] Single payslip save failed: {response.text[:200]}")
+                flash("Could not save payslip — check the logs", "error")
+                return redirect(f"/payroll/payslip-preview/{emp_id}")
+        except Exception as e:
+            logger.error(f"[PAYROLL] Single payslip error: {e}")
+            flash("Could not save payslip — check the logs", "error")
+            return redirect(f"/payroll/payslip-preview/{emp_id}")
+
+        # Update loan balance if employee has a loan
+        if loan > 0 and emp.get("loan_balance"):
+            new_balance = max(0, safe_float(emp.get("loan_balance", 0)) - loan)
+            try:
+                db.update("employees", emp["id"], {"loan_balance": round(new_balance, 2)})
+                logger.info(f"[PAYROLL] Loan balance for {emp.get('name')}: {money(new_balance)}")
+            except Exception:
+                pass
+
+        # GL journal — same balanced pattern as payroll_run
+        payroll_entries = [
+            {"account_code": gl(biz_id, "salaries"), "debit": round(basic, 2), "credit": 0},
+        ]
+        employer_uif_amount = round(uif_employer, 2) if uif_employer > 0 else 0
+        employer_sdl_amount = round(sdl, 2) if sdl > 0 else 0
+        total_employer_expense = employer_uif_amount + employer_sdl_amount
+        if total_employer_expense > 0:
+            payroll_entries.append({"account_code": "6210", "debit": round(total_employer_expense, 2), "credit": 0})
+        if paye > 0:
+            payroll_entries.append({"account_code": gl(biz_id, "paye"), "debit": 0, "credit": round(paye, 2)})
+        if uif > 0 or employer_uif_amount > 0:
+            payroll_entries.append({"account_code": "2210", "debit": 0, "credit": round(uif + employer_uif_amount, 2)})
+        if employer_sdl_amount > 0:
+            payroll_entries.append({"account_code": "2220", "debit": 0, "credit": round(employer_sdl_amount, 2)})
+        other_deduction_total = round(medical + union_fees + pension + provident + loan + other_ded, 2)
+        if other_deduction_total > 0:
+            payroll_entries.append({"account_code": gl(biz_id, "loan"), "debit": 0, "credit": other_deduction_total})
+        payroll_entries.append({"account_code": gl(biz_id, "bank"), "debit": 0, "credit": round(net, 2)})
+
+        try:
+            create_journal_entry(biz_id, pay_date, f"Salary - {emp.get('name')}", f"PAY-{payslip_id[:8]}", payroll_entries)
+        except Exception as e:
+            logger.error(f"[PAYROLL] Journal entry failed for {emp.get('name')}: {e}")
+
+        flash(f"Payslip created for {emp.get('name')} — posted to GL", "success")
+        return redirect(f"/payslip/{payslip_id}")
     
     
     @app.route("/employee/<emp_id>")
