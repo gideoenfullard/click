@@ -19225,7 +19225,8 @@ except Exception as e:
 # Register allocation ledger routes (separate module)
 try:
     if ALLOCATION_LOG_LOADED:
-        register_ledger_routes(app, db, login_required, Auth, generate_id, now, today)
+        register_ledger_routes(app, db, login_required, Auth, generate_id, now, today,
+                               create_journal_entry=create_journal_entry, money_fn=money)
         logger.info("[ALLOC LOG] Routes registered ✓")
 except Exception as e:
     logger.error(f"[ALLOC LOG] Failed to register routes: {e}")

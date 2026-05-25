@@ -32,6 +32,7 @@ import json
 import logging
 from datetime import datetime
 from collections import defaultdict
+from flask import request, redirect, flash
 
 logger = logging.getLogger(__name__)
 
@@ -288,7 +289,8 @@ PAY_BADGES = {
 }
 
 
-def register_ledger_routes(app, db, login_required, Auth, generate_id, now_fn, today_fn):
+def register_ledger_routes(app, db, login_required, Auth, generate_id, now_fn, today_fn,
+                           create_journal_entry=None, money_fn=None):
     """Register the /ledger page and API routes"""
     
     global _db, _generate_id, _now, _today
@@ -296,6 +298,8 @@ def register_ledger_routes(app, db, login_required, Auth, generate_id, now_fn, t
     _generate_id = generate_id
     _now = now_fn
     _today = today_fn
+    
+    _money = money_fn if money_fn else (lambda v: f"R{float(v or 0):,.2f}")
     
     
     def _build_gl_detail(a, money_fn):
@@ -633,6 +637,176 @@ def register_ledger_routes(app, db, login_required, Auth, generate_id, now_fn, t
     # LEDGER PAGE - "Follow the Money"
     # ═══════════════════════════════════════════════════════════════════════════
     
+    @app.route("/ledger/duplicates")
+    @login_required
+    def ledger_duplicates():
+        """Find likely duplicate allocations — same amount + date + reference
+        appearing more than once. Helps clean up double bank imports."""
+        import clickai as _ck
+        render_page = _ck.render_page
+        safe_string = _ck.safe_string
+
+        business = Auth.get_current_business()
+        biz_id = business.get("id") if business else None
+        if not biz_id:
+            return render_page("Duplicate Allocations", '<div class="card">Select a business first.</div>', Auth.get_current_user(), "ledger")
+
+        allocs = db.get("allocation_log", {"business_id": biz_id}) or []
+        # Active only — ignore ones already reversed
+        active = [a for a in allocs if a.get("status") != "reversed" and a.get("allocation_type") != "reversal"]
+
+        # Group by a duplicate signature: amount + transaction date + reference
+        groups = {}
+        for a in active:
+            amt = round(float(a.get("amount", 0) or 0), 2)
+            xtra = a.get("extra")
+            try:
+                xtra = json.loads(xtra) if isinstance(xtra, str) else (xtra or {})
+            except Exception:
+                xtra = {}
+            tdate = xtra.get("transaction_date", "") or a.get("transaction_date", "")
+            ref = (a.get("reference", "") or "").strip().upper()
+            sig = f"{amt:.2f}|{tdate}|{ref}"
+            groups.setdefault(sig, []).append(a)
+
+        dup_groups = {k: v for k, v in groups.items() if len(v) > 1}
+
+        if not dup_groups:
+            body = '<div class="card" style="text-align:center;padding:40px;"><p style="color:var(--text-muted);">No duplicate allocations found. </p></div>'
+        else:
+            body = f'<div class="card" style="background:rgba(245,158,11,0.12);border:1px solid #f59e0b;margin-bottom:15px;"><strong>[!] {len(dup_groups)} group(s) of possible duplicates found.</strong> Keep one entry in each group and reverse the rest. Each reversal posts an opposite GL journal so your Trial Balance stays correct.</div>'
+            for sig, items in dup_groups.items():
+                amt, tdate, ref = sig.split("|")
+                rows = ""
+                for idx, a in enumerate(items):
+                    who = safe_string(a.get("created_by_name", "") or "-")
+                    desc = safe_string(a.get("description", "") or "-")
+                    keep_badge = '<span style="background:#10b981;color:white;padding:2px 8px;border-radius:4px;font-size:10px;">SUGGESTED KEEP</span>' if idx == 0 else ''
+                    action = ('<span style="color:var(--text-muted);font-size:12px;">keep this one</span>' if idx == 0 else
+                              f'''<form method="POST" action="/ledger/reverse/{a.get("id")}" style="display:inline;" onsubmit="return confirm('Reverse this allocation? An opposite GL journal will be posted.');">
+                                  <button type="submit" class="btn" style="background:var(--red);color:white;padding:6px 14px;font-size:12px;">↩ Reverse</button>
+                              </form>''')
+                    rows += f'''
+                    <tr style="border-bottom:1px solid var(--border);">
+                        <td style="padding:8px;">{desc} {keep_badge}</td>
+                        <td style="padding:8px;">{who}</td>
+                        <td style="padding:8px;text-align:right;">{_money(a.get("amount", 0))}</td>
+                        <td style="padding:8px;text-align:right;">{action}</td>
+                    </tr>'''
+                body += f'''
+                <div class="card" style="margin-bottom:12px;">
+                    <div style="font-weight:600;margin-bottom:8px;">Amount {_money(amt)} · Date {tdate or "-"} · Ref {ref or "-"} — appears {len(items)}×</div>
+                    <table style="width:100%;border-collapse:collapse;font-size:13px;">
+                        <thead><tr style="border-bottom:2px solid var(--border);">
+                            <th style="text-align:left;padding:8px;">Allocation</th>
+                            <th style="text-align:left;padding:8px;">Created By</th>
+                            <th style="text-align:right;padding:8px;">Amount</th>
+                            <th style="text-align:right;padding:8px;">Action</th>
+                        </tr></thead>
+                        <tbody>{rows}</tbody>
+                    </table>
+                </div>'''
+
+        content = f'''
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:15px;">
+            <a href="/ledger" style="color:var(--text-muted);">← Back to Ledger</a>
+        </div>
+        <h2 style="margin-bottom:5px;">Duplicate Allocations</h2>
+        <p style="color:var(--text-muted);margin-bottom:15px;font-size:12px;">Same amount, date and reference appearing more than once — usually a bank statement imported twice.</p>
+        {body}
+        '''
+        return render_page("Duplicate Allocations", content, Auth.get_current_user(), "ledger")
+    
+    
+    @app.route("/ledger/reverse/<alloc_id>", methods=["POST"])
+    @login_required
+    def ledger_reverse(alloc_id):
+        """Safely reverse a single allocation: post an opposite GL journal,
+        adjust the customer/supplier balance back, and mark the original
+        as reversed. The original record is kept for audit."""
+        import clickai as _ck
+
+        user = Auth.get_current_user()
+        business = Auth.get_current_business()
+        biz_id = business.get("id") if business else None
+
+        alloc = db.get_one("allocation_log", alloc_id)
+        if not alloc:
+            flash("Allocation not found", "error")
+            return redirect("/ledger")
+
+        if alloc.get("status") == "reversed":
+            flash("This allocation was already reversed", "error")
+            return redirect("/ledger")
+
+        # 1. Reverse the GL — swap debit and credit on every line
+        gl_entries = alloc.get("gl_entries", "[]")
+        try:
+            gl_entries = json.loads(gl_entries) if isinstance(gl_entries, str) else (gl_entries or [])
+        except Exception:
+            gl_entries = []
+
+        reversed_entries = []
+        for e in gl_entries:
+            reversed_entries.append({
+                "account_code": e.get("account_code", ""),
+                "account_name": e.get("account_name", ""),
+                "debit": round(float(e.get("credit", 0) or 0), 2),
+                "credit": round(float(e.get("debit", 0) or 0), 2),
+            })
+
+        ref = alloc.get("reference", "") or alloc_id[:8]
+        if reversed_entries and create_journal_entry:
+            try:
+                create_journal_entry(
+                    biz_id,
+                    (_today() if _today else ""),
+                    f"REVERSAL — {alloc.get('description', '')[:200]}",
+                    f"REV-{ref}",
+                    reversed_entries
+                )
+            except Exception as e:
+                logger.error(f"[ALLOC REVERSE] Journal failed: {e}")
+                flash("Could not post the reversing journal — nothing was changed", "error")
+                return redirect("/ledger")
+        elif reversed_entries and not create_journal_entry:
+            logger.error("[ALLOC REVERSE] create_journal_entry not available")
+            flash("Reversal engine not wired up — contact support", "error")
+            return redirect("/ledger")
+
+        # 2. Adjust customer / supplier balance back
+        amt = round(float(alloc.get("amount", 0) or 0), 2)
+        try:
+            if alloc.get("customer_name"):
+                custs = db.get("customers", {"business_id": biz_id, "name": alloc.get("customer_name")}) or []
+                if custs:
+                    c = custs[0]
+                    new_bal = round(float(c.get("balance", 0) or 0) - amt, 2)
+                    db.update("customers", c.get("id"), {"balance": new_bal})
+            if alloc.get("supplier_name"):
+                sups = db.get("suppliers", {"business_id": biz_id, "name": alloc.get("supplier_name")}) or []
+                if sups:
+                    s = sups[0]
+                    new_bal = round(float(s.get("balance", 0) or 0) - amt, 2)
+                    db.update("suppliers", s.get("id"), {"balance": new_bal})
+        except Exception as e:
+            logger.error(f"[ALLOC REVERSE] Balance adjust warning: {e}")
+
+        # 3. Mark the original as reversed (keep it for audit)
+        try:
+            db.update("allocation_log", alloc_id, {
+                "status": "reversed",
+                "reversed_at": (_now() if _now else ""),
+                "reversed_by": user.get("name", "") if user else "",
+            })
+        except Exception as e:
+            logger.error(f"[ALLOC REVERSE] Status update warning: {e}")
+
+        logger.info(f"[ALLOC REVERSE] {alloc_id} reversed by {user.get('name','') if user else ''}")
+        flash(f"Allocation reversed — opposite GL journal REV-{ref} posted", "success")
+        return redirect("/ledger/duplicates")
+    
+    
     @app.route("/ledger")
     @login_required
     def ledger_page():
@@ -874,6 +1048,7 @@ def register_ledger_routes(app, db, login_required, Auth, generate_id, now_fn, t
                 <h2 style="margin:0;font-size:22px;">Follow the Money</h2>
                 <p style="color:var(--text-muted);margin:4px 0 0 0;font-size:13px;">Full audit trail — every transaction, every rand, forever.</p>
             </div>
+            <a href="/ledger/duplicates" class="btn btn-secondary" style="padding:10px 18px;">🔍 Find Duplicates</a>
         </div>
         
         <!-- STATS BAR -->
