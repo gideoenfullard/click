@@ -1,17 +1,15 @@
 # -*- coding: utf-8 -*-
 # ==============================================================================
-# CLICK AI - REPORTS MODULE
+# CLICK AI - POS & BAR ROUTES MODULE
 # ==============================================================================
 # Extracted from clickai.py for maintainability
-# Contains: Reports index, Aging, Debtors, Creditors, GL Report, Trial Balance,
-#           TB APIs, PnL, Balance Sheet, VAT, Cashflow, Smart Reports, Budget
+# Contains: POS page, POS history, POS API endpoints, Bar/Restaurant POS,
+#           POS settings
 # ==============================================================================
 
-import os
 import json
 import time
 import logging
-import traceback
 from datetime import datetime, timedelta
 from decimal import Decimal
 from concurrent.futures import ThreadPoolExecutor
@@ -19,6116 +17,7772 @@ from flask import request, jsonify, session, redirect, flash
 
 logger = logging.getLogger(__name__)
 
-ANTHROPIC_API_KEY = os.environ.get("ANTHROPIC_API_KEY", "")
+# SA VAT rate constant (same as in clickai.py)
+VAT_RATE = Decimal("0.15")
 
 
-def register_report_routes(app, db, login_required, Auth, render_page,
-                           generate_id, money, safe_string, now, today,
-                           has_reactor_hud, jarvis_hud_header, jarvis_techline,
-                           AuditLog, Email, IndustryKnowledge,
-                           JARVIS_HUD_CSS, THEME_REACTOR_SKINS,
-                           _anthropic_client):
-    """Register all Report routes with the Flask app."""
+def register_pos_routes(app, db, login_required, Auth, render_page,
+                        generate_id, money, safe_string, safe_uuid,
+                        next_document_number, get_user_role, get_zane_chat,
+                        RecordFactory, CSS, now, today, extract_time,
+                        create_journal_entry, log_allocation, gl,
+                        AuditLog, Email):
+    """Register all POS and Bar routes with the Flask app."""
 
-    # Alias for compatibility
-    EmailService = Email
-
-
-    # === REPORTS INDEX, AGING, DEBTORS, CREDITORS ===
-
-    @app.route("/reports")
+    @app.route("/pos")
     @login_required
-    def reports_page():
-        """Reports Hub"""
-        
-        user = Auth.get_current_user()
-        
-        content = '''
-        <h2 style="margin-bottom:20px;"> Reports</h2>
-        
-        <div class="card" style="background:linear-gradient(135deg, rgba(99,102,241,0.2), rgba(139,92,246,0.1));margin-bottom:20px;cursor:pointer;" onclick="window.location='/reports/smart'">
-            <div style="display:flex;align-items:center;gap:15px;">
-                <span style="font-size:40px;"></span>
-                <div>
-                    <h3 style="margin:0;">Smart Reports</h3>
-                    <p style="color:var(--text-muted);margin:5px 0 0 0;">Ask Zane to write ANY report - management statements, KPIs, forecasts...</p>
-                </div>
-            </div>
-        </div>
-        
-        <div class="card" style="background:linear-gradient(135deg, rgba(16,185,129,0.15), rgba(99,102,241,0.1));margin-bottom:20px;cursor:pointer;border:1px solid rgba(16,185,129,0.3);" onclick="window.location='/reports/gl-analysis'">
-            <div style="display:flex;align-items:center;gap:15px;">
-                <span style="font-size:40px;">🔬</span>
-                <div>
-                    <h3 style="margin:0;">GL Analysis</h3>
-                    <p style="color:var(--text-muted);margin:5px 0 0 0;">Upload a client GL from Sage or Xero — instant TB check, anomaly detection & AI insights</p>
-                </div>
-            </div>
-        </div>
-        
-        <h3 style="margin:20px 0 10px 0;color:var(--text-muted);">Debtors & Creditors</h3>
-        <div class="stats-grid">
-            <div class="card" style="cursor:pointer" onclick="window.location='/reports/aging'">
-                <h3> Debtors Aging</h3>
-                <p style="color:var(--text-muted)">30/60/90/120 day analysis</p>
-            </div>
-            <div class="card" style="cursor:pointer" onclick="window.location='/reports/debtors'">
-                <h3> Debtors Report</h3>
-                <p style="color:var(--text-muted)">Who owes you money</p>
-            </div>
-            <div class="card" style="cursor:pointer" onclick="window.location='/reports/creditors'">
-                <h3> Creditors Report</h3>
-                <p style="color:var(--text-muted)">What you owe suppliers</p>
-            </div>
-            <div class="card" style="cursor:pointer" onclick="window.location='/reports/creditors-aging'">
-                <h3> Creditors Aging</h3>
-                <p style="color:var(--text-muted)">Supplier aging analysis</p>
-            </div>
-            <div class="card" style="cursor:pointer;border:1px solid rgba(99,102,241,0.3);" onclick="window.location='/reports/debtors-all'">
-                <h3> Debtors — All Businesses</h3>
-                <p style="color:var(--text-muted)">Consolidated debtors summary</p>
-            </div>
-            <div class="card" style="cursor:pointer;border:1px solid rgba(99,102,241,0.3);" onclick="window.location='/reports/creditors-all'">
-                <h3> Creditors — All Businesses</h3>
-                <p style="color:var(--text-muted)">Consolidated creditors summary</p>
-            </div>
-        </div>
-        
-        <h3 style="margin:30px 0 10px 0;color:var(--text-muted);">Financial Statements</h3>
-        <div class="stats-grid">
-            <div class="card" style="cursor:pointer" onclick="window.location='/reports/tb'">
-                <h3> Trial Balance</h3>
-                <p style="color:var(--text-muted)">Debit/Credit summary</p>
-            </div>
-            <div class="card" style="cursor:pointer;border:1px solid rgba(245,158,11,0.3);" onclick="window.location='/suspense-explainer'">
-                <h3>⚠️ Suspense Explainer</h3>
-                <p style="color:var(--text-muted)">Where opening-balance variances came from</p>
-            </div>
-            <div class="card" style="cursor:pointer" onclick="window.location='/reports/pnl'">
-                <h3> Profit & Loss</h3>
-                <p style="color:var(--text-muted)">Income vs Expenses</p>
-            </div>
-            <div class="card" style="cursor:pointer" onclick="window.location='/reports/balance-sheet'">
-                <h3> Balance Sheet</h3>
-                <p style="color:var(--text-muted)">Assets, Liabilities, Equity</p>
-            </div>
-            <div class="card" style="cursor:pointer" onclick="window.location='/reports/cashflow'">
-                <h3> Cash Flow</h3>
-                <p style="color:var(--text-muted)">Money in vs out</p>
-            </div>
-            <div class="card" style="cursor:pointer" onclick="window.location='/reports/gl'">
-                <h3> General Ledger</h3>
-                <p style="color:var(--text-muted)">All transactions by account</p>
-            </div>
-            <div class="card" style="cursor:pointer" onclick="window.location='/reports/budget'">
-                <h3> Budget vs Actual</h3>
-                <p style="color:var(--text-muted)">Track against targets</p>
-            </div>
-        </div>
-        
-        <h3 style="margin:30px 0 10px 0;color:var(--text-muted);">Tax & Compliance</h3>
-        <div class="stats-grid">
-            <div class="card" style="cursor:pointer;background:linear-gradient(135deg, rgba(16,185,129,0.2), rgba(34,197,94,0.1));border:1px solid rgba(16,185,129,0.3);" onclick="window.location='/tax-saver'">
-                <h3>Tax Saver</h3>
-                <p style="color:var(--text-muted)">Find money you're missing!</p>
-            </div>
-            <div class="card" style="cursor:pointer" onclick="window.location='/reports/vat'">
-                <h3>[CHART] VAT Report</h3>
-                <p style="color:var(--text-muted)">VAT201 summary for SARS</p>
-            </div>
-            <div class="card" style="cursor:pointer" onclick="window.location='/banking'">
-                <h3>[BANK] Bank Reconciliation</h3>
-                <p style="color:var(--text-muted)">Match bank to books</p>
-            </div>
-            <div class="card" style="cursor:pointer" onclick="window.location='/year-end'">
-                <h3>Year End Close</h3>
-                <p style="color:var(--text-muted)">Close financial year</p>
-            </div>
-            <div class="card" style="cursor:pointer" onclick="window.location='/credit-notes'">
-                <h3>Credit Notes</h3>
-                <p style="color:var(--text-muted)">View all credit notes</p>
-            </div>
-        </div>
-        
-        <p style="color:var(--text-muted);text-align:center;margin-top:30px;">
-        <h3 style="margin:30px 0 10px 0;color:var(--text-muted);">Zane AI Advisor</h3>
-        <p style="color:var(--text-muted);font-size:13px;margin-bottom:12px;">Ask Zane about any of these topics — he has deep SA business knowledge built in:</p>
-        <div class="stats-grid">
-            <div class="card" style="cursor:pointer;border-left:3px solid #6366f1;" onclick="document.getElementById('jzInput')?.focus();if(typeof jzToggle==='function')jzToggle();">
-                <h3 style="font-size:15px;">SA Business Law</h3>
-                <p style="color:var(--text-muted);font-size:12px;">Contracts, CPA, disputes, IP, POPIA</p>
-            </div>
-            <div class="card" style="cursor:pointer;border-left:3px solid #10b981;" onclick="document.getElementById('jzInput')?.focus();if(typeof jzToggle==='function')jzToggle();">
-                <h3 style="font-size:15px;">Tax Strategy</h3>
-                <p style="color:var(--text-muted);font-size:12px;">Deductions, CGT, wear & tear, provisional tax, pay yourself</p>
-            </div>
-            <div class="card" style="cursor:pointer;border-left:3px solid #f59e0b;" onclick="document.getElementById('jzInput')?.focus();if(typeof jzToggle==='function')jzToggle();">
-                <h3 style="font-size:15px;">HR & Labour</h3>
-                <p style="color:var(--text-muted);font-size:12px;">BCEA, discipline, CCMA, leave, hiring, EE Act</p>
-            </div>
-            <div class="card" style="cursor:pointer;border-left:3px solid #ec4899;" onclick="document.getElementById('jzInput')?.focus();if(typeof jzToggle==='function')jzToggle();">
-                <h3 style="font-size:15px;">Insurance</h3>
-                <p style="color:var(--text-muted);font-size:12px;">Cover types, claims, liability, fleet, business interruption</p>
-            </div>
-            <div class="card" style="cursor:pointer;border-left:3px solid #8b5cf6;" onclick="document.getElementById('jzInput')?.focus();if(typeof jzToggle==='function')jzToggle();">
-                <h3 style="font-size:15px;">SARS Compliance</h3>
-                <p style="color:var(--text-muted);font-size:12px;">VAT, PAYE, UIF, SDL, eFiling, returns</p>
-            </div>
-            <div class="card" style="cursor:pointer;border-left:3px solid #14b8a6;" onclick="document.getElementById('jzInput')?.focus();if(typeof jzToggle==='function')jzToggle();">
-                <h3 style="font-size:15px;">BEE & CIPC</h3>
-                <p style="color:var(--text-muted);font-size:12px;">B-BBEE levels, registration, annual returns, compliance</p>
-            </div>
-        </div>
-        
-        <p style="color:var(--text-muted);text-align:center;margin-top:30px;">
-            [TIP] Or just ask Zane anything: "Show me aging" / "Who owes me?" / "Write me a management report"
-        </p>
-        '''
-        
-        # -- JARVIS: Reports HUD header --
-        if has_reactor_hud():
-            _hud = jarvis_hud_header(
-                page_name="REPORTS",
-                page_count="FINANCIAL ANALYTICS",
-                left_items=[
-                    ("TRIAL BALANCE", "VIEW", "c", "", ""),
-                    ("P&amp;L", "VIEW", "g", "g", ""),
-                    ("BALANCE SHEET", "VIEW", "c", "", ""),
-                    ("VAT RETURN", "VIEW", "o", "", ""),
-                ],
-                right_items=[
-                    ("SMART REPORTS", "AI", "p", "", ""),
-                    ("CASH FLOW", "VIEW", "g", "g", ""),
-                    ("DEBTORS AGE", "VIEW", "r", "", ""),
-                    ("CREDITORS AGE", "VIEW", "o", "", ""),
-                ],
-                reactor_size="page",
-                alert_html=""
-            )
-            content = JARVIS_HUD_CSS + THEME_REACTOR_SKINS + _hud + content + jarvis_techline("REPORTS <b>READY</b>")
-        
-        return render_page("Reports", content, user, "reports")
-    
-    
-    # 
-    # DEBTORS AGING REPORT - 30/60/90/120 days
-    # 
-    
-    @app.route("/reports/aging")
-    @login_required
-    def report_aging():
-        """Debtors Aging Report"""
+    def pos_page():
+        """POS - Stylish List Layout with Smart Search"""
         
         user = Auth.get_current_user()
         business = Auth.get_current_business()
         biz_id = business.get("id") if business else None
+        _pos_theme = request.cookies.get("clickai_theme", "midnight")
         
-        # Get all invoices
-        invoices = db.get("invoices", {"business_id": biz_id}) if biz_id else []
-        outstanding = [inv for inv in invoices if inv.get("status") != "paid"]
-        
-        # Get customers
-        customers = db.get("customers", {"business_id": biz_id}) if biz_id else []
-        customer_map = {c.get("id"): c for c in customers}
-        
-        # Calculate aging buckets
-        today_date = datetime.now().date()
-        
-        aging_data = {}  # customer_id -> {current, 30, 60, 90, 120+, total}
-        
-        for inv in outstanding:
-            cust_id = inv.get("customer_id")
-            if not cust_id:
-                continue
-            
-            if cust_id not in aging_data:
-                cust = customer_map.get(cust_id, {})
-                aging_data[cust_id] = {
-                    "name": cust.get("name", "Unknown"),
-                    "current": 0,
-                    "d30": 0,
-                    "d60": 0,
-                    "d90": 0,
-                    "d120": 0,
-                    "total": 0
-                }
-            
-            # Parse invoice date
-            try:
-                inv_date = datetime.strptime(inv.get("date", today()), "%Y-%m-%d").date()
-            except:
-                inv_date = today_date
-            
-            days_old = (today_date - inv_date).days
-            amount = float(inv.get("total", 0))
-            
-            if days_old <= 30:
-                aging_data[cust_id]["current"] += amount
-            elif days_old <= 60:
-                aging_data[cust_id]["d30"] += amount
-            elif days_old <= 90:
-                aging_data[cust_id]["d60"] += amount
-            elif days_old <= 120:
-                aging_data[cust_id]["d90"] += amount
-            else:
-                aging_data[cust_id]["d120"] += amount
-            
-            aging_data[cust_id]["total"] += amount
-        
-        # Sort by total descending
-        sorted_aging = sorted(aging_data.values(), key=lambda x: x["total"], reverse=True)
-        
-        # Calculate totals
-        totals = {"current": 0, "d30": 0, "d60": 0, "d90": 0, "d120": 0, "total": 0}
-        for a in sorted_aging:
-            for key in totals:
-                totals[key] += a[key]
-        
-        # Build table
-        rows = ""
-        for a in sorted_aging:
-            rows += f'''
-            <tr>
-                <td><strong>{safe_string(a["name"])}</strong></td>
-                <td style="text-align:right;">{money(a["current"]) if a["current"] else "-"}</td>
-                <td style="text-align:right;color:var(--orange);">{money(a["d30"]) if a["d30"] else "-"}</td>
-                <td style="text-align:right;color:var(--orange);">{money(a["d60"]) if a["d60"] else "-"}</td>
-                <td style="text-align:right;color:var(--red);">{money(a["d90"]) if a["d90"] else "-"}</td>
-                <td style="text-align:right;color:var(--red);font-weight:bold;">{money(a["d120"]) if a["d120"] else "-"}</td>
-                <td style="text-align:right;font-weight:bold;">{money(a["total"])}</td>
-            </tr>
-            '''
-        
-        content = f'''
-        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:20px;">
-            <a href="/reports" style="color:var(--text-muted);">-> Back to Reports</a>
-            <button class="btn btn-secondary" onclick="window.print();"> Print</button>
-        </div>
-        
-        <div class="card">
-            <h2 style="margin-bottom:5px;"> Debtors Aging Report</h2>
-            <p style="color:var(--text-muted);margin-bottom:20px;">As at {today()}</p>
-            
-            <div class="stats-grid" style="margin-bottom:20px;">
-                <div class="stat-card green">
-                    <div class="stat-value">{money(totals["current"])}</div>
-                    <div class="stat-label">Current (0-30)</div>
-                </div>
-                <div class="stat-card orange">
-                    <div class="stat-value">{money(totals["d30"])}</div>
-                    <div class="stat-label">31-60 Days</div>
-                </div>
-                <div class="stat-card orange">
-                    <div class="stat-value">{money(totals["d60"])}</div>
-                    <div class="stat-label">61-90 Days</div>
-                </div>
-                <div class="stat-card red">
-                    <div class="stat-value">{money(totals["d90"] + totals["d120"])}</div>
-                    <div class="stat-label">90+ Days</div>
-                </div>
-            </div>
-            
-            <table class="table">
-                <thead>
-                    <tr>
-                        <th>Customer</th>
-                        <th style="text-align:right;">Current</th>
-                        <th style="text-align:right;">31-60</th>
-                        <th style="text-align:right;">61-90</th>
-                        <th style="text-align:right;">91-120</th>
-                        <th style="text-align:right;">120+</th>
-                        <th style="text-align:right;">Total</th>
-                    </tr>
-                </thead>
-                <tbody>
-                    {rows or "<tr><td colspan='7' style='text-align:center;color:var(--text-muted)'>No outstanding invoices</td></tr>"}
-                </tbody>
-                <tfoot style="font-weight:bold;background:rgba(255,255,255,0.05);">
-                    <tr>
-                        <td>TOTAL</td>
-                        <td style="text-align:right;">{money(totals["current"])}</td>
-                        <td style="text-align:right;">{money(totals["d30"])}</td>
-                        <td style="text-align:right;">{money(totals["d60"])}</td>
-                        <td style="text-align:right;">{money(totals["d90"])}</td>
-                        <td style="text-align:right;">{money(totals["d120"])}</td>
-                        <td style="text-align:right;color:var(--primary);">{money(totals["total"])}</td>
-                    </tr>
-                </tfoot>
-            </table>
-        </div>
-        '''
-        
-        return render_page("Aging Report", content, user, "reports")
-    
-    
-    # 
-    # DEBTORS REPORT
-    # 
-    
-    @app.route("/reports/debtors")
-    @login_required
-    def report_debtors():
-        """Debtors Report - Who owes you with invoice breakdown"""
-        
-        user = Auth.get_current_user()
-        business = Auth.get_current_business()
-        biz_id = business.get("id") if business else None
-        
-        customers = db.get("customers", {"business_id": biz_id}) if biz_id else []
-        debtors = [c for c in customers if float(c.get("balance", 0)) > 0]
-        debtors = sorted(debtors, key=lambda x: float(x.get("balance", 0)), reverse=True)
-        
-        # Get all unpaid customer invoices
-        all_invoices = db.get("invoices", {"business_id": biz_id}) if biz_id else []
-        unpaid_invoices = [inv for inv in all_invoices if inv.get("status") != "paid"]
-        
-        total_owing = sum(float(c.get("balance", 0)) for c in debtors)
-        
-        # Build accordion rows
-        debtors_html = ""
-        for c in debtors:
-            cust_id = c.get("id")
-            balance = float(c.get("balance", 0))
-            
-            # Get unpaid invoices for this customer
-            cust_invoices = [inv for inv in unpaid_invoices if inv.get("customer_id") == cust_id]
-            cust_invoices = sorted(cust_invoices, key=lambda x: x.get("date", ""))
-            
-            # Calculate aging for each invoice
-            from datetime import datetime
-            today_date = datetime.now().date()
-            
-            inv_rows = ""
-            for inv in cust_invoices:
-                try:
-                    inv_date = datetime.strptime(inv.get("date", today()), "%Y-%m-%d").date()
-                    days_old = (today_date - inv_date).days
-                except:
-                    days_old = 0
-                
-                # Color code aging
-                if days_old > 90:
-                    age_color = "var(--red)"
-                    age_text = f"{days_old}d [!]"
-                elif days_old > 60:
-                    age_color = "var(--orange)"
-                    age_text = f"{days_old}d"
-                elif days_old > 30:
-                    age_color = "var(--yellow)"
-                    age_text = f"{days_old}d"
-                else:
-                    age_color = "var(--text-muted)"
-                    age_text = f"{days_old}d"
-                
-                inv_rows += f'''
-                <tr style="cursor:pointer;" onclick="window.location='/invoice/{inv.get("id")}'">
-                    <td>{inv.get("date", "-")}</td>
-                    <td>{inv.get("invoice_number", "-")}</td>
-                    <td style="text-align:right;font-weight:bold;">{money(inv.get("total", 0))}</td>
-                    <td style="color:{age_color};">{age_text}</td>
-                </tr>
-                '''
-            
-            debtors_html += f'''
-            <details style="background:var(--card);border-radius:6px;margin-bottom:4px;" {"open" if balance > 10000 else ""}>
-                <summary style="cursor:pointer;padding:8px 12px;list-style:none;">
-                    <div style="display:grid;grid-template-columns:2fr 1fr 1fr 100px;align-items:center;font-size:13px;">
-                        <span><strong>{safe_string(c.get("name", "-"))}</strong> <span style="color:var(--text-muted);font-size:11px;">({len(cust_invoices)} invoices)</span></span>
-                        <span style="text-align:center;color:var(--text-muted);">{safe_string(c.get("phone", ""))}</span>
-                        <span style="text-align:right;color:var(--red);font-weight:bold;">{money(balance)}</span>
-                        <span style="text-align:right;">
-                            <button class="btn btn-secondary" style="padding:2px 8px;font-size:10px;" 
-                                    onclick="event.stopPropagation();document.getElementById('aiInput').value='Send reminder to {safe_string(c.get("name", ""))}';document.getElementById('sendBtn').click();">
-                                [EMAIL] Remind
-                            </button>
-                        </span>
-                    </div>
-                </summary>
-                <div style="padding:0 10px 8px 10px;">
-                    {f"""<table class="table" style="font-size:11px;">
-                        <thead>
-                            <tr>
-                                <th style="padding:4px;">Date</th>
-                                <th style="padding:4px;">Invoice #</th>
-                                <th style="padding:4px;text-align:right;">Amount</th>
-                                <th style="padding:4px;">Age</th>
-                            </tr>
-                        </thead>
-                        <tbody>
-                            {inv_rows}
-                        </tbody>
-                    </table>""" if inv_rows else "<p style='color:var(--text-muted);text-align:center;padding:10px;'>Balance from older transactions</p>"}
-                </div>
-            </details>
-            '''
-        
-        # Sticky header
-        header_row = '''
-        <div style="position:sticky;top:56px;z-index:100;margin-bottom:4px;padding:8px 12px;background:var(--card);border-radius:6px;">
-            <div style="display:grid;grid-template-columns:2fr 1fr 1fr 100px;align-items:center;font-size:13px;font-weight:bold;">
-                <span>Customer</span>
-                <span style="text-align:center;">Contact</span>
-                <span style="text-align:right;">Owes Us</span>
-                <span style="text-align:right;">Action</span>
-            </div>
-        </div>
-        '''
-        
-        content = f'''
-        <style>
-            @media print {{
-                .no-print {{ display: none !important; }}
-                nav, header, .header, .header-top, .nav-wrapper, .nav, .mobile-nav, .nav-tap-hint, .sidebar {{ display: none !important; }}
-                body {{ background: white !important; color: black !important; }}
-                #printArea {{ display: block !important; }}
-                #printArea .card {{ break-inside: avoid; }}
-                #printArea tr {{ break-inside: avoid; }}
-                @page {{ size: A4; margin: 12mm; }}
-            }}
-        </style>
-        <div class="no-print" style="display:flex;justify-content:space-between;align-items:center;margin-bottom:15px;">
-            <a href="/reports" style="color:var(--text-muted);">← Back to Reports</a>
-            <div style="display:flex;gap:10px;">
-                <button class="btn btn-primary" onclick="document.getElementById('aiInput').value='Email all overdue customers';document.getElementById('sendBtn').click();">[EMAIL] Email All</button>
-                <button class="btn btn-secondary" onclick="window.print();">🖨️ Print</button>
-            </div>
-        </div>
-        
-        <div id="printArea">
-        <h2 style="margin-bottom:5px;">{safe_string(business.get("name", "Business") if business else "Business")} — Debtors Report</h2>
-        <p style="color:var(--text-muted);margin-bottom:15px;font-size:12px;">As at {today()} - Click customer to see unpaid invoices</p>
-        
-        <div class="stat-card red" style="margin-bottom:15px;">
-            <div class="stat-value">{money(total_owing)}</div>
-            <div class="stat-label">Total Outstanding from {len(debtors)} customers</div>
-        </div>
-        
-        {header_row}
-        {debtors_html or '<div class="card" style="text-align:center;padding:40px;"><p style="color:var(--text-muted);">No outstanding debtors </p></div>'}
-        </div>
-        '''
-        
-        return render_page("Debtors Report", content, user, "reports")
-    
-    
-    # 
-    # CREDITORS REPORT
-    # 
-    
-    @app.route("/reports/creditors")
-    @login_required
-    def report_creditors():
-        """Creditors Report - What you owe with invoice breakdown"""
-        
-        user = Auth.get_current_user()
-        business = Auth.get_current_business()
-        biz_id = business.get("id") if business else None
-        
-        suppliers = db.get("suppliers", {"business_id": biz_id}) if biz_id else []
-        creditors = [s for s in suppliers if float(s.get("balance", 0)) > 0]
-        creditors = sorted(creditors, key=lambda x: float(x.get("balance", 0)), reverse=True)
-        
-        # Get all unpaid supplier invoices
-        all_invoices = db.get("supplier_invoices", {"business_id": biz_id}) if biz_id else []
-        unpaid_invoices = [inv for inv in all_invoices if inv.get("status") != "paid"]
-        
-        total_owing = sum(float(s.get("balance", 0)) for s in creditors)
-        
-        # Build accordion rows
-        creditors_html = ""
-        for s in creditors:
-            sup_id = s.get("id")
-            balance = float(s.get("balance", 0))
-            
-            # Get unpaid invoices for this supplier
-            sup_invoices = [inv for inv in unpaid_invoices if inv.get("supplier_id") == sup_id]
-            sup_invoices = sorted(sup_invoices, key=lambda x: x.get("date", ""))
-            
-            # Calculate aging for each invoice
-            from datetime import datetime
-            today_date = datetime.now().date()
-            
-            inv_rows = ""
-            for inv in sup_invoices:
-                try:
-                    inv_date = datetime.strptime(inv.get("date", today()), "%Y-%m-%d").date()
-                    days_old = (today_date - inv_date).days
-                except:
-                    days_old = 0
-                
-                # Color code aging
-                if days_old > 90:
-                    age_color = "var(--red)"
-                    age_text = f"{days_old}d [!]"
-                elif days_old > 60:
-                    age_color = "var(--orange)"
-                    age_text = f"{days_old}d"
-                elif days_old > 30:
-                    age_color = "var(--yellow)"
-                    age_text = f"{days_old}d"
-                else:
-                    age_color = "var(--text-muted)"
-                    age_text = f"{days_old}d"
-                
-                inv_rows += f'''
-                <tr>
-                    <td>{inv.get("date", "-")}</td>
-                    <td>{inv.get("invoice_number", "-")}</td>
-                    <td style="text-align:right;font-weight:bold;">{money(inv.get("total", 0))}</td>
-                    <td style="color:{age_color};">{age_text}</td>
-                </tr>
-                '''
-            
-            creditors_html += f'''
-            <details style="background:var(--card);border-radius:6px;margin-bottom:4px;" {"open" if balance > 10000 else ""}>
-                <summary style="cursor:pointer;padding:8px 12px;list-style:none;">
-                    <div style="display:grid;grid-template-columns:2fr 1fr 1fr;align-items:center;font-size:13px;">
-                        <span><strong>{safe_string(s.get("name", "-"))}</strong> <span style="color:var(--text-muted);font-size:11px;">({len(sup_invoices)} invoices)</span></span>
-                        <span style="text-align:center;color:var(--text-muted);">{safe_string(s.get("phone", ""))}</span>
-                        <span style="text-align:right;color:var(--orange);font-weight:bold;">{money(balance)}</span>
-                    </div>
-                </summary>
-                <div style="padding:0 10px 8px 10px;">
-                    {f"""<table class="table" style="font-size:11px;">
-                        <thead>
-                            <tr>
-                                <th style="padding:4px;">Date</th>
-                                <th style="padding:4px;">Invoice #</th>
-                                <th style="padding:4px;text-align:right;">Amount</th>
-                                <th style="padding:4px;">Age</th>
-                            </tr>
-                        </thead>
-                        <tbody>
-                            {inv_rows}
-                        </tbody>
-                    </table>""" if inv_rows else "<p style='color:var(--text-muted);text-align:center;padding:10px;'>Balance from older transactions</p>"}
-                </div>
-            </details>
-            '''
-        
-        # Sticky header
-        header_row = '''
-        <div style="position:sticky;top:56px;z-index:100;margin-bottom:4px;padding:8px 12px;background:var(--card);border-radius:6px;">
-            <div style="display:grid;grid-template-columns:2fr 1fr 1fr;align-items:center;font-size:13px;font-weight:bold;">
-                <span>Supplier</span>
-                <span style="text-align:center;">Contact</span>
-                <span style="text-align:right;">We Owe</span>
-            </div>
-        </div>
-        '''
-        
-        content = f'''
-        <style>
-            @media print {{
-                .no-print {{ display: none !important; }}
-                nav, header, .header, .header-top, .nav-wrapper, .nav, .mobile-nav, .nav-tap-hint, .sidebar {{ display: none !important; }}
-                body {{ background: white !important; color: black !important; }}
-                #printArea {{ display: block !important; }}
-                #printArea .card {{ break-inside: avoid; }}
-                #printArea tr {{ break-inside: avoid; }}
-                @page {{ size: A4; margin: 12mm; }}
-            }}
-        </style>
-        <div class="no-print" style="display:flex;justify-content:space-between;align-items:center;margin-bottom:15px;">
-            <a href="/reports" style="color:var(--text-muted);">← Back to Reports</a>
-            <button class="btn btn-secondary" onclick="window.print();">🖨️ Print</button>
-        </div>
-        
-        <div id="printArea">
-        <h2 style="margin-bottom:5px;">{safe_string(business.get("name", "Business") if business else "Business")} — Creditors Report</h2>
-        <p style="color:var(--text-muted);margin-bottom:15px;font-size:12px;">As at {today()} - Click supplier to see unpaid invoices</p>
-        
-        <div class="stat-card orange" style="margin-bottom:15px;">
-            <div class="stat-value">{money(total_owing)}</div>
-            <div class="stat-label">Total Owed to {len(creditors)} suppliers</div>
-        </div>
-        
-        {header_row}
-        {creditors_html or '<div class="card" style="text-align:center;padding:40px;"><p style="color:var(--text-muted);">No outstanding creditors </p></div>'}
-        </div>
-        '''
-        
-        return render_page("Creditors Report", content, user, "reports")
-    
-    
-    @app.route("/reports/debtors-all")
-    @login_required
-    def report_debtors_all():
-        """Consolidated debtors across all businesses on the account."""
-        user = Auth.get_current_user()
-        businesses = db.get("businesses", {"user_id": user["id"]}) if user else []
-
-        rows = ""
-        grand_total = 0.0
-        for biz in businesses:
-            bid = biz.get("id")
-            customers = db.get("customers", {"business_id": bid}) if bid else []
-            owing = sum(float(c.get("balance", 0)) for c in customers if float(c.get("balance", 0)) > 0)
-            count = sum(1 for c in customers if float(c.get("balance", 0)) > 0)
-            grand_total += owing
-            rows += f'''
-            <tr style="cursor:pointer;border-bottom:1px solid var(--border);" onclick="window.location='/reports/debtors'">
-                <td style="padding:12px 8px;">{safe_string(biz.get("name", "-"))}</td>
-                <td style="padding:12px 8px;text-align:right;">{count}</td>
-                <td style="padding:12px 8px;text-align:right;font-weight:bold;color:var(--red);">{money(owing)}</td>
-                <td style="padding:12px 8px;text-align:right;"><span style="color:var(--accent);font-size:12px;">View details →</span></td>
-            </tr>'''
-
-        content = f'''
-        <style>
-            @media print {{
-                .no-print {{ display: none !important; }}
-                nav, header, .header, .header-top, .nav-wrapper, .nav, .mobile-nav, .nav-tap-hint, .sidebar {{ display: none !important; }}
-                body {{ background: white !important; color: black !important; }}
-                #printArea {{ display: block !important; }}
-                #printArea .card {{ break-inside: avoid; }}
-                #printArea tr {{ break-inside: avoid; }}
-                @page {{ size: A4; margin: 12mm; }}
-            }}
-        </style>
-        <div class="no-print" style="display:flex;justify-content:space-between;align-items:center;margin-bottom:15px;">
-            <a href="/reports" style="color:var(--text-muted);">← Back to Reports</a>
-            <button class="btn btn-secondary" onclick="window.print();">🖨️ Print</button>
-        </div>
-        <div id="printArea">
-        <h2 style="margin-bottom:5px;">All Businesses — Debtors Summary</h2>
-        <p style="color:var(--text-muted);margin-bottom:15px;font-size:12px;">As at {today()} — click a business to see its unpaid invoices</p>
-        <div class="stat-card red" style="margin-bottom:15px;">
-            <div class="stat-value">{money(grand_total)}</div>
-            <div class="stat-label">Total Outstanding across {len(businesses)} businesses</div>
-        </div>
-        <div class="card">
-            <table style="width:100%;border-collapse:collapse;">
-                <thead><tr style="border-bottom:2px solid var(--border);">
-                    <th style="text-align:left;padding:8px;">Business</th>
-                    <th style="text-align:right;padding:8px;">Debtors</th>
-                    <th style="text-align:right;padding:8px;">Outstanding</th>
-                    <th style="padding:8px;"></th>
-                </tr></thead>
-                <tbody>{rows or '<tr><td colspan="4" style="padding:20px;text-align:center;color:var(--text-muted);">No businesses found</td></tr>'}</tbody>
-            </table>
-        </div>
-        </div>
-        '''
-        return render_page("Debtors — All Businesses", content, user, "reports")
-    
-    
-    @app.route("/reports/creditors-all")
-    @login_required
-    def report_creditors_all():
-        """Consolidated creditors across all businesses on the account."""
-        user = Auth.get_current_user()
-        businesses = db.get("businesses", {"user_id": user["id"]}) if user else []
-
-        rows = ""
-        grand_total = 0.0
-        for biz in businesses:
-            bid = biz.get("id")
-            suppliers = db.get("suppliers", {"business_id": bid}) if bid else []
-            owing = sum(float(s.get("balance", 0)) for s in suppliers if float(s.get("balance", 0)) > 0)
-            count = sum(1 for s in suppliers if float(s.get("balance", 0)) > 0)
-            grand_total += owing
-            rows += f'''
-            <tr style="cursor:pointer;border-bottom:1px solid var(--border);" onclick="window.location='/reports/creditors'">
-                <td style="padding:12px 8px;">{safe_string(biz.get("name", "-"))}</td>
-                <td style="padding:12px 8px;text-align:right;">{count}</td>
-                <td style="padding:12px 8px;text-align:right;font-weight:bold;color:#f59e0b;">{money(owing)}</td>
-                <td style="padding:12px 8px;text-align:right;"><span style="color:var(--accent);font-size:12px;">View details →</span></td>
-            </tr>'''
-
-        content = f'''
-        <style>
-            @media print {{
-                .no-print {{ display: none !important; }}
-                nav, header, .header, .header-top, .nav-wrapper, .nav, .mobile-nav, .nav-tap-hint, .sidebar {{ display: none !important; }}
-                body {{ background: white !important; color: black !important; }}
-                #printArea {{ display: block !important; }}
-                #printArea .card {{ break-inside: avoid; }}
-                #printArea tr {{ break-inside: avoid; }}
-                @page {{ size: A4; margin: 12mm; }}
-            }}
-        </style>
-        <div class="no-print" style="display:flex;justify-content:space-between;align-items:center;margin-bottom:15px;">
-            <a href="/reports" style="color:var(--text-muted);">← Back to Reports</a>
-            <button class="btn btn-secondary" onclick="window.print();">🖨️ Print</button>
-        </div>
-        <div id="printArea">
-        <h2 style="margin-bottom:5px;">All Businesses — Creditors Summary</h2>
-        <p style="color:var(--text-muted);margin-bottom:15px;font-size:12px;">As at {today()} — click a business to see its unpaid invoices</p>
-        <div class="stat-card orange" style="margin-bottom:15px;">
-            <div class="stat-value">{money(grand_total)}</div>
-            <div class="stat-label">Total Owed across {len(businesses)} businesses</div>
-        </div>
-        <div class="card">
-            <table style="width:100%;border-collapse:collapse;">
-                <thead><tr style="border-bottom:2px solid var(--border);">
-                    <th style="text-align:left;padding:8px;">Business</th>
-                    <th style="text-align:right;padding:8px;">Creditors</th>
-                    <th style="text-align:right;padding:8px;">Owed</th>
-                    <th style="padding:8px;"></th>
-                </tr></thead>
-                <tbody>{rows or '<tr><td colspan="4" style="padding:20px;text-align:center;color:var(--text-muted);">No businesses found</td></tr>'}</tbody>
-            </table>
-        </div>
-        </div>
-        '''
-        return render_page("Creditors — All Businesses", content, user, "reports")
-    
-    
-    # 
-    # CREDITORS AGING
-    # 
-    
-    @app.route("/reports/creditors-aging")
-    @login_required
-    def report_creditors_aging():
-        """Creditors Aging Report"""
-        
-        user = Auth.get_current_user()
-        business = Auth.get_current_business()
-        biz_id = business.get("id") if business else None
-        
-        # Get ALL sources of supplier debt
+        # Get stock, customers, suppliers IN PARALLEL (was sequential — each takes 0.5-2s)
         from concurrent.futures import ThreadPoolExecutor
-        with ThreadPoolExecutor(max_workers=3) as pool:
-            f_sinv = pool.submit(db.get, "supplier_invoices", {"business_id": biz_id}) if biz_id else None
-            f_po = pool.submit(db.get, "purchase_orders", {"business_id": biz_id}) if biz_id else None
-            f_sup = pool.submit(db.get, "suppliers", {"business_id": biz_id}) if biz_id else None
+        with ThreadPoolExecutor(max_workers=4) as pool:
+            f_stock = pool.submit(db.get_all_stock, biz_id)
+            f_customers = pool.submit(db.get, "customers", {"business_id": biz_id}) if biz_id else None
+            f_suppliers = pool.submit(db.get, "suppliers", {"business_id": biz_id}) if biz_id else None
+            f_cashiers = pool.submit(db.get_business_users, biz_id) if biz_id else None
         
-        supplier_invoices = (f_sinv.result() if f_sinv else []) or []
-        purchase_orders = (f_po.result() if f_po else []) or []
-        suppliers = (f_sup.result() if f_sup else []) or []
-        supplier_map = {s.get("id"): s for s in suppliers}
-        
-        today_date = datetime.now().date()
-        
-        aging_data = {}
-        
-        # === SOURCE 1: Unpaid supplier invoices ===
-        outstanding_sinv = [p for p in supplier_invoices if p.get("status") != "paid"]
-        for p in outstanding_sinv:
-            supp_id = p.get("supplier_id")
-            supp_name = p.get("supplier_name", "Unknown")
-            
-            key = supp_id or supp_name
-            if not key or key == "Unknown":
-                continue
-            
-            if key not in aging_data:
-                supp = supplier_map.get(supp_id, {}) if supp_id else {}
-                aging_data[key] = {
-                    "name": supp.get("name") or supp_name,
-                    "current": 0, "d30": 0, "d60": 0, "d90": 0, "d120": 0, "total": 0
-                }
-            
-            try:
-                p_date = datetime.strptime(p.get("date", today()), "%Y-%m-%d").date()
-            except:
-                p_date = today_date
-            
-            days_old = (today_date - p_date).days
-            amount = float(p.get("total", 0) or 0)
-            
-            if days_old <= 30:
-                aging_data[key]["current"] += amount
-            elif days_old <= 60:
-                aging_data[key]["d30"] += amount
-            elif days_old <= 90:
-                aging_data[key]["d60"] += amount
-            elif days_old <= 120:
-                aging_data[key]["d90"] += amount
-            else:
-                aging_data[key]["d120"] += amount
-            
-            aging_data[key]["total"] += amount
-        
-        # === SOURCE 2: Outstanding purchase orders (sent/partial — not yet invoiced) ===
-        # Track which POs already have a matching supplier invoice to avoid double-counting
-        sinv_po_refs = set()
-        for si in supplier_invoices:
-            _ref = si.get("po_number") or si.get("reference") or ""
-            if _ref:
-                sinv_po_refs.add(_ref.strip().upper())
-        
-        outstanding_pos = [po for po in purchase_orders if po.get("status") in ("sent", "partial")]
-        for po in outstanding_pos:
-            po_num = (po.get("po_number") or "").strip().upper()
-            # Skip if this PO already has a supplier invoice
-            if po_num and po_num in sinv_po_refs:
-                continue
-            
-            supp_id = po.get("supplier_id")
-            supp_name = po.get("supplier_name", "Unknown")
-            key = supp_id or supp_name
-            if not key or key == "Unknown":
-                continue
-            
-            if key not in aging_data:
-                supp = supplier_map.get(supp_id, {}) if supp_id else {}
-                aging_data[key] = {
-                    "name": supp.get("name") or supp_name,
-                    "current": 0, "d30": 0, "d60": 0, "d90": 0, "d120": 0, "total": 0
-                }
-            
-            try:
-                po_date = datetime.strptime(po.get("date", today()), "%Y-%m-%d").date()
-            except:
-                po_date = today_date
-            
-            days_old = (today_date - po_date).days
-            amount = float(po.get("total", 0) or 0)
-            
-            if days_old <= 30:
-                aging_data[key]["current"] += amount
-            elif days_old <= 60:
-                aging_data[key]["d30"] += amount
-            elif days_old <= 90:
-                aging_data[key]["d60"] += amount
-            elif days_old <= 120:
-                aging_data[key]["d90"] += amount
-            else:
-                aging_data[key]["d120"] += amount
-            
-            aging_data[key]["total"] += amount
-        
-        # === SOURCE 3: Suppliers with balance > 0 but no invoices/POs in aging ===
-        for s in suppliers:
-            sup_id = s.get("id")
-            name = s.get("name", "")
-            balance = float(s.get("balance", 0) or 0)
-            if balance <= 0:
-                continue
-            key = sup_id or name
-            if not key:
-                continue
-            if key not in aging_data:
-                # Supplier has a balance but no individual invoices — put into current bucket
-                aging_data[key] = {
-                    "name": name,
-                    "current": balance, "d30": 0, "d60": 0, "d90": 0, "d120": 0, "total": balance
-                }
-        
-        sorted_aging = sorted(aging_data.values(), key=lambda x: x["total"], reverse=True)
-        
-        totals = {"current": 0, "d30": 0, "d60": 0, "d90": 0, "d120": 0, "total": 0}
-        for a in sorted_aging:
-            for key in totals:
-                totals[key] += a[key]
-        
-        rows = ""
-        for a in sorted_aging:
-            rows += f'''
-            <tr>
-                <td><strong>{safe_string(a["name"])}</strong></td>
-                <td style="text-align:right;">{money(a["current"]) if a["current"] else "-"}</td>
-                <td style="text-align:right;color:var(--orange);">{money(a["d30"]) if a["d30"] else "-"}</td>
-                <td style="text-align:right;color:var(--orange);">{money(a["d60"]) if a["d60"] else "-"}</td>
-                <td style="text-align:right;color:var(--red);">{money(a["d90"]) if a["d90"] else "-"}</td>
-                <td style="text-align:right;color:var(--red);font-weight:bold;">{money(a["d120"]) if a["d120"] else "-"}</td>
-                <td style="text-align:right;font-weight:bold;">{money(a["total"])}</td>
-            </tr>
-            '''
-        
-        content = f'''
-        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:20px;">
-            <a href="/reports" style="color:var(--text-muted);">-> Back to Reports</a>
-            <button class="btn btn-secondary" onclick="window.print();"> Print</button>
-        </div>
-        
-        <div class="card">
-            <h2 style="margin-bottom:5px;"> Creditors Aging Report</h2>
-            <p style="color:var(--text-muted);margin-bottom:20px;">As at {today()}</p>
-            
-            <table class="table">
-                <thead>
-                    <tr>
-                        <th>Supplier</th>
-                        <th style="text-align:right;">Current</th>
-                        <th style="text-align:right;">31-60</th>
-                        <th style="text-align:right;">61-90</th>
-                        <th style="text-align:right;">91-120</th>
-                        <th style="text-align:right;">120+</th>
-                        <th style="text-align:right;">Total</th>
-                    </tr>
-                </thead>
-                <tbody>
-                    {rows or "<tr><td colspan='7' style='text-align:center;color:var(--text-muted)'>No outstanding purchases</td></tr>"}
-                </tbody>
-                <tfoot style="font-weight:bold;background:rgba(255,255,255,0.05);">
-                    <tr>
-                        <td>TOTAL</td>
-                        <td style="text-align:right;">{money(totals["current"])}</td>
-                        <td style="text-align:right;">{money(totals["d30"])}</td>
-                        <td style="text-align:right;">{money(totals["d60"])}</td>
-                        <td style="text-align:right;">{money(totals["d90"])}</td>
-                        <td style="text-align:right;">{money(totals["d120"])}</td>
-                        <td style="text-align:right;color:var(--orange);">{money(totals["total"])}</td>
-                    </tr>
-                </tfoot>
-            </table>
-        </div>
-        '''
-        
-        return render_page("Creditors Aging", content, user, "reports")
-    
-    
-    # 
-    # CUSTOMER STATEMENT
-    # ==================== BULK STATEMENTS ====================
-    
-
-    # === GL REPORT, TRIAL BALANCE, PnL, BALANCE SHEET, VAT ===
-
-    @app.route("/reports/gl")
-    @login_required
-    def report_gl():
-        """General Ledger - shows transactions grouped by account, built from actual data"""
-        
-        user = Auth.get_current_user()
-        business = Auth.get_current_business()
-        biz_id = business.get("id") if business else None
-        
-        if not biz_id:
-            return render_page("General Ledger", "<div class='card'><p>No business selected</p></div>", user, "reports")
-        
+        stock = f_stock.result(timeout=15) or []
+        customers = f_customers.result(timeout=15) if f_customers else []
+        customers = customers or []
+        suppliers = f_suppliers.result(timeout=15) if f_suppliers else []
+        suppliers = suppliers or []
         try:
-            return _report_gl_inner(user, biz_id)
-        except Exception as e:
-            logger.error(f"[GL REPORT] Crash: {e}")
-            import traceback
-            tb = traceback.format_exc()
-            logger.error(f"[GL REPORT] Traceback: {tb}")
-            return render_page("General Ledger", f"<div class='card'><h3>Error loading GL</h3><pre style='color:var(--red);font-size:12px;white-space:pre-wrap;'>{safe_string(str(e))}\n\n{safe_string(tb[-500:])}</pre></div>", user, "reports")
-    
-    def _report_gl_inner(user, biz_id):
-        """GL built from chart_of_accounts (Sage import) OR journal_entries OB OR live ClickAI transactions"""
-        
-        # 1. Get chart of accounts (the real Sage data)
-        coa = db.get("chart_of_accounts", {"business_id": biz_id}) or []
-        coa = sorted(coa, key=lambda x: x.get("account_code", "") or "")
-        
-        # 2. Get imported opening balances from journal_entries (TB import)
-        journal_entries = db.get("journal_entries", {"business_id": biz_id}) or []
-        opening_entries = [je for je in journal_entries if je.get("reference") == "OB"]
-        
-        # 3. Get live transactions for fallback
-        invoices = db.get("invoices", {"business_id": biz_id}) or []
-        expenses = db.get("expenses", {"business_id": biz_id}) or []
-        sales = db.get("sales", {"business_id": biz_id}) or []
-        supplier_invoices = db.get("supplier_invoices", {"business_id": biz_id}) or []
-        
-        # 4. Build GL - Priority: chart_of_accounts > journal_entries OB > synthetic
-        accounts_html = ""
-        total_debit_all = 0
-        total_credit_all = 0
-        coa_codes_shown = set()  # Track codes shown from COA to avoid duplication with journals
-        
-        if coa:
-            # Pre-load ALL journals for merging with COA
-            _all_journals_for_merge = db.get("journals", {"business_id": biz_id}) or []
-            _journal_by_code = {}
-            for _jl in _all_journals_for_merge:
-                _ac = _jl.get("account_code", "")
-                if not _ac:
-                    continue
-                _dr = float(_jl.get("debit", 0) or 0)
-                _cr = float(_jl.get("credit", 0) or 0)
-                if _dr == 0 and _cr == 0:
-                    continue
-                if _ac not in _journal_by_code:
-                    _journal_by_code[_ac] = []
-                _journal_by_code[_ac].append(_jl)
-            
-            # Use imported chart of accounts with real balances + merged journals
-            for acc in coa:
-                if not acc.get("is_active", True):
-                    continue
-                
-                code = acc.get("account_code", "")
-                name = acc.get("account_name", "Unknown")
-                category = acc.get("category", "")
-                debit = float(acc.get("debit", 0) or 0)
-                credit = float(acc.get("credit", 0) or 0)
-                opening = float(acc.get("opening_balance", 0) or 0)
-                
-                if debit > 0 or credit > 0:
-                    balance_debit = debit
-                    balance_credit = credit
-                elif opening != 0:
-                    acct_type = (category or "").lower()
-                    if any(t in acct_type for t in ("asset", "expense", "cost of sale", "other expense")):
-                        balance_debit = abs(opening)
-                        balance_credit = 0
-                    elif opening > 0:
-                        balance_debit = opening
-                        balance_credit = 0
-                    else:
-                        balance_debit = 0
-                        balance_credit = abs(opening)
-                else:
-                    balance_debit = 0
-                    balance_credit = 0
-                
-                # Merge journal entries for this code
-                code_journals = _journal_by_code.get(code, [])
-                j_dr = sum(float(j.get("debit", 0) or 0) for j in code_journals)
-                j_cr = sum(float(j.get("credit", 0) or 0) for j in code_journals)
-                combined_debit = balance_debit + j_dr
-                combined_credit = balance_credit + j_cr
-                
-                if combined_debit == 0 and combined_credit == 0:
-                    continue
-                
-                coa_codes_shown.add(code)
-                total_debit_all += combined_debit
-                total_credit_all += combined_credit
-                
-                debit_display = money(combined_debit) if combined_debit else "-"
-                credit_display = money(combined_credit) if combined_credit else "-"
-                debit_color = "var(--green)" if combined_debit else "var(--text-muted)"
-                credit_color = "var(--red)" if combined_credit else "var(--text-muted)"
-                
-                # Build journal detail rows if any
-                detail_html = ""
-                if code_journals:
-                    sorted_j = sorted(code_journals, key=lambda x: x.get("date", ""), reverse=True)
-                    j_rows = ""
-                    for _j in sorted_j:
-                        _jdr = money(float(_j.get("debit", 0) or 0)) if float(_j.get("debit", 0) or 0) else "-"
-                        _jcr = money(float(_j.get("credit", 0) or 0)) if float(_j.get("credit", 0) or 0) else "-"
-                        j_rows += f'<tr><td>{_j.get("date","-")}</td><td>{safe_string(_j.get("description","-"))}</td><td>{safe_string(_j.get("reference","-"))}</td><td style="text-align:right;color:var(--green);">{_jdr}</td><td style="text-align:right;color:var(--red);">{_jcr}</td></tr>'
-                    ob_label = f"Sage Opening Balance: DR {money(balance_debit)} / CR {money(balance_credit)}" if (balance_debit or balance_credit) else ""
-                    detail_html = f'''<div style="padding:0 10px 8px 10px;">
-                        <div style="font-size:11px;color:var(--text-muted);padding:4px 0;">{ob_label} | {len(code_journals)} GL journal entries</div>
-                        <table class="table" style="font-size:11px;"><thead><tr><th>Date</th><th>Description</th><th>Ref</th><th style="text-align:right;">Debit</th><th style="text-align:right;">Credit</th></tr></thead><tbody>{j_rows}</tbody></table>
-                    </div>'''
-                else:
-                    detail_html = f'<div style="padding:8px 12px;font-size:12px;color:var(--text-muted);">Opening Balance: {money(opening)} | Category: {safe_string(category)}</div>'
-                
-                j_count_label = f" + {len(code_journals)} journals" if code_journals else ""
-                accounts_html += f'''
-                <details style="background:var(--card);border-radius:6px;margin-bottom:4px;">
-                    <summary style="cursor:pointer;padding:8px 12px;list-style:none;">
-                        <div style="display:grid;grid-template-columns:2fr 1fr 1fr;align-items:center;font-size:13px;">
-                            <span><strong>{safe_string(code)}</strong> - {safe_string(name)} <span style="color:var(--text-muted);font-size:11px;">({safe_string(category)}{j_count_label})</span></span>
-                            <span style="text-align:right;color:{debit_color};">{debit_display}</span>
-                            <span style="text-align:right;color:{credit_color};">{credit_display}</span>
-                        </div>
-                    </summary>
-                    {detail_html}
-                </details>
-                '''
-        elif opening_entries:
-            # Use imported TB opening balances from journal_entries
-            gl_ob_accounts = {}  # code -> {name, debit, credit}
-            for oe in opening_entries:
-                acc_name = oe.get("account", "Unknown")
-                acc_code = oe.get("account_code", "") or oe.get("code", "")
-                debit = float(oe.get("debit", 0) or 0)
-                credit = float(oe.get("credit", 0) or 0)
-                
-                if not acc_code:
-                    acc_code = f"9{len(gl_ob_accounts):03d}"
-                
-                if acc_code not in gl_ob_accounts:
-                    gl_ob_accounts[acc_code] = {"name": acc_name, "debit": 0, "credit": 0}
-                gl_ob_accounts[acc_code]["debit"] += debit
-                gl_ob_accounts[acc_code]["credit"] += credit
-            
-            # Also add live ClickAI transactions on top of opening balances
-            # Sales from invoices
-            inv_sales = sum(float(inv.get("subtotal", 0)) for inv in invoices if inv.get("status") != "credited")
-            inv_vat = sum(float(inv.get("vat", 0)) for inv in invoices if inv.get("status") != "credited")
-            inv_totals = sum(float(inv.get("total", 0)) for inv in invoices if inv.get("status") != "credited")
-            
-            # POS sales
-            pos_sales = sum(float(s.get("subtotal", 0)) for s in sales)
-            pos_vat = sum(float(s.get("vat", 0)) for s in sales)
-            pos_totals = sum(float(s.get("total", 0)) for s in sales)
-            
-            # Purchases from supplier invoices
-            purch_totals = sum(float(si.get("total", 0)) for si in supplier_invoices)
-            purch_vat = sum(float(si.get("vat", 0)) for si in supplier_invoices)
-            purch_net = purch_totals - purch_vat
-            
-            # Expenses
-            exp_total = sum(float(e.get("amount", 0)) for e in expenses)
-            
-            # Add live transaction totals to matching GL accounts
-            live_additions = {}
-            if inv_sales + pos_sales > 0:
-                live_additions["Sales"] = {"credit": inv_sales + pos_sales}
-            if inv_vat + pos_vat > 0:
-                live_additions["VAT Output"] = {"credit": inv_vat + pos_vat}
-            if purch_net > 0:
-                live_additions["Purchases"] = {"debit": purch_net}
-            if purch_vat > 0:
-                live_additions["VAT Input"] = {"debit": purch_vat}
-            if exp_total > 0:
-                live_additions["Operating Expenses"] = {"debit": exp_total}
-            
-            # Try to match live additions to existing OB accounts by name
-            for live_name, amounts in live_additions.items():
-                matched = False
-                for code, acc in gl_ob_accounts.items():
-                    if live_name.lower() in acc["name"].lower():
-                        acc["debit"] += amounts.get("debit", 0)
-                        acc["credit"] += amounts.get("credit", 0)
-                        matched = True
-                        break
-                if not matched:
-                    # Add as new account
-                    new_code = f"L{len(gl_ob_accounts):03d}"
-                    gl_ob_accounts[new_code] = {
-                        "name": f"{live_name} (Live)",
-                        "debit": amounts.get("debit", 0),
-                        "credit": amounts.get("credit", 0)
-                    }
-            
-            for code in sorted(gl_ob_accounts.keys()):
-                acc = gl_ob_accounts[code]
-                debit = acc["debit"]
-                credit = acc["credit"]
-                name = acc["name"]
-                
-                if debit == 0 and credit == 0:
-                    continue
-                
-                total_debit_all += debit
-                total_credit_all += credit
-                
-                debit_display = money(debit) if debit else "-"
-                credit_display = money(credit) if credit else "-"
-                debit_color = "var(--green)" if debit else "var(--text-muted)"
-                credit_color = "var(--red)" if credit else "var(--text-muted)"
-                
-                accounts_html += f'''
-                <details style="background:var(--card);border-radius:6px;margin-bottom:4px;">
-                    <summary style="cursor:pointer;padding:8px 12px;list-style:none;">
-                        <div style="display:grid;grid-template-columns:2fr 1fr 1fr;align-items:center;font-size:13px;">
-                            <span><strong>{safe_string(code)}</strong> - {safe_string(name)}</span>
-                            <span style="text-align:right;color:{debit_color};">{debit_display}</span>
-                            <span style="text-align:right;color:{credit_color};">{credit_display}</span>
-                        </div>
-                    </summary>
-                    <div style="padding:8px 12px;font-size:12px;color:var(--text-muted);">
-                        Source: Imported Opening Balance
-                    </div>
-                </details>
-                '''
-        else:
-            # Fallback: build synthetic GL from transactions
-            gl_accounts = {
-                "1000": {"name": "Bank", "type": "asset", "entries": []},
-                "1200": {"name": "Debtors Control", "type": "asset", "entries": []},
-                "2000": {"name": "Creditors Control", "type": "liability", "entries": []},
-                "2100": {"name": "VAT Output", "type": "liability", "entries": []},
-                "1400": {"name": "VAT Input", "type": "asset", "entries": []},
-                "4000": {"name": "Sales", "type": "income", "entries": []},
-                "5100": {"name": "Purchases", "type": "expense", "entries": []},
-                "6000": {"name": "Operating Expenses", "type": "expense", "entries": []},
-            }
-            
-            for inv in invoices:
-                inv_num = inv.get("invoice_number", "-")
-                customer = inv.get("customer_name", "Customer")
-                date = inv.get("date", "-")
-                total = float(inv.get("total", 0))
-                subtotal = float(inv.get("subtotal", 0))
-                vat = float(inv.get("vat", 0))
-                status = inv.get("status", "outstanding")
-                payment = inv.get("payment_method") or "account"
-                if status == "credited": continue
-                gl_accounts["4000"]["entries"].append({"date": date, "description": f"Invoice {inv_num} - {customer}", "ref": inv_num, "debit": 0, "credit": subtotal})
-                if vat > 0:
-                    gl_accounts["2100"]["entries"].append({"date": date, "description": f"VAT on {inv_num}", "ref": inv_num, "debit": 0, "credit": vat})
-                if payment == "account" and status == "outstanding":
-                    gl_accounts["1200"]["entries"].append({"date": date, "description": f"Invoice {inv_num} - {customer}", "ref": inv_num, "debit": total, "credit": 0})
-                elif status == "paid":
-                    gl_accounts["1000"]["entries"].append({"date": date, "description": f"Payment {inv_num} - {customer} ({payment.upper()})", "ref": inv_num, "debit": total, "credit": 0})
-            
-            for exp in expenses:
-                amount = float(exp.get("amount", 0))
-                desc = exp.get("description", "Expense")
-                date = exp.get("date", "-")
-                gl_accounts["6000"]["entries"].append({"date": date, "description": f"{exp.get('category', '')}: {desc[:30]}", "ref": "EXP", "debit": amount, "credit": 0})
-                gl_accounts["1000"]["entries"].append({"date": date, "description": f"Paid: {desc[:30]}", "ref": "EXP", "debit": 0, "credit": amount})
-            
-            for si in supplier_invoices:
-                total = float(si.get("total", 0))
-                vat = float(si.get("vat", 0))
-                date = si.get("date", "-")
-                supplier = si.get("supplier_name", "Supplier")
-                gl_accounts["5100"]["entries"].append({"date": date, "description": f"Purchase - {supplier}", "ref": "PINV", "debit": total - vat, "credit": 0})
-                if vat > 0:
-                    gl_accounts["1400"]["entries"].append({"date": date, "description": f"VAT - {supplier}", "ref": "PINV", "debit": vat, "credit": 0})
-                gl_accounts["2000"]["entries"].append({"date": date, "description": f"Owing - {supplier}", "ref": "PINV", "debit": 0, "credit": total})
-            
-            for sale in sales:
-                total = float(sale.get("total", 0))
-                subtotal = float(sale.get("subtotal", 0))
-                vat = float(sale.get("vat", 0))
-                date = sale.get("date", "-")
-                customer = sale.get("customer_name", "Cash")
-                payment = sale.get("payment_method") or "cash"
-                gl_accounts["4000"]["entries"].append({"date": date, "description": f"POS - {customer}", "ref": "POS", "debit": 0, "credit": subtotal})
-                if vat > 0:
-                    gl_accounts["2100"]["entries"].append({"date": date, "description": f"VAT POS - {customer}", "ref": "POS", "debit": 0, "credit": vat})
-                gl_accounts["1000"]["entries"].append({"date": date, "description": f"POS - {customer} ({payment.upper()})", "ref": "POS", "debit": total, "credit": 0})
-            
-            for code in sorted(gl_accounts.keys()):
-                acc = gl_accounts[code]
-                entries = sorted(acc["entries"], key=lambda x: x.get("date", ""), reverse=True)
-                td = sum(e.get("debit", 0) for e in entries)
-                tc = sum(e.get("credit", 0) for e in entries)
-                if not entries: continue
-                total_debit_all += td
-                total_credit_all += tc
-                trans_rows = ""
-                for e in entries:
-                    trans_rows += f'<tr><td>{e.get("date","-")}</td><td>{safe_string(e.get("description","-"))}</td><td>{e.get("ref","-")}</td><td style="text-align:right;color:var(--green);">{money(e["debit"]) if e.get("debit") else "-"}</td><td style="text-align:right;color:var(--red);">{money(e["credit"]) if e.get("credit") else "-"}</td></tr>'
-                accounts_html += f'''
-                <details style="background:var(--card);border-radius:6px;margin-bottom:4px;">
-                    <summary style="cursor:pointer;padding:8px 12px;list-style:none;">
-                        <div style="display:grid;grid-template-columns:2fr 1fr 1fr;align-items:center;font-size:13px;">
-                            <span><strong>{code}</strong> - {acc["name"]} ({len(entries)})</span>
-                            <span style="text-align:right;color:var(--green);">{money(td)}</span>
-                            <span style="text-align:right;color:var(--red);">{money(tc)}</span>
-                        </div>
-                    </summary>
-                    <div style="padding:0 10px 8px 10px;">
-                        <table class="table" style="font-size:11px;"><thead><tr><th>Date</th><th>Description</th><th>Ref</th><th style="text-align:right;">Debit</th><th style="text-align:right;">Credit</th></tr></thead><tbody>{trans_rows}</tbody></table>
-                    </div>
-                </details>
-                '''
-        
-        # ═══════════════════════════════════════════════════════════════
-        # MERGE ALL GL JOURNALS (from create_journal_entry throughout system)
-        # This includes: stock adjustments, GRVs, PO receives, banking,
-        # payments, payroll, invoice GL entries, etc.
-        # ═══════════════════════════════════════════════════════════════
-        all_journals_gl = db.get("journals", {"business_id": biz_id}) or []
-        if all_journals_gl:
-            logger.info(f"[GL] Merging {len(all_journals_gl)} journal lines into GL report")
-            all_accounts_list = db.get("accounts", {"business_id": biz_id}) or []
-            acc_name_map = {a.get("code"): a.get("name", f"Account {a.get('code')}") for a in all_accounts_list}
-            
-            # Enrich name map from chart_of_accounts (Sage import has proper names)
-            if coa:
-                for acc in coa:
-                    c = str(acc.get("account_code", "") or acc.get("code", "")).strip()
-                    n = acc.get("account_name", "") or acc.get("name", "")
-                    if c and n and c not in acc_name_map:
-                        acc_name_map[c] = n
-            
-            # Fallback: ClickAI default code → friendly name (so "1200" shows "Debtors Control" not "Account 1200")
-            _default_names = {
-                "1000": "Bank", "1050": "Cash On Hand", "1100": "Petty Cash",
-                "1200": "Debtors Control", "1300": "Stock", "1400": "VAT Input",
-                "1500": "Equipment", "1600": "Vehicles", "1700": "Accumulated Depreciation",
-                "2000": "Creditors Control", "2100": "VAT Output", "2200": "PAYE Payable",
-                "2300": "UIF/Loan Payable", "2400": "Loan",
-                "3000": "Capital", "3100": "Retained Earnings", "3200": "Drawings",
-                "4000": "Sales - Cash", "4001": "Sales - Credit", "4002": "Sales - Card Machine",
-                "4003": "Sales - Online/EFT", "4100": "Service Revenue",
-                "4200": "Rental Income", "4300": "Commission Received",
-                "4400": "Interest Received", "4900": "Sundry Income",
-                "5000": "Stock Purchases - General", "5001": "Stock Purchases - Steel",
-                "5002": "Stock Purchases - Hardware", "5003": "Stock Purchases - Paint",
-                "5004": "Stock Purchases - Electrical", "5005": "Stock Purchases - Plumbing",
-                "5010": "Stock Purchases - Food & Beverage", "5100": "Delivery/Freight",
-                "5200": "Import Duties", "5300": "Packaging", "5400": "Direct Labour",
-                "6100": "Rent - Business Premises", "6110": "Rates & Taxes - Municipal",
-                "6111": "Rates & Taxes - Property", "6120": "Electricity", "6121": "Water",
-                "6130": "Repairs & Maintenance - Building", "6140": "Cleaning & Hygiene",
-                "6141": "Garden & Grounds Maintenance", "6150": "Security",
-                "6200": "Salaries - Management", "6201": "Wages - Staff",
-                "6202": "Wages - Casual/Temp", "6210": "PAYE/UIF/SDL Payment",
-                "6220": "Provident Fund", "6230": "Staff Welfare & Training",
-                "6240": "Recruitment Costs", "6250": "Protective Clothing/Uniforms",
-                "6510": "Fuel - Business Vehicle", "6515": "Fuel - Equipment",
-                "6520": "Vehicle Repairs & Service", "6530": "Vehicle Insurance",
-                "6540": "Vehicle Licence & Registration", "6550": "Tolls & Parking",
-                "6560": "Vehicle Lease/Finance", "6600": "Stationery & Printing",
-                "6610": "Postage & Courier", "6620": "Telephone - Landline",
-                "6621": "Cellphone/Mobile", "6622": "Internet/WiFi",
-                "6630": "Software Subscription", "6640": "Computer Equipment & Repairs",
-                "6700": "Accounting Fees", "6710": "Legal Fees", "6720": "Consulting Fees",
-                "6800": "Insurance - Business", "6900": "Advertising - Print",
-                "6901": "Advertising - Online", "6910": "Signage & Branding",
-                "6920": "Promotional Materials", "6930": "Website Costs",
-                "6940": "Sponsorships & Donations",
-                "7000": "General Expenses", "7050": "Cash Short/Over",
-                "7100": "Bank Charges", "7110": "Card Machine Fees",
-                "7120": "Interest Paid - Overdraft", "7200": "Entertainment",
-                "7210": "Travel - Local", "7300": "Membership & Subscriptions",
-                "7400": "Repairs - Equipment/Machinery", "7500": "Depreciation",
-                "7600": "Bad Debts Written Off", "7900": "Sundry Expenses",
-                "7999": "General Expenses (Uncategorised)",
-            }
-            for code, name in _default_names.items():
-                if code not in acc_name_map:
-                    acc_name_map[code] = name
-            
-            # Group journals by account_code
-            journal_by_acc = {}
-            for jl in all_journals_gl:
-                try:
-                    acc_code = jl.get("account_code", "")
-                    if not acc_code:
-                        continue
-                    debit = float(jl.get("debit", 0) or 0)
-                    credit = float(jl.get("credit", 0) or 0)
-                    if debit == 0 and credit == 0:
-                        continue
-                    if acc_code not in journal_by_acc:
-                        journal_by_acc[acc_code] = []
-                    journal_by_acc[acc_code].append({
-                        "date": jl.get("date", "-"),
-                        "description": jl.get("description", "-"),
-                        "ref": jl.get("reference", "-"),
-                        "debit": debit,
-                        "credit": credit
-                    })
-                except:
-                    pass
-            
-            for code in sorted(journal_by_acc.keys()):
-                if code in coa_codes_shown:
-                    continue  # Already merged into COA section above
-                entries = sorted(journal_by_acc[code], key=lambda x: x.get("date", ""), reverse=True)
-                td = sum(e.get("debit", 0) for e in entries)
-                tc = sum(e.get("credit", 0) for e in entries)
-                acc_name = acc_name_map.get(code, f"Account {code}")
-                total_debit_all += td
-                total_credit_all += tc
-                trans_rows = ""
-                for e in entries:
-                    dr_display = money(e["debit"]) if e.get("debit") else "-"
-                    cr_display = money(e["credit"]) if e.get("credit") else "-"
-                    trans_rows += f'<tr><td>{e.get("date","-")}</td><td>{safe_string(e.get("description","-"))}</td><td>{safe_string(e.get("ref","-"))}</td><td style="text-align:right;color:var(--green);">{dr_display}</td><td style="text-align:right;color:var(--red);">{cr_display}</td></tr>'
-                accounts_html += f'''
-                <details style="background:var(--card);border-radius:6px;margin-bottom:4px;">
-                    <summary style="cursor:pointer;padding:8px 12px;list-style:none;">
-                        <div style="display:grid;grid-template-columns:2fr 1fr 1fr;align-items:center;font-size:13px;">
-                            <span><strong>{code}</strong> - {safe_string(acc_name)} <span style="color:var(--text-muted);font-size:11px;">(GL Journals: {len(entries)})</span></span>
-                            <span style="text-align:right;color:var(--green);">{money(td)}</span>
-                            <span style="text-align:right;color:var(--red);">{money(tc)}</span>
-                        </div>
-                    </summary>
-                    <div style="padding:0 10px 8px 10px;">
-                        <table class="table" style="font-size:11px;"><thead><tr><th>Date</th><th>Description</th><th>Ref</th><th style="text-align:right;">Debit</th><th style="text-align:right;">Credit</th></tr></thead><tbody>{trans_rows}</tbody></table>
-                    </div>
-                </details>
-                '''
-        
-        if not accounts_html:
-            accounts_html = '<div class="card" style="text-align:center;padding:40px;"><p>No accounts found. Import your Chart of Accounts or create transactions.</p></div>'
-        
-        diff = abs(total_debit_all - total_credit_all)
-        balance_note = f'<span style="color:var(--green);">✅ Balanced</span>' if diff < 0.02 else f'<span style="color:var(--orange);">Difference: {money(diff)}</span>'
-        
-        source_label = "Chart of Accounts (Sage)" if coa else ("Imported Trial Balance + Live Transactions" if opening_entries else "Built from transactions")
-        
-        content = f'''
-        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:15px;">
-            <a href="/reports" style="color:var(--text-muted);">← Back to Reports</a>
-            <div style="display:flex;gap:8px;align-items:center;">
-                <input type="text" id="glSearch" placeholder="Search ref, description or invoice..." 
-                    style="padding:8px 12px;border:1px solid var(--border);border-radius:6px;background:var(--bg);color:var(--text);width:280px;font-size:13px;"
-                    oninput="filterGL(this.value)">
-                <button class="btn btn-secondary" onclick="window.print();">🖨️ Print</button>
-            </div>
-        </div>
-        
-        <h2 style="margin-bottom:4px;">📒 General Ledger</h2>
-        <p style="color:var(--text-muted);margin-bottom:15px;font-size:13px;">{source_label} — Click on an account to see details</p>
-        <div id="glSearchResults" style="display:none;margin-bottom:12px;padding:12px;background:var(--card);border:1px solid var(--primary);border-radius:8px;"></div>
-        
-        <div style="position:sticky;top:56px;z-index:100;margin-bottom:4px;padding:8px 12px;background:var(--card);border-radius:6px;">
-            <div style="display:grid;grid-template-columns:2fr 1fr 1fr;align-items:center;font-size:13px;font-weight:bold;">
-                <span>Account</span>
-                <span style="text-align:right;color:var(--green);">Debit</span>
-                <span style="text-align:right;color:var(--red);">Credit</span>
-            </div>
-        </div>
-        
-        {accounts_html}
-        
-        <div style="padding:10px 12px;background:var(--card);border-radius:6px;margin-top:8px;border:2px solid var(--border);">
-            <div style="display:grid;grid-template-columns:2fr 1fr 1fr;align-items:center;font-size:14px;font-weight:bold;">
-                <span>TOTALS {balance_note}</span>
-                <span style="text-align:right;color:var(--green);">{money(total_debit_all)}</span>
-                <span style="text-align:right;color:var(--red);">{money(total_credit_all)}</span>
-            </div>
-        </div>
-        
-        <script>
-        function filterGL(query) {{
-            const results = document.getElementById('glSearchResults');
-            const q = query.toLowerCase().trim();
-            
-            if (q.length < 2) {{
-                results.style.display = 'none';
-                // Show all accounts
-                document.querySelectorAll('.gl-account-card, details').forEach(el => el.style.display = '');
-                return;
-            }}
-            
-            // Search through all table rows in GL
-            let matches = [];
-            document.querySelectorAll('details').forEach(detail => {{
-                const accTitle = detail.querySelector('summary') ? detail.querySelector('summary').textContent.toLowerCase() : '';
-                let found = false;
-                detail.querySelectorAll('tbody tr').forEach(row => {{
-                    const cells = row.querySelectorAll('td');
-                    if (cells.length >= 3) {{
-                        const date = cells[0] ? cells[0].textContent.toLowerCase() : '';
-                        const desc = cells[1] ? cells[1].textContent.toLowerCase() : '';
-                        const ref = cells[2] ? cells[2].textContent.toLowerCase() : '';
-                        const debit = cells[3] ? cells[3].textContent : '';
-                        const credit = cells[4] ? cells[4].textContent : '';
-                        
-                        if (desc.includes(q) || ref.includes(q) || date.includes(q)) {{
-                            found = true;
-                            row.style.display = '';
-                            row.style.background = 'rgba(99,102,241,0.1)';
-                            matches.push({{
-                                account: accTitle.substring(0, 50),
-                                date: cells[0].textContent.trim(),
-                                desc: cells[1].textContent.trim().substring(0, 40),
-                                ref: cells[2].textContent.trim(),
-                                debit: debit.trim(),
-                                credit: credit.trim()
-                            }});
-                        }} else {{
-                            row.style.background = '';
-                        }}
-                    }}
-                }});
-                
-                if (found) {{
-                    detail.style.display = '';
-                    detail.open = true;
-                }} else {{
-                    detail.style.display = 'none';
-                }}
-            }});
-            
-            if (matches.length > 0) {{
-                let html = '<div style="font-weight:600;margin-bottom:8px;font-size:13px;">🔍 Found ' + matches.length + ' entries matching "' + query + '"</div>';
-                html += '<table style="width:100%;font-size:12px;border-collapse:collapse;">';
-                html += '<tr style="border-bottom:1px solid var(--border);"><th style="text-align:left;padding:4px;">Account</th><th style="text-align:left;padding:4px;">Date</th><th style="text-align:left;padding:4px;">Description</th><th style="text-align:left;padding:4px;">Ref</th><th style="text-align:right;padding:4px;">Debit</th><th style="text-align:right;padding:4px;">Credit</th></tr>';
-                matches.slice(0, 20).forEach(m => {{
-                    html += '<tr style="border-bottom:1px solid rgba(255,255,255,0.05);"><td style="padding:3px 4px;">' + m.account + '</td><td style="padding:3px 4px;">' + m.date + '</td><td style="padding:3px 4px;">' + m.desc + '</td><td style="padding:3px 4px;color:var(--primary);">' + m.ref + '</td><td style="text-align:right;padding:3px 4px;">' + m.debit + '</td><td style="text-align:right;padding:3px 4px;">' + m.credit + '</td></tr>';
-                }});
-                if (matches.length > 20) html += '<tr><td colspan="6" style="padding:6px;color:var(--text-muted);font-style:italic;">...and ' + (matches.length - 20) + ' more</td></tr>';
-                html += '</table>';
-                results.innerHTML = html;
-                results.style.display = 'block';
-            }} else {{
-                results.innerHTML = '<span style="color:var(--text-muted);font-size:13px;">No entries found for "' + query + '"</span>';
-                results.style.display = 'block';
-            }}
-        }}
-        </script>
-        '''
-        
-        return render_page("General Ledger", content, user, "reports")
-    
-    
-    # 
-    # TRIAL BALANCE
-    # 
-    
-    @app.route("/reports/tb")
-    @login_required
-    def report_tb():
-        """Trial Balance - Shows imported TB with AI Analysis option"""
-        
-        user = Auth.get_current_user()
-        business = Auth.get_current_business()
-        biz_id = business.get("id") if business else None
-        biz_name = business.get("name", "Business") if business else "Business"
-        
-        if not biz_id:
-            return render_page("Trial Balance", "<div class='card'><p>No business selected</p></div>", user, "reports")
-        
-        # ═══════════════════════════════════════════════════════════════
-        # GET ALL DATA SOURCES
-        # ═══════════════════════════════════════════════════════════════
-        
-        # 1. Imported opening balances (from journal_entries with ref=OB)
-        journal_entries = db.get("journal_entries", {"business_id": biz_id}) or []
-        opening_entries = [je for je in journal_entries if je.get("reference") == "OB"]
-        logger.info(f"[TB] Journal entries: {len(journal_entries)}, Opening balances: {len(opening_entries)}")
-        
-        # 2. Live transaction data
-        customers = db.get("customers", {"business_id": biz_id}) or []
-        suppliers = db.get("suppliers", {"business_id": biz_id}) or []
-        invoices = db.get("invoices", {"business_id": biz_id}) or []
-        expenses = db.get("expenses", {"business_id": biz_id}) or []
-        sales = db.get("sales", {"business_id": biz_id}) or []
-        
-        # ═══════════════════════════════════════════════════════════════
-        # BUILD TRIAL BALANCE
-        # ═══════════════════════════════════════════════════════════════
-        
-        tb_accounts = {}  # code -> {name, debit, credit, type}
-        
-        def add_account(code, name, debit=0, credit=0, acc_type=""):
-            if code not in tb_accounts:
-                tb_accounts[code] = {"name": name, "debit": 0, "credit": 0, "type": acc_type}
-            tb_accounts[code]["debit"] += debit
-            tb_accounts[code]["credit"] += credit
-        
-        # Load imported opening balances
-        if opening_entries:
-            logger.info(f"[TB] Loading {len(opening_entries)} imported opening balances")
-            for oe in opening_entries:
-                acc_name = oe.get("account", "Unknown")
-                acc_code = oe.get("account_code", "") or oe.get("code", "")
-                debit = float(oe.get("debit", 0) or 0)
-                credit = float(oe.get("credit", 0) or 0)
-                
-                if not acc_code:
-                    acc_code = f"9{len(tb_accounts):03d}"
-                
-                add_account(acc_code, acc_name, debit, credit)
-            
-            # DON'T add live data when we have imported TB - it would double count!
-            logger.info(f"[TB] Using imported TB only - not adding live transaction data")
-        
-        else:
-            # NO imported TB - check if we have GL journals
-            all_journals_check = db.get("journals", {"business_id": biz_id}) or []
-            
-            if not all_journals_check:
-                # No imported TB AND no journals - use live data estimates as fallback
-                logger.info(f"[TB] No imported TB, no journals - building from live transaction estimates")
-                
-                # Debtors Control - from customer balances
-                debtors_total = sum(float(c.get("balance", 0)) for c in customers if float(c.get("balance", 0)) > 0)
-                if debtors_total > 0:
-                    add_account("1200", "Debtors Control", debit=debtors_total)
-                
-                # Creditors Control - from supplier balances
-                creditors_total = sum(float(s.get("balance", 0)) for s in suppliers if float(s.get("balance", 0)) > 0)
-                if creditors_total > 0:
-                    add_account("3000", "Creditors Control", credit=creditors_total)
-                
-                # Sales - from invoices (excluding credited)
-                inv_sales = sum(float(inv.get("subtotal", 0)) for inv in invoices if inv.get("status") != "credited")
-                pos_sales = sum(float(s.get("subtotal", 0)) for s in sales)
-                total_sales = inv_sales + pos_sales
-                if total_sales > 0:
-                    add_account("5000", "Sales", credit=total_sales)
-                
-                # VAT Output - from invoices and POS
-                vat_output = sum(float(inv.get("vat", 0)) for inv in invoices if inv.get("status") != "credited")
-                vat_output += sum(float(s.get("vat", 0)) for s in sales)
-                if vat_output > 0:
-                    add_account("2100", "VAT Output", credit=vat_output)
-                
-                # Operating Expenses
-                exp_total = sum(float(e.get("amount", 0)) for e in expenses)
-                if exp_total > 0:
-                    add_account("6000", "Operating Expenses", debit=exp_total)
-            else:
-                logger.info(f"[TB] No imported TB but {len(all_journals_check)} GL journals found - using journals only")
-        
-        # ═══════════════════════════════════════════════════════════════
-        # PROCESS ALL GL JOURNALS (banking, payments, payroll, invoices, etc.)
-        # These are individual debit/credit lines in the "journals" table,
-        # created by create_journal_entry() throughout the system
-        # ═══════════════════════════════════════════════════════════════
-        all_journals = db.get("journals", {"business_id": biz_id}) or []
-        # Get account names from accounts table + chart_of_accounts + defaults
-        all_accounts = db.get("accounts", {"business_id": biz_id}) or []
-        account_names = {a.get("code"): a.get("name", f"Account {a.get('code')}") for a in all_accounts}
-        # Enrich from chart_of_accounts (Sage imported names)
-        for acc in (db.get("chart_of_accounts", {"business_id": biz_id}) or []):
-            c = str(acc.get("account_code", "") or acc.get("code", "")).strip()
-            n = acc.get("account_name", "") or acc.get("name", "")
-            if c and n and c not in account_names:
-                account_names[c] = n
-        # Fallback default names from BOOKING_CATEGORIES for all ClickAI GL codes
-        try:
-            for _grp in IndustryKnowledge.BOOKING_CATEGORIES.values():
-                for _cat_name, _gl_code in _grp.get("items", []):
-                    if _gl_code and _gl_code not in account_names:
-                        account_names[_gl_code] = _cat_name
+            cashier_list = f_cashiers.result(timeout=15) if f_cashiers else []
+            cashier_list = cashier_list or []
         except Exception:
-            pass
-        # Extra defaults not in BOOKING_CATEGORIES
-        for _c, _n in {"1200": "Debtors Control", "1400": "VAT Input", "1300": "Stock",
-                        "2000": "Creditors Control", "2200": "PAYE Payable", "3100": "Retained Earnings"}.items():
-            if _c not in account_names:
-                account_names[_c] = _n
+            cashier_list = []
         
-        if all_journals:
-            logger.info(f"[TB] Processing {len(all_journals)} GL journal lines into TB")
-            for jl in all_journals:
-                try:
-                    acc_code = jl.get("account_code", "")
-                    if not acc_code:
-                        continue
-                    debit = float(jl.get("debit", 0) or 0)
-                    credit = float(jl.get("credit", 0) or 0)
-                    acc_name = account_names.get(acc_code, f"Account {acc_code}")
-                    if debit > 0 or credit > 0:
-                        add_account(acc_code, acc_name, debit=debit, credit=credit)
-                except Exception as jl_err:
-                    logger.error(f"[TB] Error processing journal line {jl.get('id', '?')}: {jl_err}")
+        # Sort stock by category then code
+        stock = sorted(stock, key=lambda x: (x.get("category") or "ZZZ", x.get("code") or ""))
         
-        # Calculate totals
-        total_debit = sum(acc.get("debit", 0) for acc in tb_accounts.values())
-        total_credit = sum(acc.get("credit", 0) for acc in tb_accounts.values())
-        difference = abs(total_debit - total_credit)
-        is_balanced = difference < 0.01
-        
-        logger.info(f"[TB] Final: {len(tb_accounts)} accounts, Dr:{total_debit:.2f} Cr:{total_credit:.2f} Diff:{difference:.2f}")
-        
-        # Build table rows
-        sorted_codes = sorted(tb_accounts.keys())
-        rows_html = ""
-        for code in sorted_codes:
-            acc = tb_accounts[code]
-            name = acc["name"]
-            debit = acc["debit"]
-            credit = acc["credit"]
+        # Build stock rows for the table (only first 100 visible for fast render)
+        stock_rows = ""
+        total_stock_count = len(stock)
+        for row_idx, item in enumerate(stock):
+            code = safe_string(item.get("code", ""))
+            desc = safe_string(item.get("description", ""))
+            price = float(item.get("price") or item.get("selling_price") or 0)
+            qty = float(item.get("qty") or item.get("quantity") or 0)
+            category = safe_string(item.get("category", ""))
             
-            debit_str = f"R {debit:,.2f}" if debit > 0 else ""
-            credit_str = f"R {credit:,.2f}" if credit > 0 else ""
+            # Stock status styling
+            stock_class = ""
+            stock_badge = ""
+            if qty < 0:
+                stock_class = "negative"
+                stock_badge = f'<span class="stock-badge negative">{qty:.0f}</span>'
+            elif qty == 0:
+                stock_class = "zero"
+                stock_badge = f'<span class="stock-badge zero">0</span>'
+            elif qty < 5:
+                stock_class = "low"
+                stock_badge = f'<span class="stock-badge low">{qty:.0f}</span>'
+            else:
+                stock_badge = f'<span class="stock-badge">{qty:.0f}</span>'
             
-            rows_html += f'''
-            <tr>
-                <td style="font-family:monospace;color:var(--text-muted);">{code}</td>
-                <td>{safe_string(name)}</td>
-                <td style="text-align:right;">{debit_str}</td>
-                <td style="text-align:right;">{credit_str}</td>
-            </tr>
-            '''
-        
-        if not tb_accounts:
-            rows_html = '''
-            <tr>
-                <td colspan="4" style="text-align:center;padding:40px;color:var(--text-muted);">
-                    No trial balance data yet.<br><br>
-                    <a href="/import">Import Opening Trial Balance</a> or start creating invoices and expenses.
+            row_hidden = ' style="display:none"' if row_idx >= 100 else ''
+            stock_rows += f'''
+            <tr class="stock-row {stock_class}"{row_hidden}
+                data-id="{item.get("id")}"
+                data-code="{code}"
+                data-desc="{desc}"
+                data-price="{price}"
+                data-qty="{qty}"
+                data-search="{code.lower()} {desc.lower()}"
+                onclick="addToCart('{item.get("id")}', '{code}', '{desc}', {price}, {qty})">
+                <td class="col-code">{code}</td>
+                <td class="col-desc">{desc}</td>
+                <td class="col-price">R{price:,.2f}</td>
+                <td class="col-stock">{stock_badge}</td>
+                <td class="col-action">
+                    <button class="qty-btn" onclick="addBulkToCart(event, '{item.get("id")}', '{code}', '{desc}', {price}, {qty})" title="Enter quantity">QTY</button>
                 </td>
             </tr>
             '''
         
-        # Build TB data for AI analysis (JSON)
-        tb_data_json = json.dumps([
-            {"code": code, "name": acc["name"], "debit": acc["debit"], "credit": acc["credit"]}
-            for code, acc in sorted(tb_accounts.items())
-        ])
+        # Customer options - sorted alphabetically
+        customer_options = '<option value="">-- Countersale --</option>'
+        customer_options += '<option value="NEW" style="color:#10b981;">+ Add New</option>'
+        for c in sorted(customers, key=lambda x: (x.get("name") or "").lower()):
+            customer_options += f'<option value="{c.get("id")}" data-name="{safe_string(c.get("name"))}">{safe_string(c.get("name"))}</option>'
         
-        content = f'''
+        # Supplier options - sorted alphabetically
+        supplier_options = '<option value="">-- Select Supplier --</option>'
+        supplier_options += '<option value="NEW" style="color:#10b981;">+ Add New</option>'
+        for s in sorted(suppliers, key=lambda x: (x.get("name") or "").lower()):
+            supplier_options += f'<option value="{s.get("id")}" data-name="{safe_string(s.get("name"))}">{safe_string(s.get("name"))}</option>'
+        
+        # JSON data for searchable dropdown
+        import json
+        customer_list = [{"id": "", "name": "Countersale"}] + [{"id": "NEW", "name": "+ Add New"}]
+        customer_list += [{"id": c.get("id"), "name": c.get("name", ""), "address": c.get("address", ""), "phone": c.get("phone", "") or c.get("cell", ""), "vat_number": c.get("vat_number", ""), "email": c.get("email", "")} for c in sorted(customers, key=lambda x: (x.get("name") or "").lower())]
+        supplier_list = [{"id": "", "name": "Select Supplier"}] + [{"id": "NEW", "name": "+ Add New"}]
+        supplier_list += [{"id": s.get("id"), "name": s.get("name", "")} for s in sorted(suppliers, key=lambda x: (x.get("name") or "").lower())]
+        customer_json = json.dumps(customer_list).replace("'", "&#39;")
+        supplier_json = json.dumps(supplier_list).replace("'", "&#39;")
+        
+        # POS print settings
+        pos_settings = {
+            "auto_print": business.get("pos_auto_print", False) if business else False,
+            "print_duplicates": business.get("pos_print_duplicates", False) if business else False,
+            "print_format": business.get("pos_print_format", "ask") if business else "ask",
+            "slip_footer": business.get("pos_slip_footer", "Thank you for your purchase!") if business else "Thank you for your purchase!",
+            "business_name": (business.get("name") or business.get("business_name") or "Business") if business else "Business",
+            "vat_number": business.get("vat_number", "") if business else "",
+            "phone": business.get("phone", "") if business else "",
+            "address": business.get("address", "") if business else "",
+            "email": business.get("email", "") if business else "",
+            "bank_name": business.get("bank_name", "") if business else "",
+            "bank_account": business.get("bank_account", "") if business else "",
+            "bank_branch": business.get("bank_branch", "") if business else ""
+        }
+        pos_settings_json = json.dumps(pos_settings).replace("'", "&#39;")
+        
+        # cashier_list already loaded in parallel above
+        current_user_id = user.get("id", "") if user else ""
+        current_user_name = user.get("name", user.get("email", "Me")) if user else "Me"
+        # Extract first name
+        if current_user_name and " " in current_user_name:
+            current_user_name = current_user_name.split()[0]
+        
+        cashier_buttons = ""
+        for cu in cashier_list:
+            cu_id = cu.get("id") or ""
+            cu_name = str(cu.get("name") or cu.get("email") or "Staff").replace("'", "").replace('"', "").replace("&", "")
+            if " " in cu_name:
+                cu_name = cu_name.split()[0]
+            cu_name = cu_name[:12]
+            is_active = "active" if cu_id == current_user_id else ""
+            cashier_buttons += f'<button class="cashier-btn {is_active}" data-uid="{cu_id}" onclick="switchCashier(this, &apos;{cu_id}&apos;, &apos;{cu_name}&apos;)">{cu_name}</button>'
+        
+        # Build cashier dropdown options for entity bar
+        cashier_dropdown_options = ""
+        _cdd_seen = set()
+        for cu in cashier_list:
+            cu_id = cu.get("id") or ""
+            if not cu_id or cu_id in _cdd_seen:
+                continue
+            _cdd_seen.add(cu_id)
+            cu_name = str(cu.get("name") or cu.get("email") or "Staff").replace("'", "").replace('"', "").replace("&", "")
+            if " " in cu_name:
+                cu_name = cu_name.split()[0]
+            cu_name = cu_name[:12]
+            cashier_dropdown_options += f'<option value="{cu_id}">{cu_name}</option>'
+        
+        # Salesman options for POS quote modal
+        pos_salesman_options = f'<option value="{current_user_id}" data-name="{current_user_name}">{current_user_name} (me)</option>'
+        _pos_seen_ids = {current_user_id}
+        for cu in cashier_list:
+            cu_id = cu.get("id") or ""
+            if cu_id and cu_id not in _pos_seen_ids:
+                _pos_seen_ids.add(cu_id)
+                cu_name = str(cu.get("name") or cu.get("email") or "Staff").replace("'", "").replace('"', "").replace("&", "")
+                if " " in cu_name:
+                    cu_name = cu_name.split()[0]
+                cu_name = cu_name[:12]
+                pos_salesman_options += f'<option value="{cu_id}" data-name="{cu_name}">{cu_name}</option>'
+        
+        pos_css = '''
         <style>
-        @media print {{
-            .no-print {{ display: none !important; }}
-            body {{ background: white !important; color: black !important; }}
-            .tb-table {{ border: 1px solid #333; }}
-            .tb-table th, .tb-table td {{ border: 1px solid #ccc; padding: 8px !important; }}
-        }}
-        .analysis-section {{ background: linear-gradient(135deg, rgba(139,92,246,0.1), rgba(99,102,241,0.05)); border: 1px solid rgba(139,92,246,0.3); border-radius: 12px; padding: 25px; margin-top: 20px; }}
-        .analysis-content {{ line-height: 1.5; font-size: 14px; }}
-        .analysis-content h2 {{ color: #8b5cf6; border-bottom: 2px solid #8b5cf6; padding-bottom: 8px; margin-top: 20px; margin-bottom: 10px; font-size: 20px; }}
-        .analysis-content h3 {{ color: #10b981; margin-top: 15px; margin-bottom: 10px; font-size: 16px; }}
-        .analysis-content h4 {{ color: #6366f1; margin-top: 12px; margin-bottom: 8px; font-size: 14px; }}
-        .analysis-content table {{ width: 100%; border-collapse: collapse; margin: 15px 0; font-size: 13px; }}
-        .analysis-content th, .analysis-content td {{ padding: 8px 12px; border: 1px solid rgba(255,255,255,0.1); text-align: left; }}
-        .analysis-content th {{ background: rgba(139,92,246,0.2); }}
-        @media print {{ .analysis-section {{ background: white; border: 1px solid #333; }} .analysis-content {{ color: black; }} }}
+        :root {
+            --pos-bg: linear-gradient(135deg, #0f0f1a 0%, #1a1a2e 50%, #0f0f1a 100%);
+            --pos-card: rgba(30, 30, 50, 0.95);
+            --pos-glow: rgba(99, 102, 241, 0.3);
+            --pos-green: #10b981;
+            --pos-red: #ef4444;
+            --pos-orange: #f59e0b;
+            --pos-blue: #3b82f6;
+        }
+        
+        body {
+            background: var(--pos-bg);
+            overflow-y: auto;
+        }
+        
+        /* ═══ CASHIER BAR ═══ */
+        .cashier-bar {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            padding: 8px 20px;
+            background: rgba(20, 20, 40, 0.9);
+            border-bottom: 1px solid rgba(99, 102, 241, 0.2);
+        }
+        .cashier-bar label {
+            color: var(--text-muted, #888);
+            font-size: 12px;
+            font-weight: bold;
+            white-space: nowrap;
+        }
+        .cashier-btn {
+            padding: 6px 14px;
+            border-radius: 20px;
+            border: 1px solid rgba(255,255,255,0.15);
+            background: rgba(255,255,255,0.05);
+            color: #aaa;
+            font-size: 13px;
+            cursor: pointer;
+            transition: all 0.15s;
+        }
+        .cashier-btn:hover {
+            background: rgba(99, 102, 241, 0.2);
+            color: white;
+        }
+        .cashier-btn.active {
+            background: linear-gradient(135deg, #6366f1, #8b5cf6);
+            color: white;
+            border-color: #8b5cf6;
+            font-weight: bold;
+            box-shadow: 0 0 12px rgba(99, 102, 241, 0.4);
+        }
+        
+        /* ═══ MAIN LAYOUT ═══ */
+        .pos-container {
+            display: grid;
+            grid-template-columns: 1fr;
+            gap: 20px;
+            height: 100%;
+            min-height: 0;
+            padding: 0 20px;
+        }
+        .pos-cart {
+            display: none !important;
+        }
+        
+        @media (max-width: 1000px) {
+            .pos-container {
+                grid-template-columns: 1fr;
+                height: auto;
+            }
+            .pos-cart {
+                max-height: 50vh;
+            }
+        }
+        
+        /* ═══ SEARCH BAR ═══ */
+        .pos-search-wrapper {
+            position: sticky;
+            top: 0;
+            z-index: 100;
+            padding: 15px 0;
+            background: transparent;
+        }
+        
+        .pos-search {
+            position: relative;
+        }
+        
+        .pos-search input {
+            width: 100%;
+            padding: 16px 20px 16px 50px;
+            font-size: 18px;
+            background: var(--pos-card);
+            border: 2px solid transparent;
+            border-radius: 16px;
+            color: white;
+            transition: all 0.3s;
+            box-shadow: 0 4px 20px rgba(0, 0, 0, 0.3);
+        }
+        
+        .pos-search input:focus {
+            outline: none;
+            border-color: var(--primary);
+            box-shadow: 0 0 30px var(--pos-glow);
+        }
+        
+        .pos-search input::placeholder {
+            color: rgba(255,255,255,0.4);
+        }
+        
+        .pos-search-icon {
+            position: absolute;
+            left: 18px;
+            top: 50%;
+            transform: translateY(-50%);
+            font-size: 20px;
+            opacity: 0.5;
+        }
+        
+        .pos-search-hint {
+            position: absolute;
+            right: 15px;
+            top: 50%;
+            transform: translateY(-50%);
+            font-size: 12px;
+            color: rgba(255,255,255,0.3);
+            background: rgba(0,0,0,0.3);
+            padding: 4px 10px;
+            border-radius: 6px;
+        }
+        
+        /* ═══ STOCK TABLE ═══ */
+        .pos-table-wrapper {
+            flex: 1;
+            overflow-y: auto;
+            background: var(--pos-card);
+            border-radius: 16px;
+            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3);
+        }
+        
+        .pos-table {
+            width: 100%;
+            border-collapse: collapse;
+        }
+        
+        .pos-table thead {
+            position: sticky;
+            top: 0;
+            z-index: 10;
+        }
+        
+        .pos-table thead th {
+            background: linear-gradient(135deg, rgba(99, 102, 241, 0.2), rgba(139, 92, 246, 0.1));
+            padding: 14px 16px;
+            text-align: left;
+            font-weight: 600;
+            font-size: 12px;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            color: rgba(255,255,255,0.7);
+            border-bottom: 1px solid rgba(255,255,255,0.1);
+        }
+        
+        .pos-table thead th:first-child {
+            border-radius: 16px 0 0 0;
+        }
+        
+        .pos-table thead th:last-child {
+            border-radius: 0 16px 0 0;
+        }
+        
+        .stock-row {
+            cursor: pointer;
+            border-bottom: 1px solid rgba(255,255,255,0.05);
+        }
+        
+        .stock-row:hover {
+            background: linear-gradient(90deg, rgba(99, 102, 241, 0.15), transparent);
+        }
+        
+        .stock-row:active {
+            background: rgba(99, 102, 241, 0.25);
+        }
+        
+        .stock-row td {
+            padding: 14px 16px;
+            vertical-align: middle;
+        }
+        
+        .stock-row.negative {
+            background: rgba(239, 68, 68, 0.1);
+        }
+        
+        .stock-row.zero {
+            opacity: 0.5;
+        }
+        
+        .stock-row.low {
+            background: rgba(245, 158, 11, 0.05);
+        }
+        
+        .col-code {
+            font-weight: 700;
+            color: var(--primary);
+            font-size: 14px;
+            width: 140px;
+        }
+        
+        .col-desc {
+            color: rgba(255,255,255,0.9);
+            font-size: 14px;
+        }
+        
+        .col-price {
+            font-weight: 700;
+            color: var(--pos-green);
+            font-size: 16px;
+            width: 120px;
+            text-align: right;
+        }
+        
+        .col-stock {
+            width: 80px;
+            text-align: center;
+        }
+        
+        .col-action {
+            width: 70px;
+            text-align: center;
+        }
+        
+        .stock-badge {
+            display: inline-block;
+            padding: 4px 10px;
+            border-radius: 20px;
+            font-size: 12px;
+            font-weight: 600;
+            background: rgba(255,255,255,0.1);
+            color: rgba(255,255,255,0.7);
+        }
+        
+        .stock-badge.negative {
+            background: rgba(239, 68, 68, 0.2);
+            color: var(--pos-red);
+        }
+        
+        .stock-badge.zero {
+            background: rgba(255,255,255,0.05);
+            color: rgba(255,255,255,0.3);
+        }
+        
+        .stock-badge.low {
+            background: rgba(245, 158, 11, 0.2);
+            color: var(--pos-orange);
+        }
+        
+        .qty-btn {
+            padding: 6px 12px;
+            background: linear-gradient(135deg, var(--primary), #7c3aed);
+            border: none;
+            border-radius: 8px;
+            color: white;
+            font-size: 11px;
+            font-weight: 700;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+        
+        .qty-btn:hover {
+            transform: scale(1.1);
+            box-shadow: 0 4px 15px rgba(99, 102, 241, 0.4);
+        }
+        
+        /* ═══ CART PANEL ═══ */
+        .pos-cart {
+            background: var(--pos-card);
+            border-radius: 16px;
+            padding: 20px;
+            display: flex;
+            flex-direction: column;
+            height: 100%;
+            min-height: 0;
+            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3);
+            overflow: hidden;
+        }
+        
+        .pos-cart-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 15px;
+            padding-bottom: 15px;
+            border-bottom: 1px solid rgba(255,255,255,0.1);
+        }
+        
+        .pos-cart-title {
+            font-size: 20px;
+            font-weight: 700;
+            background: linear-gradient(135deg, #fff, rgba(255,255,255,0.7));
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+        }
+        
+        .pos-cart-count {
+            font-size: 13px;
+            color: rgba(255,255,255,0.5);
+            background: rgba(255,255,255,0.1);
+            padding: 4px 12px;
+            border-radius: 20px;
+        }
+        
+        .pos-cart-items {
+            flex: 1;
+            overflow-y: auto;
+            margin-bottom: 15px;
+        }
+        
+        .cart-item {
+            display: flex;
+            align-items: center;
+            padding: 8px;
+            background: rgba(255,255,255,0.03);
+            border-radius: 8px;
+            margin-bottom: 6px;
+            transition: all 0.2s;
+        }
+        
+        .cart-item:hover {
+            background: rgba(255,255,255,0.06);
+        }
+        
+        .cart-item-info {
+            flex: 1;
+            min-width: 0;
+        }
+        
+        .cart-item-name {
+            font-weight: 600;
+            font-size: 11px;
+            line-height: 1.2;
+        }
+        
+        .cart-item-code {
+            font-size: 10px;
+            color: var(--primary);
+            margin-top: 1px;
+        }
+        
+        .cart-item-price {
+            font-size: 10px;
+            color: rgba(255,255,255,0.5);
+        }
+        
+        .cart-item-qty {
+            display: flex;
+            align-items: center;
+            gap: 4px;
+            margin: 0 8px;
+        }
+        
+        .cart-qty-btn {
+            width: 24px;
+            height: 24px;
+            border-radius: 6px;
+            border: none;
+            background: rgba(255,255,255,0.1);
+            color: white;
+            font-size: 14px;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+        
+        .cart-qty-btn:hover {
+            background: var(--primary);
+        }
+        
+        .cart-qty-btn.minus:hover {
+            background: var(--pos-red);
+        }
+        
+        .cart-qty-display {
+            min-width: 28px;
+            text-align: center;
+            font-weight: 700;
+            font-size: 12px;
+            cursor: pointer;
+            padding: 3px;
+            border-radius: 4px;
+            transition: all 0.2s;
+        }
+        
+        .cart-qty-display:hover {
+            background: rgba(255,255,255,0.1);
+        }
+        
+        .cart-item-total {
+            font-weight: 700;
+            font-size: 12px;
+            color: var(--pos-green);
+            min-width: 70px;
+            text-align: right;
+        }
+        .cart-del-btn {
+            background: none;
+            border: none;
+            color: #666;
+            font-size: 14px;
+            cursor: pointer;
+            padding: 4px 6px;
+            margin-left: 4px;
+            border-radius: 4px;
+            transition: all 0.15s;
+            line-height: 1;
+        }
+        .cart-del-btn:hover {
+            color: #ef4444;
+            background: rgba(239,68,68,0.15);
+        }
+        
+        /* ═══ TOTALS ═══ */
+        .pos-totals {
+            background: rgba(0,0,0,0.2);
+            border-radius: 8px;
+            padding: 10px;
+            margin-bottom: 10px;
+        }
+        
+        .pos-total-row {
+            display: flex;
+            justify-content: space-between;
+            padding: 4px 0;
+            font-size: 12px;
+            color: rgba(255,255,255,0.6);
+        }
+        
+        .pos-total-row.grand {
+            border-top: 1px solid rgba(255,255,255,0.1);
+            margin-top: 8px;
+            padding-top: 12px;
+            font-size: 15px;
+            font-weight: 700;
+            color: white;
+        }
+        
+        .pos-total-row.grand span:last-child {
+            color: var(--pos-green);
+            font-size: 18px;
+        }
+        
+        /* ═══ EMPTY STATE ═══ */
+        .pos-empty {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            padding: 15px;
+            color: rgba(255,255,255,0.3);
+            text-align: center;
+            font-size: 12px;
+        }
+        
+        .pos-empty-icon {
+            font-size: 20px;
+            margin-bottom: 5px;
+            opacity: 0.3;
+        }
+        
+        /* ═══ HEADER ═══ */
+        .pos-header {
+            position: sticky;
+            top: 0;
+            z-index: 1000;
+            background: var(--pos-card);
+            padding: 12px 20px;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            border-bottom: 1px solid rgba(255,255,255,0.1);
+            backdrop-filter: blur(10px);
+        }
+        
+        .pos-header-nav {
+            display: flex;
+            gap: 15px;
+            align-items: center;
+        }
+        
+        .pos-header-nav a {
+            color: rgba(255,255,255,0.6);
+            text-decoration: none;
+            padding: 8px 14px;
+            border-radius: 8px;
+            font-size: 14px;
+            transition: all 0.2s;
+        }
+        
+        .pos-header-nav a:hover {
+            background: rgba(255,255,255,0.05);
+            color: white;
+        }
+        
+        .pos-header-nav a.active {
+            color: white;
+            background: linear-gradient(135deg, rgba(99, 102, 241, 0.3), rgba(139, 92, 246, 0.2));
+        }
+        
+        .pos-logo {
+            font-weight: 800;
+            font-size: 16px;
+            padding: 8px 16px;
+            border-radius: 10px;
+            background: linear-gradient(135deg, var(--primary), #7c3aed);
+            color: white;
+            cursor: pointer;
+            transition: all 0.2s;
+            text-decoration: none;
+        }
+        
+        .pos-logo:hover {
+            transform: scale(1.05);
+            box-shadow: 0 4px 20px rgba(99, 102, 241, 0.5);
+        }
+        
+        .pos-header-actions {
+            display: flex;
+            gap: 10px;
+            align-items: center;
+            flex-wrap: wrap;
+        }
+        
+        .pos-header-total {
+            font-size: 22px;
+            font-weight: 800;
+            color: var(--pos-green);
+            margin-right: 15px;
+            text-shadow: 0 0 20px rgba(16, 185, 129, 0.5);
+        }
+        
+        .pos-pay-btn {
+            padding: 10px 18px;
+            border: none;
+            border-radius: 10px;
+            font-weight: 700;
+            font-size: 13px;
+            cursor: pointer;
+            transition: all 0.2s;
+            display: flex;
+            align-items: center;
+            gap: 6px;
+        }
+        
+        .pos-pay-btn:hover:not(:disabled) {
+            transform: translateY(-2px);
+            box-shadow: 0 4px 15px rgba(0,0,0,0.3);
+        }
+        
+        .pos-pay-btn:disabled {
+            opacity: 0.4;
+            cursor: not-allowed;
+        }
+        
+        .pos-pay-btn.cash {
+            background: linear-gradient(135deg, #10b981, #059669);
+            color: white;
+        }
+        
+        .pos-pay-btn.card {
+            background: linear-gradient(135deg, #3b82f6, #2563eb);
+            color: white;
+        }
+        
+        .pos-pay-btn.account {
+            background: linear-gradient(135deg, #f59e0b, #d97706);
+            color: white;
+        }
+        
+        .pos-pay-btn.quote {
+            background: linear-gradient(135deg, #8b5cf6, #7c3aed);
+            color: white;
+        }
+        
+        .pos-pay-btn.po {
+            background: linear-gradient(135deg, #ec4899, #db2777);
+            color: white;
+        }
+        
+        .pos-pay-btn.clear {
+            background: linear-gradient(135deg, #ef4444, #dc2626);
+            color: white;
+        }
+        
+        .key-hint {
+            font-size: 9px;
+            background: rgba(0,0,0,0.3);
+            padding: 2px 5px;
+            border-radius: 4px;
+            font-family: monospace;
+        }
+        
+        /* Customer/Supplier select - DARK & VISIBLE */
+        .entity-select-wrapper {
+            display: flex;
+            align-items: center;
+            gap: 4px;
+            background: rgba(20, 20, 35, 0.95);
+            border: 1px solid rgba(255,255,255,0.15);
+            border-radius: 8px;
+            padding: 2px;
+        }
+        .entity-toggle {
+            padding: 6px 10px;
+            border: none;
+            background: transparent;
+            color: rgba(255,255,255,0.5);
+            font-size: 11px;
+            font-weight: 600;
+            cursor: pointer;
+            border-radius: 6px;
+            transition: all 0.2s;
+        }
+        .entity-toggle.active {
+            background: var(--primary);
+            color: white;
+        }
+        .entity-toggle:hover:not(.active) {
+            background: rgba(255,255,255,0.1);
+        }
+        .entity-dropdown {
+            position: relative;
+        }
+        .entity-search {
+            padding: 8px 12px;
+            border-radius: 6px;
+            background: rgba(30, 30, 50, 0.95);
+            color: #fff;
+            border: none;
+            font-size: 13px;
+            cursor: pointer;
+            width: 150px;
+        }
+        .entity-search:focus {
+            outline: none;
+            box-shadow: 0 0 0 2px var(--primary);
+        }
+        .entity-search::placeholder {
+            color: rgba(255,255,255,0.7);
+        }
+        .entity-list {
+            position: absolute;
+            top: 100%;
+            left: 0;
+            right: 0;
+            background: #1a1a2e;
+            border: 1px solid rgba(255,255,255,0.2);
+            border-radius: 6px;
+            max-height: 250px;
+            overflow-y: auto;
+            z-index: 1000;
+            margin-top: 4px;
+            min-width: 200px;
+        }
+        .entity-item {
+            padding: 8px 12px;
+            color: #fff;
+            cursor: pointer;
+            font-size: 13px;
+            border-bottom: 1px solid rgba(255,255,255,0.05);
+        }
+        .entity-item:hover, .entity-item.highlighted {
+            background: var(--primary);
+        }
+        .entity-item.new-item {
+            color: #10b981;
+            font-weight: 600;
+        }
+        
+        /* ═══ SHORTCUTS BAR ═══ */
+        .pos-shortcuts {
+            position: fixed;
+            bottom: 0;
+            left: 0;
+            right: 0;
+            background: var(--pos-card);
+            border-top: 1px solid rgba(255,255,255,0.1);
+            padding: 10px 20px;
+            display: flex;
+            gap: 25px;
+            justify-content: center;
+            flex-wrap: wrap;
+            font-size: 12px;
+            color: rgba(255,255,255,0.4);
+            backdrop-filter: blur(10px);
+        }
+        
+        .pos-shortcuts span {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+        }
+        
+        .pos-shortcuts kbd {
+            background: rgba(255,255,255,0.1);
+            border: 1px solid rgba(255,255,255,0.2);
+            border-radius: 5px;
+            padding: 3px 8px;
+            font-family: monospace;
+            font-weight: 600;
+            color: rgba(255,255,255,0.7);
+        }
+        
+        /* ═══ RESPONSIVE ═══ */
+        @media (max-width: 1200px) {
+            .pos-header-actions {
+                gap: 8px;
+            }
+            .pos-pay-btn {
+                padding: 8px 12px;
+                font-size: 12px;
+            }
+        }
+        
+        @media (max-width: 768px) {
+            .pos-header {
+                flex-direction: column;
+                gap: 10px;
+            }
+            .pos-header-actions {
+                width: 100%;
+                justify-content: center;
+            }
+        }
+        
+        /* ═══ SCROLLBAR ═══ */
+        ::-webkit-scrollbar {
+            width: 8px;
+        }
+        
+        ::-webkit-scrollbar-track {
+            background: transparent;
+        }
+        
+        ::-webkit-scrollbar-thumb {
+            background: rgba(255,255,255,0.2);
+            border-radius: 4px;
+        }
+        
+        ::-webkit-scrollbar-thumb:hover {
+            background: rgba(255,255,255,0.3);
+        }
+        
+        /* ═══ NO RESULTS ═══ */
+        .no-results {
+            display: none;
+            padding: 40px;
+            text-align: center;
+            color: rgba(255,255,255,0.4);
+        }
+        
+        .no-results.show {
+            display: block;
+        }
+        
+        /* ═══════════════════════════════════════════════════════════════
+           POS REACTOR UPGRADE - Visual enhancements
+           ═══════════════════════════════════════════════════════════════ */
+        
+        /* Animated glow border on search */
+        .pos-search input {
+            border: 2px solid rgba(99, 102, 241, 0.3) !important;
+            animation: searchPulse 3s ease-in-out infinite;
+        }
+        @keyframes searchPulse {
+            0%, 100% { border-color: rgba(99, 102, 241, 0.3); box-shadow: 0 0 15px rgba(99, 102, 241, 0.1); }
+            50% { border-color: rgba(99, 102, 241, 0.6); box-shadow: 0 0 25px rgba(99, 102, 241, 0.3); }
+        }
+        .pos-search input:focus {
+            animation: none !important;
+            border-color: #6366f1 !important;
+            box-shadow: 0 0 40px rgba(99, 102, 241, 0.5), inset 0 0 20px rgba(99, 102, 241, 0.05) !important;
+        }
+        
+        /* Reactor glow on cart panel */
+        .pos-cart {
+            border: 1px solid rgba(99, 102, 241, 0.2) !important;
+            box-shadow: 0 0 30px rgba(99, 102, 241, 0.08), 0 8px 32px rgba(0, 0, 0, 0.3) !important;
+            position: relative;
+            overflow: hidden;
+        }
+        .pos-cart::before {
+            content: '';
+            position: absolute;
+            top: 0; left: 0; right: 0;
+            height: 2px;
+            background: linear-gradient(90deg, transparent, #6366f1, #10b981, #6366f1, transparent);
+            animation: cartTopGlow 4s linear infinite;
+        }
+        @keyframes cartTopGlow {
+            0% { background-position: -200% 0; }
+            100% { background-position: 200% 0; }
+        }
+        .pos-cart::before { background-size: 200% 100%; }
+        
+        /* Stock table reactor styling */
+        .pos-table-wrapper {
+            border: 1px solid rgba(99, 102, 241, 0.15) !important;
+            box-shadow: 0 0 20px rgba(99, 102, 241, 0.05), 0 8px 32px rgba(0, 0, 0, 0.3) !important;
+        }
+        
+        .pos-table thead th {
+            background: linear-gradient(135deg, rgba(99, 102, 241, 0.25), rgba(16, 185, 129, 0.08)) !important;
+            text-shadow: 0 0 10px rgba(99, 102, 241, 0.3);
+            letter-spacing: 1.5px !important;
+        }
+        
+        /* Row hover with cyan glow like dashboard */
+        .stock-row:hover {
+            background: linear-gradient(90deg, rgba(6, 182, 212, 0.12), rgba(99, 102, 241, 0.08), transparent) !important;
+            box-shadow: inset 3px 0 0 #06b6d4;
+        }
+        
+        .stock-row:active {
+            background: linear-gradient(90deg, rgba(16, 185, 129, 0.2), rgba(99, 102, 241, 0.1), transparent) !important;
+        }
+        
+        /* Price column glow */
+        .col-price {
+            text-shadow: 0 0 8px rgba(16, 185, 129, 0.4) !important;
+        }
+        
+        /* Code column cyan tint like dashboard */
+        .col-code {
+            color: #06b6d4 !important;
+            text-shadow: 0 0 6px rgba(6, 182, 212, 0.3);
+        }
+        
+        /* QTY button upgrade */
+        .qty-btn {
+            background: linear-gradient(135deg, #6366f1, #06b6d4) !important;
+            box-shadow: 0 2px 10px rgba(99, 102, 241, 0.3);
+            text-transform: uppercase;
+            letter-spacing: 1px;
+        }
+        .qty-btn:hover {
+            box-shadow: 0 4px 20px rgba(6, 182, 212, 0.5) !important;
+        }
+        
+        /* Header total glow effect */
+        .pos-header-total {
+            text-shadow: 0 0 30px rgba(0, 255, 136, 0.7), 0 0 60px rgba(0, 255, 136, 0.3) !important;
+            font-size: 24px !important;
+        }
+        
+        /* Payment buttons - more vibrant with glow */
+        .pos-pay-btn.cash {
+            box-shadow: 0 0 15px rgba(16, 185, 129, 0.3);
+        }
+        .pos-pay-btn.card {
+            box-shadow: 0 0 15px rgba(59, 130, 246, 0.3);
+        }
+        .pos-pay-btn.account {
+            box-shadow: 0 0 15px rgba(245, 158, 11, 0.3);
+        }
+        .pos-pay-btn.quote {
+            box-shadow: 0 0 15px rgba(139, 92, 246, 0.3);
+        }
+        .pos-pay-btn.cash:hover {
+            box-shadow: 0 0 25px rgba(16, 185, 129, 0.5), 0 4px 15px rgba(0,0,0,0.3) !important;
+        }
+        .pos-pay-btn.card:hover {
+            box-shadow: 0 0 25px rgba(59, 130, 246, 0.5), 0 4px 15px rgba(0,0,0,0.3) !important;
+        }
+        .pos-pay-btn.account:hover {
+            box-shadow: 0 0 25px rgba(245, 158, 11, 0.5), 0 4px 15px rgba(0,0,0,0.3) !important;
+        }
+        .pos-pay-btn.quote:hover {
+            box-shadow: 0 0 25px rgba(139, 92, 246, 0.5), 0 4px 15px rgba(0,0,0,0.3) !important;
+        }
+        
+        /* Cashier buttons - reactor style */
+        .cashier-btn {
+            text-transform: uppercase !important;
+            letter-spacing: 0.5px !important;
+            font-size: 12px !important;
+        }
+        .cashier-btn.active {
+            box-shadow: 0 0 20px rgba(99, 102, 241, 0.5), 0 0 40px rgba(99, 102, 241, 0.2) !important;
+            animation: activeCashierPulse 2s ease-in-out infinite;
+        }
+        @keyframes activeCashierPulse {
+            0%, 100% { box-shadow: 0 0 15px rgba(99, 102, 241, 0.4); }
+            50% { box-shadow: 0 0 25px rgba(99, 102, 241, 0.6), 0 0 40px rgba(99, 102, 241, 0.2); }
+        }
+        
+        /* Cashier bar reactor border */
+        .cashier-bar {
+            border-bottom: 1px solid rgba(6, 182, 212, 0.2) !important;
+            background: linear-gradient(135deg, rgba(15, 15, 30, 0.95), rgba(20, 20, 45, 0.95)) !important;
+        }
+        
+        /* Cart item hover glow */
+        .cart-item:hover {
+            background: rgba(99, 102, 241, 0.08) !important;
+            box-shadow: inset 2px 0 0 #6366f1;
+        }
+        
+        /* Grand total in cart - reactor green */
+        .pos-total-row.grand span:last-child {
+            text-shadow: 0 0 15px rgba(16, 185, 129, 0.5) !important;
+            font-size: 20px !important;
+        }
+        
+        /* Cart empty state - add subtle animation */
+        .pos-empty-icon {
+            animation: emptyFloat 3s ease-in-out infinite;
+        }
+        @keyframes emptyFloat {
+            0%, 100% { transform: translateY(0); }
+            50% { transform: translateY(-5px); }
+        }
+        
+        /* Header - reactor gradient border bottom */
+        .pos-header {
+            border-bottom: 1px solid transparent !important;
+            background-image: linear-gradient(rgba(30,30,50,0.95), rgba(30,30,50,0.95)), 
+                              linear-gradient(90deg, transparent, rgba(99,102,241,0.4), rgba(6,182,212,0.3), rgba(16,185,129,0.3), transparent) !important;
+            background-origin: border-box !important;
+            background-clip: padding-box, border-box !important;
+        }
+        
+        /* Stock badge upgrades - glow on good stock */
+        .stock-badge:not(.negative):not(.zero):not(.low) {
+            background: rgba(16, 185, 129, 0.15) !important;
+            color: #10b981 !important;
+            border: 1px solid rgba(16, 185, 129, 0.2);
+        }
+        
+        .stock-badge.low {
+            animation: lowStockPulse 2s ease-in-out infinite;
+        }
+        @keyframes lowStockPulse {
+            0%, 100% { background: rgba(245, 158, 11, 0.15); }
+            50% { background: rgba(245, 158, 11, 0.25); }
+        }
+        
+        .stock-badge.negative {
+            animation: negStockPulse 1.5s ease-in-out infinite;
+        }
+        @keyframes negStockPulse {
+            0%, 100% { background: rgba(239, 68, 68, 0.15); }
+            50% { background: rgba(239, 68, 68, 0.3); }
+        }
+        
+        /* Keyboard bar at bottom - reactor style */
+        .keyboard-bar {
+            background: linear-gradient(180deg, rgba(15,15,30,0.95), rgba(10,10,25,0.98)) !important;
+            border-top: 1px solid rgba(6, 182, 212, 0.15) !important;
+            box-shadow: 0 -4px 20px rgba(0,0,0,0.3) !important;
+        }
+        
+        /* Custom button in cart header */
+        .pos-cart-header button, .pos-cart-header .btn {
+            border: 1px solid rgba(99, 102, 241, 0.3) !important;
+        }
+        
+        /* Scan effect on row click */
+        @keyframes rowFlash {
+            0% { background: rgba(16, 185, 129, 0.3); }
+            100% { background: transparent; }
+        }
+        .stock-row.just-added {
+            animation: rowFlash 0.4s ease-out;
+        }
+    
+        /* ═══ POS REACTOR HUD ═══ */
+        .pos-reactor-wrap{border:1px solid rgba(80,180,255,0.12);background:rgba(4,12,35,0.5);position:relative;overflow:visible;margin:0;}
+        .pos-reactor-wrap::before{content:'';position:absolute;top:0;left:0;width:20px;height:20px;border-top:2px solid rgba(100,200,255,0.35);border-left:2px solid rgba(100,200,255,0.35);z-index:5;pointer-events:none;}
+        .pos-reactor-wrap::after{content:'';position:absolute;bottom:0;right:0;width:20px;height:20px;border-bottom:2px solid rgba(100,200,255,0.35);border-right:2px solid rgba(100,200,255,0.35);z-index:5;pointer-events:none;}
+        .pos-reactor-hero{display:flex;align-items:center;justify-content:center;padding:10px 20px;position:relative;gap:0;}
+        .pos-btn-flank{display:flex;flex-direction:column;gap:4px;width:180px;flex:1;max-width:200px;}
+        .pos-hud-btn{padding:8px 10px;border:1px solid rgba(80,180,255,0.12);background:rgba(10,30,60,0.3);cursor:pointer;transition:all 0.2s;display:flex;align-items:center;gap:8px;font-family:'Rajdhani',sans-serif;font-weight:600;color:#a0d8f8;font-size:12px;letter-spacing:0.5px;text-transform:uppercase;}
+        .pos-hud-btn:hover:not(:disabled){border-color:rgba(0,200,255,0.35);background:rgba(0,200,255,0.06);color:#00ddff;text-shadow:0 0 8px rgba(0,200,255,0.3);}
+        .pos-hud-btn:disabled{opacity:0.35;cursor:not-allowed;}
+        .pos-hud-btn .pk,.pos-entity-btn .pk,.f11-btn .pk{font-family:'Share Tech Mono',monospace;font-size:10px;color:#00ccff;padding:2px 6px;border:1px solid rgba(0,200,255,0.3);letter-spacing:0.5px;flex-shrink:0;background:rgba(0,200,255,0.08);text-shadow:0 0 6px rgba(0,200,255,0.4);}
+        .pos-btn-flank.L .pos-hud-btn{border-left:2px solid rgba(80,180,255,0.3);}
+        .pos-btn-flank.R .pos-hud-btn{border-right:2px solid rgba(80,180,255,0.3);flex-direction:row-reverse;}
+        .pos-reactor-cn{width:16px;height:2px;position:relative;flex-shrink:0;}
+        .pos-reactor-cn::before{content:'';position:absolute;inset:0;background:linear-gradient(90deg,rgba(80,180,255,0.05),rgba(80,180,255,0.3));}
+        .pos-reactor-cn.R::before{background:linear-gradient(90deg,rgba(80,180,255,0.3),rgba(80,180,255,0.05));}
+        .pos-reactor-cn::after{content:'';position:absolute;right:-2px;top:-2.5px;width:7px;height:7px;border-radius:50%;background:rgba(80,180,255,0.35);box-shadow:0 0 8px rgba(80,180,255,0.4);}
+        .pos-reactor-cn.R::after{left:-2px;right:auto;}
+        .pos-rx{position:relative;flex-shrink:0;width:160px;height:160px;}
+        .pos-rx .j-rg{position:absolute;border-radius:50%;border:1px solid rgba(80,180,255,0.2);}
+        .pos-rx .j-rg.r1{inset:0;border-width:2.5px;border-color:rgba(80,180,255,0.18);border-top-color:rgba(120,210,255,0.7);animation:jspin 8s linear infinite,jring-pulse-1 3s ease-in-out infinite;box-shadow:0 0 35px rgba(80,180,255,0.15),0 0 70px rgba(80,180,255,0.06),0 5px 20px rgba(0,0,0,0.45);filter:blur(0.3px);z-index:1;}
+        .pos-rx .j-rg.r2{inset:12px;border-width:2.5px;border-color:rgba(80,180,255,0.15);border-bottom-color:rgba(100,200,255,0.65);animation:jspin 6s linear infinite reverse,jring-pulse-2 3s ease-in-out infinite 0.5s;box-shadow:0 0 25px rgba(80,180,255,0.12),0 0 50px rgba(80,180,255,0.05),0 4px 14px rgba(0,0,0,0.35);z-index:2;}
+        .pos-rx .j-rg.r3{inset:24px;border-width:2px;border-color:rgba(80,180,255,0.12);border-top-color:rgba(140,220,255,0.6);animation:jspin 4s linear infinite,jring-pulse-3 3s ease-in-out infinite 1s;box-shadow:0 0 18px rgba(80,180,255,0.1),0 0 35px rgba(80,180,255,0.04),0 3px 10px rgba(0,0,0,0.25);z-index:3;}
+        .pos-rx .j-rg.r4{inset:36px;border:2px solid rgba(100,200,255,0.1);border-top-color:rgba(160,230,255,0.6);animation:jspin 12s linear infinite reverse;box-shadow:0 0 14px rgba(100,200,255,0.12),0 0 25px rgba(100,200,255,0.05),0 2px 6px rgba(0,0,0,0.2);z-index:4;}
+        .pos-rx .pos-rx-core{position:absolute;inset:42px;border-radius:50%;background:radial-gradient(circle,rgba(0,200,255,0.18) 0%,rgba(0,140,220,0.06) 40%,transparent 100%);border:2px solid rgba(100,200,255,0.35);display:flex;align-items:center;justify-content:center;flex-direction:column;box-shadow:0 0 45px rgba(0,200,255,0.3),0 0 90px rgba(0,180,255,0.15),0 0 130px rgba(0,200,255,0.06),inset 0 0 25px rgba(0,200,255,0.15),0 0 5px rgba(0,200,255,0.6);z-index:5;animation:jcore-breathe 3s ease-in-out infinite;}
+        .pos-rx .pos-rx-core .j-brand{font-family:'Orbitron',monospace;font-size:13px;font-weight:800;color:#55bbff;text-shadow:0 0 22px rgba(85,187,255,0.8),0 0 45px rgba(0,200,255,0.3);letter-spacing:2px;}
+        .pos-rx .pos-rx-core .j-sub{font-family:'Share Tech Mono',monospace;font-size:6.5px;color:#4499cc;letter-spacing:3px;margin-top:3px;}
+        .pos-hud-total{font-family:'Orbitron',monospace;font-size:14px;font-weight:700;color:#00ff88;text-shadow:0 0 12px rgba(0,255,136,0.5);margin-top:4px;letter-spacing:1px;}
+        .pos-lbl{position:absolute;bottom:-4px;left:50%;transform:translateX(-50%);text-align:center;z-index:2;}
+        .pos-lbl span{font-family:'Orbitron',monospace;font-size:10px;font-weight:600;color:#5aaadd;letter-spacing:3px;text-shadow:0 0 10px rgba(90,170,221,0.3);}
+        .pos-entity-bar{display:flex;align-items:center;justify-content:center;gap:0;padding:8px 20px;border-top:1px solid rgba(80,180,255,0.06);}
+        .pos-cashier-select{height:36px;border:1px solid rgba(80,180,255,0.15);background:rgba(6,16,40,0.5);color:#00ddff;font-family:'Rajdhani',sans-serif;font-size:13px;font-weight:700;padding:0 8px;outline:none;cursor:pointer;border-right:none;min-width:90px;margin-right:0;}
+        .pos-cashier-select option{background:#0a1428;color:#e0f0ff;}
+        .pos-entity-btn{display:flex;align-items:center;justify-content:center;gap:5px;min-width:44px;padding:0 10px;height:36px;border:1px solid rgba(80,180,255,0.15);background:rgba(10,30,60,0.4);color:#a0d8f8;font-family:'Rajdhani',sans-serif;font-weight:700;font-size:14px;cursor:pointer;transition:all 0.2s;letter-spacing:1px;flex-shrink:0;}
+        .pos-entity-btn:hover{border-color:rgba(0,200,255,0.35);color:#00ddff;background:rgba(0,200,255,0.06);}
+        .pos-entity-btn.active{background:rgba(80,180,255,0.12);color:#00ddff;border-color:rgba(0,200,255,0.3);}
+        .pos-entity-btn.L{border-right:none;}
+        .pos-entity-btn.R{border-left:none;}
+        .pos-entity-input{height:36px;width:240px;border:1px solid rgba(80,180,255,0.15);background:rgba(6,16,40,0.5);color:#e0f0ff;font-family:'Rajdhani',sans-serif;font-size:14px;font-weight:600;padding:0 14px;letter-spacing:0.5px;text-align:center;outline:none;}
+        .pos-entity-input::placeholder{color:#4a7a9a;letter-spacing:1px;}
+        .pos-entity-input:focus{border-color:rgba(0,200,255,0.35);background:rgba(0,200,255,0.04);}
+        @keyframes jspin{0%{transform:rotate(0deg)}100%{transform:rotate(360deg)}}
+        @keyframes jring-pulse-1{0%,100%{box-shadow:0 0 35px rgba(80,180,255,0.15),0 0 70px rgba(80,180,255,0.06),0 5px 20px rgba(0,0,0,0.45);border-top-color:rgba(120,210,255,0.7);}50%{box-shadow:0 0 50px rgba(80,180,255,0.22),0 0 90px rgba(80,180,255,0.09),0 5px 20px rgba(0,0,0,0.45);border-top-color:rgba(150,225,255,0.85);}}
+        @keyframes jring-pulse-2{0%,100%{box-shadow:0 0 25px rgba(80,180,255,0.12),0 0 50px rgba(80,180,255,0.05),0 4px 14px rgba(0,0,0,0.35);border-bottom-color:rgba(100,200,255,0.65);}50%{box-shadow:0 0 38px rgba(80,180,255,0.18),0 0 65px rgba(80,180,255,0.07),0 4px 14px rgba(0,0,0,0.35);border-bottom-color:rgba(130,215,255,0.8);}}
+        @keyframes jring-pulse-3{0%,100%{box-shadow:0 0 18px rgba(80,180,255,0.1),0 0 35px rgba(80,180,255,0.04),0 3px 10px rgba(0,0,0,0.35);border-top-color:rgba(140,220,255,0.6);}50%{box-shadow:0 0 28px rgba(80,180,255,0.16),0 0 50px rgba(80,180,255,0.06),0 3px 10px rgba(0,0,0,0.35);border-top-color:rgba(170,235,255,0.75);}}
+        @keyframes jcore-breathe{0%,100%{box-shadow:0 0 45px rgba(0,200,255,0.3),0 0 90px rgba(0,180,255,0.15),0 0 130px rgba(0,200,255,0.06),inset 0 0 25px rgba(0,200,255,0.15),0 0 5px rgba(0,200,255,0.6);border-color:rgba(100,200,255,0.35);}50%{box-shadow:0 0 65px rgba(0,200,255,0.45),0 0 120px rgba(0,180,255,0.2),0 0 160px rgba(0,200,255,0.08),inset 0 0 35px rgba(0,200,255,0.22),0 0 7px rgba(0,200,255,0.8);border-color:rgba(140,220,255,0.5);}}
+        .entity-list .entity-item{padding:8px 14px;cursor:pointer;color:#a0d8f8;font-family:'Rajdhani',sans-serif;font-size:14px;font-weight:600;border-bottom:1px solid rgba(80,180,255,0.04);transition:all 0.1s;}
+        .entity-list .entity-item:hover,.entity-list .entity-item.highlighted{background:rgba(0,200,255,0.06);color:#00ddff;}
+        @media(max-width:1200px){.pos-btn-flank{max-width:160px;}.pos-hud-btn{font-size:11px;padding:6px 8px;}}
+        @media(max-width:900px){.pos-reactor-hero{flex-wrap:wrap;gap:8px;}.pos-btn-flank{flex-direction:row;flex-wrap:wrap;width:100%;max-width:100%;}.pos-rx{width:120px;height:120px;}.pos-rx .pos-rx-core{inset:32px;}.pos-reactor-cn{display:none;}}
+    
+        /* ═══ INLINE ORDER MODE (was F11 fullscreen, now always visible) ═══ */
+        .f11-header{display:flex;padding:2px 6px;background:rgba(4,12,35,0.98);border-bottom:1px solid rgba(80,180,255,0.15);align-items:center;gap:0;justify-content:space-between;height:36px;min-height:36px;max-height:36px;overflow:hidden;}
+        .f11-left{display:flex;align-items:center;gap:1px;flex-wrap:nowrap;overflow:hidden;overflow-x:auto;}
+        .f11-btn{padding:4px 6px;border:1px solid rgba(80,180,255,0.15);background:rgba(10,30,60,0.4);cursor:pointer;transition:all 0.15s;display:inline-flex;align-items:center;gap:3px;font-family:'Rajdhani',sans-serif;font-weight:700;color:#a0d8f8;font-size:10px;letter-spacing:0.2px;text-transform:uppercase;white-space:nowrap;line-height:1;}
+        .f11-btn:hover{border-color:rgba(0,200,255,0.4);background:rgba(0,200,255,0.1);color:#00eeff;}
+        .f11-btn:disabled{opacity:0.3;cursor:not-allowed;}
+        .f11-btn .pk{font-family:'Share Tech Mono',monospace;font-size:8px;color:#00ccff;padding:1px 3px;border:1px solid rgba(0,200,255,0.25);background:rgba(0,200,255,0.06);}
+        .f11-right{display:flex;align-items:center;gap:6px;flex-shrink:0;margin-left:auto;padding-left:4px;}
+        .f11-cust{font-family:'Rajdhani',sans-serif;font-size:11px;color:#a0d8f8;font-weight:700;max-width:90px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+        .f11-total{font-family:'Orbitron',monospace;font-size:16px;font-weight:800;color:#00ff88;text-shadow:0 0 12px rgba(0,255,136,0.5);letter-spacing:0.5px;}
+        .f11-exit{display:none;}
+        .f11-order-wrap{display:flex;flex:1;overflow:hidden;flex-direction:column;min-height:calc(100vh - 25px);}
+        .f11-search{padding:6px 12px;border-bottom:1px solid rgba(80,180,255,0.08);position:sticky;top:0;z-index:200;background:rgba(4,12,35,0.98);}
+        .f11-search input{width:100%;height:44px;background:rgba(8,20,50,0.9);border:2px solid rgba(0,200,255,0.5);color:#e8f4ff;font-family:'Rajdhani',sans-serif;font-size:17px;font-weight:600;padding:0 14px 0 40px;outline:none;letter-spacing:0.5px;border-radius:4px;box-shadow:0 0 12px rgba(0,200,255,0.15);animation:f11searchPulse 2.5s ease-in-out infinite;}
+        @keyframes f11searchPulse{0%,100%{border-color:rgba(0,200,255,0.5);box-shadow:0 0 12px rgba(0,200,255,0.15);}50%{border-color:rgba(0,220,255,0.8);box-shadow:0 0 24px rgba(0,200,255,0.3);}}
+        .f11-search::before{content:'🔍';position:absolute;left:22px;top:50%;transform:translateY(-50%);font-size:16px;z-index:1;opacity:0.7;}
+        .f11-search input::placeholder{color:#7ab0d0;font-weight:500;}
+        .f11-search input:focus{border-color:rgba(0,220,255,0.8);background:rgba(0,200,255,0.06);box-shadow:0 0 24px rgba(0,200,255,0.3);animation:none;}
+        .f11-dd{display:none;position:fixed;left:20px;right:20px;background:rgba(6,14,36,0.98);border:1px solid rgba(80,180,255,0.25);max-height:calc(100vh - 160px);overflow-y:auto;z-index:9999;box-shadow:0 8px 32px rgba(0,0,0,0.6);}
+        .f11-dd.show{display:block;}
+        .f11-dd-item{display:flex;align-items:center;padding:14px 20px;cursor:pointer;border-bottom:1px solid rgba(80,180,255,0.04);transition:all 0.1s;gap:16px;}
+        .f11-dd-item:hover,.f11-dd-item.sel{background:rgba(0,200,255,0.08);border-left:3px solid #00ccff;}
+        .f11-dd-code{font-family:'Share Tech Mono',monospace;font-size:15px;color:#7abade;min-width:140px;letter-spacing:0.5px;}
+        .f11-dd-desc{flex:1;font-size:16px;color:#d8ecff;font-weight:600;}
+        .f11-dd-price{font-family:'Share Tech Mono',monospace;font-size:15px;color:#00ff88;font-weight:700;min-width:100px;text-align:right;}
+        .f11-dd-qty{font-family:'Share Tech Mono',monospace;font-size:11px;color:#5a8aaa;min-width:50px;text-align:right;}
+        .f11-dd-empty{padding:16px;text-align:center;color:#5a8aaa;font-size:14px;}
+        .f11-dd-rel{border-left:2px solid rgba(245,158,11,0.4) !important;}
+        .f11-dd-rel .f11-dd-code{color:#f59e0b;}
+        .f11-table-wrap{flex:1;overflow-y:auto;padding:0 20px;}
+        .f11-table{width:100%;border-collapse:collapse;}
+        .f11-table th{text-align:left;padding:10px 12px;font-family:'Share Tech Mono',monospace;font-size:11px;color:#7abade;letter-spacing:1.5px;border-bottom:2px solid rgba(80,180,255,0.15);position:sticky;top:0;background:#0a0a1a;z-index:2;}
+        .f11-table th.r{text-align:right;}
+        .f11-table td{padding:10px 12px;font-size:15px;font-weight:600;color:#d8ecff;border-bottom:1px solid rgba(80,180,255,0.04);}
+        .f11-table td.r{text-align:right;font-family:'Share Tech Mono',monospace;}
+        .f11-table td.code{color:#7abade;font-family:'Share Tech Mono',monospace;font-size:14px;}
+        .f11-table td.qty{color:#00ff88;font-weight:700;}
+        .f11-table td.tot{color:#00ff88;font-weight:700;}
+        .f11-table tr:hover td{background:rgba(0,200,255,0.04);color:#fff;}
+        .f11-table tr.f11-sel td{background:rgba(80,180,255,0.08);border-bottom:1px solid rgba(0,200,255,0.15);}
+        .f11-table tr.f11-sel td:first-child{border-left:2px solid #00ccff;}
+        .f11-onhand{font-size:12px;color:#5a8aaa;font-family:'Share Tech Mono',monospace;}
+        .f11-del-btn{background:none;border:1px solid rgba(239,68,68,0.2);color:#5a6a7a;font-size:14px;cursor:pointer;padding:3px 7px;border-radius:4px;transition:all 0.15s;line-height:1;font-weight:700;}
+        .f11-del-btn:hover{color:#ef4444;background:rgba(239,68,68,0.15);border-color:rgba(239,68,68,0.4);text-shadow:0 0 8px rgba(239,68,68,0.5);}
+    
+        /* F11 state toggle — hide page elements, show fixed overlay */
+        body.f11-mode .pos-header{display:none !important;}
+        body.f11-mode .pos-reactor-wrap{display:none !important;}
+        body.f11-mode .container{display:none !important;}
+        body.f11-mode .cashier-bar{display:none !important;}
+        body.f11-mode .zane-chat{display:none !important;}
+        body.f11-mode .f11-header{position:fixed !important;top:0;left:0;right:0;z-index:9000;background:rgba(4,12,35,0.98) !important;}
+        body.f11-mode .f11-exit{display:inline-flex !important;padding:4px 8px;border:1px solid rgba(255,80,80,0.25);background:rgba(255,40,40,0.08);cursor:pointer;align-items:center;gap:3px;font-family:'Rajdhani',sans-serif;font-weight:700;color:#ff8888;font-size:10px;text-transform:uppercase;}
+        body.f11-mode .f11-exit:hover{border-color:rgba(255,80,80,0.5);background:rgba(255,40,40,0.15);color:#ffaaaa;}
+        body.f11-mode .f11-exit .pk{color:#ff6666;border-color:rgba(255,80,80,0.25);background:rgba(255,40,40,0.06);font-size:8px;padding:1px 3px;}
+        body.f11-mode .f11-order-wrap{position:fixed !important;top:38px;left:0;right:0;bottom:0;z-index:8999;background:rgba(4,12,35,0.98) !important;min-height:auto !important;}
+        body.f11-mode .f11-search{position:relative !important;}
+        body.f11-mode{overflow:hidden !important;}
+    
+        /* ═══ LIGHT THEME POS ═══ */
+        [data-theme="light"] body{background:#f0f2f5 !important;}
+        [data-theme="light"] .cashier-bar{background:#fff;border-bottom:1px solid #e2e5ea;}
+        [data-theme="light"] .cashier-bar label{color:#6b7280;}
+        [data-theme="light"] .cashier-btn{border:1px solid #d1d5db;background:#f4f6f9;color:#374151;}
+        [data-theme="light"] .cashier-btn:hover{background:#e8eaf0;border-color:#9ca3af;}
+        [data-theme="light"] .cashier-btn.active{background:#4f46e5;color:#fff;border-color:#4f46e5;box-shadow:0 2px 8px rgba(79,70,229,0.3);text-shadow:none;}
+        [data-theme="light"] .pos-header{background:#fff !important;border-bottom:1px solid #e2e5ea;box-shadow:0 1px 3px rgba(0,0,0,0.06);}
+        [data-theme="light"] .pos-header-nav a{color:#6b7280;}
+        [data-theme="light"] .pos-header-nav a:hover{color:#4f46e5;}
+        [data-theme="light"] .pos-header-nav a.active{color:#4f46e5;border-bottom-color:#4f46e5;}
+        [data-theme="light"] .pos-search{background:#fff;border:1px solid #d1d5db;box-shadow:0 1px 3px rgba(0,0,0,0.04);}
+        [data-theme="light"] .pos-search input{background:transparent !important;color:#1a1a2e !important;}
+        [data-theme="light"] .pos-search input::placeholder{color:#9ca3af !important;}
+        [data-theme="light"] .pos-search-icon{color:#9ca3af;}
+        [data-theme="light"] .pos-search-hint{color:#9ca3af;background:#f4f6f9;}
+        [data-theme="light"] .pos-table-wrapper{background:#fff;border:1px solid #e2e5ea;box-shadow:0 1px 3px rgba(0,0,0,0.04);}
+        [data-theme="light"] .pos-table thead{background:#f8f9fb;}
+        [data-theme="light"] .pos-table thead th{background:#f8f9fb !important;color:#6b7280 !important;border-bottom:2px solid #e2e5ea !important;}
+        [data-theme="light"] .stock-row{border-bottom:1px solid #f0f2f5;}
+        [data-theme="light"] .stock-row:hover{background:#f0f4ff !important;}
+        [data-theme="light"] .stock-row:active{background:#e0e7ff !important;}
+        [data-theme="light"] .stock-row td{color:#374151;}
+        [data-theme="light"] .col-code{color:#4f46e5 !important;}
+        [data-theme="light"] .col-desc{color:#1f2937 !important;}
+        [data-theme="light"] .col-price{color:#059669 !important;}
+        [data-theme="light"] .stock-badge{background:#e0e7ff;color:#4f46e5;}
+        [data-theme="light"] .stock-badge.negative{background:#fee2e2;color:#dc2626;}
+        [data-theme="light"] .stock-badge.zero{background:#f4f6f9;color:#9ca3af;}
+        [data-theme="light"] .stock-badge.low{background:#fef3c7;color:#d97706;}
+        [data-theme="light"] .stock-row.negative{background:#fef2f2;}
+        [data-theme="light"] .stock-row.zero{background:#fafafa;}
+        [data-theme="light"] .stock-row.low{background:#fffbeb;}
+        [data-theme="light"] .qty-btn{background:#4f46e5 !important;color:#fff !important;border:none;}
+        [data-theme="light"] .qty-btn:hover{background:#4338ca !important;}
+        [data-theme="light"] .pos-cart{background:#fff;border:1px solid #e2e5ea;box-shadow:0 1px 3px rgba(0,0,0,0.04);}
+        [data-theme="light"] .pos-cart-header{border-bottom:1px solid #e2e5ea;}
+        [data-theme="light"] .pos-cart-title{color:#1f2937;background:none;-webkit-text-fill-color:#1f2937;}
+        [data-theme="light"] .pos-cart-count{color:#6b7280;}
+        [data-theme="light"] .cart-item{border-bottom:1px solid #f0f2f5;}
+        [data-theme="light"] .cart-item:hover{background:#f8f9fb;}
+        [data-theme="light"] .cart-item-name{color:#1f2937;}
+        [data-theme="light"] .cart-item-code{color:#6b7280;}
+        [data-theme="light"] .cart-item-price{color:#6b7280;}
+        [data-theme="light"] .cart-item-total{color:#059669;}
+        [data-theme="light"] .cart-qty-btn{background:#f4f6f9;color:#374151;border-color:#d1d5db;}
+        [data-theme="light"] .cart-qty-btn:hover{background:#e0e7ff;color:#4f46e5;}
+        [data-theme="light"] .cart-qty-display{color:#1f2937;background:#f8f9fb;}
+        [data-theme="light"] .cart-del-btn{color:#9ca3af;}
+        [data-theme="light"] .cart-del-btn:hover{color:#dc2626;background:#fee2e2;}
+        [data-theme="light"] .pos-totals{border-top:2px solid #e2e5ea;}
+        [data-theme="light"] .pos-total-row{color:#6b7280;}
+        [data-theme="light"] .pos-total-row span:last-child{color:#374151;}
+        [data-theme="light"] .pos-total-row.grand{color:#1f2937;}
+        [data-theme="light"] .pos-total-row.grand span:last-child{color:#4f46e5;}
+        [data-theme="light"] .pos-empty{color:#9ca3af;}
+        [data-theme="light"] .pos-shortcuts{background:#fff;border-top:1px solid #e2e5ea;color:#9ca3af;}
+        [data-theme="light"] .pos-shortcuts kbd{background:#f4f6f9;border-color:#d1d5db;color:#374151;}
+        [data-theme="light"] .entity-search{background:#fff !important;border:1px solid #d1d5db !important;color:#1f2937 !important;}
+        [data-theme="light"] .entity-search::placeholder{color:#9ca3af !important;}
+        [data-theme="light"] .entity-list{background:#fff !important;border-color:#d1d5db !important;box-shadow:0 4px 12px rgba(0,0,0,0.1) !important;}
+        [data-theme="light"] .entity-list .entity-item{color:#374151 !important;border-bottom-color:#f0f2f5 !important;}
+        [data-theme="light"] .entity-list .entity-item:hover,[data-theme="light"] .entity-list .entity-item.highlighted{background:#e0e7ff !important;color:#4f46e5 !important;}
+        [data-theme="light"] .entity-item.new-item{color:#059669 !important;}
+        [data-theme="light"] .pos-entity-btn{border-color:#d1d5db;background:#f4f6f9;color:#374151;}
+        [data-theme="light"] .pos-entity-btn:hover{background:#e0e7ff;color:#4f46e5;}
+        [data-theme="light"] .pos-entity-btn.active{background:#4f46e5;color:#fff;border-color:#4f46e5;}
+        [data-theme="light"] .pos-entity-input{background:#fff !important;border-color:#d1d5db !important;color:#1f2937 !important;}
+        [data-theme="light"] .pos-reactor-wrap{background:linear-gradient(160deg, rgba(10,10,26,0.95), rgba(18,18,42,0.95));border-color:rgba(99,102,241,0.2);}
+        [data-theme="light"] .pos-reactor-wrap::before,[data-theme="light"] .pos-reactor-wrap::after{border-color:rgba(99,102,241,0.3);}
+        [data-theme="light"] .pos-hud-btn{border-color:rgba(99,102,241,0.2);background:rgba(10,30,60,0.4);color:rgba(255,255,255,0.8);}
+        [data-theme="light"] .pos-hud-btn:hover{background:rgba(99,102,241,0.2);color:#fff;border-color:rgba(99,102,241,0.4);}
+        [data-theme="light"] .pos-hud-btn:disabled{opacity:0.35;}
+        [data-theme="light"] .pos-hud-btn .pk,[data-theme="light"] .pos-entity-btn .pk,[data-theme="light"] .f11-btn .pk{color:#4f46e5;border-color:rgba(79,70,229,0.3);background:rgba(79,70,229,0.06);text-shadow:none;}
+        [data-theme="light"] .pos-rx{border-color:rgba(79,70,229,0.2);}
+        [data-theme="light"] .pos-rx .j-rg.r1{border-color:rgba(79,70,229,0.3) !important;border-top-color:rgba(99,102,241,0.8) !important;box-shadow:0 0 30px rgba(79,70,229,0.15) !important;}
+        [data-theme="light"] .pos-rx .j-rg.r2{border-color:rgba(124,58,237,0.2) !important;border-bottom-color:rgba(139,92,246,0.7) !important;box-shadow:0 0 20px rgba(124,58,237,0.1) !important;}
+        [data-theme="light"] .pos-rx .j-rg.r3{border-color:rgba(59,130,246,0.15) !important;border-top-color:rgba(96,165,250,0.6) !important;box-shadow:0 0 15px rgba(59,130,246,0.08) !important;}
+        [data-theme="light"] .pos-rx .j-rg.r4{border-color:rgba(124,58,237,0.1) !important;border-top-color:rgba(167,139,250,0.5) !important;box-shadow:none !important;}
+        [data-theme="light"] .pos-rx .pos-rx-core{background:radial-gradient(circle, rgba(79,70,229,0.15) 0%, rgba(124,58,237,0.08) 50%, transparent 100%) !important;border-color:rgba(99,102,241,0.35) !important;box-shadow:0 0 35px rgba(79,70,229,0.2), 0 0 70px rgba(124,58,237,0.1) !important;}
+        [data-theme="light"] .j-brand{color:#818cf8 !important;text-shadow:0 0 20px rgba(99,102,241,0.6), 0 0 50px rgba(129,140,248,0.3) !important;}
+        [data-theme="light"] .j-sub{color:#a78bfa !important;}
+        [data-theme="light"] .pos-hud-total{color:#10b981 !important;text-shadow:0 0 10px rgba(16,185,129,0.4) !important;}
+        [data-theme="light"] .pos-reactor-cn::before{background:linear-gradient(90deg,rgba(99,102,241,0.05),rgba(99,102,241,0.3)) !important;}
+        [data-theme="light"] .pos-reactor-cn.R::before{background:linear-gradient(90deg,rgba(99,102,241,0.3),rgba(99,102,241,0.05)) !important;}
+        [data-theme="light"] .pos-reactor-cn::after{background:rgba(99,102,241,0.35) !important;box-shadow:0 0 8px rgba(99,102,241,0.4) !important;}
+        [data-theme="light"] .pos-lbl span{color:rgba(255,255,255,0.5);}
+        [data-theme="light"] .pos-entity-bar{border-top-color:#e2e5ea;}
+        [data-theme="light"] .no-results{color:#6b7280;background:#f8f9fb;}
+        [data-theme="light"] .f11-header{background:#fff !important;border-bottom:1px solid #e2e5ea;}
+        [data-theme="light"] .f11-btn{border-color:#d1d5db;background:#f4f6f9;color:#374151;}
+        [data-theme="light"] .f11-btn:hover{background:#e0e7ff;color:#4f46e5;border-color:#4f46e5;}
+        [data-theme="light"] .f11-btn:disabled{opacity:0.3;}
+        [data-theme="light"] .f11-cust{color:#374151;}
+        [data-theme="light"] .f11-total{color:#059669;text-shadow:none;}
+        [data-theme="light"] .f11-exit{border-color:#fca5a5;background:#fef2f2;color:#dc2626;}
+        [data-theme="light"] .f11-exit .pk{color:#dc2626;border-color:#fca5a5;background:#fef2f2;}
+        [data-theme="light"] .f11-order-wrap{background:#f0f2f5 !important;}
+        [data-theme="light"] .f11-search{border-bottom-color:#e2e5ea;background:#f0f2f5 !important;}
+        [data-theme="light"] .f11-search input{background:#fff !important;border-color:#d1d5db !important;color:#1f2937 !important;}
+        [data-theme="light"] .f11-search input::placeholder{color:#9ca3af !important;}
+        [data-theme="light"] .f11-table th{background:#f8f9fb !important;color:#6b7280 !important;border-bottom-color:#e2e5ea !important;}
+        [data-theme="light"] .f11-table td{color:#374151 !important;border-bottom-color:#f0f2f5 !important;}
+        [data-theme="light"] .f11-table tr.f11-sel td{background:#e0e7ff !important;border-bottom-color:#c7d2fe !important;}
+        [data-theme="light"] body.f11-mode .f11-header{background:#fff !important;}
+        [data-theme="light"] body.f11-mode .f11-order-wrap{background:#f0f2f5 !important;}
+        [data-theme="light"] body.f11-mode .pos-entity-bar{background:#fff;border-color:#e2e5ea;}
+        [data-theme="light"] .f11-dd-item{color:#374151;border-bottom-color:#f0f2f5;}
+        [data-theme="light"] .f11-dd-item:hover{background:#e0e7ff;}
+    
         </style>
+        '''
         
-        <div class="no-print" style="display:flex;justify-content:space-between;align-items:center;margin-bottom:15px;">
-            <a href="/reports" style="color:var(--text-muted);">← Back to Reports</a>
-            <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center;">
-                <select id="reportLang" style="padding:8px 12px;border-radius:6px;border:1px solid var(--border);background:var(--card);color:var(--text);font-size:13px;">
-                    <option value="en">English</option>
-                    <option value="af">Afrikaans</option>
-                </select>
-                <button class="btn btn-primary" onclick="analyzeWithZane()" id="analyzeBtn">Analyze with Zane</button>
-                <button class="btn btn-secondary" onclick="downloadTBcsv()">📥 Download CSV</button>
-                <button class="btn btn-secondary" onclick="window.print();">Print</button>
-                <a href="/import" class="btn btn-secondary">Import TB</a>
-                <label class="btn btn-primary" style="cursor:pointer;margin:0;background:#10b981;">
-                    📥 Replace TB
-                    <input type="file" id="tbImportFile" accept=".csv,.xlsx,.xls" style="display:none;" onchange="handleTBImportSave(this)">
-                </label>
-                <label class="btn btn-secondary" style="cursor:pointer;margin:0;">
-                    📁 Upload CSV/Excel
-                    <input type="file" id="tbFileUpload" accept=".csv,.xlsx,.xls" style="display:none;" onchange="handleTBUpload(this)">
-                </label>
-                {f'<button class="btn btn-warning" onclick="clearOpeningBalances()" style="background:#f59e0b;">Clear OB ({len(opening_entries)})</button>' if opening_entries else ''}
-            </div>
+        pos_html = f'''
+        <div class="cashier-bar">
+            <label>👤 Cashier:</label>
+            {cashier_buttons}
         </div>
-        
-        {f'<div class="card" style="background:rgba(239,68,68,0.1);border:1px solid #ef4444;padding:15px;margin-bottom:15px;"><strong>⚠️ Warning:</strong> There are <strong>{len(opening_entries)}</strong> opening balance entries for <strong>{len(tb_accounts)}</strong> accounts. If you imported multiple times, click "Clear OB" and import again.</div>' if opening_entries and len(opening_entries) > len(tb_accounts) + 5 else ''}
-        
-        <div class="card" style="padding:30px;">
-            <!-- HEADER -->
-            <div style="text-align:center;margin-bottom:30px;">
-                <h2 style="margin:0;">{safe_string(biz_name)}</h2>
-                <h3 style="margin:10px 0;color:var(--text-muted);font-weight:normal;">Trial Balance</h3>
-                <p style="color:var(--text-muted);margin:0;">As at {today()}</p>
-            </div>
-            
-            <!-- TABLE -->
-            <table class="table tb-table" style="width:100%;">
-                <thead>
-                    <tr style="background:var(--bg);">
-                        <th style="width:100px;">Code</th>
-                        <th>Account</th>
-                        <th style="text-align:right;width:150px;">Debit (Dr)</th>
-                        <th style="text-align:right;width:150px;">Credit (Cr)</th>
-                    </tr>
-                </thead>
-                <tbody>
-                    {rows_html}
-                </tbody>
-                <tfoot>
-                    <tr style="font-weight:bold;background:var(--bg);border-top:2px solid var(--border);">
-                        <td></td>
-                        <td>TOTAL</td>
-                        <td style="text-align:right;border-top:2px solid var(--text);">R {total_debit:,.2f}</td>
-                        <td style="text-align:right;border-top:2px solid var(--text);">R {total_credit:,.2f}</td>
-                    </tr>
-                </tfoot>
-            </table>
-            
-            <!-- BALANCE STATUS -->
-            <div style="margin-top:20px;padding:15px;border-radius:8px;text-align:center;background:{"rgba(16,185,129,0.1)" if is_balanced else "rgba(239,68,68,0.1)"};">
-                {"✅ Trial Balance is balanced" if is_balanced else f"⚠️ Difference: R {difference:,.2f}"}
-            </div>
-        </div>
-        
-        <!-- AI ANALYSIS SECTION -->
-        <div id="analysisSection" class="analysis-section" style="display:none;">
-            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:15px;">
-                <h3 style="margin:0;">📊 Zane's Financial Analysis Report</h3>
-                <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;">
-                    <span id="analysisDate" style="color:var(--text-muted);font-size:12px;"></span>
-                    <button class="btn btn-secondary no-print" onclick="downloadTBReport()" style="font-size:12px;padding:6px 12px;">⬇️ Download</button>
-                    <button class="btn btn-secondary no-print" onclick="emailTBReport()" style="font-size:12px;padding:6px 12px;">Email</button>
-                    <button class="btn btn-secondary no-print" onclick="printAnalysis()" style="font-size:12px;padding:6px 12px;">🖨️ Print</button>
+        <div class="pos-container">
+            <!-- Stock List Panel -->
+            <div style="display:flex;flex-direction:column;min-height:0;">
+                <div class="pos-search-wrapper">
+                    <div class="pos-search">
+                        <span class="pos-search-icon">🔍</span>
+                        <input type="text" id="stockSearch" placeholder="Search code or description..." oninput="filterStock()" autofocus>
+                        <span class="pos-search-hint">5*CODE = 5 pcs</span>
+                    </div>
+                </div>
+                
+                <div class="pos-table-wrapper">
+                    <table class="pos-table">
+                        <tbody id="stockBody">
+                            {stock_rows if stock_rows else '<tr><td colspan="5" class="pos-empty">No stock items</td></tr>'}
+                        </tbody>
+                    </table>
+                    <div class="no-results" id="noResults">
+                        <div style="font-size:48px;margin-bottom:15px;">🔍</div>
+                        <div>No items found</div>
+                        <div style="font-size:12px;margin-top:5px;">Try a different search term</div>
+                    </div>
+                    <div id="stockCount" style="text-align:center;padding:8px;color:var(--text-muted);font-size:12px;">
+                        Showing 100 of {total_stock_count} items &bull; Type to search all
+                    </div>
                 </div>
             </div>
-            <div id="analysisContent" class="analysis-content">
-                <div style="text-align:center;padding:30px;">
-                    <div class="spinner" style="border:3px solid rgba(139,92,246,0.3);border-top:3px solid #8b5cf6;border-radius:50%;width:30px;height:30px;animation:spin 1s linear infinite;margin:0 auto 15px;"></div>
-                    <p style="color:var(--text-muted);margin:0;">Zane is analyzing your trial balance...</p>
+            
+            <!-- Cart Panel -->
+            <div class="pos-cart">
+                <div class="pos-cart-header">
+                    <span class="pos-cart-title">🛒 Cart</span>
+                    <div style="display:flex;align-items:center;gap:10px;">
+                        <button id="btnAddItem" onclick="showCustomItemModal()" style="background:#8b5cf6;color:white;border:none;padding:4px 10px;border-radius:4px;font-size:11px;cursor:pointer;" title="Add custom/once-off item">+ Custom</button>
+                        <span class="pos-cart-count" id="cartCount">0 items</span>
+                    </div>
+                </div>
+                
+                <div class="pos-cart-items" id="cartItems">
+                    <div class="pos-empty">
+                        <div class="pos-empty-icon">🛒</div>
+                        <div>Cart is empty</div>
+                        <div style="font-size:12px;margin-top:5px;">Click items to add</div>
+                    </div>
+                </div>
+                
+                <div class="pos-totals">
+                    <div class="pos-total-row">
+                        <span>Subtotal (excl VAT)</span>
+                        <span id="subtotal">R0.00</span>
+                    </div>
+                    <div class="pos-total-row">
+                        <span>VAT (15%)</span>
+                        <span id="vatAmount">R0.00</span>
+                    </div>
+                    <div class="pos-total-row grand">
+                        <span>TOTAL</span>
+                        <span id="grandTotal">R0.00</span>
+                    </div>
                 </div>
             </div>
         </div>
-        <style>@keyframes spin {{ 0% {{ transform: rotate(0deg); }} 100% {{ transform: rotate(360deg); }} }}</style>
         
+        <!-- Shortcuts Bar -->
+        <div class="pos-shortcuts">
+            <span><kbd>Type</kbd> Search</span>
+            <span><kbd>Enter</kbd> Add first result</span>
+            <span><kbd>5*CODE</kbd> Add 5 pcs</span>
+            <span><kbd>↑↓</kbd> Navigate</span>
+            <span><kbd>F1</kbd> Cash</span>
+            <span><kbd>F2</kbd> Card</span>
+            <span><kbd>F3</kbd> Account</span>
+            <span><kbd>F4</kbd> Quote</span>
+            <span><kbd>F5</kbd> PO</span>
+            <span><kbd>F6</kbd> Invoice</span>
+            <span><kbd>F7</kbd> Edit Cust</span>
+            <span><kbd>F8</kbd> Cust</span>
+            <span><kbd>F9</kbd> Supp</span>
+            <span><kbd>F10</kbd> Credit</span>
+            <span><kbd>ESC</kbd> Clear</span>
+        </div>
+        '''
+        
+        pos_js = '''
         <script>
-        const tbData = {tb_data_json};
-        const totalDebit = {total_debit};
-        const totalCredit = {total_credit};
-        const isBalanced = {"true" if is_balanced else "false"};
-        
-        function downloadTBcsv() {{
-            const tbData = {tb_data_json};
-            if (!tbData || tbData.length === 0) {{ alert('No trial balance data to download'); return; }}
-            
-            // Standard TB CSV format that any accounting software can read
-            let csv = 'Account Code,Account Name,Account Type,Debit,Credit\\n';
-            let totDr = 0, totCr = 0;
-            
-            tbData.forEach(row => {{
-                const code = (row.code || '').replace(/"/g, '""');
-                const name = (row.name || '').replace(/"/g, '""');
-                const type = '';
-                const dr = row.debit > 0 ? row.debit.toFixed(2) : '';
-                const cr = row.credit > 0 ? row.credit.toFixed(2) : '';
-                csv += `"${{code}}","${{name}}","${{type}}",${{dr}},${{cr}}\\n`;
-                totDr += row.debit || 0;
-                totCr += row.credit || 0;
-            }});
-            
-            csv += `,,TOTAL,${{totDr.toFixed(2)}},${{totCr.toFixed(2)}}\\n`;
-            
-            const blob = new Blob([csv], {{ type: 'text/csv;charset=utf-8;' }});
-            const url = URL.createObjectURL(blob);
-            const a = document.createElement('a');
-            a.href = url;
-            const bizName = document.title.split(' - ')[1] || 'Business';
-            const date = new Date().toISOString().split('T')[0];
-            a.download = `Trial_Balance_${{bizName.replace(/[^a-zA-Z0-9]/g, '_')}}_${{date}}.csv`;
-            a.click();
-            URL.revokeObjectURL(url);
-        }}
-        
-        async function analyzeWithZane() {{
-            const btn = document.getElementById('analyzeBtn');
-            const section = document.getElementById('analysisSection');
-            const content = document.getElementById('analysisContent');
-            const dateSpan = document.getElementById('analysisDate');
-            const lang = document.getElementById('reportLang').value;
-            
-            btn.disabled = true;
-            btn.innerHTML = 'Analyzing...';
-            section.style.display = 'block';
-            
-            try {{
-                // STEP 1: Get Python report INSTANTLY (no AI wait)
-                const response = await fetch('/api/reports/tb/analyze', {{
-                    method: 'POST',
-                    headers: {{'Content-Type': 'application/json'}},
-                    body: JSON.stringify({{
-                        accounts: tbData,
-                        total_debit: totalDebit,
-                        total_credit: totalCredit,
-                        is_balanced: isBalanced,
-                        lang: lang
-                    }})
-                }});
-                
-                const data = await response.json();
-                
-                if (data.success) {{
-                    content.innerHTML = data.analysis;
-                    dateSpan.innerHTML = 'Analyzed: ' + new Date().toLocaleString();
-                    
-                    // STEP 2: Load Zane's AI insights in BACKGROUND
-                    const insightBox = document.getElementById('aiInsightsContent');
-                    if (insightBox) {{
-                        insightBox.innerHTML = '<p style="color:var(--text-muted);"><span class="loading-dots">Zane is analyzing</span>...</p>';
-                        
-                        // Pass insights_payload directly (no cache dependency)
-                        fetch('/api/reports/tb/insights', {{
-                            method: 'POST',
-                            headers: {{'Content-Type': 'application/json'}},
-                            body: JSON.stringify({{lang: lang, insights_payload: data.insights_payload || null}})
-                        }})
-                        .then(r => r.json())
-                        .then(idata => {{
-                            if (idata.success && idata.insights) {{
-                                insightBox.innerHTML = idata.insights;
-                            }} else {{
-                                const errMsg = idata.error || 'Could not load insights';
-                                insightBox.innerHTML = '<p style="color:#f97316;">' + errMsg + '. Die syfers hierbo is egter 100% akkuraat.</p>';
-                            }}
-                        }})
-                        .catch(err => {{
-                            insightBox.innerHTML = '<p style="color:#f97316;">Insights timeout - die syfers hierbo is 100% akkuraat.</p>';
-                        }});
-                    }}
-                }} else {{
-                    content.innerHTML = '<p style="color:var(--red);">' + (data.error || 'Analysis failed') + '</p>';
-                }}
-            }} catch (err) {{
-                content.innerHTML = '<p style="color:var(--red);">Error: ' + err.message + '</p>';
-            }}
-            
-            btn.disabled = false;
-            btn.innerHTML = 'Re-analyze';
-        }}
-        
-        async function handleTBImportSave(input) {{
-            const file = input.files[0];
-            if (!file) return;
-            
-            if (!confirm('This will REPLACE the current Trial Balance with the data from:\\n\\n' + file.name + '\\n\\nExisting opening balances will be cleared.\\nContinue?')) {{
-                input.value = '';
-                return;
-            }}
-            
-            // Show loading
-            const section = document.getElementById('analysisSection');
-            const content = document.getElementById('analysisContent');
-            section.style.display = 'block';
-            content.innerHTML = '<p style="color:var(--text-muted);">📥 Importing ' + file.name + ' and replacing Trial Balance...</p>';
-            
-            const formData = new FormData();
-            formData.append('file', file);
-            
-            try {{
-                const response = await fetch('/api/reports/tb/import-save', {{
-                    method: 'POST',
-                    body: formData
-                }});
-                
-                const data = await response.json();
-                
-                if (data.success) {{
-                    content.innerHTML = '<p style="color:#10b981;">✅ ' + data.message + '</p><p>Page reloading in 2 seconds...</p>';
-                    setTimeout(() => location.reload(), 2000);
-                }} else {{
-                    content.innerHTML = '<p style="color:#ef4444;">❌ ' + (data.error || 'Import failed') + '</p>';
-                }}
-            }} catch (err) {{
-                content.innerHTML = '<p style="color:#ef4444;">Error: ' + err.message + '</p>';
-            }}
-            
-            input.value = '';
-        }}
-        
-        async function handleTBUpload(input) {{
-            const file = input.files[0];
-            if (!file) return;
-            
-            const section = document.getElementById('analysisSection');
-            const content = document.getElementById('analysisContent');
-            const dateSpan = document.getElementById('analysisDate');
-            const lang = document.getElementById('reportLang').value;
-            
-            section.style.display = 'block';
-            content.innerHTML = '<p style="color:var(--text-muted);">📂 Reading ' + file.name + '...</p>';
-            
-            const formData = new FormData();
-            formData.append('file', file);
-            formData.append('lang', lang);
-            
-            try {{
-                // Step 1: Upload and parse the file
-                const uploadResponse = await fetch('/api/reports/tb/upload-analyze', {{
-                    method: 'POST',
-                    body: formData
-                }});
-                
-                const uploadData = await uploadResponse.json();
-                
-                if (!uploadData.success) {{
-                    content.innerHTML = '<p style="color:var(--red);">' + (uploadData.error || 'Upload failed') + '</p>';
-                    input.value = '';
-                    return;
-                }}
-                
-                content.innerHTML = '<p style="color:var(--text-muted);">✅ ' + uploadData.message + '<br>🤖 Analyzing with Zane...</p>';
-                
-                // Step 2: Analyze the parsed data
-                const analyzeResponse = await fetch('/api/reports/tb/analyze', {{
-                    method: 'POST',
-                    headers: {{'Content-Type': 'application/json'}},
-                    body: JSON.stringify({{
-                        accounts: uploadData.accounts,
-                        total_debit: uploadData.total_debit,
-                        total_credit: uploadData.total_credit,
-                        is_balanced: uploadData.is_balanced,
-                        lang: lang,
-                        source_file: file.name,
-                        company_name: uploadData.company_name || '',
-                        tb_control_profit: uploadData.tb_control_profit || null
-                    }})
-                }});
-                
-                const analyzeData = await analyzeResponse.json();
-                
-                if (analyzeData.success) {{
-                    content.innerHTML = analyzeData.analysis;
-                    dateSpan.innerHTML = 'Analyzed: ' + new Date().toLocaleString() + ' (from ' + file.name + ')';
-                    
-                    // Async load Zane's insights
-                    const insightBox = document.getElementById('aiInsightsContent');
-                    if (insightBox) {{
-                        insightBox.innerHTML = '<p style="color:var(--text-muted);">Zane is analyzing...</p>';
-                        fetch('/api/reports/tb/insights', {{
-                            method: 'POST',
-                            headers: {{'Content-Type': 'application/json'}},
-                            body: JSON.stringify({{lang: lang, insights_payload: analyzeData.insights_payload || null}})
-                        }})
-                        .then(r => r.json())
-                        .then(idata => {{
-                            if (idata.success && idata.insights) {{
-                                insightBox.innerHTML = idata.insights;
-                            }} else {{
-                                insightBox.innerHTML = '<p style="color:#f97316;">' + (idata.error || 'Insights unavailable') + '. Figures above are 100% accurate.</p>';
-                            }}
-                        }})
-                        .catch(() => {{
-                            insightBox.innerHTML = '<p style="color:#f97316;">Insights timeout - figures above are 100% accurate.</p>';
-                        }});
-                    }}
-                }} else {{
-                    content.innerHTML = '<p style="color:var(--red);">' + (analyzeData.error || 'Analysis failed') + '</p>';
-                }}
-            }} catch (err) {{
-                content.innerHTML = '<p style="color:var(--red);">Error: ' + err.message + '</p>';
-            }}
-            
-            // Reset input so same file can be uploaded again
-            input.value = '';
-        }}
-        
-        function printAnalysis() {{
-            const content = document.getElementById('analysisContent').innerHTML;
-            const printWindow = window.open('', '_blank', 'width=900,height=700');
-            
-            printWindow.document.write(`
-                <!DOCTYPE html>
-                <html>
-                <head>
-                    <title>Trial Balance Analysis - {safe_string(biz_name)}</title>
-                    <style>
-                        * {{ margin: 0; padding: 0; box-sizing: border-box; }}
-                        body {{ 
-                            font-family: 'Segoe UI', Arial, sans-serif; 
-                            padding: 30px;
-                            color: #333;
-                            background: white;
-                            line-height: 1.6;
-                        }}
-                        h2 {{ color: #6366f1; border-bottom: 2px solid #6366f1; padding-bottom: 10px; margin-top: 25px; font-size: 18px; }}
-                        h3 {{ color: #10b981; margin-top: 20px; margin-bottom: 10px; font-size: 15px; }}
-                        h4 {{ color: #8b5cf6; margin-top: 15px; font-size: 13px; }}
-                        table {{ width: 100%; border-collapse: collapse; margin: 15px 0; font-size: 12px; }}
-                        th, td {{ padding: 8px; border: 1px solid #ddd; text-align: left; }}
-                        th {{ background: #f5f5f5; }}
-                        hr {{ border: none; border-top: 1px solid #ddd; margin: 15px 0; }}
-                        strong {{ color: #333; }}
-                        @media print {{
-                            body {{ padding: 15px; }}
-                            @page {{ size: A4; margin: 15mm; }}
-                        }}
-                    </style>
-                </head>
-                <body>
-                    <div style="text-align:center;margin-bottom:20px;border-bottom:2px solid #6366f1;padding-bottom:15px;">
-                        <h1 style="color:#6366f1;margin:0;">Trial Balance Analysis Report</h1>
-                        <p style="color:#666;margin:5px 0;">{safe_string(biz_name)} | Generated: ${{new Date().toLocaleDateString()}}</p>
-                    </div>
-                    ${{content}}
-                    <div style="margin-top:30px;padding-top:15px;border-top:1px solid #ddd;text-align:center;color:#888;font-size:11px;">
-                        Generated by Click AI | Zane Financial Analysis
-                    </div>
-                </body>
-                </html>
-            `);
-            
-            printWindow.document.close();
-            printWindow.focus();
-            
-            setTimeout(function() {{
-                printWindow.print();
-            }}, 300);
-        }}
-        
-        // ═══ DOWNLOAD TB REPORT ═══
-        function downloadTBReport() {{
-            const content = document.getElementById('analysisContent').innerHTML;
-            const dateStr = new Date().toISOString().slice(0,10);
-            const title = 'Trial Balance Analysis - {safe_string(biz_name)}';
-            
-            const html = `<!DOCTYPE html>
-    <html><head><meta charset="utf-8"><title>${{title}}</title>
-    <style>
-    body {{ font-family: Arial, Helvetica, sans-serif; max-width: 900px; margin: 30px auto; padding: 20px; color: #1a1a2e; line-height: 1.7; font-size: 14px; }}
-    h1, h2, h3 {{ color: #1a1a2e; }} h2 {{ color: #6366f1; border-bottom: 2px solid #6366f1; padding-bottom: 10px; }}
-    h3 {{ color: #10b981; }} table {{ width: 100%; border-collapse: collapse; margin: 12px 0; }}
-    th {{ text-align: left; padding: 8px; border-bottom: 2px solid #e5e7eb; color: #6366f1; }}
-    td {{ padding: 6px 8px; border-bottom: 1px solid #f3f4f6; }}
-    strong {{ color: #4f46e5; }} hr {{ border: none; border-top: 1px solid #e5e7eb; margin: 15px 0; }}
-    @media print {{ body {{ margin: 0; }} @page {{ size: A4; margin: 15mm; }} }}
-    </style></head><body>
-    <h1 style="color:#4f46e5;">📊 ${{title}}</h1>
-    <p style="color:#6b7280;font-size:12px;">Generated by ClickAI | ${{dateStr}}</p>
-    ${{content}}
-    <hr><p style="color:#6b7280;font-size:11px;text-align:center;">Generated by ClickAI — AI-Powered Business Management</p>
-    </body></html>`;
-            
-            const lightHtml = html
-                .replace(/color:\s*rgba\(255,\s*255,\s*255,[\s\d.]+\)/gi, 'color:#1a1a2e')
-                .replace(/color:\s*var\(--text\)/gi, 'color:#1a1a2e')
-                .replace(/color:\s*var\(--text-muted\)/gi, 'color:#6b7280')
-                .replace(/border[^:]*:\s*[\d.]+px\s+solid\s+rgba\(255,\s*255,\s*255,[\s\d.]+\)/gi, 'border:1px solid #e5e7eb');
-            
-            const blob = new Blob([lightHtml], {{type: 'text/html'}});
-            const a = document.createElement('a');
-            a.href = URL.createObjectURL(blob);
-            a.download = 'TB_Analysis_{safe_string(biz_name)}_' + dateStr + '.html';
-            a.click();
-            URL.revokeObjectURL(a.href);
-        }}
-        
-        // ═══ EMAIL TB REPORT ═══
-        function emailTBReport() {{
-            // Create modal dynamically
-            let modal = document.getElementById('tbEmailModal');
-            if (!modal) {{
-                modal = document.createElement('div');
-                modal.id = 'tbEmailModal';
-                modal.style.cssText = 'display:none;position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.6);z-index:9999;align-items:center;justify-content:center;';
-                modal.innerHTML = `
-                    <div style="background:var(--card);border:1px solid var(--border);border-radius:12px;padding:25px;width:90%;max-width:420px;box-shadow:0 20px 60px rgba(0,0,0,0.5);">
-                        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:15px;">
-                            <h3 style="margin:0;color:var(--primary);">Email Report</h3>
-                            <button onclick="document.getElementById('tbEmailModal').style.display='none'" style="background:none;border:none;color:var(--text-muted);font-size:20px;cursor:pointer;">✕</button>
-                        </div>
-                        <input type="email" id="tbEmailTo" class="form-input" placeholder="email@example.com" style="width:100%;margin-bottom:10px;">
-                        <input type="text" id="tbEmailSubject" class="form-input" value="TB Analysis - {safe_string(biz_name)}" style="width:100%;margin-bottom:15px;">
-                        <div style="display:flex;gap:10px;justify-content:flex-end;">
-                            <button class="btn btn-secondary" onclick="document.getElementById('tbEmailModal').style.display='none'">Cancel</button>
-                            <button class="btn btn-primary" id="tbSendBtn" onclick="sendTBEmail()">Send</button>
-                        </div>
-                        <p id="tbEmailStatus" style="margin:10px 0 0 0;font-size:12px;display:none;"></p>
-                    </div>`;
-                document.body.appendChild(modal);
-            }}
-            document.getElementById('tbEmailStatus').style.display = 'none';
-            modal.style.display = 'flex';
-            document.getElementById('tbEmailTo').focus();
-        }}
-        
-        async function sendTBEmail() {{
-            const to = document.getElementById('tbEmailTo').value.trim();
-            const subject = document.getElementById('tbEmailSubject').value.trim() || 'TB Analysis';
-            const content = document.getElementById('analysisContent').innerHTML;
-            const status = document.getElementById('tbEmailStatus');
-            const btn = document.getElementById('tbSendBtn');
-            
-            if (!to || !to.includes('@')) {{
-                status.style.display = 'block'; status.style.color = 'var(--red)';
-                status.textContent = 'Please enter a valid email'; return;
-            }}
-            
-            btn.disabled = true; btn.textContent = 'Sending...';
-            status.style.display = 'block'; status.style.color = 'var(--text-muted)';
-            status.textContent = 'Sending report...';
-            
-            try {{
-                const resp = await fetch('/api/reports/email', {{
-                    method: 'POST',
-                    headers: {{'Content-Type': 'application/json'}},
-                    body: JSON.stringify({{
-                        to_email: to, subject: subject,
-                        report_html: content,
-                        report_title: 'Trial Balance Analysis - {safe_string(biz_name)}'
-                    }})
-                }});
-                const data = await resp.json();
-                if (data.success) {{
-                    status.style.color = 'var(--green)'; status.textContent = 'GOOD: ' + data.message;
-                    setTimeout(() => {{ document.getElementById('tbEmailModal').style.display='none'; }}, 2000);
-                }} else {{
-                    status.style.color = 'var(--red)'; status.textContent = '✗ ' + (data.error || 'Failed');
-                }}
-            }} catch (err) {{
-                status.style.color = 'var(--red)'; status.textContent = '✗ ' + err.message;
-            }}
-            btn.disabled = false; btn.textContent = 'Send';
-        }}
-        
-        async function clearOpeningBalances() {{
-            if (!confirm('⚠️ Dit sal ALLE opening balance entries uitvee!\\n\\nJy sal daarna weer moet import.\\n\\nIs jy seker?')) return;
-            
-            try {{
-                const response = await fetch('/api/reports/tb/clear-ob', {{method: 'POST'}});
-                const data = await response.json();
-                
-                if (data.success) {{
-                    alert('✅ ' + data.message + '\\n\\nHerlaai bladsy...');
-                    location.reload();
-                }} else {{
-                    alert('❌ Error: ' + data.error);
-                }}
-            }} catch (err) {{
-                alert('❌ Error: ' + err.message);
-            }}
-        }}
-        // Auto-analyze if redirected from import page
-        if (window.location.search.includes('auto_analyze=1')) {{
-            setTimeout(() => analyzeWithZane(), 500);
-        }}
+        // === F-KEY INTERCEPTOR (capture phase — fires BEFORE browser defaults like F1=Help) ===
+        document.addEventListener('keydown', function(e) {
+            if (['F1','F2','F3','F4','F5','F6','F7','F8','F9','F10'].includes(e.key)) {
+                e.preventDefault();
+                // Do NOT stopPropagation — let the POS keydown handler still receive it
+            }
+        }, true);  // true = capture phase
         </script>
-        '''
-        
-        return render_page("Trial Balance", content, user, "reports")
-    
-    
-    @app.route("/api/reports/tb/clear-ob", methods=["POST"])
-    @login_required
-    def api_tb_clear_ob():
-        """Clear all opening balance entries for this business"""
-        
-        business = Auth.get_current_business()
-        biz_id = business.get("id") if business else None
-        
-        if not biz_id:
-            return jsonify({"success": False, "error": "No business selected"})
-        
-        try:
-            # Get all OB entries
-            journal_entries = db.get("journal_entries", {"business_id": biz_id}) or []
-            ob_entries = [je for je in journal_entries if je.get("reference") == "OB"]
-            
-            if not ob_entries:
-                return jsonify({"success": True, "message": "Geen opening balance entries om te verwyder nie"})
-            
-            # Delete each OB entry
-            deleted = 0
-            for ob in ob_entries:
-                try:
-                    db.delete("journal_entries", ob.get("id"))
-                    deleted += 1
-                except Exception as del_err:
-                    logger.warning(f"[TB CLEAR] Failed to delete {ob.get('id')}: {del_err}")
-            
-            logger.info(f"[TB CLEAR] Deleted {deleted} OB entries for business {biz_id}")
-            AuditLog.log("DELETE", "journal_entries", None, details=f"Cleared {deleted} opening balance entries")
-            
-            return jsonify({"success": True, "message": f"{deleted} opening balance entries verwyder"})
-            
-        except Exception as e:
-            logger.error(f"[TB CLEAR] Error: {e}")
-            return jsonify({"success": False, "error": str(e)})
-    
-    
-    @app.route("/api/reports/tb/import-save", methods=["POST"])
-    @login_required
-    def api_tb_import_save():
-        """Upload CSV/Excel TB and SAVE it as opening balances - REPLACES existing TB.
-        
-        Flow: Parse file → Clear old OB entries → Save new OB entries → Return success
-        Page reloads to show new TB data.
-        """
-        
-        business = Auth.get_current_business()
-        biz_id = business.get("id") if business else None
-        
-        if not biz_id:
-            return jsonify({"success": False, "error": "No business selected"})
-        
-        try:
-            if 'file' not in request.files:
-                return jsonify({"success": False, "error": "No file uploaded"})
-            
-            file = request.files['file']
-            if not file.filename:
-                return jsonify({"success": False, "error": "No file selected"})
-            
-            filename = file.filename.lower()
-            logger.info(f"[TB IMPORT-SAVE] Processing {filename}")
-            
-            import pandas as pd
-            import io
-            
-            # ═══ Read file ═══
-            try:
-                if filename.endswith('.csv'):
-                    content = file.read()
-                    if content[:3] == b'\xef\xbb\xbf':
-                        content = content[3:]
-                    
-                    text = None
-                    for enc in ['utf-8', 'latin-1', 'cp1252', 'iso-8859-1']:
-                        try:
-                            text = content.decode(enc)
-                            break
-                        except:
-                            continue
-                    
-                    if not text:
-                        return jsonify({"success": False, "error": "Could not read CSV - encoding issue"})
-                    
-                    lines = [l.strip() for l in text.split('\n') if l.strip()]
-                    header_row = 0
-                    for i, line in enumerate(lines[:10]):
-                        stripped = line.strip().strip('"').strip().lower()
-                        if stripped.startswith('sep='):
-                            header_row = i + 1
-                            continue
-                        in_quote = False
-                        comma_count = 0
-                        for ch in line:
-                            if ch == '"': in_quote = not in_quote
-                            elif ch == ',' and not in_quote: comma_count += 1
-                        if comma_count == 0:
-                            header_row = i + 1
-                            continue
-                        break
-                    
-                    header_line = lines[header_row] if header_row < len(lines) else lines[0]
-                    if ';' in header_line and header_line.count(';') > header_line.count(','):
-                        sep = ';'
-                    elif '\t' in header_line:
-                        sep = '\t'
-                    else:
-                        sep = ','
-                    
-                    clean_text = '\n'.join(lines[header_row:])
-                    df = pd.read_csv(io.StringIO(clean_text), sep=sep, on_bad_lines='skip', engine='python')
-                    
-                elif filename.endswith(('.xlsx', '.xls')):
-                    df = pd.read_excel(file)
-                else:
-                    return jsonify({"success": False, "error": "Unsupported file type. Use CSV or Excel."})
-            except Exception as read_err:
-                return jsonify({"success": False, "error": f"Could not read file: {str(read_err)}"})
-            
-            logger.info(f"[TB IMPORT-SAVE] Read {len(df)} rows, columns: {list(df.columns)}")
-            
-            # ═══ Column detection (same logic as upload-analyze) ═══
-            cols_lower = {c.lower().strip(): c for c in df.columns}
-            
-            code_col = None
-            for c in ['code', 'acc code', 'account code', 'acc_code', 'kode', 'gl code', 'account_code', 'acc no', 'account no', 'account number', 'gl no', 'no', 'number']:
-                if c in cols_lower: code_col = cols_lower[c]; break
-            
-            name_col = None
-            for c in ['name', 'account', 'account name', 'description', 'naam', 'rekening', 'rekening naam', 'acc name', 'account_name', 'omskrywing', 'account description', 'ledger', 'gl name', 'label']:
-                if c in cols_lower: name_col = cols_lower[c]; break
-            
-            debit_col = None
-            for c in ['debit', 'dr', 'debits', 'debit amount', 'debiet', 'debit balance', 'debiet saldo', 'dr amount']:
-                if c in cols_lower: debit_col = cols_lower[c]; break
-            
-            credit_col = None
-            for c in ['credit', 'cr', 'credits', 'credit amount', 'krediet', 'credit balance', 'krediet saldo', 'cr amount']:
-                if c in cols_lower: credit_col = cols_lower[c]; break
-            
-            balance_col = None
-            if not debit_col and not credit_col:
-                for c in ['balance', 'saldo', 'amount', 'bedrag', 'net balance', 'netto', 'value', 'total', 'totaal', 'closing balance', 'closing']:
-                    if c in cols_lower: balance_col = cols_lower[c]; break
-            
-            # AI fallback if needed
-            if not name_col or (not debit_col and not credit_col and not balance_col):
-                try:
-                    sample_rows = df.head(8).to_string()
-                    col_list = list(df.columns)
-                    ai_prompt = f"Analyze this trial balance file columns.\nCOLUMNS: {col_list}\nSAMPLE:\n{sample_rows}\nReturn ONLY JSON: {{\"account_code\": \"col or null\", \"account_name\": \"col\", \"debit\": \"col or null\", \"credit\": \"col or null\", \"balance\": \"col or null\"}}"
-                    client = _anthropic_client
-                    ai_resp = client.messages.create(model="claude-sonnet-4-6", max_tokens=300, messages=[{"role": "user", "content": ai_prompt}])
-                    # ─── AI-USAGE TRACKING ───
-                    try:
-                        if hasattr(app, "_ai_usage_tracker") and biz_id:
-                            _usr = Auth.get_current_user()
-                            _usr_id = _usr.get("id") if _usr else None
-                            _usage = getattr(ai_resp, "usage", None)
-                            app._ai_usage_tracker.log_usage(
-                                business_id=biz_id,
-                                tool="tb_column_detect",
-                                model=getattr(ai_resp, "model", "claude-sonnet-4-6"),
-                                input_tokens=int(getattr(_usage, "input_tokens", 0) or 0),
-                                output_tokens=int(getattr(_usage, "output_tokens", 0) or 0),
-                                cache_read_tokens=int(getattr(_usage, "cache_read_input_tokens", 0) or 0),
-                                cache_write_tokens=int(getattr(_usage, "cache_creation_input_tokens", 0) or 0),
-                                user_id=_usr_id,
-                                success=True,
-                            )
-                    except Exception as _track_err:
-                        logger.error(f"[AI-USAGE] tb_column_detect tracking skipped: {_track_err}")
-                    # ─── END TRACKING ───
-                    ai_text = ai_resp.content[0].text.strip()
-                    if '```' in ai_text: ai_text = ai_text.split('```')[1].replace('json', '').strip()
-                    ai_map = json.loads(ai_text)
-                    if ai_map.get("account_name") and ai_map["account_name"] in df.columns: name_col = ai_map["account_name"]
-                    if ai_map.get("account_code") and ai_map["account_code"] in df.columns: code_col = ai_map["account_code"]
-                    if ai_map.get("debit") and ai_map["debit"] in df.columns: debit_col = ai_map["debit"]
-                    if ai_map.get("credit") and ai_map["credit"] in df.columns: credit_col = ai_map["credit"]
-                    if ai_map.get("balance") and ai_map["balance"] in df.columns: balance_col = ai_map["balance"]
-                except Exception as ai_err:
-                    logger.warning(f"[TB IMPORT-SAVE] AI column detection failed: {ai_err}")
-            
-            if not name_col:
-                for c in df.columns:
-                    if df[c].dtype == 'object': name_col = c; break
-            
-            if not name_col:
-                return jsonify({"success": False, "error": f"Could not find account name column. Columns: {list(df.columns)}"})
-            if not debit_col and not credit_col and not balance_col:
-                return jsonify({"success": False, "error": f"Could not find debit/credit/balance columns. Columns: {list(df.columns)}"})
-            
-            logger.info(f"[TB IMPORT-SAVE] Mapped: code={code_col}, name={name_col}, debit={debit_col}, credit={credit_col}, balance={balance_col}")
-            
-            # ═══ Parse amounts ═══
-            def parse_amount(val):
-                if pd.isna(val): return 0.0
-                val = str(val).replace('R', '').replace('r', '').replace(',', '').replace(' ', '').strip()
-                is_neg = val.startswith('(') and val.endswith(')')
-                if is_neg: val = val[1:-1]
-                if val in ['', '-', 'nan', 'none', '0', '0.0', '0.00']: return 0.0
-                try:
-                    result = float(val)
-                    return -result if is_neg else result
-                except: return 0.0
-            
-            # ═══ Build accounts ═══
-            accounts = []
-            for idx, row in df.iterrows():
-                name = str(row.get(name_col, '')).strip() if name_col else ''
-                if not name or name.lower() in ['nan', 'none', '', 'total', 'totals', 'totaal', 'grand total', 'netto', 'net', 'net profit/loss', 'net profit/loss after tax', 'net profit']:
-                    continue
-                
-                code = str(row.get(code_col, '')).strip() if code_col else ''
-                if code.lower() in ['nan', 'none', '']: code = ''
-                
-                # Smart split: "1000/000 : Sales" → code, name
-                if not code and ' : ' in name:
-                    parts = name.split(' : ', 1); code = parts[0].strip(); name = parts[1].strip()
-                elif not code and ' - ' in name and name[0].isdigit():
-                    parts = name.split(' - ', 1); code = parts[0].strip(); name = parts[1].strip()
-                
-                if not code: code = f"A{idx:04d}"
-                name = name.replace('_AND_', '&')
-                
-                debit = 0.0
-                credit = 0.0
-                if debit_col and credit_col:
-                    debit = abs(parse_amount(row.get(debit_col)))
-                    credit = abs(parse_amount(row.get(credit_col)))
-                elif balance_col:
-                    bal = parse_amount(row.get(balance_col))
-                    if bal > 0: debit = bal
-                    elif bal < 0: credit = abs(bal)
-                
-                if debit > 0 or credit > 0:
-                    accounts.append({"code": code, "name": name, "debit": debit, "credit": credit})
-            
-            if not accounts:
-                return jsonify({"success": False, "error": "No valid accounts found in file"})
-            
-            # ═══ Clear existing OB entries ═══
-            journal_entries = db.get("journal_entries", {"business_id": biz_id}) or []
-            ob_entries = [je for je in journal_entries if je.get("reference") == "OB"]
-            deleted = 0
-            for ob in ob_entries:
-                try:
-                    db.delete("journal_entries", ob.get("id"))
-                    deleted += 1
-                except: pass
-            logger.info(f"[TB IMPORT-SAVE] Cleared {deleted} old OB entries")
-            
-            # ═══ Save new OB entries ═══
-            saved = 0
-            for acc in accounts:
-                entry = {
-                    "id": generate_id(),
-                    "business_id": biz_id,
-                    "date": today(),
-                    "account": acc["name"],
-                    "account_code": acc["code"],
-                    "debit": acc["debit"],
-                    "credit": acc["credit"],
-                    "description": f"Opening Balance - {acc['name']}",
-                    "reference": "OB",
-                    "created_at": now()
-                }
-                success, _ = db.save("journal_entries", entry)
-                if success:
-                    saved += 1
-            
-            logger.info(f"[TB IMPORT-SAVE] Saved {saved}/{len(accounts)} OB entries from {file.filename}")
-            
-            total_dr = sum(a["debit"] for a in accounts)
-            total_cr = sum(a["credit"] for a in accounts)
-            
-            return jsonify({
-                "success": True,
-                "message": f"TB imported: {saved} accounts saved. Debits: R{total_dr:,.2f}, Credits: R{total_cr:,.2f}",
-                "accounts_saved": saved,
-                "total_accounts": len(accounts)
-            })
-            
-        except Exception as e:
-            logger.error(f"[TB IMPORT-SAVE] Error: {e}")
-            import traceback
-            traceback.print_exc()
-            return jsonify({"success": False, "error": str(e)})
-    
-    
-    @app.route("/api/reports/tb/analyze", methods=["POST"])
-    @login_required
-    def api_tb_analyze():
-        """AI Analysis of Trial Balance - ALL CALCULATIONS BY PYTHON"""
-        
-        business = Auth.get_current_business()
-        biz_name = business.get("name", "Business") if business else "Business"
-        industry = business.get("industry", "general") if business else "general"
-        
-        try:
-            data = request.get_json()
-            accounts = data.get("accounts", [])
-            lang = data.get("lang", "en")
-            
-            # If a source file was uploaded (external TB), note it in the report
-            source_file = data.get("source_file", "")
-            company_name = data.get("company_name", "")
-            
-            # IMPORTANT: If a CSV was uploaded, it's ALWAYS a third-party client's data
-            # The user wouldn't upload their own TB - ClickAI generates that internally
-            # So NEVER use the logged-in business name for uploaded TBs
-            if source_file:
-                if company_name:
-                    report_company = company_name
-                else:
-                    # Use filename without extension as company hint
-                    clean_name = source_file.rsplit('.', 1)[0].replace('_', ' ').replace('-', ' ').strip()
-                    report_company = f"Client TB ({clean_name})"
-                is_third_party = True
-            else:
-                report_company = biz_name
-                is_third_party = False
-            
-            logger.info(f"[TB ANALYZE] Language selected: {lang}")
-            
-            # ═══════════════════════════════════════════════════════════════════════
-            # LANGUAGE LABELS - English and Afrikaans
-            # ═══════════════════════════════════════════════════════════════════════
-            labels = {
-                "en": {
-                    "report_title": "TRIAL BALANCE ANALYSIS REPORT",
-                    "company": "Company",
-                    "date": "Date",
-                    "prepared_by": "Prepared by",
-                    "balance_status": "1. BALANCE STATUS",
-                    "total_debits": "Total Debits",
-                    "total_credits": "Total Credits",
-                    "difference": "Difference",
-                    "balanced": "BALANCED",
-                    "unbalanced": "UNBALANCED",
-                    "critical_error": "CRITICAL ERROR",
-                    "tb_not_balanced": "This trial balance does NOT balance. There is a",
-                    "difference_text": "difference. Check the data before continuing.",
-                    "balance_sheet_summary": "2. BALANCE SHEET SUMMARY",
-                    "assets": "ASSETS",
-                    "current_assets": "Current Assets",
-                    "bank_cash": "Bank/Cash",
-                    "debtors": "Debtors",
-                    "inventory": "Inventory",
-                    "vat_input": "VAT Input",
-                    "prepayments": "Prepayments",
-                    "total_current_assets": "Total Current Assets",
-                    "fixed_assets": "Fixed Assets",
-                    "cost": "Cost",
-                    "less_accum_depr": "Less: Accumulated Depreciation",
-                    "net_fixed_assets": "Net Fixed Assets",
-                    "total_assets": "TOTAL ASSETS",
-                    "liab_equity": "LIABILITIES & EQUITY",
-                    "current_liabilities": "Current Liabilities",
-                    "creditors": "Creditors",
-                    "vat_output": "VAT Output",
-                    "paye_payable": "PAYE Payable",
-                    "uif_payable": "UIF Payable",
-                    "total_current_liab": "Total Current",
-                    "long_term_liab": "Long-term Liabilities",
-                    "loans": "Loans",
-                    "total_liabilities": "Total Liabilities",
-                    "equity": "Equity",
-                    "capital": "Capital",
-                    "retained_earnings": "Retained Earnings",
-                    "less_drawings": "Less: Drawings",
-                    "total_equity": "Total Equity",
-                    "liab_plus_equity": "LIABILITIES + EQUITY",
-                    "income_statement": "3. INCOME STATEMENT SUMMARY",
-                    "sales": "Sales",
-                    "less_returns": "Less: Sales Returns",
-                    "net_sales": "Net Sales",
-                    "less_cos": "Less: Cost of Sales",
-                    "gross_profit": "GROSS PROFIT",
-                    "plus_other_income": "Plus: Other Income",
-                    "less_operating_exp": "Less: Operating Expenses",
-                    "net_profit": "NET PROFIT",
-                    "financial_ratios": "4. FINANCIAL RATIOS",
-                    "ratio": "Ratio",
-                    "value": "Value",
-                    "status": "Status",
-                    "norm": "Norm",
-                    "current_ratio": "Current Ratio",
-                    "quick_ratio": "Quick Ratio",
-                    "debt_equity": "Debt to Equity",
-                    "gp_margin": "Gross Profit Margin",
-                    "np_margin": "Net Profit Margin",
-                    "debtor_days": "Debtor Days",
-                    "creditor_days": "Creditor Days",
-                    "stock_days": "Stock Days",
-                    "days": "days",
-                    "industry": "Industry",
-                    "sars_obligations": "5. SARS OBLIGATIONS",
-                    "vat_position": "VAT Position",
-                    "vat_collected": "VAT Output (Collected)",
-                    "vat_paid": "VAT Input (Paid)",
-                    "vat_payable": "VAT Payable to SARS",
-                    "vat_refund": "VAT Refund",
-                    "employee_taxes": "Employee Taxes",
-                    "total_emp201": "Total EMP201",
-                    "expense_analysis": "6. EXPENSE ANALYSIS",
-                    "expense": "Expense",
-                    "amount": "Amount",
-                    "pct_of_sales": "% of Sales",
-                    "salaries_wages": "Salaries and Wages",
-                    "rent": "Rent",
-                    "electricity": "Electricity",
-                    "depreciation": "Depreciation",
-                    "fuel_transport": "Fuel & Transport",
-                    "advertising": "Advertising",
-                    "professional_fees": "Professional Fees",
-                    "interest_paid": "Interest Paid",
-                    "other_expenses": "Other Expenses",
-                    "total_expenses": "TOTAL EXPENSES",
-                    "zane_insight": "Zane's Insight",
-                    "loading_insight": "Loading professional insight...",
-                    "calculations_by": "All calculations by Python | Figures verified | Generated",
-                    "red_flags": "RED FLAGS",
-                    "no_critical": "NO CRITICAL ISSUES",
-                    "all_ratios_ok": "All ratios within acceptable limits.",
-                    "critical": "CRITICAL",
-                    "warning": "WARNING",
-                    "monitor": "MONITOR",
-                    "tb_not_bal_flag": "TB does NOT balance - R{diff} difference. STOP EVERYTHING and find the error.",
-                    "current_ratio_crit": "Current ratio {ratio}:1 - cannot pay short-term debt!",
-                    "current_ratio_warn": "Current ratio {ratio}:1 - liquidity under pressure.",
-                    "quick_ratio_crit": "Quick ratio {ratio}:1 - serious cash flow risk!",
-                    "debtor_days_warn": "Debtors {days} days - collect urgently!",
-                    "debtor_days_mon": "Debtors {days} days - start applying pressure.",
-                    "stock_days_warn": "Inventory {days} days - dead/slow stock?",
-                    "gp_margin_crit": "Gross margin {pct}% - prices too low or costs too high!",
-                    "gp_margin_warn": "Gross margin {pct}% - below industry norm.",
-                    "making_loss": "Making a LOSS of R{amount}!",
-                    "np_margin_warn": "Net margin {pct}% - very thin.",
-                    "debt_equity_warn": "Debt/Equity {ratio}:1 - highly leveraged.",
-                    "vat_payable_mon": "VAT payable R{amount} - ensure funds available.",
-                    "salaries_warn": "Salaries {pct}% of sales - overhead costs high.",
-                    "paye_uif_mon": "PAYE/UIF R{amount} - submit EMP201 on time!",
-                    "acc_list_title": "FULL ACCOUNT LIST (Python-verified):",
-                    "acc_code": "Code",
-                    "acc_name": "Account Name",
-                    "debit": "Debit",
-                    "credit": "Credit",
-                    "assets_codes": "ASSETS (Codes 1xxx-2xxx):",
-                    "no_asset_acc": "No asset accounts",
-                    "liab_codes": "LIABILITIES (Codes 3xxx):",
-                    "no_liab_acc": "No liability accounts",
-                    "equity_codes": "EQUITY (Codes 4xxx):",
-                    "no_equity_acc": "No equity accounts",
-                    "income_codes": "INCOME (Codes 5xxx):",
-                    "no_income_acc": "No income accounts",
-                    "expense_codes": "EXPENSES (Codes 6xxx-9xxx):",
-                    "no_expense_acc": "No expense accounts",
-                    "unclassified": "UNCLASSIFIED:",
-                },
-                "af": {
-                    "report_title": "PROEFBALANS ANALISE VERSLAG",
-                    "company": "Maatskappy",
-                    "date": "Datum",
-                    "prepared_by": "Voorberei deur",
-                    "balance_status": "1. BALANS STATUS",
-                    "total_debits": "Totale Debits",
-                    "total_credits": "Totale Kredits",
-                    "difference": "Verskil",
-                    "balanced": "GEBALANSEER",
-                    "unbalanced": "ONGEBALANSEER",
-                    "critical_error": "KRITIEKE FOUT",
-                    "tb_not_balanced": "Hierdie proefbalans balanseer NIE. Daar is 'n",
-                    "difference_text": "verskil. Gaan die data na voordat jy voortgaan.",
-                    "balance_sheet_summary": "2. BALANSSTAAT OPSOMMING",
-                    "assets": "BATES",
-                    "current_assets": "Bedryfsbates",
-                    "bank_cash": "Bank/Kontant",
-                    "debtors": "Debiteure",
-                    "inventory": "Voorraad",
-                    "vat_input": "BTW Insette",
-                    "prepayments": "Vooruitbetalings",
-                    "total_current_assets": "Totaal Bedryfsbates",
-                    "fixed_assets": "Vaste Bates",
-                    "cost": "Kosprys",
-                    "less_accum_depr": "Min: Opgehoopte Waardevermindering",
-                    "net_fixed_assets": "Netto Vaste Bates",
-                    "total_assets": "TOTALE BATES",
-                    "liab_equity": "LASTE & EKWITEIT",
-                    "current_liabilities": "Korttermyn Laste",
-                    "creditors": "Krediteure",
-                    "vat_output": "BTW Uitsette",
-                    "paye_payable": "LBS Betaalbaar",
-                    "uif_payable": "WVF Betaalbaar",
-                    "total_current_liab": "Totaal Korttermyn",
-                    "long_term_liab": "Langtermyn Laste",
-                    "loans": "Lenings",
-                    "total_liabilities": "Totale Laste",
-                    "equity": "Ekwiteit",
-                    "capital": "Kapitaal",
-                    "retained_earnings": "Behoue Verdienste",
-                    "less_drawings": "Min: Onttrekkings",
-                    "total_equity": "Totale Ekwiteit",
-                    "liab_plus_equity": "LASTE + EKWITEIT",
-                    "income_statement": "3. INKOMSTESTAAT OPSOMMING",
-                    "sales": "Verkope",
-                    "less_returns": "Min: Verkope Teruggawes",
-                    "net_sales": "Netto Verkope",
-                    "less_cos": "Min: Koste van Verkope",
-                    "gross_profit": "BRUTO WINS",
-                    "plus_other_income": "Plus: Ander Inkomste",
-                    "less_operating_exp": "Min: Bedryfsuitgawes",
-                    "net_profit": "NETTO WINS",
-                    "financial_ratios": "4. FINANSIËLE VERHOUDINGS",
-                    "ratio": "Verhouding",
-                    "value": "Waarde",
-                    "status": "Status",
-                    "norm": "Norm",
-                    "current_ratio": "Bedryfsbateverhouding (Current Ratio)",
-                    "quick_ratio": "Suurtoetsverhouding (Quick Ratio)",
-                    "debt_equity": "Skuld tot Ekwiteit (Debt/Equity)",
-                    "gp_margin": "Bruto Winsmarge (GP Margin)",
-                    "np_margin": "Netto Winsmarge (NP Margin)",
-                    "debtor_days": "Debiteure Dae (Debtor Days)",
-                    "creditor_days": "Krediteure Dae (Creditor Days)",
-                    "stock_days": "Voorraad Dae (Stock Days)",
-                    "days": "dae",
-                    "industry": "Industrie",
-                    "sars_obligations": "5. SAID/SARS VERPLIGTINGE",
-                    "vat_position": "BTW Posisie",
-                    "vat_collected": "BTW Uitsette (Ingesamel)",
-                    "vat_paid": "BTW Insette (Betaal)",
-                    "vat_payable": "BTW Betaalbaar aan SAID",
-                    "vat_refund": "BTW Terugbetaling",
-                    "employee_taxes": "Werknemerbelasting",
-                    "total_emp201": "Totaal EMP201",
-                    "expense_analysis": "6. UITGAWE ANALISE",
-                    "expense": "Uitgawe",
-                    "amount": "Bedrag",
-                    "pct_of_sales": "% van Verkope",
-                    "salaries_wages": "Salarisse en Lone",
-                    "rent": "Huur",
-                    "electricity": "Elektrisiteit",
-                    "depreciation": "Waardevermindering",
-                    "fuel_transport": "Brandstof & Vervoer",
-                    "advertising": "Reklame",
-                    "professional_fees": "Professionele Fooie",
-                    "interest_paid": "Rente Betaal",
-                    "other_expenses": "Ander Uitgawes",
-                    "total_expenses": "TOTALE UITGAWES",
-                    "zane_insight": "Zane se Insig",
-                    "loading_insight": "Laai professionele insig...",
-                    "calculations_by": "Alle berekeninge gedoen deur Python | Syfers geverifieer | Gegenereer",
-                    "red_flags": "ROOI VLAE",
-                    "no_critical": "GEEN KRITIEKE PROBLEME",
-                    "all_ratios_ok": "Alle verhoudinge binne aanvaarbare perke.",
-                    "critical": "KRITIEK",
-                    "warning": "WAARSKUWING",
-                    "monitor": "MONITOR",
-                    "tb_not_bal_flag": "TB balanseer NIE - R{diff} verskil. STOP ALLES en vind die fout.",
-                    "current_ratio_crit": "Current ratio {ratio}:1 - kan nie korttermyn skuld betaal nie!",
-                    "current_ratio_warn": "Current ratio {ratio}:1 - likiditeit onder druk.",
-                    "quick_ratio_crit": "Quick ratio {ratio}:1 - ernstige kontantvloei risiko!",
-                    "debtor_days_warn": "Debiteure {days} dae - invorder dringend!",
-                    "debtor_days_mon": "Debiteure {days} dae - begin druk sit.",
-                    "stock_days_warn": "Voorraad {days} dae - dooie/stadige voorraad?",
-                    "gp_margin_crit": "Bruto marge {pct}% - pryse te laag of koste te hoog!",
-                    "gp_margin_warn": "Bruto marge {pct}% - onder industrie norm.",
-                    "making_loss": "Maak VERLIES van R{amount}!",
-                    "np_margin_warn": "Netto marge {pct}% - baie dun.",
-                    "debt_equity_warn": "Skuld/Ekwiteit {ratio}:1 - hoog gehefboom.",
-                    "vat_payable_mon": "BTW betaalbaar R{amount} - maak seker fondse beskikbaar.",
-                    "salaries_warn": "Salarisse {pct}% van verkope - oorhoofse koste hoog.",
-                    "paye_uif_mon": "LBS/WVF R{amount} - EMP201 betyds indien!",
-                    "acc_list_title": "VOLLEDIGE REKENINGLYS (Python-geverifieer):",
-                    "acc_code": "Kode",
-                    "acc_name": "Rekening Naam",
-                    "debit": "Debit",
-                    "credit": "Krediet",
-                    "assets_codes": "BATES (Kodes 1xxx-2xxx):",
-                    "no_asset_acc": "Geen bate rekeninge",
-                    "liab_codes": "LASTE (Kodes 3xxx):",
-                    "no_liab_acc": "Geen laste rekeninge",
-                    "equity_codes": "EKWITEIT (Kodes 4xxx):",
-                    "no_equity_acc": "Geen ekwiteit rekeninge",
-                    "income_codes": "INKOMSTE (Kodes 5xxx):",
-                    "no_income_acc": "Geen inkomste rekeninge",
-                    "expense_codes": "UITGAWES (Kodes 6xxx-9xxx):",
-                    "no_expense_acc": "Geen uitgawe rekeninge",
-                    "unclassified": "ONGEKLASSIFISEER:",
-                }
-            }
-            L = labels.get(lang, labels["en"])  # Default to English if unknown lang
-            
-            if not accounts:
-                return jsonify({"success": False, "error": "No trial balance data to analyze"})
-            
-            # ═══════════════════════════════════════════════════════════════════════
-            # PYTHON CALCULATES EVERYTHING - 100% ACCURATE
-            # ═══════════════════════════════════════════════════════════════════════
-            
-            # Step 1: Calculate EXACT totals from raw data
-            total_debit = sum(float(a.get("debit", 0) or 0) for a in accounts)
-            total_credit = sum(float(a.get("credit", 0) or 0) for a in accounts)
-            difference = abs(total_debit - total_credit)
-            is_balanced = difference < 0.01
-            
-            logger.info(f"[TB ANALYZE] Python calculated: Dr={total_debit:.2f} Cr={total_credit:.2f} Diff={difference:.2f}")
-            
-            # Step 2: Categorize accounts - USE CATEGORY COLUMN IF AVAILABLE
-            # This is critical: different accounting packages use different code schemes
-            # Sage Pastel: 1000=Sales, 2000=COS, 3000-4000=Expenses, 5000=Equity, 6000+=Assets
-            # Standard:    1000=Assets, 2000=Assets, 3000=Liabilities, 4000=Equity, 5000=Income, 6000+=Expenses
-            # So we CANNOT rely on codes - we must use the Category column
-            
-            has_categories = any(a.get("category") for a in accounts)
-            logger.info(f"[TB ANALYZE] Category column available: {has_categories}")
-            
-            if has_categories:
-                # ═══════════════════════════════════════════════════════════════
-                # CATEGORY-BASED CLASSIFICATION (reliable, works for ALL systems)
-                # ═══════════════════════════════════════════════════════════════
-                logger.info("[TB ANALYZE] Using CATEGORY column for classification")
-                
-                def cat_sum(acc_list, categories, column="debit"):
-                    """Sum accounts matching category list"""
-                    total = 0
-                    for a in acc_list:
-                        cat = str(a.get("category", "")).lower().strip()
-                        for c in categories:
-                            if c in cat:
-                                total += float(a.get(column, 0) or 0)
-                                break
-                    return total
-                
-                def cat_net(acc_list, categories):
-                    """Net value (debit - credit) for matching categories"""
-                    total = 0
-                    for a in acc_list:
-                        cat = str(a.get("category", "")).lower().strip()
-                        for c in categories:
-                            if c in cat:
-                                dr = float(a.get("debit", 0) or 0)
-                                cr = float(a.get("credit", 0) or 0)
-                                total += dr - cr
-                                break
-                    return total
-                
-                def name_match(acc, keywords, column="debit"):
-                    """Match account by name keywords"""
-                    name = str(acc.get("name", "")).lower()
-                    val = float(acc.get(column, 0) or 0)
-                    for kw in keywords:
-                        if kw in name:
-                            return val
-                    return 0
-                
-                # INCOME (Credit balances - sales, other income)
-                sales = cat_sum(accounts, ["sales", "revenue", "turnover", "omset"], "credit")
-                sales_returns = cat_sum(accounts, ["sales return", "return"], "debit")
-                cos = cat_sum(accounts, ["cost of sale", "cost of goods", "koste van verkope", "cogs"], "debit")
-                other_income = cat_sum(accounts, ["other income", "ander inkomste", "interest received"], "credit")
-                
-                # EXPENSES (Debit balances)
-                # Get all expense accounts individually for the breakdown
-                expense_accounts = [a for a in accounts if any(kw in str(a.get("category", "")).lower() for kw in ["expense", "uitgawe", "operating"])]
-                
-                salaries = sum(name_match(a, ["salary", "salaries", "wage", "payroll", "salar"]) for a in expense_accounts)
-                rent = sum(name_match(a, ["rent"]) for a in expense_accounts)
-                electricity = sum(name_match(a, ["electric", "water", "eskom", "power", "elektris"]) for a in expense_accounts)
-                water = 0  # Often combined with electricity
-                telephone = sum(name_match(a, ["telephone", "internet", "cell", "mobile", "telkom", "telef"]) for a in expense_accounts)
-                insurance = sum(name_match(a, ["insurance", "verseker"]) for a in expense_accounts)
-                bank_charges = sum(name_match(a, ["bank charge", "bank fee", "bankkoste"]) for a in expense_accounts)
-                fuel = sum(name_match(a, ["fuel", "petrol", "diesel", "transport", "brandstof"]) for a in expense_accounts)
-                repairs = sum(name_match(a, ["repair", "maintenance", "onderhoud"]) for a in expense_accounts)
-                office = sum(name_match(a, ["office", "stationery", "supplies", "kantoor"]) for a in expense_accounts)
-                advertising = sum(name_match(a, ["advertising", "marketing", "promotion", "advertens"]) for a in expense_accounts)
-                professional = sum(name_match(a, ["professional", "accounting", "legal", "audit", "rekenmeest"]) for a in expense_accounts)
-                depreciation = sum(name_match(a, ["depreciation", "waardevermindering"]) for a in expense_accounts)
-                bad_debts = sum(name_match(a, ["bad debt", "doubtful", "slegte skuld"]) for a in expense_accounts)
-                interest_paid = sum(name_match(a, ["interest paid", "interest expense", "finance charge", "rente betaal"]) for a in expense_accounts)
-                
-                # Total expenses from category (more accurate than summing named items)
-                total_expenses_from_cat = cat_net(accounts, ["expense", "uitgawe", "operating"])
-                # Handle credit balance expenses (recoveries) - net them out
-                if total_expenses_from_cat < 0:
-                    total_expenses_from_cat = 0
-                
-                # Sundry = total expenses minus named ones
-                named_expenses = salaries + rent + electricity + water + telephone + insurance + bank_charges + fuel + repairs + office + advertising + professional + depreciation + bad_debts + interest_paid
-                sundry_exp = max(0, total_expenses_from_cat - named_expenses)
-                
-                # BALANCE SHEET from categories
-                # Current Assets
-                bank = 0
-                cash = 0
-                debtors = 0
-                stock = 0
-                prepaid = 0
-                vat_input = 0
-                other_current = 0
-                
-                for a in accounts:
-                    cat = str(a.get("category", "")).lower()
-                    name = str(a.get("name", "")).lower()
-                    dr = float(a.get("debit", 0) or 0)
-                    cr = float(a.get("credit", 0) or 0)
-                    net = dr - cr
-                    
-                    if "current asset" in cat and "non-current" not in cat or "bedryfsbate" in cat and "nie-bedryfs" not in cat:
-                        if any(kw in name for kw in ["bank", "fnb", "standard", "absa", "nedbank", "capitec", "investec"]):
-                            bank += net
-                        elif any(kw in name for kw in ["cash", "petty", "kontant"]):
-                            cash += net
-                        elif any(kw in name for kw in ["debtor", "receivable", "debiteur"]):
-                            debtors += net
-                        elif any(kw in name for kw in ["stock", "inventory", "voorraad", "goods", "finished"]):
-                            stock += net
-                        elif any(kw in name for kw in ["prepaid", "prepayment", "vooruitbetaal"]):
-                            prepaid += net
-                        elif any(kw in name for kw in ["vat input", "input vat", "btw inset"]):
-                            vat_input += net
-                        else:
-                            other_current += net
-                    
-                    elif "fixed asset" in cat or "non-current asset" in cat or "vaste bate" in cat or "nie-bedryfs" in cat:
-                        pass  # Handled below
-                    
-                    elif "current liabilit" in cat and "non-current" not in cat or "bedryfslas" in cat and "nie-bedryfs" not in cat:
-                        pass  # Handled below
-                    
-                # Fixed Assets
-                fixed_assets_cost = 0
-                accum_depr = 0
-                for a in accounts:
-                    cat = str(a.get("category", "")).lower()
-                    name = str(a.get("name", "")).lower()
-                    dr = float(a.get("debit", 0) or 0)
-                    cr = float(a.get("credit", 0) or 0)
-                    
-                    if "fixed asset" in cat or "non-current asset" in cat or "vaste bate" in cat or "nie-bedryfs" in cat:
-                        if any(kw in name for kw in ["accumulated", "acc dep", "accum", "opgehoopte"]):
-                            accum_depr += cr
-                        else:
-                            fixed_assets_cost += dr
-                
-                # Liabilities
-                creditors = 0
-                vat_output = 0
-                paye = 0
-                uif = 0
-                other_liabilities = 0
-                loans = 0
-                
-                for a in accounts:
-                    cat = str(a.get("category", "")).lower()
-                    name = str(a.get("name", "")).lower()
-                    dr = float(a.get("debit", 0) or 0)
-                    cr = float(a.get("credit", 0) or 0)
-                    net_cr = cr - dr  # Liabilities are credit balances
-                    
-                    if "current liabilit" in cat and "non-current" not in cat or "bedryfslas" in cat and "nie-bedryfs" not in cat:
-                        # IMPORTANT: Specific matches FIRST, generic "payable"/"creditor" LAST
-                        # Otherwise "VAT Payable" matches "payable" and lands in creditors
-                        if any(kw in name for kw in ["vat output", "output vat", "vat payable", "btw uitset", "vat control", "vat / tax"]):
-                            vat_output += net_cr
-                        elif "paye" in name or "pay as you earn" in name:
-                            paye += net_cr
-                        elif "uif" in name or "unemployment" in name:
-                            uif += net_cr
-                        elif any(kw in name for kw in ["taxation", "tax payable", "belasting", "sars"]):
-                            other_liabilities += net_cr
-                        elif any(kw in name for kw in ["creditor", "payable", "trade payable", "krediteur"]):
-                            creditors += net_cr
-                        else:
-                            other_liabilities += net_cr
-                    
-                    elif "long term" in cat or "non-current liabilit" in cat or "langtermyn" in cat or "nie-bedryfs" in cat:
-                        loans += net_cr
-                
-                # Equity
-                capital = 0
-                retained = 0
-                drawings = 0
-                reserves = 0
-                
-                for a in accounts:
-                    cat = str(a.get("category", "")).lower()
-                    name = str(a.get("name", "")).lower()
-                    dr = float(a.get("debit", 0) or 0)
-                    cr = float(a.get("credit", 0) or 0)
-                    
-                    if "equity" in cat or "ekwiteit" in cat or "owner" in cat or "eienaar" in cat:
-                        if any(kw in name for kw in ["retained", "opgehoopte", "accumulated profit"]):
-                            retained += cr - dr
-                        elif any(kw in name for kw in ["drawing", "onttrekking"]):
-                            drawings += dr
-                        elif any(kw in name for kw in ["reserve"]):
-                            reserves += cr - dr
-                        else:
-                            capital += cr - dr
-                
-                # Use category-based total for expenses (more accurate)
-                total_expenses = total_expenses_from_cat if total_expenses_from_cat > 0 else named_expenses
-                
-            else:
-                # ═══════════════════════════════════════════════════════════════
-                # CODE-BASED CLASSIFICATION (fallback for files without Category)
-                # Assumes STANDARD chart: 1=Assets, 2=Assets, 3=Liab, 4=Equity, 5=Income, 6+=Expenses
-                # ═══════════════════════════════════════════════════════════════
-                logger.info("[TB ANALYZE] No category column - using CODE-BASED classification (standard chart)")
-                
-                def match_account(acc, codes=None, keywords=None, column="debit"):
-                    """Match account by code prefix or name keywords"""
-                    code = str(acc.get("code", "")).strip()
-                    name = str(acc.get("name", "")).lower()
-                    val = float(acc.get(column, 0) or 0)
-                    
-                    if codes:
-                        for c in codes:
-                            if code.startswith(c):
-                                return val
-                    if keywords:
-                        for kw in keywords:
-                            if kw in name:
-                                return val
-                    return 0
-                
-                # ASSETS (Debit balances)
-                bank = sum(match_account(a, ["1000", "10"], ["bank", "fnb", "standard", "absa", "nedbank", "capitec"]) for a in accounts)
-                cash = sum(match_account(a, ["1050", "1100", "11"], ["cash", "petty", "cash on hand"]) for a in accounts)
-                debtors = sum(match_account(a, ["1200", "12"], ["debtor", "receivable", "trade receivable"]) for a in accounts)
-                stock = sum(match_account(a, ["1300", "13", "14"], ["stock", "inventory", "goods"]) for a in accounts)
-                prepaid = sum(match_account(a, ["1400", "15"], ["prepaid", "prepayment", "advance"]) for a in accounts)
-                vat_input = sum(match_account(a, ["1500", "16"], ["vat input", "input vat", "input tax"]) for a in accounts)
-                other_current = sum(match_account(a, ["17", "18", "19"], []) for a in accounts)
-                
-                fixed_assets_cost = sum(match_account(a, ["2"], ["fixed asset", "equipment", "vehicle", "furniture", "machinery", "property", "building"]) for a in accounts)
-                accum_depr = sum(match_account(a, ["20", "21", "22", "23"], ["accumulated", "acc dep", "accum"], "credit") for a in accounts)
-                
-                # LIABILITIES (Credit balances)
-                creditors = sum(match_account(a, ["3000", "30"], ["creditor", "payable", "trade payable", "supplier"], "credit") for a in accounts)
-                vat_output = sum(match_account(a, ["3100", "31"], ["vat output", "output vat", "output tax"], "credit") for a in accounts)
-                paye = sum(match_account(a, ["3200", "32"], ["paye", "pay as you earn"], "credit") for a in accounts)
-                uif = sum(match_account(a, ["3300", "33"], ["uif", "unemployment"], "credit") for a in accounts)
-                loans = sum(match_account(a, ["3400", "34", "35", "36", "37", "38"], ["loan", "mortgage", "credit card", "overdraft"], "credit") for a in accounts)
-                other_liabilities = sum(match_account(a, ["39"], [], "credit") for a in accounts)
-                
-                # EQUITY (Credit balances)
-                capital = sum(match_account(a, ["4000", "40"], ["capital", "share capital", "owner"], "credit") for a in accounts)
-                retained = sum(match_account(a, ["4100", "41"], ["retained", "accumulated profit"], "credit") for a in accounts)
-                drawings = sum(match_account(a, ["4200", "42"], ["drawing", "distribution"]) for a in accounts)
-                reserves = sum(match_account(a, ["43", "44", "45"], ["reserve"], "credit") for a in accounts)
-                
-                # REVENUE (Credit balances)
-                sales = sum(match_account(a, ["5000", "50"], ["sales", "revenue", "turnover", "income"], "credit") for a in accounts)
-                for a in accounts:
-                    if "return" in str(a.get("name", "")).lower() and str(a.get("code", "")).startswith("5"):
-                        sales -= float(a.get("credit", 0) or 0)
-                
-                sales_returns = sum(match_account(a, ["52"], ["return", "refund"]) for a in accounts)
-                cos = sum(match_account(a, ["5100", "51"], ["cost of sales", "cost of goods", "cogs", "purchases"]) for a in accounts)
-                other_income = sum(match_account(a, ["8"], ["interest received", "discount received", "other income", "sundry income"], "credit") for a in accounts)
-                
-                # EXPENSES (Debit balances)
-                salaries = sum(match_account(a, ["6000", "60"], ["salary", "salaries", "wage", "payroll"]) for a in accounts)
-                rent = sum(match_account(a, ["6100", "61"], ["rent"]) for a in accounts)
-                electricity = sum(match_account(a, ["6200", "62"], ["electric", "eskom", "power"]) for a in accounts)
-                water = sum(match_account(a, ["6300", "63"], ["water", "rates", "municipal"]) for a in accounts)
-                telephone = sum(match_account(a, ["6400", "64"], ["telephone", "internet", "cell", "mobile", "telkom", "vodacom", "mtn"]) for a in accounts)
-                insurance = sum(match_account(a, ["6500", "65"], ["insurance"]) for a in accounts)
-                bank_charges = sum(match_account(a, ["6600", "66"], ["bank charge", "bank fee"]) for a in accounts)
-                fuel = sum(match_account(a, ["6700", "67"], ["fuel", "petrol", "diesel", "transport"]) for a in accounts)
-                repairs = sum(match_account(a, ["6800", "68"], ["repair", "maintenance"]) for a in accounts)
-                office = sum(match_account(a, ["6900", "69"], ["office", "stationery", "supplies"]) for a in accounts)
-                advertising = sum(match_account(a, ["7000", "70"], ["advertising", "marketing", "promotion"]) for a in accounts)
-                professional = sum(match_account(a, ["7100", "71"], ["professional", "accounting", "legal", "audit"]) for a in accounts)
-                depreciation = sum(match_account(a, ["7200", "72"], ["depreciation"]) for a in accounts)
-                bad_debts = sum(match_account(a, ["7300", "73"], ["bad debt", "doubtful"]) for a in accounts)
-                interest_paid = sum(match_account(a, ["7400", "74"], ["interest paid", "interest expense", "finance charge"]) for a in accounts)
-                sundry_exp = sum(match_account(a, ["7500", "75", "76", "77", "78", "79"], ["sundry", "other expense", "miscellaneous"]) for a in accounts)
-                
-                total_expenses = salaries + rent + electricity + water + telephone + insurance + bank_charges + fuel + repairs + office + advertising + professional + depreciation + bad_debts + interest_paid + sundry_exp
-            # Step 3: Calculate totals
-            current_assets = bank + cash + debtors + stock + prepaid + vat_input + other_current
-            fixed_assets_net = fixed_assets_cost - accum_depr
-            total_assets = current_assets + fixed_assets_net
-            
-            current_liabilities = creditors + vat_output + paye + uif + other_liabilities
-            long_term_liabilities = loans
-            total_liabilities = current_liabilities + long_term_liabilities
-            
-            total_equity = capital + retained + reserves - drawings
-            
-            net_sales = sales - sales_returns
-            total_income = net_sales + other_income
-            
-            total_expenses = salaries + rent + electricity + water + telephone + insurance + bank_charges + fuel + repairs + office + advertising + professional + depreciation + bad_debts + interest_paid + sundry_exp
-            
-            gross_profit = net_sales - cos
-            net_profit = total_income - cos - total_expenses
-            
-            # Step 4: Calculate ratios (with safe division)
-            gp_margin = round((gross_profit / net_sales * 100), 1) if net_sales > 0 else 0
-            np_margin = round((net_profit / total_income * 100), 1) if total_income > 0 else 0
-            current_ratio = round(current_assets / current_liabilities, 2) if current_liabilities > 0 else 0
-            quick_ratio = round((current_assets - stock) / current_liabilities, 2) if current_liabilities > 0 else 0
-            debt_equity = round(total_liabilities / total_equity, 2) if total_equity > 0 else 0
-            
-            vat_position = vat_output - vat_input
-            
-            debtor_days = round((debtors / net_sales * 365), 0) if net_sales > 0 else 0
-            creditor_days = round((creditors / cos * 365), 0) if cos > 0 else 0
-            stock_days = round((stock / cos * 365), 0) if cos > 0 else 0
-            
-            salaries_pct = round((salaries / net_sales * 100), 1) if net_sales > 0 else 0
-            rent_pct = round((rent / net_sales * 100), 1) if net_sales > 0 else 0
-            
-            # Log all calculations for verification
-            logger.info(f"[TB ANALYZE] Assets: Current={current_assets:.2f}, Fixed={fixed_assets_net:.2f}, Total={total_assets:.2f}")
-            logger.info(f"[TB ANALYZE] Liab: Current={current_liabilities:.2f}, LT={long_term_liabilities:.2f}, Total={total_liabilities:.2f}")
-            logger.info(f"[TB ANALYZE] Equity: {total_equity:.2f}")
-            logger.info(f"[TB ANALYZE] P&L: Sales={net_sales:.2f}, COS={cos:.2f}, GP={gross_profit:.2f}, Exp={total_expenses:.2f}, NP={net_profit:.2f}")
-            
-            # ═══════════════════════════════════════════════════════════════════════
-            # VALIDATION: Compare our calculation to TB's own control figure
-            # ═══════════════════════════════════════════════════════════════════════
-            tb_control_profit = data.get("tb_control_profit")
-            validation_ok = True
-            validation_warning = ""
-            
-            if tb_control_profit is not None:
-                try:
-                    control = float(tb_control_profit)
-                    diff = abs(net_profit - control)
-                    pct_diff = (diff / abs(control) * 100) if control != 0 else 0
-                    
-                    logger.info(f"[TB VALIDATE] Our net profit: R{net_profit:,.2f} | TB control: R{control:,.2f} | Diff: R{diff:,.2f} ({pct_diff:.1f}%)")
-                    
-                    if diff < 1.0:
-                        # Perfect match
-                        logger.info("[TB VALIDATE] ✅ PERFECT MATCH - our calculation matches TB control figure")
-                        validation_warning = ""
-                    elif pct_diff < 5:
-                        # Close enough - rounding differences
-                        logger.info(f"[TB VALIDATE] ✅ Close match - {pct_diff:.1f}% difference (likely rounding)")
-                        validation_warning = ""
-                    else:
-                        # Significant difference - WARN
-                        validation_ok = False
-                        logger.warning(f"[TB VALIDATE] ⚠️ MISMATCH - {pct_diff:.1f}% difference!")
-                        if lang == "af":
-                            validation_warning = f'''
-                            <div style="background:rgba(239,68,68,0.15);border:2px solid #ef4444;border-radius:10px;padding:20px;margin:15px 0;">
-                                <h3 style="color:#ef4444;margin:0 0 10px 0;">⚠️ WAARSKUWING: Syfers Klop Nie</h3>
-                                <p style="margin:5px 0;">Ons berekening van netto wins (<strong>R {net_profit:,.2f}</strong>) verskil van die proefbalans se eie syfer (<strong>R {control:,.2f}</strong>) met <strong>R {diff:,.2f}</strong> ({pct_diff:.1f}%).</p>
-                                <p style="margin:5px 0;color:var(--text-muted);">Dit kan beteken dat sommige rekeninge verkeerd geklassifiseer is. Kontroleer die data voor u op hierdie report staatmaak.</p>
-                            </div>'''
-                        else:
-                            validation_warning = f'''
-                            <div style="background:rgba(239,68,68,0.15);border:2px solid #ef4444;border-radius:10px;padding:20px;margin:15px 0;">
-                                <h3 style="color:#ef4444;margin:0 0 10px 0;">⚠️ WARNING: Numbers Don't Match</h3>
-                                <p style="margin:5px 0;">Our calculated net profit (<strong>R {net_profit:,.2f}</strong>) differs from the trial balance's own figure (<strong>R {control:,.2f}</strong>) by <strong>R {diff:,.2f}</strong> ({pct_diff:.1f}%).</p>
-                                <p style="margin:5px 0;color:var(--text-muted);">This may indicate some accounts were incorrectly classified. Please verify the data before relying on this report.</p>
-                            </div>'''
-                except (ValueError, TypeError) as e:
-                    logger.warning(f"[TB VALIDATE] Could not parse control figure: {e}")
-            
-            # Build confidence indicator
-            if has_categories:
-                if validation_ok:
-                    confidence_html = '<div style="background:rgba(16,185,129,0.15);border:1px solid #10b981;border-radius:8px;padding:10px 15px;margin:10px 0;font-size:13px;">✅ <strong>High Confidence</strong> - Category column detected, control figure matches. Data classification verified.</div>'
-                else:
-                    confidence_html = '<div style="background:rgba(245,158,11,0.15);border:1px solid #f59e0b;border-radius:8px;padding:10px 15px;margin:10px 0;font-size:13px;">⚠️ <strong>Review Required</strong> - Category column detected but control figure mismatch. Some accounts may be misclassified.</div>'
-            else:
-                confidence_html = '<div style="background:rgba(245,158,11,0.15);border:1px solid #f59e0b;border-radius:8px;padding:10px 15px;margin:10px 0;font-size:13px;">⚠️ <strong>Medium Confidence</strong> - No category column found. Accounts classified by code patterns. Please verify the numbers.</div>'
-            
-            # ═══════════════════════════════════════════════════════════════════════
-            # BUILD REPORT - PYTHON GENERATES ALL NUMBERS IN HTML
-            # ═══════════════════════════════════════════════════════════════════════
-            
-            # Status indicators
-            def status(value, good_min, warn_min=None, higher_is_better=True):
-                if higher_is_better:
-                    if value >= good_min:
-                        return "✅ GOOD"
-                    elif warn_min and value >= warn_min:
-                        return "⚠️ CONCERN"
-                    else:
-                        return "🔴 CRITICAL"
-                else:  # Lower is better
-                    if value <= good_min:
-                        return "✅ GOOD"
-                    elif warn_min and value <= warn_min:
-                        return "⚠️ CONCERN"
-                    else:
-                        return "🔴 CRITICAL"
-            
-            current_status = status(current_ratio, 1.5, 1.0)
-            quick_status = status(quick_ratio, 1.0, 0.7)
-            debt_status = status(debt_equity, 1.5, 2.5, False)
-            debtor_status = status(debtor_days, 45, 60, False)
-            gp_status = status(gp_margin, 30, 20)
-            np_status = status(np_margin, 5, 2)
-            
-            # Build the complete report HTML with all Python-calculated values
-            # Using language labels (L) for bilingual support
-            report_html = f"""
-    <h2 style="color:#8b5cf6;border-bottom:2px solid #8b5cf6;padding-bottom:10px;">📊 {L["report_title"]}</h2>
-    <p><strong>{L["company"]}:</strong> {safe_string(report_company)} | <strong>{L["date"]}:</strong> {today()} | <strong>{L["prepared_by"]}:</strong> Zane, ClickAI</p>
-    
-    {validation_warning}
-    {confidence_html}
-    
-    <hr style="border:none;border-top:1px solid rgba(255,255,255,0.2);margin:20px 0;">
-    
-    <h3 style="color:#10b981;">{L["balance_status"]}</h3>
-    <table style="width:100%;border-collapse:collapse;margin:15px 0;">
-    <tr><td style="padding:8px;border:1px solid rgba(255,255,255,0.1);width:200px;"><strong>{L["total_debits"]}:</strong></td><td style="padding:8px;border:1px solid rgba(255,255,255,0.1);text-align:right;font-family:monospace;">R {total_debit:,.2f}</td></tr>
-    <tr><td style="padding:8px;border:1px solid rgba(255,255,255,0.1);"><strong>{L["total_credits"]}:</strong></td><td style="padding:8px;border:1px solid rgba(255,255,255,0.1);text-align:right;font-family:monospace;">R {total_credit:,.2f}</td></tr>
-    <tr style="background:{'rgba(16,185,129,0.2)' if is_balanced else 'rgba(239,68,68,0.2)'};">
-    <td style="padding:8px;border:1px solid rgba(255,255,255,0.1);"><strong>{L["difference"]}:</strong></td>
-    <td style="padding:8px;border:1px solid rgba(255,255,255,0.1);text-align:right;font-family:monospace;">R {difference:,.2f} {'✅ ' + L["balanced"] if is_balanced else '❌ ' + L["unbalanced"]}</td></tr>
-    </table>
-    
-    {f'<div style="background:rgba(239,68,68,0.2);border:1px solid #ef4444;padding:15px;border-radius:8px;margin:15px 0;"><strong>🚨 ' + L["critical_error"] + ':</strong> ' + L["tb_not_balanced"] + f' R {difference:,.2f} ' + L["difference_text"] + '</div>' if not is_balanced else ''}
-    
-    <hr style="border:none;border-top:1px solid rgba(255,255,255,0.2);margin:20px 0;">
-    
-    <h3 style="color:#10b981;">{L["balance_sheet_summary"]}</h3>
-    
-    <div style="display:grid;grid-template-columns:1fr 1fr;gap:20px;">
-    <div>
-    <h4 style="color:#6366f1;">{L["assets"]}</h4>
-    <table style="width:100%;border-collapse:collapse;font-size:13px;">
-    <tr style="background:rgba(99,102,241,0.1);"><td colspan="2" style="padding:6px;"><strong>{L["current_assets"]}</strong></td></tr>
-    <tr><td style="padding:4px 8px;">{L["bank_cash"]}</td><td style="text-align:right;font-family:monospace;">R {bank + cash:,.2f}</td></tr>
-    <tr><td style="padding:4px 8px;">{L["debtors"]}</td><td style="text-align:right;font-family:monospace;">R {debtors:,.2f}</td></tr>
-    <tr><td style="padding:4px 8px;">{L["inventory"]}</td><td style="text-align:right;font-family:monospace;">R {stock:,.2f}</td></tr>
-    <tr><td style="padding:4px 8px;">{L["vat_input"]}</td><td style="text-align:right;font-family:monospace;">R {vat_input:,.2f}</td></tr>
-    <tr><td style="padding:4px 8px;">{L["prepayments"]}</td><td style="text-align:right;font-family:monospace;">R {prepaid:,.2f}</td></tr>
-    <tr style="background:rgba(99,102,241,0.2);"><td style="padding:6px;"><strong>{L["total_current_assets"]}</strong></td><td style="text-align:right;font-family:monospace;"><strong>R {current_assets:,.2f}</strong></td></tr>
-    
-    <tr style="background:rgba(99,102,241,0.1);"><td colspan="2" style="padding:6px;"><strong>{L["fixed_assets"]}</strong></td></tr>
-    <tr><td style="padding:4px 8px;">{L["cost"]}</td><td style="text-align:right;font-family:monospace;">R {fixed_assets_cost:,.2f}</td></tr>
-    <tr><td style="padding:4px 8px;">{L["less_accum_depr"]}</td><td style="text-align:right;font-family:monospace;">(R {accum_depr:,.2f})</td></tr>
-    <tr style="background:rgba(99,102,241,0.2);"><td style="padding:6px;"><strong>{L["net_fixed_assets"]}</strong></td><td style="text-align:right;font-family:monospace;"><strong>R {fixed_assets_net:,.2f}</strong></td></tr>
-    
-    <tr style="background:rgba(16,185,129,0.3);"><td style="padding:8px;"><strong>{L["total_assets"]}</strong></td><td style="text-align:right;font-family:monospace;"><strong>R {total_assets:,.2f}</strong></td></tr>
-    </table>
-    </div>
-    
-    <div>
-    <h4 style="color:#6366f1;">{L["liab_equity"]}</h4>
-    <table style="width:100%;border-collapse:collapse;font-size:13px;">
-    <tr style="background:rgba(239,68,68,0.1);"><td colspan="2" style="padding:6px;"><strong>{L["current_liabilities"]}</strong></td></tr>
-    <tr><td style="padding:4px 8px;">{L["creditors"]}</td><td style="text-align:right;font-family:monospace;">R {creditors:,.2f}</td></tr>
-    <tr><td style="padding:4px 8px;">{L["vat_output"]}</td><td style="text-align:right;font-family:monospace;">R {vat_output:,.2f}</td></tr>
-    <tr><td style="padding:4px 8px;">{L["paye_payable"]}</td><td style="text-align:right;font-family:monospace;">R {paye:,.2f}</td></tr>
-    <tr><td style="padding:4px 8px;">{L["uif_payable"]}</td><td style="text-align:right;font-family:monospace;">R {uif:,.2f}</td></tr>
-    <tr style="background:rgba(239,68,68,0.2);"><td style="padding:6px;"><strong>{L["total_current_liab"]}</strong></td><td style="text-align:right;font-family:monospace;"><strong>R {current_liabilities:,.2f}</strong></td></tr>
-    
-    <tr style="background:rgba(239,68,68,0.1);"><td colspan="2" style="padding:6px;"><strong>{L["long_term_liab"]}</strong></td></tr>
-    <tr><td style="padding:4px 8px;">{L["loans"]}</td><td style="text-align:right;font-family:monospace;">R {loans:,.2f}</td></tr>
-    <tr style="background:rgba(239,68,68,0.2);"><td style="padding:6px;"><strong>{L["total_liabilities"]}</strong></td><td style="text-align:right;font-family:monospace;"><strong>R {total_liabilities:,.2f}</strong></td></tr>
-    
-    <tr style="background:rgba(139,92,246,0.1);"><td colspan="2" style="padding:6px;"><strong>{L["equity"]}</strong></td></tr>
-    <tr><td style="padding:4px 8px;">{L["capital"]}</td><td style="text-align:right;font-family:monospace;">R {capital:,.2f}</td></tr>
-    <tr><td style="padding:4px 8px;">{L["retained_earnings"]}</td><td style="text-align:right;font-family:monospace;">R {retained:,.2f}</td></tr>
-    <tr><td style="padding:4px 8px;">{L["less_drawings"]}</td><td style="text-align:right;font-family:monospace;">(R {drawings:,.2f})</td></tr>
-    <tr><td style="padding:4px 8px;font-style:italic;">{"Netto Wins/Verlies" if lang == "af" else "Net Profit/Loss"}</td><td style="text-align:right;font-family:monospace;font-style:italic;">R {net_profit:,.2f}</td></tr>
-    <tr style="background:rgba(139,92,246,0.2);"><td style="padding:6px;"><strong>{L["total_equity"]}</strong></td><td style="text-align:right;font-family:monospace;"><strong>R {total_equity + net_profit:,.2f}</strong></td></tr>
-    
-    <tr style="background:rgba(16,185,129,0.3);"><td style="padding:8px;"><strong>{L["liab_plus_equity"]}</strong></td><td style="text-align:right;font-family:monospace;"><strong>R {total_liabilities + total_equity + net_profit:,.2f}</strong></td></tr>
-    </table>
-    </div>
-    </div>
-    
-    <hr style="border:none;border-top:1px solid rgba(255,255,255,0.2);margin:20px 0;">
-    
-    <h3 style="color:#10b981;">{L["income_statement"]}</h3>
-    <table style="width:100%;max-width:500px;border-collapse:collapse;">
-    <tr><td style="padding:8px;">{L["sales"]}</td><td style="text-align:right;font-family:monospace;">R {sales:,.2f}</td></tr>
-    <tr><td style="padding:8px;">{L["less_returns"]}</td><td style="text-align:right;font-family:monospace;">(R {sales_returns:,.2f})</td></tr>
-    <tr style="border-top:1px solid rgba(255,255,255,0.2);"><td style="padding:8px;"><strong>{L["net_sales"]}</strong></td><td style="text-align:right;font-family:monospace;"><strong>R {net_sales:,.2f}</strong></td></tr>
-    <tr><td style="padding:8px;">{L["less_cos"]}</td><td style="text-align:right;font-family:monospace;">(R {cos:,.2f})</td></tr>
-    <tr style="background:rgba(16,185,129,0.2);border-top:1px solid rgba(255,255,255,0.2);"><td style="padding:8px;"><strong>{L["gross_profit"]}</strong></td><td style="text-align:right;font-family:monospace;"><strong>R {gross_profit:,.2f}</strong> ({gp_margin}%)</td></tr>
-    <tr><td style="padding:8px;">{L["plus_other_income"]}</td><td style="text-align:right;font-family:monospace;">R {other_income:,.2f}</td></tr>
-    <tr><td style="padding:8px;">{L["less_operating_exp"]}</td><td style="text-align:right;font-family:monospace;">(R {total_expenses:,.2f})</td></tr>
-    <tr style="background:{'rgba(16,185,129,0.3)' if net_profit >= 0 else 'rgba(239,68,68,0.3)'};border-top:2px solid rgba(255,255,255,0.3);"><td style="padding:10px;"><strong>{L["net_profit"]}</strong></td><td style="text-align:right;font-family:monospace;font-size:16px;"><strong>R {net_profit:,.2f}</strong> ({np_margin}%)</td></tr>
-    </table>
-    
-    <hr style="border:none;border-top:1px solid rgba(255,255,255,0.2);margin:20px 0;">
-    
-    <h3 style="color:#10b981;">{L["financial_ratios"]}</h3>
-    <table style="width:100%;border-collapse:collapse;">
-    <tr style="background:rgba(99,102,241,0.2);"><th style="padding:10px;text-align:left;">{L["ratio"]}</th><th style="text-align:right;">{L["value"]}</th><th style="text-align:center;">{L["status"]}</th><th style="text-align:right;">{L["norm"]}</th></tr>
-    <tr><td style="padding:8px;border-bottom:1px solid rgba(255,255,255,0.1);">{L["current_ratio"]}</td><td style="text-align:right;font-family:monospace;">{current_ratio:.2f}:1</td><td style="text-align:center;">{current_status}</td><td style="text-align:right;">&gt;1.5:1</td></tr>
-    <tr><td style="padding:8px;border-bottom:1px solid rgba(255,255,255,0.1);">{L["quick_ratio"]}</td><td style="text-align:right;font-family:monospace;">{quick_ratio:.2f}:1</td><td style="text-align:center;">{quick_status}</td><td style="text-align:right;">&gt;1.0:1</td></tr>
-    <tr><td style="padding:8px;border-bottom:1px solid rgba(255,255,255,0.1);">{L["debt_equity"]}</td><td style="text-align:right;font-family:monospace;">{debt_equity:.2f}:1</td><td style="text-align:center;">{debt_status}</td><td style="text-align:right;">&lt;1.5:1</td></tr>
-    <tr><td style="padding:8px;border-bottom:1px solid rgba(255,255,255,0.1);">{L["gp_margin"]}</td><td style="text-align:right;font-family:monospace;">{gp_margin}%</td><td style="text-align:center;">{gp_status}</td><td style="text-align:right;">&gt;30%</td></tr>
-    <tr><td style="padding:8px;border-bottom:1px solid rgba(255,255,255,0.1);">{L["np_margin"]}</td><td style="text-align:right;font-family:monospace;">{np_margin}%</td><td style="text-align:center;">{np_status}</td><td style="text-align:right;">&gt;5%</td></tr>
-    <tr><td style="padding:8px;border-bottom:1px solid rgba(255,255,255,0.1);">{L["debtor_days"]}</td><td style="text-align:right;font-family:monospace;">{debtor_days:.0f} {L["days"]}</td><td style="text-align:center;">{debtor_status}</td><td style="text-align:right;">30-45 {L["days"]}</td></tr>
-    <tr><td style="padding:8px;border-bottom:1px solid rgba(255,255,255,0.1);">{L["creditor_days"]}</td><td style="text-align:right;font-family:monospace;">{creditor_days:.0f} {L["days"]}</td><td style="text-align:center;">ℹ️</td><td style="text-align:right;">30-60 {L["days"]}</td></tr>
-    <tr><td style="padding:8px;border-bottom:1px solid rgba(255,255,255,0.1);">{L["stock_days"]}</td><td style="text-align:right;font-family:monospace;">{stock_days:.0f} {L["days"]}</td><td style="text-align:center;">ℹ️</td><td style="text-align:right;">{L["industry"]}</td></tr>
-    </table>
-    
-    <hr style="border:none;border-top:1px solid rgba(255,255,255,0.2);margin:20px 0;">
-    
-    <h3 style="color:#10b981;">{L["sars_obligations"]}</h3>
-    <table style="width:100%;max-width:500px;border-collapse:collapse;">
-    <tr style="background:rgba(245,158,11,0.2);"><td colspan="2" style="padding:10px;"><strong>{L["vat_position"]}</strong></td></tr>
-    <tr><td style="padding:8px;">{L["vat_collected"]}</td><td style="text-align:right;font-family:monospace;">R {vat_output:,.2f}</td></tr>
-    <tr><td style="padding:8px;">{L["vat_paid"]}</td><td style="text-align:right;font-family:monospace;">(R {vat_input:,.2f})</td></tr>
-    <tr style="background:{'rgba(239,68,68,0.2)' if vat_position > 0 else 'rgba(16,185,129,0.2)'};"><td style="padding:10px;"><strong>{L["vat_payable"] if vat_position > 0 else L["vat_refund"]}</strong></td><td style="text-align:right;font-family:monospace;"><strong>R {abs(vat_position):,.2f}</strong></td></tr>
-    </table>
-    
-    <table style="width:100%;max-width:500px;border-collapse:collapse;margin-top:15px;">
-    <tr style="background:rgba(245,158,11,0.2);"><td colspan="2" style="padding:10px;"><strong>{L["employee_taxes"]}</strong></td></tr>
-    <tr><td style="padding:8px;">{L["paye_payable"]}</td><td style="text-align:right;font-family:monospace;">R {paye:,.2f}</td></tr>
-    <tr><td style="padding:8px;">{L["uif_payable"]}</td><td style="text-align:right;font-family:monospace;">R {uif:,.2f}</td></tr>
-    <tr style="background:rgba(245,158,11,0.3);"><td style="padding:10px;"><strong>{L["total_emp201"]}</strong></td><td style="text-align:right;font-family:monospace;"><strong>R {paye + uif:,.2f}</strong></td></tr>
-    </table>
-    
-    <hr style="border:none;border-top:1px solid rgba(255,255,255,0.2);margin:20px 0;">
-    
-    <h3 style="color:#10b981;">{L["expense_analysis"]}</h3>
-    <table style="width:100%;border-collapse:collapse;">
-    <tr style="background:rgba(99,102,241,0.2);"><th style="padding:8px;text-align:left;">{L["expense"]}</th><th style="text-align:right;">{L["amount"]}</th><th style="text-align:right;">{L["pct_of_sales"]}</th></tr>
-    <tr><td style="padding:6px;border-bottom:1px solid rgba(255,255,255,0.1);">{L["salaries_wages"]}</td><td style="text-align:right;font-family:monospace;">R {salaries:,.2f}</td><td style="text-align:right;">{salaries_pct}%</td></tr>
-    <tr><td style="padding:6px;border-bottom:1px solid rgba(255,255,255,0.1);">{L["rent"]}</td><td style="text-align:right;font-family:monospace;">R {rent:,.2f}</td><td style="text-align:right;">{rent_pct}%</td></tr>
-    <tr><td style="padding:6px;border-bottom:1px solid rgba(255,255,255,0.1);">{L["electricity"]}</td><td style="text-align:right;font-family:monospace;">R {electricity:,.2f}</td><td style="text-align:right;">{round(electricity/net_sales*100,1) if net_sales else 0}%</td></tr>
-    <tr><td style="padding:6px;border-bottom:1px solid rgba(255,255,255,0.1);">{L["depreciation"]}</td><td style="text-align:right;font-family:monospace;">R {depreciation:,.2f}</td><td style="text-align:right;">{round(depreciation/net_sales*100,1) if net_sales else 0}%</td></tr>
-    <tr><td style="padding:6px;border-bottom:1px solid rgba(255,255,255,0.1);">{L["fuel_transport"]}</td><td style="text-align:right;font-family:monospace;">R {fuel:,.2f}</td><td style="text-align:right;">{round(fuel/net_sales*100,1) if net_sales else 0}%</td></tr>
-    <tr><td style="padding:6px;border-bottom:1px solid rgba(255,255,255,0.1);">{L["advertising"]}</td><td style="text-align:right;font-family:monospace;">R {advertising:,.2f}</td><td style="text-align:right;">{round(advertising/net_sales*100,1) if net_sales else 0}%</td></tr>
-    <tr><td style="padding:6px;border-bottom:1px solid rgba(255,255,255,0.1);">{L["professional_fees"]}</td><td style="text-align:right;font-family:monospace;">R {professional:,.2f}</td><td style="text-align:right;">{round(professional/net_sales*100,1) if net_sales else 0}%</td></tr>
-    <tr><td style="padding:6px;border-bottom:1px solid rgba(255,255,255,0.1);">{L["interest_paid"]}</td><td style="text-align:right;font-family:monospace;">R {interest_paid:,.2f}</td><td style="text-align:right;">{round(interest_paid/net_sales*100,1) if net_sales else 0}%</td></tr>
-    <tr><td style="padding:6px;border-bottom:1px solid rgba(255,255,255,0.1);">{L["other_expenses"]}</td><td style="text-align:right;font-family:monospace;">R {insurance + bank_charges + repairs + office + water + telephone + bad_debts + sundry_exp:,.2f}</td><td style="text-align:right;">-</td></tr>
-    <tr style="background:rgba(99,102,241,0.3);"><td style="padding:8px;"><strong>{L["total_expenses"]}</strong></td><td style="text-align:right;font-family:monospace;"><strong>R {total_expenses:,.2f}</strong></td><td style="text-align:right;"><strong>{round(total_expenses/net_sales*100,1) if net_sales else 0}%</strong></td></tr>
-    </table>
-    
-    <hr style="border:none;border-top:1px solid rgba(255,255,255,0.2);margin:20px 0;">
-    
-    <div id="aiInsights" style="background:linear-gradient(135deg, rgba(139,92,246,0.08) 0%, rgba(16,185,129,0.06) 100%);border:1px solid rgba(139,92,246,0.25);border-radius:12px;padding:20px 25px;margin-top:25px;">
-    <h3 style="color:#8b5cf6;margin-top:0;margin-bottom:15px;font-size:18px;">🤖 {L["zane_insight"]}</h3>
-    <div id="aiInsightsContent" style="min-height:100px;color:rgba(255,255,255,0.9);font-size:14px;line-height:1.7;">
-    <p style="color:var(--text-muted);">{L["loading_insight"]}</p>
-    </div>
-    </div>
-    
-    <hr style="border:none;border-top:1px solid rgba(255,255,255,0.2);margin:20px 0;">
-    
-    <p style="color:var(--text-muted);font-size:11px;text-align:center;">
-    {L["calculations_by"]}: {today()} {now()[11:16]}
-    </p>
-    """
-            
-            # ═══════════════════════════════════════════════════════════════════════
-            # SONNET GIVES INSIGHTS ONLY - PYTHON DID ALL THE MATH
-            # ═══════════════════════════════════════════════════════════════════════
-            
-            # Build red flags list based on Python calculations - using language labels
-            red_flags = []
-            if not is_balanced:
-                red_flags.append(f"🔴 {L['critical']}: " + L["tb_not_bal_flag"].format(diff=f"{difference:,.2f}"))
-            if current_ratio < 1.0:
-                red_flags.append(f"🔴 {L['critical']}: " + L["current_ratio_crit"].format(ratio=f"{current_ratio:.2f}"))
-            elif current_ratio < 1.5:
-                red_flags.append(f"🟠 {L['warning']}: " + L["current_ratio_warn"].format(ratio=f"{current_ratio:.2f}"))
-            if quick_ratio < 0.7:
-                red_flags.append(f"🔴 {L['critical']}: " + L["quick_ratio_crit"].format(ratio=f"{quick_ratio:.2f}"))
-            if debtor_days > 60:
-                red_flags.append(f"🟠 {L['warning']}: " + L["debtor_days_warn"].format(days=f"{debtor_days:.0f}"))
-            elif debtor_days > 45:
-                red_flags.append(f"🟡 {L['monitor']}: " + L["debtor_days_mon"].format(days=f"{debtor_days:.0f}"))
-            if stock_days > 120:
-                red_flags.append(f"🟠 {L['warning']}: " + L["stock_days_warn"].format(days=f"{stock_days:.0f}"))
-            if gp_margin < 20:
-                red_flags.append(f"🔴 {L['critical']}: " + L["gp_margin_crit"].format(pct=gp_margin))
-            elif gp_margin < 30:
-                red_flags.append(f"🟠 {L['warning']}: " + L["gp_margin_warn"].format(pct=gp_margin))
-            if np_margin < 0:
-                red_flags.append(f"🔴 {L['critical']}: " + L["making_loss"].format(amount=f"{abs(net_profit):,.2f}"))
-            elif np_margin < 3:
-                red_flags.append(f"🟠 {L['warning']}: " + L["np_margin_warn"].format(pct=np_margin))
-            if debt_equity > 2:
-                red_flags.append(f"🟠 {L['warning']}: " + L["debt_equity_warn"].format(ratio=f"{debt_equity:.2f}"))
-            if vat_position > 50000:
-                red_flags.append(f"🟡 {L['monitor']}: " + L["vat_payable_mon"].format(amount=f"{vat_position:,.2f}"))
-            if salaries_pct > 40:
-                red_flags.append(f"🟠 {L['warning']}: " + L["salaries_warn"].format(pct=salaries_pct))
-            if paye + uif > 20000:
-                red_flags.append(f"🟡 {L['monitor']}: " + L["paye_uif_mon"].format(amount=f"{paye+uif:,.2f}"))
-            
-            # Build the red flags HTML
-            red_flags_html = ""
-            if red_flags:
-                red_flags_html = f"<h3 style='color:#ef4444;margin-top:20px;'>⚠️ {L['red_flags']}</h3><div style='background:rgba(239,68,68,0.1);border:1px solid rgba(239,68,68,0.3);border-radius:8px;padding:15px;'>"
-                for flag in red_flags:
-                    red_flags_html += f"<div style='margin:8px 0;'>{flag}</div>"
-                red_flags_html += "</div>"
-            else:
-                red_flags_html = f"<h3 style='color:#10b981;margin-top:20px;'>✅ {L['no_critical']}</h3><p>{L['all_ratios_ok']}</p>"
-            
-            # Add red flags to report
-            report_html = report_html.replace(
-                '<div id="aiInsights"',
-                red_flags_html + '\n\n<div id="aiInsights"'
-            )
-            
-            # ═══════════════════════════════════════════════════════════════════════
-            # BUILD FULL ACCOUNT LIST FOR SONNET - DETAILED ANALYSIS
-            # ═══════════════════════════════════════════════════════════════════════
-            
-            # Build a detailed account listing for AI analysis - using language labels
-            accounts_text = f"{L['acc_list_title']}\n"
-            accounts_text += "=" * 80 + "\n"
-            accounts_text += f"{L['acc_code']:<10} {L['acc_name']:<40} {L['debit']:>15} {L['credit']:>15}\n"
-            accounts_text += "-" * 80 + "\n"
-            
-            # Group accounts by CATEGORY (not by code - codes differ per accounting system!)
-            asset_accounts = []
-            liability_accounts = []
-            equity_accounts = []
-            income_accounts = []
-            expense_accounts = []
-            unclassified = []
-            
-            for acc in accounts:
-                code = str(acc.get("code", "")).strip()
-                name = str(acc.get("name", "")).strip()
-                cat = str(acc.get("category", "")).lower()
-                dr = float(acc.get("debit", 0) or 0)
-                cr = float(acc.get("credit", 0) or 0)
-                
-                line = f"{code:<10} {name[:40]:<40} R{dr:>13,.2f} R{cr:>13,.2f}"
-                
-                # Classify by CATEGORY first, fallback to code
-                if cat:
-                    if any(kw in cat for kw in ["sales", "revenue", "other income", "income", "omset", "inkomste"]):
-                        income_accounts.append(line)
-                    elif any(kw in cat for kw in ["cost of sale", "cogs", "koste van verkope"]):
-                        expense_accounts.append(line)  # COS goes with expenses for display
-                    elif any(kw in cat for kw in ["expense", "uitgawe", "operating"]):
-                        expense_accounts.append(line)
-                    elif any(kw in cat for kw in ["current asset", "non-current asset", "fixed asset", "bate"]):
-                        asset_accounts.append(line)
-                    elif any(kw in cat for kw in ["current liabilit", "non-current liabilit", "long term", "laste"]):
-                        liability_accounts.append(line)
-                    elif any(kw in cat for kw in ["equity", "owner", "ekwiteit", "eienaar"]):
-                        equity_accounts.append(line)
-                    else:
-                        unclassified.append(line)
-                else:
-                    # Fallback to code-based (standard chart only)
-                    if code.startswith(("1", "2")):
-                        asset_accounts.append(line)
-                    elif code.startswith("3"):
-                        liability_accounts.append(line)
-                    elif code.startswith("4"):
-                        equity_accounts.append(line)
-                    elif code.startswith("5"):
-                        income_accounts.append(line)
-                    elif code.startswith(("6", "7", "8", "9")):
-                        expense_accounts.append(line)
-                    else:
-                        unclassified.append(line)
-            
-            accounts_text += f"\n📊 {L['assets_codes']}\n"
-            accounts_text += "\n".join(asset_accounts) if asset_accounts else f"  {L['no_asset_acc']}\n"
-            
-            accounts_text += f"\n\n💳 {L['liab_codes']}\n"
-            accounts_text += "\n".join(liability_accounts) if liability_accounts else f"  {L['no_liab_acc']}\n"
-            
-            accounts_text += f"\n\n🏛️ {L['equity_codes']}\n"
-            accounts_text += "\n".join(equity_accounts) if equity_accounts else f"  {L['no_equity_acc']}\n"
-            
-            accounts_text += f"\n\n💰 {L['income_codes']}\n"
-            accounts_text += "\n".join(income_accounts) if income_accounts else f"  {L['no_income_acc']}\n"
-            
-            accounts_text += f"\n\n📉 {L['expense_codes']}\n"
-            accounts_text += "\n".join(expense_accounts) if expense_accounts else f"  {L['no_expense_acc']}\n"
-            
-            if unclassified:
-                accounts_text += f"\n\n⚠️ {L['unclassified']}\n"
-                accounts_text += "\n".join(unclassified)
-            
-            accounts_text += "\n" + "=" * 80
-            accounts_text += f"\nTOTAL: {len(accounts)} accounts | Debits: R{total_debit:,.2f} | Credits: R{total_credit:,.2f}"
-            
-            # Build comprehensive prompt with ALL data - language based on user selection
-            if lang == "af":
-                # Afrikaans prompt
-                af_third_party = ""
-                if is_third_party:
-                    af_third_party = f"""
-    BELANGRIKE KONTEKS: Hierdie is 'n DERDE PARTY kliënt se proefbalans wat opgelaai is vir analise.
-    Dit is NIE {biz_name} se eie data nie. MOENIE na {biz_name} verwys in jou analise nie.
-    Analiseer dit as 'n onafhanklike kliënt se finansiële data.
-    """
-                insights_prompt = f"""Jy is Zane, ClickAI se senior finansiële analis met 20 jaar ondervinding. Jy ontvang nou 'n VOLLEDIGE proefbalans om te analiseer.
-    Jou naam is net "Zane" - MOENIE 'n van gebruik nie. Teken reports as "Zane, ClickAI" alleen.
-    
-    BESIGHEID: {safe_string(report_company)}
-    INDUSTRIE: {industry}
-    DATUM: {today()}
-    {af_third_party}
-    
-    {accounts_text}
-    
-    PYTHON-BEREKENDE OPSOMMING (100% akkuraat - moenie herbereken nie):
-    
-    BALANS STATUS:
-    - Totale Debits: R {total_debit:,.2f}
-    - Totale Kredits: R {total_credit:,.2f}
-    - Verskil: R {difference:,.2f}
-    - Status: {'GEBALANSEER' if is_balanced else 'ONGEBALANSEER - KRITIEK!'}
-    
-    BALANSSTAAT:
-    - Bedryfsbates: R {current_assets:,.2f} (Bank R{bank+cash:,.2f}, Debiteure R{debtors:,.2f}, Voorraad R{stock:,.2f})
-    - Vaste Bates Netto: R {fixed_assets_net:,.2f}
-    - Totale Bates: R {total_assets:,.2f}
-    - Korttermyn Laste: R {current_liabilities:,.2f}
-    - Langtermyn Laste: R {long_term_liabilities:,.2f}
-    - Totale Ekwiteit: R {total_equity:,.2f}
-    
-    INKOMSTESTAAT:
-    - Netto Verkope: R {net_sales:,.2f}
-    - Koste van Verkope: R {cos:,.2f}
-    - Bruto Wins: R {gross_profit:,.2f} ({gp_margin}%)
-    - Totale Uitgawes: R {total_expenses:,.2f}
-    - Netto Wins: R {net_profit:,.2f} ({np_margin}%)
-    
-    VERHOUDINGS:
-    - Current Ratio: {current_ratio:.2f}:1 (norm >1.5)
-    - Quick Ratio: {quick_ratio:.2f}:1 (norm >1.0)
-    - Skuld/Ekwiteit: {debt_equity:.2f}:1 (norm <1.5)
-    - Debiteure Dae: {debtor_days:.0f} (norm 30-45)
-    - Krediteure Dae: {creditor_days:.0f}
-    - Voorraad Dae: {stock_days:.0f}
-    
-    SARS:
-    - BTW Posisie: R {abs(vat_position):,.2f} {'BETAALBAAR' if vat_position > 0 else 'TERUG'}
-    - LBS + WVF: R {paye + uif:,.2f}
-    
-    JOU OPDRAG - SKRYF 'N VOLLEDIGE FINANSIËLE ANALISE VERSLAG IN AFRIKAANS
-    
-    KRITIEKE INSTRUKSIES:
-    - Die rekeninge is REEDS KORREK geklassifiseer in die regte kategorieë (Bates, Laste, Ekwiteit, Inkomste, Uitgawes) deur die bronsstelsel se eie kategorisering
-    - MOENIE rekeningkodes bevraagteken of herklassifiseer nie. Verskillende stelsels gebruik verskillende nommering (Sage Pastel gebruik 1xxx vir Verkope, standaard gebruik 5xxx). Die kategorieë hier bo is KORREK.
-    - MOENIE sê rekeninge is "verkeerd geklassifiseer" of in die "verkeerde afdeling" gebaseer op hulle kodenommers nie
-    - MOENIE bedrog-aantygings maak sonder duidelike bewyse nie
-    - Gebruik die PYTHON-BEREKENDE syfers as bron van waarheid - moenie herbereken of weerspreek nie
-    - As Python sê Netto Wins is positief, IS die besigheid winsgewend. Moenie anders sê nie.
-    
-    **1. UITVOERENDE OPSOMMING**
-    [2-3 sinne: Algehele gesondheid gebaseer op PYTHON-BEREKENDE verhoudings en winssyfers]
-    
-    **2. REKENING-VIR-REKENING ANALISE**
-    Gaan deur ELKE rekening kategorie en noem:
-    - Watter rekeninge lyk normaal vir die industrie
-    - Watter BEDRAE lyk ongewoon of kommerwekkend
-    - Watter rekeninge ONTBREEK wat daar behoort te wees
-    - MOENIE rekeningKODES kritiseer nie - fokus op BEDRAE en SALDO'S
-    
-    **3. ROOI VLAE EN RISIKOS**
-    Lys werklike bekommernisse gebaseer op die SYFERS:
-    - Likwiditeitsprobleme?
-    - Winsgewendheidskwessies?
-    - Ongewone saldo's?
-    - Ontbrekende voorsiening of toevallings?
-    - MOENIE die rekeningnommeringstelsel as probleem vlag nie
-    
-    **4. SARS NAKOMING**
-    - BTW posisie en betaaldatums
-    - PAYE/UIF status
-    
-    **5. SPESIFIEKE AANBEVELINGS**
-    Gee TEN MINSTE 5 konkrete aksies met prioriteite (DRINGEND / BELANGRIK / MONITOR)
-    
-    **6. VRAE VIR DIE KLIËNT**
-    Lys 3-5 vrae wat jy sou vra.
-    
-    FORMAAT INSTRUKSIES:
-    - Skryf SKOON HTML (geen markdown nie). Gebruik <h2>, <h3> vir opskrifte.
-    - DONKER TEMA: MOENIE background:white, background:#fff, of enige ligte agtergrondkleure gebruik nie. Gebruik slegs rgba() met lae opacity vir agtergronde. Tekskleur moet ligkleurig wees (wit/grys).
-    - Vir tabelle: <table style="width:100%;border-collapse:collapse;margin:15px 0;"><tr><th style="text-align:left;padding:8px;border-bottom:2px solid rgba(255,255,255,0.2);color:#8b5cf6;">Kolom</th></tr><tr><td style="padding:8px;border-bottom:1px solid rgba(255,255,255,0.1);">Waarde</td></tr></table>
-    - Vir kleur indicators: <span style="color:#ef4444;">✗ Sleg</span> of <span style="color:#10b981;">GOOD: Goed</span> of <span style="color:#f59e0b;">WARNING: Waarskuwing</span>
-    - ELKE tabel sel MOET inhoud hê - moet NOOIT leë selle los nie
-    - Voltooi ALLE afdelings volledig - moenie halfpad stop nie
-    
-    REËLS:
-    - Verwys na SPESIFIEKE rekeninge by naam en kode
-    - Wees SPESIFIEK oor bedrae en persentasies
-    - Skryf soos 'n regte finansiële analis wat omgee
-    - Gebruik die PRESIESE syfers wat Python bereken het
-    - MOET NOOIT sê die rekeningplan is "fout" of "verkeerd geklassifiseer" nie"""
-            else:
-                # English prompt (default)
-                third_party_note = ""
-                if is_third_party:
-                    third_party_note = f"""
-    IMPORTANT CONTEXT: This is a THIRD-PARTY client's trial balance that was uploaded for analysis.
-    This is NOT {biz_name}'s own data. Do NOT reference {biz_name} anywhere in your analysis.
-    Analyze this as an independent client's financial data. If you see references to other companies
-    (e.g., loans from/to other entities), these are the CLIENT's intercompany relationships, not related to {biz_name}.
-    """
-                insights_prompt = f"""You are Zane, ClickAI's senior financial analyst with 20 years of experience. You are analyzing a COMPLETE trial balance.
-    Your name is simply "Zane" - do NOT use any surname. Sign reports as "Zane, ClickAI" only.
-    
-    BUSINESS: {safe_string(report_company)}
-    INDUSTRY: {industry}
-    DATE: {today()}
-    {third_party_note}
-    
-    {accounts_text}
-    
-    PYTHON-CALCULATED SUMMARY (100% accurate - do not recalculate):
-    
-    BALANCE STATUS:
-    - Total Debits: R {total_debit:,.2f}
-    - Total Credits: R {total_credit:,.2f}
-    - Difference: R {difference:,.2f}
-    - Status: {'BALANCED' if is_balanced else 'UNBALANCED - CRITICAL!'}
-    
-    BALANCE SHEET:
-    - Current Assets: R {current_assets:,.2f} (Bank R{bank+cash:,.2f}, Debtors R{debtors:,.2f}, Inventory R{stock:,.2f})
-    - Fixed Assets Net: R {fixed_assets_net:,.2f}
-    - Total Assets: R {total_assets:,.2f}
-    - Current Liabilities: R {current_liabilities:,.2f}
-    - Long-term Liabilities: R {long_term_liabilities:,.2f}
-    - Total Equity: R {total_equity:,.2f}
-    
-    INCOME STATEMENT:
-    - Net Sales: R {net_sales:,.2f}
-    - Cost of Sales: R {cos:,.2f}
-    - Gross Profit: R {gross_profit:,.2f} ({gp_margin}%)
-    - Total Expenses: R {total_expenses:,.2f}
-    - Net Profit: R {net_profit:,.2f} ({np_margin}%)
-    
-    RATIOS:
-    - Current Ratio: {current_ratio:.2f}:1 (norm >1.5)
-    - Quick Ratio: {quick_ratio:.2f}:1 (norm >1.0)
-    - Debt/Equity: {debt_equity:.2f}:1 (norm <1.5)
-    - Debtor Days: {debtor_days:.0f} (norm 30-45)
-    - Creditor Days: {creditor_days:.0f}
-    - Stock Days: {stock_days:.0f}
-    
-    SARS (South African Revenue Service):
-    - VAT Position: R {abs(vat_position):,.2f} {'PAYABLE' if vat_position > 0 else 'REFUNDABLE'}
-    - PAYE + UIF: R {paye + uif:,.2f}
-    
-    YOUR TASK - WRITE A COMPLETE FINANCIAL ANALYSIS REPORT IN ENGLISH
-    
-    CRITICAL INSTRUCTIONS:
-    - The accounts have been PRE-CLASSIFIED into the correct categories (Assets, Liabilities, Equity, Income, Expenses) using the source system's own categorization
-    - DO NOT question or reclassify account codes. Different accounting systems use different numbering (Sage Pastel uses 1xxx for Sales, standard uses 5xxx). The categories shown above are CORRECT.
-    - DO NOT suggest accounts are "misclassified" or in the "wrong section" based on their code numbers
-    - DO NOT make fraud allegations without clear evidence of actual fraud
-    - Use the PYTHON-CALCULATED numbers as the source of truth - do not recalculate or contradict them
-    - If Python says Net Profit is positive, the business IS profitable. Do not say otherwise.
-    
-    **1. EXECUTIVE SUMMARY**
-    [2-3 sentences: Overall health based on the PYTHON-CALCULATED ratios and profit figures]
-    
-    **2. ACCOUNT-BY-ACCOUNT ANALYSIS**
-    Go through EACH account category and note:
-    - Which accounts look normal for the industry
-    - Which AMOUNTS look unusual or concerning (e.g., very high expenses, credit balances on expense accounts)
-    - Which accounts are MISSING that should be there (depreciation, bad debts, etc)
-    - DO NOT criticize account CODES - focus on AMOUNTS and BALANCES
-    
-    **3. RED FLAGS AND RISKS**
-    List genuine concerns based on the NUMBERS:
-    - Liquidity problems (current ratio, quick ratio)?
-    - Profitability issues (margins)?
-    - Unusual balances (credit balances on expenses, large intercompany loans)?
-    - Missing provisions or accruals?
-    - DO NOT flag the account numbering system as a problem
-    
-    **4. SARS COMPLIANCE**
-    - VAT: Is the position correct? When must it be paid?
-    - PAYE/UIF: Is it included? Are amounts reasonable for business size?
-    - Any missing tax accounts?
-    
-    **5. SPECIFIC RECOMMENDATIONS**
-    Give AT LEAST 5 concrete actions with priority (URGENT / IMPORTANT / MONITOR)
-    
-    **6. QUESTIONS FOR THE CLIENT**
-    List 3-5 questions you would ask the business owner.
-    
-    FORMAT INSTRUCTIONS:
-    - Output CLEAN HTML only. NEVER USE MARKDOWN. No ##, no **, no ---, no * bullets.
-    - DARK THEME: NEVER use background:white, background:#fff, or any light background colors. Only use rgba() with low opacity for backgrounds. Text color must be light (white/grey). All content renders on a dark navy background.
-    - Use <h2 style="color:#10b981;border-bottom:1px solid rgba(255,255,255,0.1);padding-bottom:5px;margin-top:25px;"> for main section headings
-    - Use <h3 style="color:#8b5cf6;margin-top:18px;"> for sub-headings
-    - Use <p> for all paragraph text
-    - Use <strong> for emphasis (not **)
-    - Use <ul><li> for bullet lists (not - or *)
-    - For tables use: <table style="width:100%;border-collapse:collapse;margin:15px 0;"><tr><th style="text-align:left;padding:8px;border-bottom:2px solid rgba(255,255,255,0.2);color:#8b5cf6;">Column</th></tr><tr><td style="padding:8px;border-bottom:1px solid rgba(255,255,255,0.1);">Value</td></tr></table>
-    - For colored indicators use: <span style="color:#ef4444;">✗ Bad</span> or <span style="color:#10b981;">GOOD: Good</span> or <span style="color:#f59e0b;">WARNING: Warning</span>
-    - For WARNING boxes use: <div style="padding:15px;background:rgba(239,68,68,0.15);border-left:4px solid #ef4444;border-radius:6px;margin:12px 0;color:#fca5a5;">warning content</div>
-    - For POSITIVE boxes use: <div style="padding:15px;background:rgba(16,185,129,0.15);border-left:4px solid #10b981;border-radius:6px;margin:12px 0;color:#6ee7b7;">positive content</div>
-    - For INFO boxes use: <div style="padding:15px;background:rgba(99,102,241,0.15);border-left:4px solid #6366f1;border-radius:6px;margin:12px 0;color:#a5b4fc;">info content</div>
-    - For CAUTION boxes use: <div style="padding:15px;background:rgba(245,158,11,0.15);border-left:4px solid #f59e0b;border-radius:6px;margin:12px 0;color:#fcd34d;">caution content</div>
-    - EVERY table cell MUST have content - never leave cells empty
-    - Complete ALL sections fully - do not stop halfway through a section
-    - IMPORTANT: You MUST complete the entire report. Do not leave any section unfinished. If running long, be more concise in later sections rather than stopping mid-sentence.
-    
-    RULES:
-    - Refer to SPECIFIC accounts by name and code
-    - Do NOT be generic - be SPECIFIC about amounts and percentages
-    - Write like a real financial analyst who cares
-    - Use the EXACT figures that Python calculated - do not make up new numbers
-    - NEVER say the chart of accounts is "wrong" or "misclassified" - different systems use different codes"""
-    
-            # ═══════════════════════════════════════════════════════════
-            # AI INSIGHTS — SKIPPED HERE, loaded async via /api/reports/tb/insights
-            # The placeholder in report_html stays as "Loading professional insight..."
-            # Frontend will call insights endpoint separately
-            # ═══════════════════════════════════════════════════════════
-            
-            # Store data for insights endpoint - BOTH in cache AND return to JS
-            _insights_payload = {
-                'accounts_text': accounts_text[:15000],
-                'report_company': report_company,
-                'industry': industry,
-                'is_third_party': is_third_party,
-                'lang': lang,
-                'total_debit': total_debit,
-                'total_credit': total_credit,
-                'difference': difference,
-                'is_balanced': is_balanced,
-                'current_assets': current_assets,
-                'bank_cash': bank + cash,
-                'debtors': debtors,
-                'stock': stock,
-                'fixed_assets_net': fixed_assets_net,
-                'total_assets': total_assets,
-                'current_liabilities': current_liabilities,
-                'long_term_liabilities': long_term_liabilities,
-                'total_equity': total_equity,
-                'net_sales': net_sales,
-                'cos': cos,
-                'gross_profit': gross_profit,
-                'gp_margin': gp_margin,
-                'total_expenses': total_expenses,
-                'net_profit': net_profit,
-                'np_margin': np_margin,
-                'current_ratio': current_ratio,
-                'quick_ratio': quick_ratio,
-                'debt_equity': debt_equity,
-                'debtor_days': debtor_days,
-                'creditor_days': creditor_days,
-                'stock_days': stock_days,
-                'vat_position': vat_position,
-                'paye': paye,
-                'uif': uif,
-            }
-            
-            # Also keep cache as fallback
-            _tb_cache_key = f"tb_insights:{session.get('user_id', 'anon')}"
-            Auth._mem[_tb_cache_key] = {"d": _insights_payload, "t": time.time()}
-            logger.info(f"[TB ANALYZE] Returning Python report + insights payload")
-            
-            return jsonify({"success": True, "analysis": report_html, "insights_payload": _insights_payload})
-            
-        except Exception as e:
-            logger.error(f"[TB ANALYZE] Error: {e}")
-            import traceback
-            traceback.print_exc()
-            return jsonify({"success": False, "error": str(e)})
-    
-    
-    # ═══════════════════════════════════════════════════════════════════════
-    # TB INSIGHTS - Async AI analysis (called AFTER report loads)
-    # ═══════════════════════════════════════════════════════════════════════
-    
-    @app.route("/api/reports/tb/insights", methods=["POST"])
-    @login_required
-    def api_tb_insights():
-        """Async AI insights for TB report - called after Python report is shown"""
-        
-        business = Auth.get_current_business()
-        biz_name = business.get("name", "Business") if business else "Business"
-        
-        try:
-            # Try POST body first (reliable, works with gunicorn multi-worker)
-            posted = request.get_json() or {}
-            if posted.get('insights_payload'):
-                td = posted['insights_payload']
-                logger.info(f"[TB INSIGHTS] Using data from POST body")
-            else:
-                # Fallback to cache (legacy)
-                _tb_cache_key = f"tb_insights:{session.get('user_id', 'anon')}"
-                _cached = Auth._mem.get(_tb_cache_key)
-                if not _cached or (time.time() - _cached.get("t", 0)) > 600:
-                    return jsonify({"success": False, "error": "No TB data found. Please re-analyze."})
-                td = _cached["d"]
-                logger.info(f"[TB INSIGHTS] Using data from cache")
-            
-            lang = td.get('lang', 'en')
-            report_company = td.get('report_company', biz_name)
-            industry = td.get('industry', 'general')
-            is_third_party = td.get('is_third_party', False)
-            accounts_text = td.get('accounts_text', '')
-            
-            total_debit = td.get('total_debit', 0)
-            total_credit = td.get('total_credit', 0)
-            difference = td.get('difference', 0)
-            is_balanced = td.get('is_balanced', True)
-            current_assets = td.get('current_assets', 0)
-            bank_cash = td.get('bank_cash', 0)
-            debtors = td.get('debtors', 0)
-            stock = td.get('stock', 0)
-            fixed_assets_net = td.get('fixed_assets_net', 0)
-            total_assets = td.get('total_assets', 0)
-            current_liabilities = td.get('current_liabilities', 0)
-            long_term_liabilities = td.get('long_term_liabilities', 0)
-            total_equity = td.get('total_equity', 0)
-            net_sales = td.get('net_sales', 0)
-            cos = td.get('cos', 0)
-            gross_profit = td.get('gross_profit', 0)
-            gp_margin = td.get('gp_margin', 0)
-            total_expenses = td.get('total_expenses', 0)
-            net_profit = td.get('net_profit', 0)
-            np_margin = td.get('np_margin', 0)
-            current_ratio = td.get('current_ratio', 0)
-            quick_ratio = td.get('quick_ratio', 0)
-            debt_equity = td.get('debt_equity', 0)
-            debtor_days = td.get('debtor_days', 0)
-            creditor_days = td.get('creditor_days', 0)
-            stock_days = td.get('stock_days', 0)
-            vat_position = td.get('vat_position', 0)
-            paye = td.get('paye', 0)
-            uif = td.get('uif', 0)
-            
-            if lang == "af":
-                tp_note = f"\nDit is 'n DERDE PARTY kliënt se TB, nie {biz_name} s'n nie.\n" if is_third_party else ""
-                insights_prompt = f"""Jy is Zane, ClickAI. Analiseer hierdie proefbalans BONDIG.
-    
-    BESIGHEID: {safe_string(report_company)} | INDUSTRIE: {industry}
-    {tp_note}
-    {accounts_text}
-    
-    PYTHON-BEREKENDE OPSOMMING (100% akkuraat):
-    - Debits: R{total_debit:,.2f} | Kredits: R{total_credit:,.2f} | {'GEBALANSEER' if is_balanced else 'ONGEBALANSEER'}
-    - Bates: R{total_assets:,.2f} (Bedryf R{current_assets:,.2f}, Vas R{fixed_assets_net:,.2f})
-    - Laste: R{current_liabilities + long_term_liabilities:,.2f} | Ekwiteit: R{total_equity:,.2f}
-    - Verkope: R{net_sales:,.2f} | Bruto Wins: R{gross_profit:,.2f} ({gp_margin}%) | Netto: R{net_profit:,.2f} ({np_margin}%)
-    - Current Ratio: {current_ratio:.2f} | Quick: {quick_ratio:.2f} | Skuld/Ekwiteit: {debt_equity:.2f}
-    - Debiteure Dae: {debtor_days:.0f} | Krediteure Dae: {creditor_days:.0f} | Voorraad Dae: {stock_days:.0f}
-    - BTW: R{abs(vat_position):,.2f} {'BETAALBAAR' if vat_position > 0 else 'TERUG'} | LBS+WVF: R{paye + uif:,.2f}
-    
-    SKRYF 'N VOLLEDIGE FINANSIËLE ANALISE IN AFRIKAANS (1200-1800 woorde):
-    1. UITVOERENDE OPSOMMING (3-4 sinne)
-    2. HOOFSAKE - Sterkpunte en Swakpunte (noem spesifieke rekeninge en bedrae)
-    3. ROOI VLAE (net werklike probleme)
-    4. TOP 5 AANBEVELINGS (konkreet, met prioriteit)
-    5. VRAE VIR DIE KLIËNT (3-5 vrae)
-    
-    REËLS: Gebruik Python syfers. Moenie kodes bevraagteken nie. Skryf skoon HTML met <h3> vir opskrifte. Voltooi AL 5 afdelings VOLLEDIG. MOENIE style="background:white" of enige ligte agtergrondkleure gebruik nie — die UI het 'n donker tema. Eindig met: Zane, ClickAI."""
-            else:
-                tp_note = f"\nThis is a THIRD-PARTY client TB, not {biz_name}'s data.\n" if is_third_party else ""
-                insights_prompt = f"""You are Zane, ClickAI. Analyze this trial balance CONCISELY.
-    
-    BUSINESS: {safe_string(report_company)} | INDUSTRY: {industry}
-    {tp_note}
-    {accounts_text}
-    
-    PYTHON-CALCULATED SUMMARY (100% accurate):
-    - Debits: R{total_debit:,.2f} | Credits: R{total_credit:,.2f} | {'BALANCED' if is_balanced else 'UNBALANCED'}
-    - Assets: R{total_assets:,.2f} (Current R{current_assets:,.2f}, Fixed R{fixed_assets_net:,.2f})
-    - Liabilities: R{current_liabilities + long_term_liabilities:,.2f} | Equity: R{total_equity:,.2f}
-    - Sales: R{net_sales:,.2f} | Gross Profit: R{gross_profit:,.2f} ({gp_margin}%) | Net: R{net_profit:,.2f} ({np_margin}%)
-    - Current Ratio: {current_ratio:.2f} | Quick: {quick_ratio:.2f} | Debt/Equity: {debt_equity:.2f}
-    - Debtor Days: {debtor_days:.0f} | Creditor Days: {creditor_days:.0f} | Stock Days: {stock_days:.0f}
-    - VAT: R{abs(vat_position):,.2f} {'PAYABLE' if vat_position > 0 else 'REFUND'} | PAYE+UIF: R{paye + uif:,.2f}
-    
-    WRITE A COMPLETE FINANCIAL ANALYSIS (1200-1800 words):
-    1. EXECUTIVE SUMMARY (3-4 sentences)
-    2. KEY FINDINGS - Strengths and Weaknesses (name specific accounts and amounts)
-    3. RED FLAGS (only real problems)
-    4. TOP 5 RECOMMENDATIONS (concrete, prioritized)
-    5. QUESTIONS FOR THE CLIENT (3-5 questions)
-    
-    RULES: Use EXACT Python figures. Don't question account codes. Write clean HTML with <h3> for headings. Complete ALL 5 sections FULLY. Do NOT use style="background:white" or any light background colors — the UI uses a dark theme. End with sign-off: Zane, ClickAI."""
-            
-            if not ANTHROPIC_API_KEY:
-                return jsonify({"success": False, "error": "No API key"})
-            
-            logger.info(f"[TB INSIGHTS] Starting async AI analysis for {report_company}")
-            
-            client = _anthropic_client
-            message = client.messages.create(
-                model="claude-sonnet-4-6",
-                max_tokens=32000,
-                messages=[{"role": "user", "content": insights_prompt}]
-            )
-            
-            # ─── AI-USAGE TRACKING ───
-            try:
-                if hasattr(app, "_ai_usage_tracker"):
-                    _biz_id = business.get("id") if business else None
-                    _usr = Auth.get_current_user()
-                    _usr_id = _usr.get("id") if _usr else None
-                    if _biz_id:
-                        _usage = getattr(message, "usage", None)
-                        app._ai_usage_tracker.log_usage(
-                            business_id=_biz_id,
-                            tool="tb_insights",
-                            model=getattr(message, "model", "claude-sonnet-4-6"),
-                            input_tokens=int(getattr(_usage, "input_tokens", 0) or 0),
-                            output_tokens=int(getattr(_usage, "output_tokens", 0) or 0),
-                            cache_read_tokens=int(getattr(_usage, "cache_read_input_tokens", 0) or 0),
-                            cache_write_tokens=int(getattr(_usage, "cache_creation_input_tokens", 0) or 0),
-                            user_id=_usr_id,
-                            success=True,
-                        )
-            except Exception as _track_err:
-                logger.error(f"[AI-USAGE] tb_insights tracking skipped: {_track_err}")
-            # ─── END TRACKING ───
-            
-            # Log truncation
-            if message.stop_reason == "max_tokens":
-                logger.warning(f"[TB INSIGHTS] ⚠️ TRUNCATED — hit max_tokens")
-            
-            if message.content and message.content[0].text:
-                insights_html = message.content[0].text
-                
-                import re as _re
-                # Strip any raw HTML tags Sonnet might have added
-                insights_html = _re.sub(r'</?html[^>]*>', '', insights_html)
-                insights_html = _re.sub(r'</?body[^>]*>', '', insights_html)
-                
-                # Headings — purple for main, green for sub
-                insights_html = _re.sub(r'^### (.+)$', r'<h3 style="color:#a78bfa;margin:22px 0 10px 0;font-size:15px;font-weight:600;">\1</h3>', insights_html, flags=_re.MULTILINE)
-                insights_html = _re.sub(r'^## (.+)$', r'<h3 style="color:#10b981;border-bottom:1px solid rgba(16,185,129,0.2);padding-bottom:6px;margin:26px 0 12px 0;font-size:16px;font-weight:600;">\1</h3>', insights_html, flags=_re.MULTILINE)
-                insights_html = _re.sub(r'^# (.+)$', r'<h2 style="color:#8b5cf6;border-bottom:2px solid rgba(139,92,246,0.3);padding-bottom:8px;margin:28px 0 14px 0;font-size:18px;font-weight:700;">\1</h2>', insights_html, flags=_re.MULTILINE)
-                
-                # Bold text — accent purple
-                insights_html = _re.sub(r'\*\*(.+?)\*\*', r'<strong style="color:#a78bfa;">\1</strong>', insights_html)
-                
-                # Numbered items — with subtle left border
-                insights_html = _re.sub(r'^\d+\. (.+)$', r'<div style="margin:8px 0 8px 12px;padding:4px 0 4px 12px;border-left:2px solid rgba(139,92,246,0.3);">→ \1</div>', insights_html, flags=_re.MULTILINE)
-                
-                # Bullet items
-                insights_html = _re.sub(r'^- (.+)$', r'<div style="margin:6px 0 6px 12px;padding:2px 0;">• \1</div>', insights_html, flags=_re.MULTILINE)
-                
-                # Horizontal rules
-                insights_html = _re.sub(r'^---+$', r'<hr style="border:none;border-top:1px solid rgba(255,255,255,0.08);margin:18px 0;">', insights_html, flags=_re.MULTILINE)
-                
-                # Paragraph spacing
-                insights_html = _re.sub(r'\n{3,}', '<br><br>', insights_html)
-                insights_html = _re.sub(r'\n\n', '<br><br>', insights_html)
-                insights_html = _re.sub(r'(?<!>)\n(?!<)', '<br>', insights_html)
-                
-                # Wrap any Sonnet-generated tables in dark styling
-                insights_html = insights_html.replace('<table', '<table style="width:100%;border-collapse:collapse;margin:12px 0;font-size:13px;" ')
-                insights_html = insights_html.replace('<th', '<th style="padding:8px;text-align:left;border-bottom:1px solid rgba(255,255,255,0.15);color:#a78bfa;font-weight:600;" ')
-                insights_html = insights_html.replace('<td', '<td style="padding:6px 8px;border-bottom:1px solid rgba(255,255,255,0.06);" ')
-                
-                # CRITICAL: Strip ALL white/light backgrounds Sonnet may inject
-                insights_html = _re.sub(r'background[-\w]*:\s*#?(?:fff|ffffff|white|fafafa|f5f5f5|f8f8f8|f9f9f9|fef[0-9a-f]+|ffe[0-9a-f]+|fdf[0-9a-f]+)[^;"]*;?', '', insights_html, flags=_re.IGNORECASE)
-                insights_html = _re.sub(r'background[-\w]*:\s*rgb\(\s*2[45]\d\s*,\s*2[45]\d\s*,\s*2[45]\d\s*\)[^;"]*;?', '', insights_html, flags=_re.IGNORECASE)
-                insights_html = _re.sub(r'background[-\w]*:\s*white[^;"]*;?', '', insights_html, flags=_re.IGNORECASE)
-                
-                # Force text color on any divs/spans Sonnet creates
-                insights_html = _re.sub(r'color:\s*#?(?:000|000000|333|333333|222|444|555|666)[^;"]*;?', 'color:rgba(255,255,255,0.9);', insights_html, flags=_re.IGNORECASE)
-                insights_html = _re.sub(r'color:\s*black[^;"]*;?', 'color:rgba(255,255,255,0.9);', insights_html, flags=_re.IGNORECASE)
-                insights_html = _re.sub(r'color:\s*rgb\(\s*0\s*,\s*0\s*,\s*0\s*\)[^;"]*;?', 'color:rgba(255,255,255,0.9);', insights_html, flags=_re.IGNORECASE)
-                
-                # Strip border colors that are dark (they become invisible on dark bg)
-                insights_html = _re.sub(r'border[-\w]*:\s*\d+px\s+solid\s+#?(?:ccc|ddd|eee|e0e0e0|d0d0d0)[^;"]*;?', 'border:1px solid rgba(255,255,255,0.1);', insights_html, flags=_re.IGNORECASE)
-                
-                # Style the Zane sign-off if present
-                insights_html = _re.sub(
-                    r'(Zane,?\s*ClickAI)',
-                    r'<div style="margin-top:20px;padding-top:12px;border-top:1px solid rgba(139,92,246,0.2);color:#8b5cf6;font-weight:600;font-style:italic;">\1</div>',
-                    insights_html
-                )
-                
-                logger.info(f"[TB INSIGHTS] AI analysis complete: {len(insights_html)} chars")
-                return jsonify({"success": True, "insights": insights_html})
-            else:
-                return jsonify({"success": False, "error": "AI returned empty"})
-                
-        except Exception as e:
-            logger.warning(f"[TB INSIGHTS] Failed: {e}")
-            return jsonify({"success": False, "error": str(e)[:200]})
-    
-    
-    # ═══════════════════════════════════════════════════════════════
-    # REPORT EMAIL & DOWNLOAD
-    # ═══════════════════════════════════════════════════════════════
-    
-    @app.route("/api/reports/email", methods=["POST"])
-    @login_required
-    def api_report_email():
-        """Email a report to specified address"""
-        try:
-            data = request.get_json() or {}
-            to_email = (data.get('to_email') or '').strip()
-            subject = data.get('subject', 'ClickAI Report')
-            report_html = data.get('report_html', '')
-            report_title = data.get('report_title', 'Report')
-            
-            if not to_email or '@' not in to_email:
-                return jsonify({"success": False, "error": "Valid email address required"})
-            
-            if not report_html:
-                return jsonify({"success": False, "error": "No report content"})
-            
-            business = Auth.get_current_business()
-            biz_name = business.get("name", "Business") if business else "Business"
-            
-            # Build professional email HTML (light theme for email clients)
-            email_html = f"""
-            <div style="max-width:800px;margin:0 auto;font-family:Arial,Helvetica,sans-serif;color:#1a1a2e;">
-                <div style="background:linear-gradient(135deg,#1a1a2e 0%,#16213e 100%);padding:25px 30px;border-radius:12px 12px 0 0;">
-                    <h1 style="color:#8b5cf6;margin:0;font-size:22px;">📊 {report_title}</h1>
-                    <p style="color:rgba(255,255,255,0.7);margin:8px 0 0 0;font-size:13px;">{biz_name} | Generated by ClickAI</p>
-                </div>
-                <div style="background:#ffffff;padding:25px 30px;border:1px solid #e5e7eb;color:#1a1a2e;line-height:1.7;font-size:14px;">
-                    {report_html}
-                </div>
-                <div style="background:#f8fafc;padding:15px 30px;border-radius:0 0 12px 12px;border:1px solid #e5e7eb;border-top:none;">
-                    <p style="margin:0;font-size:11px;color:#6b7280;text-align:center;">
-                        Generated by <strong style="color:#8b5cf6;">ClickAI</strong> — AI-Powered Business Management
-                        <br>All calculations by Python | Figures verified | {today()}
-                    </p>
-                </div>
-            </div>"""
-            
-            # Convert dark theme colors to light for email
-            import re as _re
-            email_html = _re.sub(r'color:\s*rgba\(255,\s*255,\s*255,\s*[\d.]+\)', 'color:#1a1a2e', email_html)
-            email_html = _re.sub(r'color:\s*var\(--text\)', 'color:#1a1a2e', email_html)
-            email_html = _re.sub(r'color:\s*var\(--text-muted\)', 'color:#6b7280', email_html)
-            email_html = _re.sub(r'border[-\w]*:\s*[\d.]+px\s+solid\s+rgba\(255,\s*255,\s*255,\s*[\d.]+\)', 'border:1px solid #e5e7eb', email_html)
-            
-            success = EmailService.send(
-                to_email=to_email,
-                subject=f"{subject} — {biz_name}",
-                body_html=email_html,
-                body_text=f"{report_title} for {biz_name}. Please view the HTML version of this email."
-            )
-            
-            if success:
-                logger.info(f"[REPORT EMAIL] Sent '{report_title}' to {to_email}")
-                return jsonify({"success": True, "message": f"Report sent to {to_email}"})
-            else:
-                return jsonify({"success": False, "error": "Email sending failed. Check SMTP settings in Business Settings."})
-                
-        except Exception as e:
-            logger.warning(f"[REPORT EMAIL] Failed: {e}")
-            return jsonify({"success": False, "error": str(e)[:200]})
-    
-    
-    @app.route("/api/reports/tb/upload-analyze", methods=["POST"])
-    @login_required
-    def api_tb_upload_analyze():
-        """Upload CSV/Excel TB file and analyze it - returns same professional report"""
-        
-        business = Auth.get_current_business()
-        biz_name = business.get("name", "Business") if business else "Business"
-        industry = business.get("industry", "general") if business else "general"
-        
-        try:
-            if 'file' not in request.files:
-                return jsonify({"success": False, "error": "No file uploaded"})
-            
-            file = request.files['file']
-            lang = request.form.get('lang', 'en')
-            
-            if not file.filename:
-                return jsonify({"success": False, "error": "No file selected"})
-            
-            filename = file.filename.lower()
-            logger.info(f"[TB UPLOAD] Processing {filename}, lang={lang}")
-            
-            # Read file into DataFrame
-            import pandas as pd
-            import io
-            
-            try:
-                if filename.endswith('.csv'):
-                    content = file.read()
-                    df = None
-                    
-                    # Strip BOM if present
-                    if content[:3] == b'\xef\xbb\xbf':
-                        content = content[3:]
-                    
-                    # Decode content to text first
-                    text = None
-                    for enc in ['utf-8', 'latin-1', 'cp1252', 'iso-8859-1']:
-                        try:
-                            text = content.decode(enc)
-                            break
-                        except:
-                            continue
-                    
-                    if not text:
-                        return jsonify({"success": False, "error": "Kon nie die CSV lees nie - encoding probleem."})
-                    
-                    # Clean up: remove Excel hints and find real header row
-                    lines = [l.strip() for l in text.split('\n') if l.strip()]
-                    
-                    # Skip non-data rows at top (sep=, title rows)
-                    header_row = 0
-                    for i, line in enumerate(lines[:10]):
-                        stripped = line.strip().strip('"').strip()
-                        stripped_lower = stripped.lower()
-                        # Skip: sep=X lines
-                        if stripped_lower.startswith('sep='):
-                            header_row = i + 1
-                            continue
-                        # Skip: single-value title rows (no commas between values, just a title)
-                        # But NOT rows like "Name","Category","Debit","Credit" which are headers
-                        raw_no_quoted = line
-                        # Count commas outside quotes to check if it's a real CSV row
-                        in_quote = False
-                        comma_count = 0
-                        for ch in line:
-                            if ch == '"':
-                                in_quote = not in_quote
-                            elif ch == ',' and not in_quote:
-                                comma_count += 1
-                        if comma_count == 0:
-                            # Single value row = title, skip it
-                            header_row = i + 1
-                            continue
-                        # This has commas = real header or data row, stop
-                        break
-                    
-                    logger.info(f"[TB UPLOAD] Detected header at row {header_row}, skipping {header_row} rows")
-                    
-                    # Detect delimiter from header line
-                    header_line = lines[header_row] if header_row < len(lines) else lines[0]
-                    if ';' in header_line and header_line.count(';') > header_line.count(','):
-                        sep = ';'
-                    elif '\t' in header_line:
-                        sep = '\t'
-                    else:
-                        sep = ','
-                    
-                    # Rebuild clean text without skipped rows
-                    clean_text = '\n'.join(lines[header_row:])
-                    
-                    try:
-                        df = pd.read_csv(io.StringIO(clean_text), sep=sep, on_bad_lines='skip', engine='python')
-                        logger.info(f"[TB UPLOAD] Read {len(df)} rows, {len(df.columns)} cols: {list(df.columns)}")
-                    except Exception as e:
-                        logger.error(f"[TB UPLOAD] pandas read failed: {e}")
-                    
-                    if df is None or len(df.columns) <= 1:
-                        return jsonify({"success": False, "error": "Kon nie die CSV lees nie. Probeer om dit as Excel (.xlsx) te save en weer te upload."})
-                        
-                elif filename.endswith(('.xlsx', '.xls')):
-                    df = pd.read_excel(file)
-                else:
-                    return jsonify({"success": False, "error": "Unsupported file type. Use CSV or Excel."})
-            except Exception as read_err:
-                logger.error(f"[TB UPLOAD] Read error: {read_err}")
-                return jsonify({"success": False, "error": f"Could not read file: {str(read_err)}"})
-            
-            logger.info(f"[TB UPLOAD] Read {len(df)} rows, columns: {list(df.columns)}")
-            
-            # ═══════════════════════════════════════════════════════════
-            # SMART COLUMN DETECTION - tries hardcoded first, then AI
-            # Every accountant's TB looks different!
-            # ═══════════════════════════════════════════════════════════
-            cols_lower = {c.lower().strip(): c for c in df.columns}
-            
-            # Find account code column
-            code_col = None
-            for candidate in ['code', 'acc code', 'account code', 'acc_code', 'kode', 'rekening kode', 
-                              'gl code', 'account_code', 'acc no', 'account no', 'account number',
-                              'rekeningnommer', 'gl no', 'no', 'number', 'acc', 'account #']:
-                if candidate in cols_lower:
-                    code_col = cols_lower[candidate]
-                    break
-            
-            # Find account name column
-            name_col = None
-            for candidate in ['name', 'account', 'account name', 'description', 'naam', 'rekening', 
-                              'rekening naam', 'acc name', 'account_name', 'rekeningnaam', 'omskrywing',
-                              'account description', 'ledger', 'ledger name', 'gl name', 'label',
-                              'type', 'account type']:
-                if candidate in cols_lower:
-                    name_col = cols_lower[candidate]
-                    break
-            
-            # Find debit column
-            debit_col = None
-            for candidate in ['debit', 'dr', 'debits', 'debit amount', 'debiet', 'debit balance',
-                              'debiet saldo', 'debit total', 'dr amount', 'dr balance']:
-                if candidate in cols_lower:
-                    debit_col = cols_lower[candidate]
-                    break
-            
-            # Find credit column
-            credit_col = None
-            for candidate in ['credit', 'cr', 'credits', 'credit amount', 'krediet', 'credit balance',
-                              'krediet saldo', 'credit total', 'cr amount', 'cr balance']:
-                if candidate in cols_lower:
-                    credit_col = cols_lower[candidate]
-                    break
-            
-            # Find single balance column (some TBs use one column with +/-)
-            balance_col = None
-            if not debit_col and not credit_col:
-                for candidate in ['balance', 'saldo', 'amount', 'bedrag', 'net balance', 'netto',
-                                  'value', 'waarde', 'total', 'totaal', 'closing balance', 'closing',
-                                  'sluitsaldo', 'net', 'movement', 'beweging']:
-                    if candidate in cols_lower:
-                        balance_col = cols_lower[candidate]
-                        break
-            
-            # Find category/type column
-            category_col = None
-            for candidate in ['category', 'kategorie', 'type', 'account type', 'tipe', 'class',
-                              'group', 'groep', 'section', 'heading', 'opskrif']:
-                if candidate in cols_lower:
-                    if cols_lower[candidate] != name_col:  # Don't use same col as name
-                        category_col = cols_lower[candidate]
-                        break
-            
-            # ═══════════════════════════════════════════════════════════
-            # AI FALLBACK - if we can't find columns, ask Claude
-            # ═══════════════════════════════════════════════════════════
-            ai_mapped = False
-            if not name_col or (not debit_col and not credit_col and not balance_col):
-                logger.info(f"[TB UPLOAD] Hardcoded mapping failed. Trying AI detection...")
-                try:
-                    # Send sample to Claude for column detection
-                    sample_rows = df.head(8).to_string()
-                    col_list = list(df.columns)
-                    
-                    ai_prompt = f"""Analyze this trial balance / opening balance file and identify which columns map to what.
-    
-    COLUMNS: {col_list}
-    
-    SAMPLE DATA (first 8 rows):
-    {sample_rows}
-    
-    Return ONLY valid JSON (no markdown, no explanation):
-    {{"account_code": "exact column name or null", "account_name": "exact column name", "debit": "exact column name or null", "credit": "exact column name or null", "balance": "exact column name or null", "category": "exact column name or null"}}
-    
-    Rules:
-    - account_name: The column with account descriptions (e.g. "Sales", "Bank", "Rent")
-    - account_code: The column with account numbers/codes (e.g. "1000", "4000/000")
-    - debit/credit: Separate columns for debit and credit amounts
-    - balance: Single column with positive/negative amounts (use ONLY if no separate debit/credit)
-    - category: Column showing account type/category (Asset, Liability, Income, Expense)
-    - Use exact column names from the COLUMNS list above
-    - Use null if column doesn't exist"""
-    
-                    client = _anthropic_client
-                    ai_response = client.messages.create(
-                        model="claude-sonnet-4-6",
-                        max_tokens=500,
-                        messages=[{"role": "user", "content": ai_prompt}]
-                    )
-                    
-                    # ─── AI-USAGE TRACKING ───
-                    try:
-                        if hasattr(app, "_ai_usage_tracker"):
-                            _biz_id = business.get("id") if business else None
-                            _usr = Auth.get_current_user()
-                            _usr_id = _usr.get("id") if _usr else None
-                            if _biz_id:
-                                _usage = getattr(ai_response, "usage", None)
-                                app._ai_usage_tracker.log_usage(
-                                    business_id=_biz_id,
-                                    tool="tb_column_detect",
-                                    model=getattr(ai_response, "model", "claude-sonnet-4-6"),
-                                    input_tokens=int(getattr(_usage, "input_tokens", 0) or 0),
-                                    output_tokens=int(getattr(_usage, "output_tokens", 0) or 0),
-                                    cache_read_tokens=int(getattr(_usage, "cache_read_input_tokens", 0) or 0),
-                                    cache_write_tokens=int(getattr(_usage, "cache_creation_input_tokens", 0) or 0),
-                                    user_id=_usr_id,
-                                    success=True,
-                                )
-                    except Exception as _track_err:
-                        logger.error(f"[AI-USAGE] tb_column_detect tracking skipped: {_track_err}")
-                    # ─── END TRACKING ───
-                    
-                    ai_text = ai_response.content[0].text.strip()
-                    # Clean markdown if present
-                    if '```' in ai_text:
-                        ai_text = ai_text.split('```')[1].replace('json', '').strip()
-                    
-                    ai_map = json.loads(ai_text)
-                    logger.info(f"[TB UPLOAD] AI column mapping: {ai_map}")
-                    
-                    # Apply AI mapping
-                    if ai_map.get("account_name") and ai_map["account_name"] in df.columns:
-                        name_col = ai_map["account_name"]
-                    if ai_map.get("account_code") and ai_map["account_code"] in df.columns:
-                        code_col = ai_map["account_code"]
-                    if ai_map.get("debit") and ai_map["debit"] in df.columns:
-                        debit_col = ai_map["debit"]
-                    if ai_map.get("credit") and ai_map["credit"] in df.columns:
-                        credit_col = ai_map["credit"]
-                    if ai_map.get("balance") and ai_map["balance"] in df.columns:
-                        balance_col = ai_map["balance"]
-                    if ai_map.get("category") and ai_map["category"] in df.columns:
-                        category_col = ai_map["category"]
-                    
-                    ai_mapped = True
-                    
-                except Exception as ai_err:
-                    logger.error(f"[TB UPLOAD] AI detection failed: {ai_err}")
-            
-            # Validate we found required columns
-            if not name_col:
-                # Last resort: try first text column as name
-                for c in df.columns:
-                    if df[c].dtype == 'object':
-                        name_col = c
-                        break
-            
-            if not name_col:
-                return jsonify({"success": False, "error": f"Kon nie rekening naam kolom vind nie. Kolomme in jou file: {list(df.columns)}"})
-            
-            if not debit_col and not credit_col and not balance_col:
-                return jsonify({"success": False, "error": f"Kon nie debit/credit/balance kolomme vind nie. Kolomme in jou file: {list(df.columns)}"})
-            
-            mapped_info = f"Code: {code_col}, Name: {name_col}, Debit: {debit_col}, Credit: {credit_col}, Balance: {balance_col}, Category: {category_col}"
-            logger.info(f"[TB UPLOAD] Mapped columns {'(AI)' if ai_mapped else '(hardcoded)'} - {mapped_info}")
-            
-            # Build accounts list
-            accounts = []
-            tb_control_profit = None  # Capture the TB's own net profit figure for validation
-            
-            for idx, row in df.iterrows():
-                name = str(row.get(name_col, '')).strip() if name_col else ''
-                if not name or name.lower() in ['nan', 'none', '', 'total', 'totals', 'totaal', 'grand total', 'netto', 'net']:
-                    continue
-                
-                # Capture the TB's own Net Profit/Loss figure as a control check
-                if name.lower() in ['net profit/loss', 'net profit/loss after tax', 'net profit', 'netto wins',
-                                     'net profit/loss before tax', 'netto wins/verlies', 'netto wins na belasting']:
-                    # This row has the TB's calculated profit - grab it for validation
-                    dr = float(str(row.get(debit_col, '') or '0').replace('R','').replace('r','').replace(',','').replace(' ','').strip() or '0') if debit_col else 0
-                    cr = float(str(row.get(credit_col, '') or '0').replace('R','').replace('r','').replace(',','').replace(' ','').strip() or '0') if credit_col else 0
-                    if cr > 0:
-                        tb_control_profit = cr  # Credit = profit
-                    elif dr > 0:
-                        tb_control_profit = -dr  # Debit = loss
-                    elif balance_col:
-                        bal = str(row.get(balance_col, '') or '0').replace('R','').replace('r','').replace(',','').replace(' ','').strip()
-                        try:
-                            tb_control_profit = float(bal)
-                        except:
-                            pass
-                    logger.info(f"[TB UPLOAD] Found control profit figure: R {tb_control_profit:,.2f}" if tb_control_profit else "[TB UPLOAD] Could not parse control profit")
-                    continue  # Don't include in accounts list
-                
-                code = str(row.get(code_col, '')).strip() if code_col else ''
-                if code.lower() in ['nan', 'none', '']:
-                    code = ''
-                
-                # Smart split: "1000/000 : Sales" → code="1000/000", name="Sales"
-                # Also handles: "1000 - Sales", "1000: Sales", "ACC001 Sales"
-                if not code and ' : ' in name:
-                    parts = name.split(' : ', 1)
-                    code = parts[0].strip()
-                    name = parts[1].strip()
-                elif not code and ' - ' in name and name[0].isdigit():
-                    parts = name.split(' - ', 1)
-                    code = parts[0].strip()
-                    name = parts[1].strip()
-                elif not code and ': ' in name and name[0].isdigit():
-                    parts = name.split(': ', 1)
-                    code = parts[0].strip()
-                    name = parts[1].strip()
-                
-                if not code:
-                    code = f"A{idx:04d}"
-                
-                # Clean up _AND_ → & (Sage Pastel export quirk)
-                name = name.replace('_AND_', '&').replace(' _and_ ', ' & ')
-                
-                # Parse debit/credit values - handles R1,000.00, R 1 000.00, (1000), -1000
-                def parse_amount(val):
-                    if pd.isna(val):
-                        return 0.0
-                    val = str(val).replace('R', '').replace('r', '').replace(',', '').replace(' ', '').strip()
-                    # Handle bracket notation for negatives: (1000) = -1000
-                    is_negative = False
-                    if val.startswith('(') and val.endswith(')'):
-                        val = val[1:-1]
-                        is_negative = True
-                    if val in ['', '-', 'nan', 'none', '0', '0.0', '0.00']:
-                        return 0.0
-                    try:
-                        result = float(val)
-                        return -result if is_negative else result
-                    except:
-                        return 0.0
-                
-                debit = 0.0
-                credit = 0.0
-                
-                if debit_col and credit_col:
-                    # Separate debit/credit columns
-                    debit = abs(parse_amount(row.get(debit_col)))
-                    credit = abs(parse_amount(row.get(credit_col)))
-                elif balance_col:
-                    # Single balance column: positive = debit, negative = credit
-                    bal = parse_amount(row.get(balance_col))
-                    if bal > 0:
-                        debit = bal
-                    elif bal < 0:
-                        credit = abs(bal)
-                elif debit_col:
-                    # Only debit column
-                    val = parse_amount(row.get(debit_col))
-                    if val > 0:
-                        debit = val
-                    else:
-                        credit = abs(val)
-                elif credit_col:
-                    # Only credit column
-                    val = parse_amount(row.get(credit_col))
-                    if val > 0:
-                        credit = val
-                    else:
-                        debit = abs(val)
-                
-                if debit > 0 or credit > 0:
-                    acc = {
-                        "code": code,
-                        "name": name,
-                        "debit": debit,
-                        "credit": credit
-                    }
-                    if category_col:
-                        cat = str(row.get(category_col, '')).strip()
-                        if cat and cat.lower() not in ['nan', 'none']:
-                            acc["category"] = cat
-                    accounts.append(acc)
-            
-            if not accounts:
-                return jsonify({"success": False, "error": "No valid account data found in file"})
-            
-            logger.info(f"[TB UPLOAD] Extracted {len(accounts)} accounts")
-            
-            # Now call the same analysis logic as api_tb_analyze
-            # We'll construct the data and call the analyze endpoint internally
-            total_debit = sum(a['debit'] for a in accounts)
-            total_credit = sum(a['credit'] for a in accounts)
-            is_balanced = abs(total_debit - total_credit) < 0.01
-            
-            # Inject into request-like data and call analyze logic
-            # For simplicity, we'll use requests to call our own endpoint
-            import requests as req_lib
-            
-            # Actually, let's just inline the analysis - cleaner
-            # Set up the data structure the analyzer expects
-            analyze_data = {
-                "accounts": accounts,
-                "total_debit": total_debit,
-                "total_credit": total_credit,
-                "is_balanced": is_balanced,
-                "lang": lang
-            }
-            
-            # Make internal request (this is a bit hacky but works)
-            from flask import g
-            with app.test_request_context('/api/reports/tb/analyze', method='POST', 
-                                           data=json.dumps(analyze_data),
-                                           content_type='application/json'):
-                # Copy session/auth from current request
-                from flask import session as flask_session
-                # Just call the function directly with mocked request data
-                pass
-            
-            # Actually, cleaner approach - just duplicate the core logic or call directly
-            # Let's make a simpler approach: return the accounts and let frontend call analyze
-            # No wait, user wants single upload -> full report
-            
-            # Simplest: redirect the data through the existing endpoint via internal call
-            # But that's complex. Let's just inline the key parts:
-            
-            # Build the same analysis by importing the core from api_tb_analyze
-            # This is getting complex - let me just return success with a redirect approach
-            
-            # SIMPLE APPROACH: Return the parsed data and have JS call the analyze endpoint
-            return jsonify({
-                "success": True, 
-                "accounts": accounts,
-                "total_debit": total_debit,
-                "total_credit": total_credit,
-                "is_balanced": is_balanced,
-                "message": f"Parsed {len(accounts)} accounts from {file.filename}",
-                "source_file": file.filename,
-                "tb_control_profit": tb_control_profit,
-                "redirect_analyze": True
-            })
-            
-        except Exception as e:
-            logger.error(f"[TB UPLOAD] Error: {e}")
-            import traceback
-            traceback.print_exc()
-            return jsonify({"success": False, "error": str(e)})
-    
-    
-    @app.route("/api/reports/tb/smart-report", methods=["POST"])
-    @login_required
-    def api_tb_smart_report():
-        """Generate different report types from uploaded TB data (management statement, KPI, etc.)"""
-        
-        try:
-            data = request.get_json()
-            accounts = data.get("accounts", [])
-            report_type = data.get("report_type", "management")
-            custom_request = data.get("custom_request", "")
-            lang = data.get("lang", "en")
-            source_file = data.get("source_file", "Uploaded TB")
-            tb_control_profit = data.get("tb_control_profit")
-            
-            if not accounts:
-                return jsonify({"success": False, "error": "No account data provided"})
-            
-            # ═══ PYTHON CALCULATES EVERYTHING FROM THE TB DATA ═══
-            has_categories = any(a.get("category") for a in accounts)
-            
-            def cat_sum(cats, column="debit"):
-                total = 0
-                for a in accounts:
-                    cat = str(a.get("category", "")).lower()
-                    for c in cats:
-                        if c in cat:
-                            total += float(a.get(column, 0) or 0)
-                            break
-                return total
-            
-            def name_sum(accs, keywords, column="debit"):
-                return sum(float(a.get(column, 0) or 0) for a in accs 
-                          if any(kw in str(a.get("name", "")).lower() for kw in keywords))
-            
-            if has_categories:
-                sales = cat_sum(["sales", "revenue", "turnover", "omset"], "credit")
-                cos = cat_sum(["cost of sale", "cost of goods", "koste van verkope"], "debit")
-                other_income = cat_sum(["other income", "ander inkomste"], "credit")
-                
-                expense_accs = [a for a in accounts if any(kw in str(a.get("category", "")).lower() for kw in ["expense", "uitgawe", "operating"])]
-                total_expenses = sum(float(a.get("debit", 0) or 0) - float(a.get("credit", 0) or 0) for a in expense_accs)
-                if total_expenses < 0:
-                    total_expenses = 0
-                
-                current_assets = sum(float(a.get("debit", 0) or 0) - float(a.get("credit", 0) or 0) 
-                                   for a in accounts if "current asset" in str(a.get("category", "")).lower() and "non-current" not in str(a.get("category", "")).lower())
-                fixed_assets = sum(float(a.get("debit", 0) or 0) - float(a.get("credit", 0) or 0) 
-                                 for a in accounts if any(kw in str(a.get("category", "")).lower() for kw in ["fixed asset", "non-current asset"]))
-                current_liab = sum(float(a.get("credit", 0) or 0) - float(a.get("debit", 0) or 0) 
-                                 for a in accounts if "current liabilit" in str(a.get("category", "")).lower() and "non-current" not in str(a.get("category", "")).lower())
-                long_term_liab = sum(float(a.get("credit", 0) or 0) - float(a.get("debit", 0) or 0) 
-                                   for a in accounts if any(kw in str(a.get("category", "")).lower() for kw in ["long term", "non-current liabilit"]))
-                equity = sum(float(a.get("credit", 0) or 0) - float(a.get("debit", 0) or 0) 
-                            for a in accounts if any(kw in str(a.get("category", "")).lower() for kw in ["equity", "owner", "ekwiteit"]))
-                
-                salaries = name_sum(expense_accs, ["salary", "salaries", "wage", "payroll", "salar"])
-                rent = name_sum(expense_accs, ["rent", "huur"])
-                electricity = name_sum(expense_accs, ["electric", "water", "eskom", "elektris"])
-                advertising = name_sum(expense_accs, ["advertising", "marketing", "advertens"])
-                insurance = name_sum(expense_accs, ["insurance", "verseker"])
-                bank_charges = name_sum(expense_accs, ["bank charge", "bank fee", "bankkoste"])
-                depreciation = name_sum(expense_accs, ["depreciation", "waardevermindering"])
-                professional = name_sum(expense_accs, ["professional", "accounting", "legal", "audit", "rekenmeest"])
-            else:
-                sales = sum(float(a.get("credit", 0) or 0) for a in accounts if str(a.get("code", "")).startswith("5"))
-                cos = sum(float(a.get("debit", 0) or 0) for a in accounts if str(a.get("code", "")).startswith("51"))
-                total_expenses = sum(float(a.get("debit", 0) or 0) for a in accounts if str(a.get("code", ""))[:1] in "6789")
-                other_income = 0
-                current_assets = current_liab = fixed_assets = long_term_liab = equity = 0
-                salaries = rent = electricity = advertising = insurance = bank_charges = depreciation = professional = 0
-            
-            gross_profit = sales - cos
-            net_profit = sales + other_income - cos - total_expenses
-            total_assets = current_assets + fixed_assets
-            total_liabilities = current_liab + long_term_liab
-            
-            gp_margin = round((gross_profit / sales * 100), 1) if sales > 0 else 0
-            np_margin = round((net_profit / (sales + other_income) * 100), 1) if (sales + other_income) > 0 else 0
-            current_ratio = round(current_assets / current_liab, 2) if current_liab > 0 else 0
-            debt_equity = round(total_liabilities / equity, 2) if equity > 0 else 0
-            sal_pct = round(salaries / sales * 100, 1) if sales > 0 else 0
-            rent_pct = round(rent / sales * 100, 1) if sales > 0 else 0
-            
-            validation_note = ""
-            if tb_control_profit is not None:
-                try:
-                    control = float(tb_control_profit)
-                    diff = abs(net_profit - control)
-                    pct = (diff / abs(control) * 100) if control != 0 else 0
-                    if pct > 5:
-                        validation_note = f"⚠️ Note: Calculated net profit (R{net_profit:,.2f}) differs from TB control figure (R{control:,.2f}) by {pct:.1f}%."
-                except:
-                    pass
-            
-            clean_name = source_file.rsplit('.', 1)[0].replace('_', ' ').replace('-', ' ').strip()
-            
-            data_for_ai = f"""
-    CLIENT: {clean_name}
-    DATA SOURCE: Uploaded Trial Balance ({len(accounts)} accounts)
-    {validation_note}
-    
-    === INCOME STATEMENT (Python-calculated, 100% accurate - DO NOT recalculate) ===
-    Revenue/Sales: R{sales:,.2f}
-    Cost of Sales: R{cos:,.2f}
-    Gross Profit: R{gross_profit:,.2f} ({gp_margin}%)
-    Other Income: R{other_income:,.2f}
-    Total Expenses: R{total_expenses:,.2f}
-      - Salaries: R{salaries:,.2f} ({sal_pct}% of sales)
-      - Rent: R{rent:,.2f}
-      - Electricity/Water: R{electricity:,.2f}
-      - Advertising: R{advertising:,.2f}
-      - Insurance: R{insurance:,.2f}
-      - Bank Charges: R{bank_charges:,.2f}
-      - Depreciation: R{depreciation:,.2f}
-      - Professional Fees: R{professional:,.2f}
-    Net Profit: R{net_profit:,.2f} ({np_margin}%)
-    
-    === BALANCE SHEET ===
-    Current Assets: R{current_assets:,.2f}
-    Fixed Assets: R{fixed_assets:,.2f}
-    Total Assets: R{total_assets:,.2f}
-    Current Liabilities: R{current_liab:,.2f}
-    Long-term Liabilities: R{long_term_liab:,.2f}
-    Total Liabilities: R{total_liabilities:,.2f}
-    Equity: R{equity:,.2f}
-    
-    === RATIOS ===
-    Current Ratio: {current_ratio}:1 (norm >1.5)
-    Gross Margin: {gp_margin}%
-    Net Margin: {np_margin}%
-    Debt/Equity: {debt_equity}:1
-    """
-            
-            report_prompts = {
-                "management": """Write a professional MANAGEMENT STATEMENT (Year-to-Date). Structure:
-    1. Executive Summary (2-3 sentences)
-    2. Income Statement Analysis (revenue, margins, expense breakdown)
-    3. Balance Sheet Summary
-    4. Key Ratios & What They Mean
-    5. Concerns & Red Flags
-    6. Recommendations (5+ specific actions)""",
-                
-                "kpi": f"""Write a KPI DASHBOARD REPORT with traffic light status (Green/Amber/Red):
-    1. Gross Profit Margin ({gp_margin}%)
-    2. Net Profit Margin ({np_margin}%)
-    3. Current Ratio ({current_ratio}:1)
-    4. Salaries % of Sales ({sal_pct}%)
-    5. Rent % of Sales ({rent_pct}%)
-    6. Debt to Equity ({debt_equity}:1)
-    For each: meaning, benchmark, and action.""",
-                
-                "sales": """Write a SALES ANALYSIS covering: revenue performance, cost structure, gross margin quality, expense impact, and improvement recommendations.""",
-                
-                "debtor": f"""Write a WORKING CAPITAL report: Current Ratio ({current_ratio}), cash position, liquidity risk, and recommendations.""",
-                
-                "forecast": """Write a FORWARD-LOOKING ANALYSIS: sustainability, cash flow outlook, scenario analysis (sales drop 10/20/30%), and strategic recommendations.""",
-                
-                "custom": f"""Answer this request: {custom_request or 'General financial overview'}"""
-            }
-            
-            prompt = report_prompts.get(report_type, report_prompts["management"])
-            
-            system_prompt = f"""You are Zane, ClickAI's senior financial analyst. You are writing a report for a CLIENT's uploaded trial balance.
-    Your name is simply "Zane" - do NOT use any surname. Sign as "Zane, ClickAI" only.
-    RULES: Use ONLY the Python-calculated numbers. Do NOT recalculate. Do NOT make fraud allegations.
-    {"Write in Afrikaans." if lang == "af" else "Write in English."} Use R (Rand) for all amounts.
-    
-    FORMAT RULES - OUTPUT CLEAN HTML:
-    - Use <h2> for main sections, <h3> for subsections
-    - Use <p> for paragraphs
-    - Use <strong> for emphasis
-    - Use <table> with inline styles for any data tables
-    - Use <div style="background:rgba(239,68,68,0.15);border-left:3px solid #ef4444;padding:12px;margin:10px 0;color:#fca5a5;border-radius:6px;"> for warnings/red flags
-    - Use <div style="background:rgba(16,185,129,0.15);border-left:3px solid #10b981;padding:12px;margin:10px 0;color:#6ee7b7;border-radius:6px;"> for positive items
-    - Use <div style="background:rgba(245,158,11,0.15);border-left:3px solid #f59e0b;padding:12px;margin:10px 0;color:#fcd34d;border-radius:6px;"> for caution items
-    - Use <div style="background:rgba(16,185,129,0.1);border-left:3px solid #10b981;padding:10px;margin:10px 0;"> for positive items
-    
-    - DO NOT use markdown (no ##, no **, no ---, no bullet points with -)
-    - Use <ul><li> for lists
-    - Make it visually professional and easy to scan"""
-    
-            if not ANTHROPIC_API_KEY:
-                return jsonify({"success": False, "error": "AI not configured"})
-            
-            message = _anthropic_client.messages.create(
-                model="claude-sonnet-4-6",
-                max_tokens=32000,
-                system=system_prompt,
-                messages=[{"role": "user", "content": f"{data_for_ai}\n\n{prompt}"}]
-            )
-            
-            # ─── AI-USAGE TRACKING ───
-            try:
-                if hasattr(app, "_ai_usage_tracker"):
-                    _biz = Auth.get_current_business()
-                    _biz_id = _biz.get("id") if _biz else None
-                    _usr = Auth.get_current_user()
-                    _usr_id = _usr.get("id") if _usr else None
-                    if _biz_id:
-                        _usage = getattr(message, "usage", None)
-                        app._ai_usage_tracker.log_usage(
-                            business_id=_biz_id,
-                            tool="tb_smart_report",
-                            model=getattr(message, "model", "claude-sonnet-4-6"),
-                            input_tokens=int(getattr(_usage, "input_tokens", 0) or 0),
-                            output_tokens=int(getattr(_usage, "output_tokens", 0) or 0),
-                            cache_read_tokens=int(getattr(_usage, "cache_read_input_tokens", 0) or 0),
-                            cache_write_tokens=int(getattr(_usage, "cache_creation_input_tokens", 0) or 0),
-                            user_id=_usr_id,
-                            success=True,
-                            metadata={"report_type": report_type},
-                        )
-            except Exception as _track_err:
-                logger.error(f"[AI-USAGE] tb_smart_report tracking skipped: {_track_err}")
-            # ─── END TRACKING ───
-            
-            report = message.content[0].text if message.content else ""
-            
-            # Convert any remaining markdown to HTML (fallback if Sonnet mixed formats)
-            import re
-            report = re.sub(r'^### (.+)$', r'<h3 style="color:#8b5cf6;margin-top:20px;">\1</h3>', report, flags=re.MULTILINE)
-            report = re.sub(r'^## (.+)$', r'<h2 style="color:#10b981;border-bottom:1px solid rgba(255,255,255,0.1);padding-bottom:5px;margin-top:25px;">\1</h2>', report, flags=re.MULTILINE)
-            report = re.sub(r'^# (.+)$', r'<h2 style="color:#8b5cf6;border-bottom:2px solid #8b5cf6;padding-bottom:8px;">\1</h2>', report, flags=re.MULTILINE)
-            report = re.sub(r'\*\*(.+?)\*\*', r'<strong>\1</strong>', report)
-            report = re.sub(r'^- (.+)$', r'<div style="margin:4px 0 4px 20px;">• \1</div>', report, flags=re.MULTILINE)
-            report = re.sub(r'^\d+\. (.+)$', r'<div style="margin:4px 0 4px 20px;">→ \1</div>', report, flags=re.MULTILINE)
-            report = re.sub(r'^---+$', r'<hr style="border:none;border-top:1px solid rgba(255,255,255,0.1);margin:15px 0;">', report, flags=re.MULTILINE)
-            # Wrap plain text paragraphs
-            report = re.sub(r'\n\n(?!<)', '\n<br><br>\n', report)
-            return jsonify({"success": True, "report": report})
-            
-        except Exception as e:
-            logger.error(f"[TB SMART REPORT] Error: {e}")
-            import traceback
-            traceback.print_exc()
-            return jsonify({"success": False, "error": str(e)})
-    
-    
-    # 
-    # PROFIT & LOSS
-    # 
-    
-    @app.route("/reports/pnl")
-    @login_required
-    def report_pnl():
-        """Profit & Loss Statement - Proper accounting format"""
-        
-        user = Auth.get_current_user()
-        business = Auth.get_current_business()
-        biz_id = business.get("id") if business else None
-        
-        # Get period from query params (default: current month)
-        period = request.args.get("period", "month")
-        
-        # Calculate date range
-        today_date = datetime.now()
-        if period == "month":
-            start_date = today_date.replace(day=1).strftime("%Y-%m-%d")
-            end_date = today_date.strftime("%Y-%m-%d")
-            period_label = today_date.strftime("%B %Y")
-        elif period == "quarter":
-            quarter = (today_date.month - 1) // 3
-            start_date = today_date.replace(month=quarter*3+1, day=1).strftime("%Y-%m-%d")
-            end_date = today_date.strftime("%Y-%m-%d")
-            period_label = f"Q{quarter+1} {today_date.year}"
-        elif period == "year":
-            start_date = today_date.replace(month=1, day=1).strftime("%Y-%m-%d")
-            end_date = today_date.strftime("%Y-%m-%d")
-            period_label = f"Year {today_date.year}"
-        elif period == "all":
-            start_date = "2000-01-01"
-            end_date = today_date.strftime("%Y-%m-%d")
-            period_label = "All Time"
-        else:
-            start_date = today_date.replace(day=1).strftime("%Y-%m-%d")
-            end_date = today_date.strftime("%Y-%m-%d")
-            period_label = today_date.strftime("%B %Y")
-        
-        # Get data filtered by date
-        invoices = db.get("invoices", {"business_id": biz_id}) if biz_id else []
-        invoices = [i for i in invoices if start_date <= i.get("date", "") <= end_date]
-        
-        sales = db.get("sales", {"business_id": biz_id}) if biz_id else []
-        sales = [s for s in sales if start_date <= s.get("date", "") <= end_date]
-        
-        expenses = db.get("expenses", {"business_id": biz_id}) if biz_id else []
-        expenses = [e for e in expenses if start_date <= e.get("date", "") <= end_date]
-        
-        payslips = db.get("payslips", {"business_id": biz_id}) if biz_id else []
-        payslips = [p for p in payslips if start_date <= p.get("date", "") <= end_date]
-        
-        supplier_invoices = db.get("supplier_invoices", {"business_id": biz_id}) if biz_id else []
-        supplier_invoices = [si for si in supplier_invoices if start_date <= si.get("date", "") <= end_date]
-        
-        # REVENUE
-        invoice_income = sum(float(inv.get("subtotal", 0)) for inv in invoices)
-        sales_income = sum(float(s.get("subtotal", 0)) for s in sales)
-        total_revenue = invoice_income + sales_income
-        
-        # COST OF SALES (from supplier invoices marked as stock/inventory)
-        cost_of_sales = sum(float(si.get("total", 0)) for si in supplier_invoices if si.get("category", "").lower() in ("stock", "inventory", "cost of sales", "purchases"))
-        
-        # If no supplier invoices categorized, estimate from stock movements
-        if cost_of_sales == 0:
-            stock_movements = db.get("stock_movements", {"business_id": biz_id}) if biz_id else []
-            stock_out = [sm for sm in stock_movements if sm.get("type") == "out" and start_date <= sm.get("date", "") <= end_date]
-            cost_of_sales = sum(float(sm.get("cost", 0)) * float(sm.get("quantity", 0)) for sm in stock_out)
-        
-        gross_profit = total_revenue - cost_of_sales
-        gross_margin = (gross_profit / total_revenue * 100) if total_revenue > 0 else 0
-        
-        # OPERATING EXPENSES by category
-        expense_categories = {}
-        for e in expenses:
-            cat = e.get("category", "General Expenses")
-            if cat.lower() not in ("stock", "inventory", "cost of sales", "purchases"):  # Exclude COS
-                if cat not in expense_categories:
-                    expense_categories[cat] = 0
-                expense_categories[cat] += float(e.get("amount", 0))
-        
-        # Add payroll to expenses
-        payroll_total = sum(float(p.get("gross", 0)) for p in payslips)
-        if payroll_total > 0:
-            expense_categories["Salaries & Wages"] = payroll_total
-        
-        total_expenses = sum(expense_categories.values())
-        
-        # NET PROFIT
-        net_profit = gross_profit - total_expenses
-        net_margin = (net_profit / total_revenue * 100) if total_revenue > 0 else 0
-        
-        # Build expense rows
-        expense_rows = ""
-        for cat, amount in sorted(expense_categories.items(), key=lambda x: x[1], reverse=True):
-            expense_rows += f'''
-            <tr>
-                <td style="padding-left:40px;">{cat}</td>
-                <td style="text-align:right;">{money(amount)}</td>
-            </tr>
-            '''
-        
-        content = f'''
-        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:20px;">
-            <a href="/reports" style="color:var(--text-muted);">← Back to Reports</a>
-            <div style="display:flex;gap:10px;align-items:center;">
-                <select onchange="window.location='/reports/pnl?period='+this.value" style="padding:8px;border-radius:6px;background:var(--card);color:var(--text);border:1px solid var(--border);">
-                    <option value="month" {"selected" if period == "month" else ""}>This Month</option>
-                    <option value="quarter" {"selected" if period == "quarter" else ""}>This Quarter</option>
-                    <option value="year" {"selected" if period == "year" else ""}>This Year</option>
-                    <option value="all" {"selected" if period == "all" else ""}>All Time</option>
-                </select>
-                <button class="btn btn-secondary" onclick="window.print();">🖨️ Print</button>
-            </div>
-        </div>
-        
-        <div class="card">
-            <h2 style="margin-bottom:5px;">[CHART] Income Statement</h2>
-            <p style="color:var(--text-muted);margin-bottom:20px;">For the period: {period_label}</p>
-            
-            <table class="table" style="font-size:14px;">
-                <tbody>
-                    <!-- REVENUE -->
-                    <tr style="background:rgba(16,185,129,0.1);">
-                        <td><strong>REVENUE</strong></td>
-                        <td></td>
-                    </tr>
-                    <tr>
-                        <td style="padding-left:40px;">Sales - Invoices</td>
-                        <td style="text-align:right;">{money(invoice_income)}</td>
-                    </tr>
-                    <tr>
-                        <td style="padding-left:40px;">Sales - Cash/POS</td>
-                        <td style="text-align:right;">{money(sales_income)}</td>
-                    </tr>
-                    <tr style="font-weight:bold;">
-                        <td style="padding-left:20px;">Total Revenue</td>
-                        <td style="text-align:right;">{money(total_revenue)}</td>
-                    </tr>
-                    
-                    <!-- COST OF SALES -->
-                    <tr style="background:rgba(239,68,68,0.05);margin-top:10px;">
-                        <td><strong>COST OF SALES</strong></td>
-                        <td></td>
-                    </tr>
-                    <tr>
-                        <td style="padding-left:40px;">Purchases / Stock Cost</td>
-                        <td style="text-align:right;color:var(--red);">({money(cost_of_sales)})</td>
-                    </tr>
-                    <tr style="font-weight:bold;">
-                        <td style="padding-left:20px;">Total Cost of Sales</td>
-                        <td style="text-align:right;color:var(--red);">({money(cost_of_sales)})</td>
-                    </tr>
-                    
-                    <!-- GROSS PROFIT -->
-                    <tr style="font-weight:bold;background:rgba(59,130,246,0.1);border-top:2px solid var(--border);">
-                        <td>GROSS PROFIT</td>
-                        <td style="text-align:right;color:{'var(--green)' if gross_profit >= 0 else 'var(--red)'};">{money(gross_profit)} <span style="font-size:12px;color:var(--text-muted);">({gross_margin:.1f}%)</span></td>
-                    </tr>
-                    
-                    <!-- OPERATING EXPENSES -->
-                    <tr style="background:rgba(239,68,68,0.1);margin-top:10px;">
-                        <td><strong>OPERATING EXPENSES</strong></td>
-                        <td></td>
-                    </tr>
-                    {expense_rows or "<tr><td style='padding-left:40px;color:var(--text-muted);' colspan='2'>No expenses recorded</td></tr>"}
-                    <tr style="font-weight:bold;">
-                        <td style="padding-left:20px;">Total Operating Expenses</td>
-                        <td style="text-align:right;color:var(--red);">({money(total_expenses)})</td>
-                    </tr>
-                </tbody>
-            </table>
-            
-            <!-- NET PROFIT -->
-            <div style="margin-top:20px;padding:20px;border-radius:8px;background:{'rgba(16,185,129,0.15)' if net_profit >= 0 else 'rgba(239,68,68,0.15)'};border:2px solid {'var(--green)' if net_profit >= 0 else 'var(--red)'};">
-                <div style="display:flex;justify-content:space-between;align-items:center;">
-                    <span style="font-size:20px;font-weight:bold;">NET {'PROFIT' if net_profit >= 0 else 'LOSS'}</span>
-                    <span style="font-size:32px;font-weight:bold;color:{'var(--green)' if net_profit >= 0 else 'var(--red)'};">{money(abs(net_profit))}</span>
-                </div>
-                <div style="text-align:right;color:var(--text-muted);font-size:12px;margin-top:5px;">
-                    Net margin: {net_margin:.1f}%
-                </div>
-            </div>
-        </div>
-        '''
-        
-        return render_page("Income Statement", content, user, "reports")
-    
-    
-    # 
-    # BALANCE SHEET
-    # 
-    
-    @app.route("/reports/balance-sheet")
-    @login_required
-    def report_balance_sheet():
-        """Balance Sheet - Proper accounting format"""
-        
-        user = Auth.get_current_user()
-        business = Auth.get_current_business()
-        biz_id = business.get("id") if business else None
-        
-        # ASSETS
-        # Current Assets
-        customers = db.get("customers", {"business_id": biz_id}) if biz_id else []
-        total_debtors = sum(float(c.get("balance", 0)) for c in customers if float(c.get("balance", 0)) > 0)
-        
-        stock = db.get_all_stock(biz_id)
-        stock_value = sum(
-            float(s.get("qty") or s.get("quantity") or 0) * float(s.get("cost") or s.get("cost_price") or 0) 
-            for s in stock
-        )
-        
-        # Bank balance (from receipts - expenses - supplier payments)
-        receipts = db.get("receipts", {"business_id": biz_id}) if biz_id else []
-        total_receipts = sum(float(r.get("amount", 0)) for r in receipts)
-        
-        sales = db.get("sales", {"business_id": biz_id}) if biz_id else []
-        # Only cash and card sales affect bank - account sales are in debtors
-        cash_card_sales = sum(float(s.get("total", 0)) for s in sales if s.get("payment_method", "cash") in ("cash", "card"))
-        
-        expenses = db.get("expenses", {"business_id": biz_id}) if biz_id else []
-        total_expenses_paid = sum(float(e.get("amount", 0)) for e in expenses)
-        
-        supplier_payments = db.get("supplier_payments", {"business_id": biz_id}) if biz_id else []
-        total_supplier_payments = sum(float(p.get("amount", 0)) for p in supplier_payments)
-        
-        payslips = db.get("payslips", {"business_id": biz_id}) if biz_id else []
-        total_payroll_paid = sum(float(p.get("net", 0)) for p in payslips)
-        
-        bank_balance = total_receipts + cash_card_sales - total_expenses_paid - total_supplier_payments - total_payroll_paid
-        
-        # VAT Receivable (input VAT from expenses)
-        vat_receivable = sum(float(e.get("vat", 0)) for e in expenses)
-        
-        total_current_assets = total_debtors + stock_value + bank_balance + vat_receivable
-        if bank_balance < 0:
-            total_current_assets = total_debtors + stock_value + vat_receivable  # Bank overdraft goes to liabilities
-        
-        total_assets = total_current_assets
-        
-        # LIABILITIES
-        # Current Liabilities
-        suppliers = db.get("suppliers", {"business_id": biz_id}) if biz_id else []
-        total_creditors = sum(float(s.get("balance", 0)) for s in suppliers if float(s.get("balance", 0)) > 0)
-        
-        # VAT Payable (output VAT from sales)
-        invoices = db.get("invoices", {"business_id": biz_id}) if biz_id else []
-        vat_from_invoices = sum(float(i.get("vat", 0)) for i in invoices)
-        vat_from_sales = sum(float(s.get("vat", 0)) for s in sales)
-        vat_payable = vat_from_invoices + vat_from_sales - vat_receivable
-        if vat_payable < 0:
-            vat_payable = 0  # VAT refund due would be an asset
-        
-        bank_overdraft = abs(bank_balance) if bank_balance < 0 else 0
-        
-        total_current_liabilities = total_creditors + vat_payable + bank_overdraft
-        total_liabilities = total_current_liabilities
-        
-        # EQUITY
-        # Calculate retained earnings from profit
-        invoice_income = sum(float(inv.get("subtotal", 0)) for inv in invoices)
-        sales_income = sum(float(s.get("subtotal", 0)) for s in sales)
-        total_income = invoice_income + sales_income
-        
-        expense_total = sum(float(e.get("amount", 0)) for e in expenses)
-        payroll_total = sum(float(p.get("gross", 0)) for p in payslips)
-        
-        # Cost of sales from supplier invoices
-        supplier_invoices = db.get("supplier_invoices", {"business_id": biz_id}) if biz_id else []
-        cost_of_sales = sum(float(si.get("total", 0)) for si in supplier_invoices)
-        
-        net_profit = total_income - cost_of_sales - expense_total - payroll_total
-        
-        # Get previous year retained earnings
-        year_ends = db.get("year_ends", {"business_id": biz_id}) if biz_id else []
-        previous_retained = sum(float(ye.get("retained_earnings", 0)) for ye in year_ends)
-        
-        retained_earnings = previous_retained + net_profit
-        total_equity = retained_earnings
-        
-        # Check if balanced
-        is_balanced = abs(total_assets - (total_liabilities + total_equity)) < 0.01
-        balance_diff = total_assets - (total_liabilities + total_equity)
-        
-        content = f'''
-        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:20px;">
-            <a href="/reports" style="color:var(--text-muted);">← Back to Reports</a>
-            <button class="btn btn-secondary" onclick="window.print();">🖨️ Print</button>
-        </div>
-        
-        <div class="card">
-            <h2 style="margin-bottom:5px;">[CHART] Balance Sheet</h2>
-            <p style="color:var(--text-muted);margin-bottom:20px;">As at {today()}</p>
-            
-            <table class="table" style="font-size:14px;">
-                <tbody>
-                    <!-- ASSETS -->
-                    <tr style="background:rgba(59,130,246,0.1);">
-                        <td colspan="2"><strong>ASSETS</strong></td>
-                    </tr>
-                    <tr>
-                        <td style="padding-left:20px;font-weight:bold;">Current Assets</td>
-                        <td></td>
-                    </tr>
-                    <tr>
-                        <td style="padding-left:40px;">Bank</td>
-                        <td style="text-align:right;color:{'var(--green)' if bank_balance >= 0 else 'var(--text-muted)'};">{money(max(0, bank_balance))}</td>
-                    </tr>
-                    <tr>
-                        <td style="padding-left:40px;">Debtors (Trade Receivables)</td>
-                        <td style="text-align:right;">{money(total_debtors)}</td>
-                    </tr>
-                    <tr>
-                        <td style="padding-left:40px;">Inventory (Stock)</td>
-                        <td style="text-align:right;">{money(stock_value)}</td>
-                    </tr>
-                    <tr>
-                        <td style="padding-left:40px;">VAT Receivable</td>
-                        <td style="text-align:right;">{money(vat_receivable)}</td>
-                    </tr>
-                    <tr style="font-weight:bold;border-top:1px solid var(--border);">
-                        <td style="padding-left:20px;">Total Current Assets</td>
-                        <td style="text-align:right;">{money(total_current_assets)}</td>
-                    </tr>
-                    <tr style="font-weight:bold;background:rgba(59,130,246,0.05);">
-                        <td>TOTAL ASSETS</td>
-                        <td style="text-align:right;font-size:16px;">{money(total_assets)}</td>
-                    </tr>
-                    
-                    <!-- LIABILITIES -->
-                    <tr style="background:rgba(239,68,68,0.1);margin-top:20px;">
-                        <td colspan="2"><strong>LIABILITIES</strong></td>
-                    </tr>
-                    <tr>
-                        <td style="padding-left:20px;font-weight:bold;">Current Liabilities</td>
-                        <td></td>
-                    </tr>
-                    {f'<tr><td style="padding-left:40px;">Bank Overdraft</td><td style="text-align:right;color:var(--red);">{money(bank_overdraft)}</td></tr>' if bank_overdraft > 0 else ''}
-                    <tr>
-                        <td style="padding-left:40px;">Creditors (Trade Payables)</td>
-                        <td style="text-align:right;">{money(total_creditors)}</td>
-                    </tr>
-                    <tr>
-                        <td style="padding-left:40px;">VAT Payable</td>
-                        <td style="text-align:right;">{money(vat_payable)}</td>
-                    </tr>
-                    <tr style="font-weight:bold;border-top:1px solid var(--border);">
-                        <td style="padding-left:20px;">Total Current Liabilities</td>
-                        <td style="text-align:right;">{money(total_current_liabilities)}</td>
-                    </tr>
-                    <tr style="font-weight:bold;background:rgba(239,68,68,0.05);">
-                        <td>TOTAL LIABILITIES</td>
-                        <td style="text-align:right;font-size:16px;">{money(total_liabilities)}</td>
-                    </tr>
-                    
-                    <!-- EQUITY -->
-                    <tr style="background:rgba(139,92,246,0.1);margin-top:20px;">
-                        <td colspan="2"><strong>EQUITY</strong></td>
-                    </tr>
-                    <tr>
-                        <td style="padding-left:40px;">Retained Earnings (Previous Years)</td>
-                        <td style="text-align:right;">{money(previous_retained)}</td>
-                    </tr>
-                    <tr>
-                        <td style="padding-left:40px;">Current Year Profit/Loss</td>
-                        <td style="text-align:right;color:{'var(--green)' if net_profit >= 0 else 'var(--red)'};">{money(net_profit)}</td>
-                    </tr>
-                    <tr style="font-weight:bold;background:rgba(139,92,246,0.05);">
-                        <td>TOTAL EQUITY</td>
-                        <td style="text-align:right;font-size:16px;">{money(total_equity)}</td>
-                    </tr>
-                </tbody>
-            </table>
-            
-            <!-- Balance Check -->
-            <div style="margin-top:20px;padding:15px;border-radius:8px;background:{'rgba(16,185,129,0.1)' if is_balanced else 'rgba(239,68,68,0.1)'};border:1px solid {'var(--green)' if is_balanced else 'var(--red)'};">
-                <div style="display:flex;justify-content:space-between;align-items:center;">
-                    <span>{'' if is_balanced else '[!]'} Assets = Liabilities + Equity</span>
-                    <span style="font-weight:bold;">{money(total_assets)} = {money(total_liabilities)} + {money(total_equity)}</span>
-                </div>
-                {f'<div style="color:var(--red);margin-top:10px;">Difference: {money(balance_diff)} - Please review entries</div>' if not is_balanced else ''}
-            </div>
-        </div>
-        '''
-        
-        return render_page("Balance Sheet", content, user, "reports")
-    
-    
-    # 
-    # VAT REPORT
-    # 
-    
-    @app.route("/reports/vat")
-    @login_required
-    def report_vat():
-        """VAT201 Report - Proper SARS format with period selection"""
-        
-        user = Auth.get_current_user()
-        business = Auth.get_current_business()
-        biz_id = business.get("id") if business else None
-        
-        # VAT periods (2 months each)
-        # Jan-Feb, Mar-Apr, May-Jun, Jul-Aug, Sep-Oct, Nov-Dec
-        today_date = datetime.now()
-        current_month = today_date.month
-        current_year = today_date.year
-        
-        # Get period from query params
-        period = request.args.get("period", "current")
-        
-        if period == "current":
-            # Current VAT period
-            period_start_month = ((current_month - 1) // 2) * 2 + 1
-            period_end_month = period_start_month + 1
-            year = current_year
-        elif period == "previous":
-            # Previous VAT period
-            period_start_month = ((current_month - 1) // 2) * 2 - 1
-            if period_start_month < 1:
-                period_start_month = 11
-                year = current_year - 1
-            else:
-                year = current_year
-            period_end_month = period_start_month + 1
-        else:
-            # Parse specific period like "2026-01"
-            try:
-                parts = period.split("-")
-                year = int(parts[0])
-                month = int(parts[1])
-                period_start_month = ((month - 1) // 2) * 2 + 1
-                period_end_month = period_start_month + 1
-            except:
-                period_start_month = 1
-                period_end_month = 2
-                year = current_year
-        
-        start_date = f"{year}-{period_start_month:02d}-01"
-        if period_end_month == 12:
-            end_date = f"{year}-12-31"
-        else:
-            end_date = f"{year}-{period_end_month+1:02d}-01"
-        
-        month_names = ["", "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
-        period_label = f"{month_names[period_start_month]}-{month_names[period_end_month]} {year}"
-        
-        # Get data filtered by period
-        invoices = db.get("invoices", {"business_id": biz_id}) if biz_id else []
-        invoices = [i for i in invoices if start_date <= i.get("date", "") < end_date]
-        
-        sales = db.get("sales", {"business_id": biz_id}) if biz_id else []
-        sales = [s for s in sales if start_date <= s.get("date", "") < end_date]
-        
-        expenses = db.get("expenses", {"business_id": biz_id}) if biz_id else []
-        expenses = [e for e in expenses if start_date <= e.get("date", "") < end_date]
-        
-        supplier_invoices = db.get("supplier_invoices", {"business_id": biz_id}) if biz_id else []
-        supplier_invoices = [si for si in supplier_invoices if start_date <= si.get("date", "") < end_date]
-        
-        # OUTPUT VAT (what you owe SARS)
-        # For imported invoices where vat=0, back-calculate from total (assume VAT inclusive)
-        invoice_sales_excl = 0
-        invoice_vat = 0
-        for inv in invoices:
-            subtotal = float(inv.get("subtotal", 0))
-            vat = float(inv.get("vat", 0))
-            total = float(inv.get("total", 0))
-            if vat > 0:
-                invoice_sales_excl += subtotal
-                invoice_vat += vat
-            elif total > 0:
-                # Back-calculate: total is VAT inclusive
-                calc_excl = total / 1.15
-                calc_vat = total - calc_excl
-                invoice_sales_excl += calc_excl
-                invoice_vat += calc_vat
-        
-        pos_sales_excl = sum(float(s.get("subtotal", 0)) for s in sales)
-        pos_vat = sum(float(s.get("vat", 0)) for s in sales)
-        
-        total_sales_excl = invoice_sales_excl + pos_sales_excl
-        total_output_vat = invoice_vat + pos_vat
-        
-        # INPUT VAT (what you can claim back)
-        expense_excl = sum(float(e.get("amount", 0)) / 1.15 for e in expenses)
-        expense_vat = sum(float(e.get("amount", 0)) * 0.15 / 1.15 for e in expenses)
-        
-        # Supplier invoices - also back-calculate if vat=0
-        si_excl = 0
-        si_vat = 0
-        for si in supplier_invoices:
-            vat = float(si.get("vat", 0))
-            total = float(si.get("total", 0))
-            subtotal = float(si.get("subtotal", 0))
-            if vat > 0:
-                si_excl += subtotal or (total - vat)
-                si_vat += vat
-            elif total > 0:
-                calc_excl = total / 1.15
-                calc_vat = total - calc_excl
-                si_excl += calc_excl
-                si_vat += calc_vat
-        
-        total_purchases_excl = expense_excl + si_excl
-        total_input_vat = expense_vat + si_vat
-        
-        # NET VAT
-        vat_payable = total_output_vat - total_input_vat
-        
-        # Build period selector
-        periods_html = ""
-        for m in range(1, 12, 2):
-            p_label = f"{month_names[m]}-{month_names[m+1]} {current_year}"
-            p_value = f"{current_year}-{m:02d}"
-            periods_html += f'<option value="{p_value}" {"selected" if period_start_month == m and year == current_year else ""}>{p_label}</option>'
-        # Add previous year
-        for m in range(1, 12, 2):
-            p_label = f"{month_names[m]}-{month_names[m+1]} {current_year-1}"
-            p_value = f"{current_year-1}-{m:02d}"
-            periods_html += f'<option value="{p_value}" {"selected" if period_start_month == m and year == current_year-1 else ""}>{p_label}</option>'
-        
-        content = f'''
-        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:20px;">
-            <a href="/reports" style="color:var(--text-muted);">← Back to Reports</a>
-            <div style="display:flex;gap:10px;align-items:center;">
-                <select onchange="window.location='/reports/vat?period='+this.value" style="padding:8px;border-radius:6px;background:var(--card);color:var(--text);border:1px solid var(--border);">
-                    {periods_html}
-                </select>
-                <button class="btn btn-secondary" onclick="window.print();">🖨️ Print</button>
-            </div>
-        </div>
-        
-        <div class="card">
-            <h2 style="margin-bottom:5px;">[CHART] VAT201 Return</h2>
-            <p style="color:var(--text-muted);margin-bottom:20px;">Tax Period: {period_label}</p>
-            
-            <table class="table" style="font-size:14px;">
-                <thead>
-                    <tr>
-                        <th>Description</th>
-                        <th style="text-align:right;">Value (Excl VAT)</th>
-                        <th style="text-align:right;">VAT Amount</th>
-                    </tr>
-                </thead>
-                <tbody>
-                    <!-- OUTPUT VAT -->
-                    <tr style="background:rgba(239,68,68,0.1);">
-                        <td colspan="3"><strong>OUTPUT VAT (You owe SARS)</strong></td>
-                    </tr>
-                    <tr>
-                        <td style="padding-left:20px;">1. Standard rated sales - Invoices</td>
-                        <td style="text-align:right;">{money(invoice_sales_excl)}</td>
-                        <td style="text-align:right;">{money(invoice_vat)}</td>
-                    </tr>
-                    <tr>
-                        <td style="padding-left:20px;">1a. Standard rated sales - Cash/POS</td>
-                        <td style="text-align:right;">{money(pos_sales_excl)}</td>
-                        <td style="text-align:right;">{money(pos_vat)}</td>
-                    </tr>
-                    <tr style="font-weight:bold;border-top:1px solid var(--border);">
-                        <td style="padding-left:20px;">Total Output VAT</td>
-                        <td style="text-align:right;">{money(total_sales_excl)}</td>
-                        <td style="text-align:right;color:var(--red);">{money(total_output_vat)}</td>
-                    </tr>
-                    
-                    <!-- INPUT VAT -->
-                    <tr style="background:rgba(16,185,129,0.1);">
-                        <td colspan="3"><strong>INPUT VAT (You can claim)</strong></td>
-                    </tr>
-                    <tr>
-                        <td style="padding-left:20px;">14. Capital goods</td>
-                        <td style="text-align:right;">R0.00</td>
-                        <td style="text-align:right;">R0.00</td>
-                    </tr>
-                    <tr>
-                        <td style="padding-left:20px;">15. Other goods/services - Supplier invoices</td>
-                        <td style="text-align:right;">{money(si_excl)}</td>
-                        <td style="text-align:right;">{money(si_vat)}</td>
-                    </tr>
-                    <tr>
-                        <td style="padding-left:20px;">15a. Other goods/services - Expenses</td>
-                        <td style="text-align:right;">{money(expense_excl)}</td>
-                        <td style="text-align:right;">{money(expense_vat)}</td>
-                    </tr>
-                    <tr style="font-weight:bold;border-top:1px solid var(--border);">
-                        <td style="padding-left:20px;">Total Input VAT</td>
-                        <td style="text-align:right;">{money(total_purchases_excl)}</td>
-                        <td style="text-align:right;color:var(--green);">{money(total_input_vat)}</td>
-                    </tr>
-                </tbody>
-            </table>
-            
-            <!-- VAT Payable/Refund -->
-            <div style="margin-top:20px;padding:20px;border-radius:8px;background:{'rgba(239,68,68,0.15)' if vat_payable > 0 else 'rgba(16,185,129,0.15)'};border:2px solid {'var(--red)' if vat_payable > 0 else 'var(--green)'};">
-                <div style="display:flex;justify-content:space-between;align-items:center;">
-                    <div>
-                        <span style="font-size:14px;color:var(--text-muted);">Field 20:</span>
-                        <span style="font-size:18px;font-weight:bold;margin-left:10px;">VAT {'PAYABLE' if vat_payable > 0 else 'REFUNDABLE'}</span>
-                    </div>
-                    <span style="font-size:32px;font-weight:bold;color:{'var(--red)' if vat_payable > 0 else 'var(--green)'};">{money(abs(vat_payable))}</span>
-                </div>
-            </div>
-            
-            <div style="margin-top:20px;padding:15px;background:rgba(59,130,246,0.1);border-radius:8px;">
-                <p style="margin:0;font-size:12px;color:var(--text-muted);">
-                    [!] <strong>Important:</strong> This is a summary for reference only. 
-                    Always verify figures with source documents before submitting to SARS.
-                    Due date: Last business day of the month following the tax period.
-                </p>
-            </div>
-        </div>
-        '''
-        
-        return render_page("VAT Report", content, user, "reports")
-    
-    
-    # 
-    # PURCHASE ORDERS
-    # 
-    
-
-    # === CASHFLOW, SMART REPORTS, BUDGET ===
-
-    @app.route("/reports/cashflow")
-    @login_required
-    def report_cashflow():
-        """Cash Flow Statement - Proper accounting format"""
-        
-        user = Auth.get_current_user()
-        business = Auth.get_current_business()
-        biz_id = business.get("id") if business else None
-        
-        # Get period from query params
-        period = request.args.get("period", "month")
-        today_date = datetime.now()
-        
-        if period == "month":
-            start_date = today_date.replace(day=1).strftime("%Y-%m-%d")
-            end_date = today_date.strftime("%Y-%m-%d")
-            period_label = today_date.strftime("%B %Y")
-        elif period == "quarter":
-            quarter = (today_date.month - 1) // 3
-            start_date = today_date.replace(month=quarter*3+1, day=1).strftime("%Y-%m-%d")
-            end_date = today_date.strftime("%Y-%m-%d")
-            period_label = f"Q{quarter+1} {today_date.year}"
-        elif period == "year":
-            start_date = today_date.replace(month=1, day=1).strftime("%Y-%m-%d")
-            end_date = today_date.strftime("%Y-%m-%d")
-            period_label = f"Year {today_date.year}"
-        else:
-            start_date = today_date.replace(day=1).strftime("%Y-%m-%d")
-            end_date = today_date.strftime("%Y-%m-%d")
-            period_label = today_date.strftime("%B %Y")
-        
-        # Get data filtered by period
-        receipts = db.get("receipts", {"business_id": biz_id}) if biz_id else []
-        receipts = [r for r in receipts if start_date <= r.get("date", "") <= end_date]
-        
-        sales = db.get("sales", {"business_id": biz_id}) if biz_id else []
-        sales = [s for s in sales if start_date <= s.get("date", "") <= end_date]
-        
-        expenses = db.get("expenses", {"business_id": biz_id}) if biz_id else []
-        expenses = [e for e in expenses if start_date <= e.get("date", "") <= end_date]
-        
-        payslips = db.get("payslips", {"business_id": biz_id}) if biz_id else []
-        payslips = [p for p in payslips if start_date <= p.get("date", "") <= end_date]
-        
-        supplier_payments = db.get("supplier_payments", {"business_id": biz_id}) if biz_id else []
-        supplier_payments = [sp for sp in supplier_payments if start_date <= sp.get("date", "") <= end_date]
-        
-        # OPERATING ACTIVITIES
-        # Cash IN
-        cash_from_debtors = sum(float(r.get("amount", 0)) for r in receipts)
-        # Only cash POS sales are actual cash in (not card/account)
-        cash_sales = sum(float(s.get("total", 0)) for s in sales if s.get("payment_method", "cash") == "cash")
-        # Card sales also go to bank
-        card_sales = sum(float(s.get("total", 0)) for s in sales if s.get("payment_method") == "card")
-        total_cash_in = cash_from_debtors + cash_sales + card_sales
-        
-        # Cash OUT
-        cash_to_creditors = sum(float(sp.get("amount", 0)) for sp in supplier_payments)
-        cash_to_expenses = sum(float(e.get("amount", 0)) for e in expenses)
-        cash_to_employees = sum(float(p.get("net", 0)) for p in payslips)
-        total_cash_out = cash_to_creditors + cash_to_expenses + cash_to_employees
-        
-        net_operating = total_cash_in - total_cash_out
-        
-        # Opening and Closing balance (simplified)
-        # For proper cash flow, we'd need opening bank balance
-        closing_balance = net_operating  # Simplified
-        
-        content = f'''
-        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:20px;">
-            <a href="/reports" style="color:var(--text-muted);">← Back to Reports</a>
-            <div style="display:flex;gap:10px;align-items:center;">
-                <select onchange="window.location='/reports/cashflow?period='+this.value" style="padding:8px;border-radius:6px;background:var(--card);color:var(--text);border:1px solid var(--border);">
-                    <option value="month" {"selected" if period == "month" else ""}>This Month</option>
-                    <option value="quarter" {"selected" if period == "quarter" else ""}>This Quarter</option>
-                    <option value="year" {"selected" if period == "year" else ""}>This Year</option>
-                </select>
-                <button class="btn btn-secondary" onclick="window.print();">🖨️ Print</button>
-            </div>
-        </div>
-        
-        <div class="card">
-            <h2 style="margin-bottom:5px;">[MONEY] Cash Flow Statement</h2>
-            <p style="color:var(--text-muted);margin-bottom:20px;">For the period: {period_label}</p>
-            
-            <table class="table" style="font-size:14px;">
-                <tbody>
-                    <!-- OPERATING ACTIVITIES -->
-                    <tr style="background:rgba(16,185,129,0.1);">
-                        <td colspan="2"><strong>CASH FLOWS FROM OPERATING ACTIVITIES</strong></td>
-                    </tr>
-                    
-                    <!-- Cash Receipts -->
-                    <tr>
-                        <td style="padding-left:20px;font-weight:bold;">Cash Receipts</td>
-                        <td></td>
-                    </tr>
-                    <tr>
-                        <td style="padding-left:40px;">Receipts from customers (debtors)</td>
-                        <td style="text-align:right;color:var(--green);">{money(cash_from_debtors)}</td>
-                    </tr>
-                    <tr>
-                        <td style="padding-left:40px;">Cash sales</td>
-                        <td style="text-align:right;color:var(--green);">{money(cash_sales)}</td>
-                    </tr>
-                    <tr style="font-weight:bold;border-top:1px solid var(--border);">
-                        <td style="padding-left:20px;">Total Cash In</td>
-                        <td style="text-align:right;color:var(--green);">{money(total_cash_in)}</td>
-                    </tr>
-                    
-                    <!-- Cash Payments -->
-                    <tr>
-                        <td style="padding-left:20px;font-weight:bold;">Cash Payments</td>
-                        <td></td>
-                    </tr>
-                    <tr>
-                        <td style="padding-left:40px;">Payments to suppliers (creditors)</td>
-                        <td style="text-align:right;color:var(--red);">({money(cash_to_creditors)})</td>
-                    </tr>
-                    <tr>
-                        <td style="padding-left:40px;">Operating expenses</td>
-                        <td style="text-align:right;color:var(--red);">({money(cash_to_expenses)})</td>
-                    </tr>
-                    <tr>
-                        <td style="padding-left:40px;">Salaries and wages</td>
-                        <td style="text-align:right;color:var(--red);">({money(cash_to_employees)})</td>
-                    </tr>
-                    <tr style="font-weight:bold;border-top:1px solid var(--border);">
-                        <td style="padding-left:20px;">Total Cash Out</td>
-                        <td style="text-align:right;color:var(--red);">({money(total_cash_out)})</td>
-                    </tr>
-                    
-                    <tr style="font-weight:bold;background:rgba(59,130,246,0.1);border-top:2px solid var(--border);">
-                        <td>Net Cash from Operating Activities</td>
-                        <td style="text-align:right;color:{'var(--green)' if net_operating >= 0 else 'var(--red)'};">{money(net_operating)}</td>
-                    </tr>
-                    
-                    <!-- INVESTING ACTIVITIES -->
-                    <tr style="background:rgba(139,92,246,0.05);">
-                        <td colspan="2"><strong>CASH FLOWS FROM INVESTING ACTIVITIES</strong></td>
-                    </tr>
-                    <tr>
-                        <td style="padding-left:40px;color:var(--text-muted);">Purchase of equipment</td>
-                        <td style="text-align:right;color:var(--text-muted);">R0.00</td>
-                    </tr>
-                    <tr style="font-weight:bold;">
-                        <td>Net Cash from Investing Activities</td>
-                        <td style="text-align:right;">R0.00</td>
-                    </tr>
-                    
-                    <!-- FINANCING ACTIVITIES -->
-                    <tr style="background:rgba(249,115,22,0.05);">
-                        <td colspan="2"><strong>CASH FLOWS FROM FINANCING ACTIVITIES</strong></td>
-                    </tr>
-                    <tr>
-                        <td style="padding-left:40px;color:var(--text-muted);">Owner drawings</td>
-                        <td style="text-align:right;color:var(--text-muted);">R0.00</td>
-                    </tr>
-                    <tr style="font-weight:bold;">
-                        <td>Net Cash from Financing Activities</td>
-                        <td style="text-align:right;">R0.00</td>
-                    </tr>
-                </tbody>
-            </table>
-            
-            <!-- Net Cash Movement -->
-            <div style="margin-top:20px;padding:20px;border-radius:8px;background:{'rgba(16,185,129,0.15)' if net_operating >= 0 else 'rgba(239,68,68,0.15)'};border:2px solid {'var(--green)' if net_operating >= 0 else 'var(--red)'};">
-                <div style="display:flex;justify-content:space-between;align-items:center;">
-                    <span style="font-size:18px;font-weight:bold;">NET {'INCREASE' if net_operating >= 0 else 'DECREASE'} IN CASH</span>
-                    <span style="font-size:32px;font-weight:bold;color:{'var(--green)' if net_operating >= 0 else 'var(--red)'};">{money(abs(net_operating))}</span>
-                </div>
-            </div>
-        </div>
-        '''
-        
-        return render_page("Cash Flow", content, user, "reports")
-    
-    
-    # 
-    # SMART AI REPORTS - Zane writes ANY report you want
-    # 
-    
-    @app.route("/reports/smart")
-    @login_required
-    def smart_reports_page():
-        """AI-Generated Management Reports"""
-        
-        user = Auth.get_current_user()
-        business = Auth.get_current_business()
-        
-        content = '''
-        <div class="card">
-            <h2 style="margin-bottom:15px;">Smart Reports</h2>
-            
-            <!-- DATA SOURCE SELECTOR -->
-            <div class="card" style="margin-bottom:20px;padding:15px;">
-                <h3 style="margin:0 0 10px 0;">📂 Data Source</h3>
-                <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center;">
-                    <button id="srcOwnBtn" class="btn btn-primary" onclick="setDataSource('own')" style="flex:none;">
-                        🏢 My Business Data
-                    </button>
-                    <label id="srcClientBtn" class="btn btn-secondary" style="cursor:pointer;flex:none;margin:0;">
-                        📁 Upload Client TB
-                        <input type="file" id="smartReportTBUpload" accept=".csv,.xlsx,.xls" style="display:none;" onchange="handleSmartReportTB(this)">
-                    </label>
-                    <span id="dataSourceStatus" style="color:var(--text-muted);font-size:13px;">Using your own business data</span>
-                </div>
-            </div>
-            
-            <!-- REPORT TYPE SELECTION -->
-            <h3 style="margin:20px 0 10px 0;">Choose Report Type</h3>
-            <div class="stats-grid">
-                <div class="card report-btn" style="cursor:pointer" onclick="generateReport('management')">
-                    <h4>Management Statement</h4>
-                    <p style="color:var(--text-muted);font-size:13px;">Year-to-date P&L, Balance Sheet & KPIs</p>
-                </div>
-                <div class="card report-btn" style="cursor:pointer" onclick="generateReport('tb_analysis')">
-                    <h4>TB Analysis</h4>
-                    <p style="color:var(--text-muted);font-size:13px;">Full account-by-account financial review</p>
-                </div>
-                <div class="card report-btn" style="cursor:pointer" onclick="generateReport('kpi')">
-                    <h4>KPI Dashboard</h4>
-                    <p style="color:var(--text-muted);font-size:13px;">Key metrics and trends</p>
-                </div>
-                <div class="card report-btn" style="cursor:pointer" onclick="generateReport('sales')">
-                    <h4>Sales Analysis</h4>
-                    <p style="color:var(--text-muted);font-size:13px;">Sales breakdown with AI insights</p>
-                </div>
-                <div class="card report-btn" style="cursor:pointer" onclick="generateReport('debtor')">
-                    <h4>Debtor Risk Report</h4>
-                    <p style="color:var(--text-muted);font-size:13px;">Problem customers & recommendations</p>
-                </div>
-                <div class="card report-btn" style="cursor:pointer" onclick="generateReport('forecast')">
-                    <h4>Cash Flow Forecast</h4>
-                    <p style="color:var(--text-muted);font-size:13px;">Next 30 days projection</p>
-                </div>
-                <div class="card report-btn" style="cursor:pointer;border:1px solid rgba(16,185,129,0.3);background:linear-gradient(135deg, rgba(16,185,129,0.08), rgba(99,102,241,0.05));" onclick="goToGLAnalysis()">
-                    <h4>🔬 GL Analysis</h4>
-                    <p style="color:var(--text-muted);font-size:13px;">Live data when in 'My Business' mode — Upload for client GLs</p>
-                </div>
-            </div>
-            
-            <h3 style="margin:30px 0 10px 0;">Custom Report</h3>
-            <p style="color:var(--text-muted);margin-bottom:10px;">Or ask for anything specific:</p>
-            <div style="display:flex;gap:10px;">
-                <input type="text" id="customReportInput" class="form-input" style="flex:1;" placeholder="e.g., Compare this month vs last month sales by customer...">
-                <button class="btn btn-primary" onclick="generateCustomReport()">Generate</button>
-            </div>
-        </div>
-        
-        <div id="reportLoading" style="display:none;text-align:center;padding:40px;">
-            <div style="font-size:24px;margin-bottom:10px;">Generating Report...</div>
-            <p style="color:var(--text-muted);">Analyzing data. This may take up to 30 seconds.</p>
-        </div>
-        
-        <div id="reportOutput" style="margin-top:20px;display:none;">
-            <div class="card">
-                <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:15px;flex-wrap:wrap;gap:10px;">
-                    <h3 id="reportTitle" style="margin:0;">Report</h3>
-                    <div style="display:flex;gap:8px;flex-wrap:wrap;">
-                        <button class="btn btn-secondary" onclick="downloadReport()" style="font-size:12px;padding:6px 14px;">⬇️ Download</button>
-                        <button class="btn btn-secondary" onclick="showEmailModal()" style="font-size:12px;padding:6px 14px;">Email</button>
-                        <button class="btn btn-secondary" onclick="window.print();" style="font-size:12px;padding:6px 14px;">🖨️ Print</button>
-                    </div>
-                </div>
-                <div id="reportContent" style="line-height:1.6;"></div>
-            </div>
-        </div>
-        
-        <!-- EMAIL MODAL -->
-        <div id="emailModal" style="display:none;position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.6);z-index:9999;align-items:center;justify-content:center;">
-            <div style="background:var(--card);border:1px solid var(--border);border-radius:12px;padding:25px;width:90%;max-width:420px;box-shadow:0 20px 60px rgba(0,0,0,0.5);">
-                <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:15px;">
-                    <h3 style="margin:0;color:var(--primary);">Email Report</h3>
-                    <button onclick="closeEmailModal()" style="background:none;border:none;color:var(--text-muted);font-size:20px;cursor:pointer;">✕</button>
-                </div>
-                <input type="email" id="emailTo" class="form-input" placeholder="email@example.com" style="width:100%;margin-bottom:10px;">
-                <input type="text" id="emailSubject" class="form-input" placeholder="Subject (optional)" style="width:100%;margin-bottom:15px;">
-                <div style="display:flex;gap:10px;justify-content:flex-end;">
-                    <button class="btn btn-secondary" onclick="closeEmailModal()">Cancel</button>
-                    <button class="btn btn-primary" id="sendEmailBtn" onclick="sendReportEmail()">Send</button>
-                </div>
-                <p id="emailStatus" style="margin:10px 0 0 0;font-size:12px;display:none;"></p>
-            </div>
-        </div>
-        
-        <style>
-        .report-btn { transition: all 0.2s; border: 1px solid var(--border); }
-        .report-btn:hover { border-color: var(--primary); transform: translateY(-2px); }
-        .report-btn.disabled { opacity: 0.5; pointer-events: none; }
-        </style>
-        
         <script>
-        // ═══ DATA SOURCE STATE ═══
-        let dataSource = 'own';  // 'own' or 'client'
-        let clientTBData = null;  // Parsed client TB data
-        let clientFileName = '';
+        let cart = [];
+        let selectedRowIndex = -1;
+        let currentCashierId = null;
+        let currentCashierName = null;
         
-        const reportTitles = {
-            'management': 'Management Statement',
-            'tb_analysis': 'TB Analysis',
-            'kpi': 'Key Performance Indicators',
-            'sales': 'Sales Analysis',
-            'debtor': 'Debtor Risk Report',
-            'forecast': 'Cash Flow Forecast'
-        };
+        // Initialize cashier - restore from cookie or use logged-in user
+        document.addEventListener('DOMContentLoaded', function() {
+            const myUid = '{_safe_uid}';
+            const myName = '{_safe_uname}';
+            const dd = document.getElementById('cashierSelect');
+            
+            const savedCashier = document.cookie.split(';').find(c => c.trim().startsWith('pos_cashier='));
+            if (savedCashier) {
+                const uid = savedCashier.split('=')[1];
+                const btn = document.querySelector('.cashier-btn[data-uid="' + uid + '"]');
+                if (btn) {
+                    // Cookie cashier exists as a valid team member — use it
+                    document.querySelectorAll('.cashier-btn').forEach(b => b.classList.remove('active'));
+                    btn.classList.add('active');
+                    currentCashierId = uid;
+                    currentCashierName = btn.textContent.trim();
+                    if (dd) dd.value = uid;
+                    return;
+                }
+                // Also check dropdown only (cashier-bar hidden)
+                if (dd) {
+                    const opt = Array.from(dd.options).find(o => o.value === uid);
+                    if (opt) {
+                        dd.value = uid;
+                        currentCashierId = uid;
+                        currentCashierName = opt.text;
+                        return;
+                    }
+                }
+                // Cookie cashier not found in team — clear stale cookie, fall through to default
+                document.cookie = 'pos_cashier=;expires=Thu, 01 Jan 1970 00:00:00 GMT;path=/';
+            }
+            // Default: use the logged-in user's own button, or set their ID directly
+            const myBtn = document.querySelector('.cashier-btn[data-uid="' + myUid + '"]');
+            if (myBtn) {
+                document.querySelectorAll('.cashier-btn').forEach(b => b.classList.remove('active'));
+                myBtn.classList.add('active');
+                currentCashierId = myUid;
+                currentCashierName = myBtn.textContent.trim();
+            } else {
+                // No button for this user — just use their ID
+                currentCashierId = myUid;
+                currentCashierName = myName;
+            }
+            // Sync dropdown to default
+            if (dd) {
+                const myOpt = Array.from(dd.options).find(o => o.value === myUid);
+                if (myOpt) dd.value = myUid;
+            }
+            // Save persistent cookie
+            document.cookie = 'pos_cashier=' + currentCashierId + ';expires=Fri, 31 Dec 2027 23:59:59 GMT;path=/';
+        });
         
-        // ═══ DOWNLOAD REPORT ═══
-        function downloadReport() {
-            const title = document.getElementById('reportTitle').textContent || 'Report';
-            const content = document.getElementById('reportContent').innerHTML;
-            const dateStr = new Date().toISOString().slice(0,10);
-            
-            const html = `<!DOCTYPE html>
-    <html><head><meta charset="utf-8"><title>${title}</title>
-    <style>
-    body { font-family: Arial, Helvetica, sans-serif; max-width: 900px; margin: 30px auto; padding: 20px; color: #1a1a2e; line-height: 1.7; font-size: 14px; }
-    h1, h2, h3 { color: #1a1a2e; }
-    table { width: 100%; border-collapse: collapse; margin: 12px 0; }
-    th { text-align: left; padding: 8px; border-bottom: 2px solid #e5e7eb; color: #6366f1; font-weight: 600; }
-    td { padding: 6px 8px; border-bottom: 1px solid #f3f4f6; }
-    strong { color: #4f46e5; }
-    hr { border: none; border-top: 1px solid #e5e7eb; margin: 15px 0; }
-    @media print { body { margin: 0; } }
-    </style></head><body>
-    <h1 style="color:#4f46e5;border-bottom:2px solid #4f46e5;padding-bottom:10px;">${title}</h1>
-    <p style="color:#6b7280;font-size:12px;">Generated by ClickAI | ${dateStr}</p>
-    ${content}
-    <hr><p style="color:#6b7280;font-size:11px;text-align:center;">Generated by ClickAI — AI-Powered Business Management</p>
-    </body></html>`;
-            
-            // Fix dark theme colors for download
-            const lightHtml = html
-                .replace(/color:\s*rgba\(255,\s*255,\s*255,[\s\d.]+\)/gi, 'color:#1a1a2e')
-                .replace(/color:\s*var\(--text\)/gi, 'color:#1a1a2e')
-                .replace(/color:\s*var\(--text-muted\)/gi, 'color:#6b7280')
-                .replace(/color:\s*var\(--primary\)/gi, 'color:#6366f1')
-                .replace(/color:\s*var\(--green\)/gi, 'color:#10b981')
-                .replace(/color:\s*var\(--red\)/gi, 'color:#ef4444')
-                .replace(/border[^:]*:\s*[\d.]+px\s+solid\s+rgba\(255,\s*255,\s*255,[\s\d.]+\)/gi, 'border:1px solid #e5e7eb')
-                .replace(/background:\s*rgba\(139,\s*92,\s*246,[\s\d.]+\)/gi, 'background:rgba(99,102,241,0.06)')
-                .replace(/background:\s*rgba\(16,\s*185,\s*129,[\s\d.]+\)/gi, 'background:rgba(16,185,129,0.06)')
-                .replace(/background:\s*rgba\(239,\s*68,\s*68,[\s\d.]+\)/gi, 'background:rgba(239,68,68,0.06)');
-            
-            const blob = new Blob([lightHtml], {type: 'text/html'});
-            const a = document.createElement('a');
-            a.href = URL.createObjectURL(blob);
-            a.download = title.replace(/[^a-zA-Z0-9 _-]/g, '').replace(/\s+/g, '_') + '_' + dateStr + '.html';
-            a.click();
-            URL.revokeObjectURL(a.href);
+        function switchCashier(btn, uid, name) {
+            document.querySelectorAll('.cashier-btn').forEach(b => b.classList.remove('active'));
+            btn.classList.add('active');
+            currentCashierId = uid;
+            currentCashierName = name;
+            // Save to cookie - persistent until manually changed
+            document.cookie = 'pos_cashier=' + uid + ';expires=Fri, 31 Dec 2027 23:59:59 GMT;path=/';
+            // Sync dropdown
+            var dd = document.getElementById('cashierSelect');
+            if (dd) dd.value = uid;
         }
         
-        // ═══ EMAIL MODAL ═══
-        function showEmailModal() {
-            const title = document.getElementById('reportTitle').textContent || 'Report';
-            document.getElementById('emailSubject').value = title;
-            document.getElementById('emailStatus').style.display = 'none';
-            document.getElementById('emailModal').style.display = 'flex';
-            document.getElementById('emailTo').focus();
+        function switchCashierDD(sel) {
+            var uid = sel.value;
+            var name = sel.options[sel.selectedIndex].text;
+            currentCashierId = uid;
+            currentCashierName = name;
+            // Save to cookie - persistent until manually changed
+            document.cookie = 'pos_cashier=' + uid + ';expires=Fri, 31 Dec 2027 23:59:59 GMT;path=/';
+            // Sync cashier buttons if visible
+            document.querySelectorAll('.cashier-btn').forEach(b => b.classList.remove('active'));
+            var btn = document.querySelector('.cashier-btn[data-uid="' + uid + '"]');
+            if (btn) btn.classList.add('active');
         }
         
-        function closeEmailModal() {
-            document.getElementById('emailModal').style.display = 'none';
-        }
-        
-        async function sendReportEmail() {
-            const to = document.getElementById('emailTo').value.trim();
-            const subject = document.getElementById('emailSubject').value.trim() || 'ClickAI Report';
-            const content = document.getElementById('reportContent').innerHTML;
-            const title = document.getElementById('reportTitle').textContent || 'Report';
-            const status = document.getElementById('emailStatus');
-            const btn = document.getElementById('sendEmailBtn');
+        function addToCart(id, code, desc, price, stock) {
+            if (stock <= 0) {
+                if (!confirm('Warning: Stock is ' + stock + ' - add anyway?')) {
+                    return;
+                }
+            }
             
-            if (!to || !to.includes('@')) {
-                status.style.display = 'block';
-                status.style.color = 'var(--red)';
-                status.textContent = 'Please enter a valid email address';
+            const existing = cart.find(item => item.id === id);
+            if (existing) {
+                existing.qty++;
+            } else {
+                cart.push({id, code, desc, price, qty: 1, maxQty: 99999});
+            }
+            
+            updateCart();
+            
+            // Visual feedback
+            showAddedFeedback(code);
+        }
+        
+        function showAddedFeedback(code) {
+            // Reactor flash on the row
+            const row = document.querySelector(`tr[data-code="${code}"]`);
+            if (row) {
+                row.classList.remove('just-added');
+                void row.offsetWidth; // force reflow
+                row.classList.add('just-added');
+                setTimeout(() => row.classList.remove('just-added'), 500);
+            }
+        }
+        
+        async function addBulkToCart(event, id, code, desc, price, stock) {
+            event.stopPropagation();
+            
+            const qtyStr = await posPrompt('Enter quantity for ' + code + ':', '10');
+            if (qtyStr === null) return;
+            
+            const qty = parseInt(qtyStr);
+            if (isNaN(qty) || qty <= 0) {
+                alert('Invalid quantity');
                 return;
             }
             
-            btn.disabled = true;
-            btn.textContent = 'Sending...';
-            status.style.display = 'block';
-            status.style.color = 'var(--text-muted)';
-            status.textContent = 'Sending report...';
+            if (qty > stock && stock > 0) {
+                if (!confirm('Warning: Only ' + stock + ' in stock - add ' + qty + ' anyway?')) {
+                    return;
+                }
+            }
+            
+            const existing = cart.find(item => item.id === id);
+            if (existing) {
+                existing.qty += qty;
+            } else {
+                cart.push({id, code, desc, price, qty: qty, maxQty: 99999});
+            }
+            
+            updateCart();
+            showAddedFeedback(code);
+        }
+        
+        function updateQty(id, delta) {
+            const item = cart.find(i => i.id === id);
+            if (!item) return;
+            
+            item.qty += delta;
+            
+            if (item.qty <= 0) {
+                cart = cart.filter(i => i.id !== id);
+            }
+            
+            updateCart();
+        }
+        
+        function removeFromCart(id) {
+            cart = cart.filter(i => i.id !== id);
+            updateCart();
+        }
+        
+        async function setQty(id) {
+            const item = cart.find(i => i.id === id);
+            if (!item) return;
+            
+            const newQty = await posPrompt('Enter quantity:', item.qty);
+            if (newQty === null) return;
+            
+            const qty = parseInt(newQty);
+            if (isNaN(qty) || qty < 0) {
+                alert('Invalid quantity');
+                return;
+            }
+            
+            if (qty === 0) {
+                cart = cart.filter(i => i.id !== id);
+            } else {
+                item.qty = qty;
+            }
+            
+            updateCart();
+        }
+        
+        function updateCart() {
+            const container = document.getElementById('cartItems');
+            const count = document.getElementById('cartCount');
+            
+            if (cart.length === 0) {
+                container.innerHTML = `
+                    <div class="pos-empty">
+                        <div class="pos-empty-icon">🛒</div>
+                        <div>Cart is empty</div>
+                        <div style="font-size:12px;margin-top:5px;">Click items to add</div>
+                    </div>
+                `;
+                count.textContent = '0 items';
+                document.getElementById('subtotal').textContent = 'R0.00';
+                document.getElementById('vatAmount').textContent = 'R0.00';
+                document.getElementById('grandTotal').textContent = 'R0.00';
+                document.getElementById('headerTotal').textContent = 'R0.00';
+                if (typeof renderF11Table === 'function') { renderF11Table(); syncF11Buttons(); }
+                document.getElementById('btnCash').disabled = true;
+                document.getElementById('btnCard').disabled = true;
+                // Account/Invoice - enabled if customer selected (will show "cart empty" message)
+                const hasCustomer = !!document.getElementById('entityValue').value;
+                document.getElementById('btnAccount').disabled = !hasCustomer;
+                document.getElementById('btnQuote').disabled = true;
+                document.getElementById('btnInvoice').disabled = !hasCustomer;
+                document.getElementById('btnPO').disabled = true;
+                document.getElementById('btnCredit').disabled = true;
+                return;
+            }
+            
+            let html = '';
+            let total = 0;
+            let itemCount = 0;
+            
+            cart.forEach(item => {
+                const lineTotal = item.price * item.qty;
+                total += lineTotal;
+                itemCount += item.qty;
+                
+                html += `
+                    <div class="cart-item">
+                        <div class="cart-item-info">
+                            <div class="cart-item-name">${item.desc}</div>
+                            <div class="cart-item-code">${item.code}</div>
+                            <div class="cart-item-price">R${item.price.toFixed(2)} each</div>
+                        </div>
+                        <div class="cart-item-qty">
+                            <button class="cart-qty-btn minus" onclick="updateQty('${item.id}', -1)">−</button>
+                            <span class="cart-qty-display" onclick="setQty('${item.id}')" title="Click to edit">${item.qty}</span>
+                            <button class="cart-qty-btn" onclick="updateQty('${item.id}', 1)">+</button>
+                        </div>
+                        <div class="cart-item-total">R${lineTotal.toFixed(2)}</div>
+                        <button class="cart-del-btn" onclick="removeFromCart('${item.id}')" title="Remove">✕</button>
+                    </div>
+                `;
+            });
+            
+            container.innerHTML = html;
+            count.textContent = itemCount + ' item' + (itemCount !== 1 ? 's' : '');
+            
+            // Round to nearest cent
+            // 'total' here is sum of line items (qty × price) — prices are EXCL VAT
+            const subtotal = Math.round(total * 100) / 100;
+            const vat = Math.round(subtotal * 0.15 * 100) / 100;  // ADD 15% VAT
+            const grandTotal = Math.round((subtotal + vat) * 100) / 100;
+            
+            document.getElementById('subtotal').textContent = 'R' + subtotal.toFixed(2);
+            document.getElementById('vatAmount').textContent = 'R' + vat.toFixed(2);
+            document.getElementById('grandTotal').textContent = 'R' + grandTotal.toFixed(2);
+            document.getElementById('headerTotal').textContent = 'R' + grandTotal.toFixed(2);
+            // Sync F11 view
+            if (typeof renderF11Table === 'function') { renderF11Table(); syncF11Buttons(); updateF11CustName(); }
+            
+            document.getElementById('btnCash').disabled = false;
+            document.getElementById('btnCard').disabled = false;
+            document.getElementById('btnAccount').disabled = !document.getElementById('entityValue').value;
+            document.getElementById('btnQuote').disabled = false;
+            document.getElementById('btnInvoice').disabled = !document.getElementById('entityValue').value;
+            document.getElementById('btnCredit').disabled = !document.getElementById('entityValue').value;
+            document.getElementById('btnPO').disabled = false;
+        }
+        
+        // Searchable Entity Dropdown
+        let currentEntityType = 'customer';
+        let dropdownOpen = false;
+        let entityData = [];
+        let highlightedIndex = -1;
+        
+        // Load data on page load
+        function loadEntityData() {
+            const custData = document.getElementById('customerData').value.replace(/&#39;/g, "'");
+            const suppData = document.getElementById('supplierData').value.replace(/&#39;/g, "'");
+            window.customerList = JSON.parse(custData);
+            window.supplierList = JSON.parse(suppData);
+            entityData = window.customerList;
+        }
+        
+        // Remember customer selection when switching to supplier
+        let lastCustomerId = '';
+        let lastCustomerName = '';
+        let lastSupplierId = '';
+        let lastSupplierName = '';
+        
+        function toggleEntity(type) {
+            // In F11 mode, show the entity bar (normally hidden)
+            if (f11Mode) {
+                var ebar = document.querySelector('.pos-entity-bar');
+                if (ebar) ebar.style.display = 'flex';
+            }
+            const btnCust = document.getElementById('btnCust');
+            const btnSupp = document.getElementById('btnSupp');
+            const searchInput = document.getElementById('entitySearch');
+            const valueInput = document.getElementById('entityValue');
+            const btnAddItem = document.getElementById('btnAddItem');
+            
+            // Save current selection before switching
+            if (currentEntityType === 'customer' && valueInput.value) {
+                lastCustomerId = valueInput.value;
+                lastCustomerName = searchInput.value;
+            } else if (currentEntityType === 'supplier' && valueInput.value) {
+                lastSupplierId = valueInput.value;
+                lastSupplierName = searchInput.value;
+            }
+            
+            currentEntityType = type;
+            
+            if (type === 'customer') {
+                btnCust.classList.add('active');
+                btnSupp.classList.remove('active');
+                entityData = window.customerList || [];
+                searchInput.placeholder = 'Countersale';
+                // Update add item button for sales
+                if (btnAddItem) {
+                    btnAddItem.textContent = '+ Custom';
+                    btnAddItem.title = 'Add custom/once-off item';
+                }
+                // Restore last customer if available
+                if (lastCustomerId) {
+                    searchInput.value = lastCustomerName;
+                    valueInput.value = lastCustomerId;
+                    return; // Don't open dropdown
+                }
+            } else {
+                btnSupp.classList.add('active');
+                btnCust.classList.remove('active');
+                entityData = window.supplierList || [];
+                searchInput.placeholder = 'Select Supplier';
+                // Update add item button for PO
+                if (btnAddItem) {
+                    btnAddItem.textContent = '+ PO Item';
+                    btnAddItem.title = 'Add item to order - no price needed';
+                    btnAddItem.style.background = '#f59e0b';  // Orange for PO
+                }
+                // Restore last supplier if available
+                if (lastSupplierId) {
+                    searchInput.value = lastSupplierName;
+                    valueInput.value = lastSupplierId;
+                    return; // Don't open dropdown
+                }
+            }
+            
+            // Clear and open
+            searchInput.value = '';
+            valueInput.value = '';
+            openEntityDropdown();
+        }
+        
+        // Get current customer (even if supplier is selected)
+        function getCurrentCustomer() {
+            let id = '';
+            let name = '';
+            if (currentEntityType === 'customer') {
+                id = document.getElementById('entityValue').value;
+                name = document.getElementById('entitySearch').value;
+            } else {
+                id = lastCustomerId;
+                name = lastCustomerName;
+            }
+            // Look up full customer details from data
+            let address = '', phone = '', vat_number = '', email = '';
+            if (id) {
+                try {
+                    const customers = JSON.parse(document.getElementById('customerData').value.replace(/&#39;/g, "'"));
+                    const found = customers.find(c => c.id === id);
+                    if (found) {
+                        address = found.address || '';
+                        phone = found.phone || '';
+                        vat_number = found.vat_number || '';
+                        email = found.email || '';
+                        if (!name) name = found.name || '';
+                    }
+                } catch(e) {}
+            }
+            return { id, name, address, phone, vat_number, email };
+        }
+        
+        // Get current supplier (even if customer is selected)
+        function getCurrentSupplier() {
+            if (currentEntityType === 'supplier') {
+                return {
+                    id: document.getElementById('entityValue').value,
+                    name: document.getElementById('entitySearch').value
+                };
+            }
+            return { id: lastSupplierId, name: lastSupplierName };
+        }
+        
+        function openEntityDropdown() {
+            const list = document.getElementById('entityList');
+            const searchInput = document.getElementById('entitySearch');
+            dropdownOpen = true;
+            highlightedIndex = -1;
+            renderEntityList('');
+            list.style.display = 'block';
+            searchInput.focus();
+        }
+        
+        function closeEntityDropdown(keepValue = true) {
+            const list = document.getElementById('entityList');
+            const searchInput = document.getElementById('entitySearch');
+            list.style.display = 'none';
+            dropdownOpen = false;
+            highlightedIndex = -1;
+            if (!keepValue) {
+                searchInput.value = '';
+                document.getElementById('entityValue').value = '';
+            }
+            if (f11Mode) {
+                // Hide entity bar overlay in F11 mode
+                var ebar = document.querySelector('.pos-entity-bar');
+                if (ebar) ebar.style.display = 'none';
+            }
+            if (typeof updateF11CustName === 'function') updateF11CustName();
+            var f11El = document.getElementById('f11Search');
+            if (f11El) f11El.focus();
+        }
+        
+        function renderEntityList(filter) {
+            const list = document.getElementById('entityList');
+            const lowerFilter = filter.toLowerCase();
+            
+            let html = '';
+            let visibleCount = 0;
+            entityData.forEach((item, idx) => {
+                const name = item.name || '';
+                if (lowerFilter === '' || name.toLowerCase().includes(lowerFilter)) {
+                    const isNew = item.id === 'NEW';
+                    const highlighted = idx === highlightedIndex ? 'highlighted' : '';
+                    html += '<div class="entity-item ' + (isNew ? 'new-item ' : '') + highlighted + '" data-id="' + (item.id || '') + '" data-name="' + name + '" data-idx="' + idx + '" onclick="selectEntity(this)">' + name + '</div>';
+                    visibleCount++;
+                }
+            });
+            
+            if (visibleCount === 0) {
+                html = '<div class="entity-item" style="color:#888;">No matches</div>';
+            }
+            list.innerHTML = html;
+        }
+        
+        async function selectEntity(el) {
+            const id = el.dataset.id;
+            const name = el.dataset.name;
+            
+            // Handle "Add New" option
+            if (id === 'NEW') {
+                const entityType = currentEntityType === 'customer' ? 'Customer' : 'Supplier';
+                const newName = await posPrompt('👤 ' + entityType + ' name:', '');
+                if (newName && newName.trim()) {
+                    const endpoint = currentEntityType === 'customer' ? '/api/customer/quick-add' : '/api/supplier/quick-add';
+                    fetch(endpoint, {
+                        method: 'POST',
+                        headers: {'Content-Type': 'application/json'},
+                        body: JSON.stringify({name: newName.trim()})
+                    })
+                    .then(r => r.json())
+                    .then(data => {
+                        if (data.success) {
+                            document.getElementById('entitySearch').value = newName.trim();
+                            document.getElementById('entityValue').value = data.id;
+                            // Add to list
+                            const newItem = {id: data.id, name: newName.trim()};
+                            if (currentEntityType === 'customer') {
+                                window.customerList.push(newItem);
+                            } else {
+                                window.supplierList.push(newItem);
+                            }
+                            closeEntityDropdown(true);
+                            // Enable buttons now that customer is selected!
+                            document.getElementById('btnAccount').disabled = false;
+                            document.getElementById('btnInvoice').disabled = false;
+                        } else {
+                            alert('Failed: ' + (data.error || 'Unknown error'));
+                        }
+                    })
+                    .catch(err => {
+                        // Offline: queue customer for later sync
+                        if (!navigator.onLine || err.message.includes('fetch') || err.message.includes('network')) {
+                            const tempId = 'OFFLINE_' + Date.now();
+                            if (window.queueOfflineItem) {
+                                window.queueOfflineItem('customer_queue', {
+                                    name: newName.trim(), type: currentEntityType,
+                                    offline_date: new Date().toISOString()
+                                }).then(() => {
+                                    // Use temp ID locally so they can still make sales
+                                    document.getElementById('entitySearch').value = newName.trim();
+                                    document.getElementById('entityValue').value = '';
+                                    const newItem = {id: '', name: newName.trim()};
+                                    if (currentEntityType === 'customer') window.customerList.push(newItem);
+                                    else window.supplierList.push(newItem);
+                                    closeEntityDropdown(true);
+                                    alert('📴 ' + newName.trim() + ' saved offline. Will sync when internet returns.');
+                                }).catch(() => alert('Could not save offline'));
+                            } else { alert('Error: ' + err.message); }
+                        } else { alert('Error: ' + err.message); }
+                    });
+                }
+                return;
+            }
+            
+            document.getElementById('entitySearch').value = name;
+            document.getElementById('entityValue').value = id;
+            closeEntityDropdown(true);
+            
+            // Update button states - Invoice/Account/Credit need customer, cart can be empty (will show message)
+            document.getElementById('btnAccount').disabled = !id;
+            document.getElementById('btnInvoice').disabled = !id;
+            document.getElementById('btnCredit').disabled = !id || cart.length === 0;
+        }
+        
+        function navigateEntityList(direction) {
+            const items = document.querySelectorAll('.entity-item[data-idx]');
+            if (items.length === 0) return;
+            
+            // Remove old highlight
+            items.forEach(i => i.classList.remove('highlighted'));
+            
+            // Find visible indices
+            const visibleIndices = Array.from(items).map(i => parseInt(i.dataset.idx));
+            const currentPos = visibleIndices.indexOf(highlightedIndex);
+            
+            let newPos = currentPos + direction;
+            if (newPos < 0) newPos = visibleIndices.length - 1;
+            if (newPos >= visibleIndices.length) newPos = 0;
+            
+            highlightedIndex = visibleIndices[newPos];
+            
+            // Highlight new item
+            const newItem = document.querySelector('.entity-item[data-idx="' + highlightedIndex + '"]');
+            if (newItem) {
+                newItem.classList.add('highlighted');
+                newItem.scrollIntoView({ block: 'nearest' });
+            }
+        }
+        
+        function selectHighlightedEntity() {
+            const item = document.querySelector('.entity-item.highlighted');
+            if (item && item.dataset.id !== undefined) {
+                selectEntity(item);
+            }
+        }
+        
+        // Entity search input handler
+        document.addEventListener('DOMContentLoaded', function() {
+            loadEntityData();
+            
+            const entitySearch = document.getElementById('entitySearch');
+            entitySearch.addEventListener('input', function() {
+                renderEntityList(this.value);
+                highlightedIndex = -1;
+            });
+            
+            entitySearch.addEventListener('keydown', function(e) {
+                if (!dropdownOpen) return;
+                
+                if (e.key === 'ArrowDown') {
+                    e.preventDefault();
+                    navigateEntityList(1);
+                } else if (e.key === 'ArrowUp') {
+                    e.preventDefault();
+                    navigateEntityList(-1);
+                } else if (e.key === 'Enter') {
+                    e.preventDefault();
+                    selectHighlightedEntity();
+                } else if (e.key === 'Escape') {
+                    e.preventDefault();
+                    closeEntityDropdown(false);
+                }
+            });
+            
+            entitySearch.addEventListener('focus', function() {
+                if (!dropdownOpen) openEntityDropdown();
+            });
+        });
+        
+        // Close dropdown when clicking outside
+        document.addEventListener('click', function(e) {
+            if (dropdownOpen && !e.target.closest('.entity-dropdown') && !e.target.closest('.pos-entity-btn') && !e.target.closest('.f11-btn')) {
+                closeEntityDropdown(true);
+            }
+        });
+        
+        function clearCart() {
+            cart = [];
+            updateCart();
+        }
+        
+        function filterStock() {
+            if (window.isNavigating) { window.isNavigating = false; return; }
+            window.originalSearch = null;
+            
+            const raw = document.getElementById('stockSearch').value;
+            let search = raw.toLowerCase().trim();
+            const rows = document.querySelectorAll('.stock-row');
+            const noResults = document.getElementById('noResults');
+            
+            if (search.match(/^\d+\*\s*/)) {
+                search = search.replace(/^\d+\*\s*/, '');
+            }
+            search = search.replace(/\s*[xX]\s*/g, 'x');
+            
+            selectedRowIndex = -1;
+            
+            if (search === '') {
+                let v = 0;
+                rows.forEach((row, i) => {
+                    if (v < 500) { row.style.display = ''; v++; if (selectedRowIndex === -1) selectedRowIndex = i; }
+                    else { row.style.display = 'none'; }
+                });
+                const el = document.getElementById('stockCount');
+                if (el) { el.style.display = ''; el.textContent = 'Showing ' + v + ' of ' + rows.length + ' items \u2022 Type to search all'; }
+                noResults.classList.remove('show');
+                rows.forEach(r => r.classList.remove('highlighted'));
+                return;
+            }
+            
+            const tokens = search.split(/\s+/).filter(t => t.length > 0);
+            
+            let visibleCount = 0;
+            rows.forEach((row, index) => {
+                const haystack = ((row.getAttribute('data-code') || '') + ' ' + (row.getAttribute('data-desc') || '')).toLowerCase().replace(/\s*[xX]\s*/g, 'x');
+                if (tokens.every(t => haystack.indexOf(t) !== -1)) {
+                    row.style.display = '';
+                    visibleCount++;
+                    if (selectedRowIndex === -1) selectedRowIndex = index;
+                } else {
+                    row.style.display = 'none';
+                }
+            });
+            
+            const stockCountEl = document.getElementById('stockCount');
+            if (visibleCount === 0) {
+                noResults.classList.add('show');
+                if (stockCountEl) stockCountEl.style.display = 'none';
+            } else {
+                noResults.classList.remove('show');
+                if (stockCountEl) { stockCountEl.style.display = ''; stockCountEl.textContent = visibleCount + ' matches'; }
+            }
+            rows.forEach(r => r.classList.remove('highlighted'));
+        }
+        function highlightRow() {
+            const rows = document.querySelectorAll('.stock-row');
+            rows.forEach((row, index) => {
+                row.classList.remove('highlighted');
+                if (index === selectedRowIndex && row.style.display !== 'none') {
+                    row.classList.add('highlighted');
+                }
+            });
+        }
+        
+        let posLocked = false;
+        
+        async function completeSale(method) {
+            if (cart.length === 0) {
+                alert('🛒 Cart is empty!\\n\\nAdd items to cart first.\\n\\nTip: Search for stock items above and click to add them.');
+                document.getElementById('stockSearch').focus();
+                return;
+            }
+            
+            // Prevent double submission (any POS transaction)
+            if (posLocked) {
+                console.log('[POS] Transaction already in progress, ignoring');
+                return;
+            }
+            posLocked = true;
+            
+            // Use getCurrentCustomer - works even if supplier is selected
+            const customer = getCurrentCustomer();
+            const customerId = customer.id;
+            const customerName = customer.name || ('Countersale ' + ({cash:'Cash',card:'Card',account:'Account'}[method]||'') + (currentCashierName ? ' - '+currentCashierName : ''));
+            
+            if (method === 'account' && !customerId) {
+                alert('Warning: Please select a customer for account sale (F8)');
+                toggleEntity('customer');
+                posLocked = false;
+                return;
+            }
+            
+            // Calculate totals — prices are EXCL VAT
+            let subtotal = cart.reduce((sum, item) => sum + (item.price * item.qty), 0);
+            subtotal = Math.round(subtotal * 100) / 100;
+            const vat = Math.round(subtotal * 0.15 * 100) / 100;
+            const grandTotal = Math.round((subtotal + vat) * 100) / 100;
+            const itemCount = cart.reduce((sum, item) => sum + item.qty, 0);
+            
+            // SA rounding to nearest 10c (1c/5c coins phased out)
+            // Applies to ALL payment methods — VAT calc creates fractional cents that must be rounded
+            const paymentTotal = Math.round(grandTotal * 10) / 10;
+            const roundingAdj = Math.round((paymentTotal - grandTotal) * 100) / 100;
+            
+            let cashReceived = 0;
+            let changeGiven = 0;
+            
+            if (method === 'cash') {
+                const received = await posPrompt('CASH R' + paymentTotal.toFixed(2) + ' (' + itemCount + ' items) — Cash received:', paymentTotal.toFixed(2));
+                if (received === null) { posLocked = false; return; }
+                cashReceived = parseFloat(received);
+                if (isNaN(cashReceived) || cashReceived < 0) { alert('Invalid amount'); posLocked = false; return; }
+                changeGiven = cashReceived - paymentTotal;
+                if (changeGiven < -0.01) { alert('Short R' + Math.abs(changeGiven).toFixed(2)); posLocked = false; return; }
+            } else if (method === 'card') {
+                // Card — no prompt needed, just go
+            } else if (method === 'account') {
+                // Account — customer already selected
+            }
+            
+            const items = cart.map(item => ({
+                stock_id: (item.isCustom || item.isPOItem) ? null : item.id,
+                code: item.code,
+                description: item.desc,
+                quantity: item.qty,
+                price: item.price,
+                total: item.price * item.qty
+            }));
             
             try {
-                const resp = await fetch('/api/reports/email', {
+                const response = await fetch('/api/pos/sale', {
                     method: 'POST',
                     headers: {'Content-Type': 'application/json'},
                     body: JSON.stringify({
-                        to_email: to,
-                        subject: subject,
-                        report_html: content,
-                        report_title: title
+                        items: items,
+                        customer_id: customerId,
+                        customer_name: customerName,
+                        payment_method: method,
+                        subtotal: subtotal,
+                        vat: vat,
+                        total: grandTotal,
+                        payment_total: paymentTotal,
+                        rounding: roundingAdj,
+                        cashier_id: currentCashierId,
+                        cashier_name: currentCashierName
                     })
                 });
-                const data = await resp.json();
+                
+                const data = await response.json();
                 
                 if (data.success) {
-                    status.style.color = 'var(--green)';
-                    status.textContent = 'GOOD: ' + data.message;
-                    setTimeout(() => closeEmailModal(), 2000);
+                    // Show print dialog based on settings - pass cash info and customer details
+                    showPrintDialog(data.sale_number, data.sale_id, method, customer, items, subtotal, vat, grandTotal, cashReceived, changeGiven, paymentTotal, roundingAdj);
+                    clearCart();
+                    // posLocked will be reset on page reload after print
                 } else {
-                    status.style.color = 'var(--red)';
-                    status.textContent = '✗ ' + (data.error || 'Failed to send');
+                    alert('Error: ' + (data.error || 'Sale failed'));
+                    posLocked = false;
                 }
             } catch (err) {
-                status.style.color = 'var(--red)';
-                status.textContent = '✗ Network error: ' + err.message;
-            }
-            
-            btn.disabled = false;
-            btn.textContent = 'Send';
-        }
-        
-        function setDataSource(src) {
-            dataSource = src;
-            const ownBtn = document.getElementById('srcOwnBtn');
-            const clientBtn = document.getElementById('srcClientBtn');
-            const status = document.getElementById('dataSourceStatus');
-            
-            if (src === 'own') {
-                ownBtn.className = 'btn btn-primary';
-                clientBtn.className = 'btn btn-secondary';
-                clientTBData = null;
-                clientFileName = '';
-                status.textContent = 'Using your own business data';
-                status.style.color = 'var(--text-muted)';
-            }
-        }
-        
-        function handleSmartReportTB(input) {
-            const file = input.files[0];
-            if (!file) return;
-            const status = document.getElementById('dataSourceStatus');
-            status.textContent = '⏳ Parsing ' + file.name + '...';
-            
-            const formData = new FormData();
-            formData.append('file', file);
-            formData.append('lang', document.documentElement.lang || 'en');
-            
-            fetch('/api/reports/tb/upload-analyze', {
-                method: 'POST',
-                body: formData
-            })
-            .then(r => r.json())
-            .then(data => {
-                if (data.success) {
-                    clientTBData = data;
-                    clientFileName = file.name;
-                    dataSource = 'client';
-                    
-                    // Update UI
-                    document.getElementById('srcOwnBtn').className = 'btn btn-secondary';
-                    document.getElementById('srcClientBtn').className = 'btn btn-primary';
-                    status.innerHTML = '✅ <strong>' + file.name + '</strong> loaded (' + data.accounts.length + ' accounts) — Now choose a report type below';
-                    status.style.color = '#10b981';
+                // ═══ OFFLINE MODE: Queue sale locally instead of losing it ═══
+                if (!navigator.onLine || err.message.includes('fetch') || err.message.includes('network') || err.message.includes('Network')) {
+                    try {
+                        await queueOfflineSale({
+                            items: items,
+                            customer_id: customerId,
+                            customer_name: customerName,
+                            payment_method: method,
+                            subtotal: subtotal,
+                            vat: vat,
+                            total: grandTotal,
+                            payment_total: paymentTotal,
+                            rounding: roundingAdj,
+                            cashier_id: currentCashierId,
+                            cashier_name: currentCashierName,
+                            offline_date: new Date().toISOString().slice(0,10),
+                            offline_time: new Date().toISOString()
+                        });
+                        
+                        const offlineNum = 'OFF' + Date.now().toString().slice(-6);
+                        
+                        // ═══ STILL PRINT — LAN printer works without internet ═══
+                        showPrintDialog(offlineNum, '', method, customer, items, subtotal, vat, grandTotal, cashReceived, changeGiven, paymentTotal, roundingAdj);
+                        clearCart();
+                        updateOfflineIndicator();
+                    } catch (dbErr) {
+                        alert('OFFLINE SAVE FAILED\\n\\nCould not save sale locally.\\n\\nPlease write down:\\nTotal: R' + paymentTotal.toFixed(2) + ' (' + method + ')');
+                    }
                 } else {
-                    status.textContent = '❌ ' + (data.error || 'Upload failed');
-                    status.style.color = '#ef4444';
+                    alert('Connection error: ' + err.message);
                 }
-            })
-            .catch(e => {
-                status.textContent = '❌ Error: ' + e.message;
-                status.style.color = '#ef4444';
-            });
-            
-            input.value = '';
-        }
-        
-        function goToGLAnalysis() {
-            // Respect the data source toggle: own data → auto-load live GL; otherwise → upload page
-            if (dataSource === 'own') {
-                window.location = '/reports/gl-analysis?source=own';
-            } else {
-                window.location = '/reports/gl-analysis';
+                posLocked = false;
             }
         }
         
-        async function generateReport(type) {
-            const title = reportTitles[type] || 'Report';
+        async function createQuote() {
+            if (posLocked) { console.log('[POS] Transaction in progress'); return; }
+            const customer = getCurrentCustomer();
+            const customerId = customer.id;
+            const customerName = customer.name || '';
             
-            if (dataSource === 'client' && clientTBData) {
-                // Generate from uploaded client TB
-                await runClientTBReport(type, title);
-            } else if (dataSource === 'client' && !clientTBData) {
-                alert('Upload a client TB first, then choose a report type.');
-            } else {
-                // Generate from own business data
-                await runOwnReport(type, null, title);
-            }
-        }
-        
-        async function generateCustomReport() {
-            const input = document.getElementById('customReportInput').value;
-            if (!input) return;
+            // LOGIC:
+            // Cart empty + no customer = Quick Quote (once-off, new customer)
+            // Cart empty + customer selected = Quick Quote with custom items for this customer
+            // Cart has items + no customer = Quick Customer modal
+            // Cart has items + customer = Normal quote with stock items
             
-            if (dataSource === 'client' && clientTBData) {
-                await runClientTBReport('custom', 'Custom Report', input);
-            } else {
-                await runOwnReport('custom', input, 'Custom Report');
+            if (cart.length === 0) {
+                // Show quick quote modal - pass customer if selected
+                showQuickQuoteModal(customerId, customerName);
+                return;
             }
-        }
-        
-        // ═══ OWN DATA REPORTS ═══
-        async function runOwnReport(type, customRequest, title) {
-            document.getElementById('reportLoading').style.display = 'block';
-            document.getElementById('reportOutput').style.display = 'none';
+            
+            // Cart has items
+            if (!customerId) {
+                // Show quick customer modal instead of just alert
+                showQuickCustomerModal();
+                return;
+            }
+            
+            // Cart has items AND customer selected - create quote with stock items
+            const items = cart.map(item => ({
+                stock_id: (item.isCustom || item.isPOItem) ? null : item.id,
+                code: item.code,
+                description: item.desc,
+                quantity: item.qty,
+                price: item.price,
+                total: item.price * item.qty
+            }));
+            
+            // Prices are EXCL VAT - ADD VAT
+            const subtotal = Math.round(items.reduce((sum, item) => sum + item.total, 0) * 100) / 100;
+            const vat = Math.round(subtotal * 0.15 * 100) / 100;
+            const grandTotal = Math.round((subtotal + vat) * 100) / 100;
             
             try {
-                const response = await fetch('/api/report', {
+                const response = await fetch('/api/pos/quote', {
                     method: 'POST',
                     headers: {'Content-Type': 'application/json'},
-                    body: JSON.stringify({ type: type, custom: customRequest })
+                    body: JSON.stringify({
+                        items: items,
+                        customer_id: customerId,
+                        customer_name: customerName,
+                        subtotal: subtotal,
+                        vat: vat,
+                        total: grandTotal,
+                        cashier_id: currentCashierId,
+                        cashier_name: currentCashierName
+                    })
+                });
+                
+                const data = await response.json();
+                
+                if (data.success) {
+                    alert('Quote ' + data.quote_number + ' created!');
+                    clearCart();
+                    if (confirm('Open quote now?')) {
+                        window.location = '/quote/' + data.quote_id;
+                    }
+                } else {
+                    alert('Error: ' + (data.error || 'Quote failed'));
+                }
+            } catch (err) {
+                if (!navigator.onLine || err.message.includes('fetch') || err.message.includes('network') || err.message.includes('Network')) {
+                    try {
+                        await (window.queueOfflineItem || queueOfflineSale)('quote_queue', {
+                            items: items, customer_id: customerId, customer_name: customerName,
+                            subtotal: subtotal, vat: vat, total: grandTotal,
+                            offline_date: new Date().toISOString().slice(0,10), offline_time: new Date().toISOString()
+                        });
+                        alert('📴 OFFLINE QUOTE SAVED\\n\\nFor: ' + (customerName || 'Walk-in') + '\\nTotal: R' + grandTotal.toFixed(2) + '\\n\\nWill sync when internet returns.');
+                        clearCart();
+                    } catch(e) { alert('Could not save quote offline'); }
+                } else { alert('Connection error: ' + err.message); }
+            }
+        }
+        
+        async function createInvoice() {
+            if (cart.length === 0) {
+                alert('🛒 Cart is empty!\\n\\nAdd items to cart first, then click Invoice.\\n\\nTip: Search for stock items above and click to add them.');
+                document.getElementById('stockSearch').focus();
+                return;
+            }
+            
+            // Prevent double submission (any POS transaction)
+            if (posLocked) {
+                console.log('[POS] Transaction already in progress, ignoring');
+                return;
+            }
+            posLocked = true;
+            
+            // Use getCurrentCustomer - works even if supplier is selected
+            const customer = getCurrentCustomer();
+            const customerId = customer.id;
+            const customerName = customer.name || '';
+            
+            if (!customerId) {
+                alert('Warning: Please select a customer for the invoice (F8)');
+                toggleEntity('customer');
+                posLocked = false;
+                return;
+            }
+            let subtotal = cart.reduce((sum, item) => sum + (item.price * item.qty), 0);
+            subtotal = Math.round(subtotal * 100) / 100;
+            const vat = Math.round(subtotal * 0.15 * 100) / 100;
+            const grandTotal = Math.round((subtotal + vat) * 100) / 100;
+            const itemCount = cart.reduce((sum, item) => sum + item.qty, 0);
+            
+            let preview = '═══════════════════════\\n';
+            preview += 'INVOICE PREVIEW\\n';
+            preview += '═══════════════════════\\n\\n';
+            preview += 'Customer: ' + customerName + '\\n';
+            preview += '───────────────────────\\n';
+            
+            cart.forEach(item => {
+                const lineTotal = item.price * item.qty;
+                preview += item.qty + 'x ' + item.code + '\\n';
+                preview += '   @ R' + item.price.toFixed(2) + ' = R' + lineTotal.toFixed(2) + '\\n';
+            });
+            
+            preview += '───────────────────────\\n';
+            preview += 'Subtotal: R' + subtotal.toFixed(2) + '\\n';
+            preview += 'VAT (15%): R' + vat.toFixed(2) + '\\n';
+            preview += 'TOTAL: R' + grandTotal.toFixed(2) + ' (' + itemCount + ' items)\\n';
+            preview += '═══════════════════════\\n\\n';
+            preview += 'Create invoice?';
+            
+            if (!confirm(preview)) {
+                posLocked = false;
+                return;
+            }
+            
+            const items = cart.map(item => ({
+                stock_id: (item.isCustom || item.isPOItem) ? null : item.id,
+                code: item.code,
+                description: item.desc,
+                quantity: item.qty,
+                price: item.price,
+                total: item.price * item.qty
+            }));
+            
+            try {
+                const response = await fetch('/api/pos/invoice', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({
+                        items: items,
+                        customer_id: customerId,
+                        customer_name: customerName,
+                        subtotal: subtotal,
+                        vat: vat,
+                        total: grandTotal,
+                        cashier_id: currentCashierId,
+                        cashier_name: currentCashierName
+                    })
+                });
+                
+                const data = await response.json();
+                
+                if (data.success) {
+                    alert('Invoice ' + data.invoice_number + ' created!');
+                    clearCart();
+                    posLocked = false;
+                    if (confirm('Open invoice now?')) {
+                        window.location = '/invoice/' + data.invoice_id;
+                    }
+                } else {
+                    alert('Error: ' + (data.error || 'Invoice failed'));
+                    posLocked = false;
+                }
+            } catch (err) {
+                alert('Connection error — Invoices require internet for sequential numbering.');
+                posLocked = false;
+            }
+        }
+        
+        async function createPO() {
+            if (posLocked) { console.log('[POS] Transaction in progress'); return; }
+            
+            // ALWAYS switch to supplier mode first — GRV/PO needs a supplier, not customer
+            if (currentEntityType !== 'supplier') {
+                toggleEntity('supplier');
+            }
+            
+            const supplier = getCurrentSupplier();
+            const supplierId = supplier.id;
+            const supplierName = supplier.name || '';
+            
+            // LOGIC:
+            // Cart empty + no supplier = Quick PO (once-off, new supplier)
+            // Cart empty + supplier selected = Quick PO with custom items for this supplier
+            // Cart has items + no supplier = Ask to select supplier
+            // Cart has items + supplier = Normal PO with stock items
+            
+            if (cart.length === 0) {
+                // Show quick PO modal - pass supplier if selected
+                showQuickPOModal(supplierId, supplierName);
+                return;
+            }
+            
+            // Cart has items
+            if (!supplierId) {
+                // Switch to supplier mode and ask
+                toggleEntity('supplier');
+                alert('Select a supplier for the PO (F9)');
+                return;
+            }
+            
+            // Cart has items AND supplier selected - create PO with stock items
+            // Ask for reference name (who is ordering)
+            const poRef = await posPrompt('Reference name for PO (e.g. person ordering):', currentCashierName || '');
+            if (poRef === null) return; // cancelled
+            
+            // PO items - NO PRICES (supplier must not see our selling prices)
+            const items = cart.map(item => ({
+                stock_id: (item.isCustom || item.isPOItem) ? null : item.id,
+                code: item.code,
+                description: item.desc,
+                qty: item.qty
+            }));
+            
+            try {
+                const response = await fetch('/api/pos/purchase-order', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({
+                        items: items,
+                        supplier_id: supplierId,
+                        supplier_name: supplierName,
+                        reference: poRef
+                    })
+                });
+                
+                const data = await response.json();
+                
+                if (data.success) {
+                    clearCart();
+                    
+                    // Offer options: View, Email, or Done
+                    const choice = prompt(
+                        'PO ' + data.po_number + ' created!\\n\\n' +
+                        'What would you like to do?\\n\\n' +
+                        '1 = Open PO\\n' +
+                        '2 = Email to Supplier\\n' +
+                        '3 = Done\\n\\n' +
+                        'Enter 1, 2, or 3:',
+                        '2'
+                    );
+                    
+                    if (choice === '1') {
+                        window.location = '/purchase/' + data.po_id;
+                    } else if (choice === '2') {
+                        // Email PO directly
+                        try {
+                            const emailResp = await fetch('/api/purchase/' + data.po_id + '/email', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({})});
+                            const emailData = await emailResp.json();
+                            if (emailData.success) {
+                                alert('✅ ' + emailData.message);
+                            } else {
+                                alert('❌ ' + emailData.error + '\\n\\nOpen PO to add supplier email.');
+                                window.location = '/purchase/' + data.po_id;
+                            }
+                        } catch(e) {
+                            alert('Email error: ' + e.message);
+                        }
+                    }
+                    // choice === '3' or cancelled = just stay on POS
+                } else {
+                    alert('Error: ' + (data.error || 'PO failed'));
+                }
+            } catch (err) {
+                alert('Connection error');
+            }
+        }
+        
+        // ═══ CREDIT NOTE FROM POS ═══
+        async function createCreditNote() {
+            if (cart.length === 0) return;
+            if (posLocked) { console.log('[POS] Transaction in progress'); return; }
+            
+            // Use getCurrentCustomer - works even if supplier is selected
+            const customer = getCurrentCustomer();
+            const customerId = customer.id;
+            const customerName = customer.name || '';
+            
+            if (!customerId) {
+                alert('Warning: Please select a customer for the credit note (F8)');
+                toggleEntity('customer');
+                return;
+            }
+            
+            // Build preview - prices are EXCL VAT, ADD VAT
+            let subtotal = cart.reduce((sum, item) => sum + (item.price * item.qty), 0);
+            subtotal = Math.round(subtotal * 100) / 100;
+            const vat = Math.round(subtotal * 0.15 * 100) / 100;
+            const grandTotal = Math.round((subtotal + vat) * 100) / 100;
+            const itemCount = cart.reduce((sum, item) => sum + item.qty, 0);
+            
+            let preview = '═══════════════════════\\n';
+            preview += 'Warning: CREDIT NOTE PREVIEW\\n';
+            preview += '═══════════════════════\\n\\n';
+            preview += 'Customer: ' + customerName + '\\n';
+            preview += '───────────────────────\\n';
+            
+            cart.forEach(item => {
+                const lineTotal = item.price * item.qty;
+                preview += item.qty + 'x ' + item.code + '\\n';
+                preview += '   @ R' + item.price.toFixed(2) + ' = R' + lineTotal.toFixed(2) + '\\n';
+            });
+            
+            preview += '───────────────────────\\n';
+            preview += 'Subtotal: R' + subtotal.toFixed(2) + '\\n';
+            preview += 'VAT (15%): R' + vat.toFixed(2) + '\\n';
+            preview += 'CREDIT TOTAL: -R' + grandTotal.toFixed(2) + '\\n';
+            preview += '═══════════════════════\\n\\n';
+            preview += 'This will REDUCE customer balance.\\nCreate credit note?';
+            
+            if (!confirm(preview)) {
+                return;
+            }
+            
+            const items = cart.map(item => ({
+                stock_id: (item.isCustom || item.isPOItem) ? null : item.id,
+                code: item.code,
+                description: item.desc,
+                quantity: item.qty,
+                price: item.price,
+                total: item.price * item.qty
+            }));
+            
+            try {
+                const response = await fetch('/api/pos/credit-note', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({
+                        items: items,
+                        customer_id: customerId,
+                        customer_name: customerName,
+                        subtotal: subtotal,
+                        vat: vat,
+                        total: grandTotal
+                    })
+                });
+                
+                const data = await response.json();
+                
+                if (data.success) {
+                    alert('Credit Note ' + data.credit_note_number + ' created!\\nCustomer balance reduced by R' + grandTotal.toFixed(2));
+                    clearCart();
+                    if (confirm('View credit note?')) {
+                        window.location = '/credit-note/' + data.credit_note_id;
+                    }
+                } else {
+                    alert('Error: ' + (data.error || 'Credit note failed'));
+                }
+            } catch (err) {
+                alert('Connection error');
+            }
+        }
+        
+        // ═══ KEYBOARD SHORTCUTS ═══
+        document.addEventListener('keydown', function(e) {
+            const activeEl = document.activeElement;
+            const isSearchInput = activeEl.id === 'stockSearch';
+            const isInput = activeEl.tagName === 'INPUT' || activeEl.tagName === 'TEXTAREA';
+            const searchInput = document.getElementById('stockSearch');
+            
+            // ENTER - Add item (highlighted or first visible)
+            if (e.key === 'Enter' && isSearchInput) {
+                e.preventDefault();
+                
+                const raw = window.originalSearch || searchInput.value.trim();
+                let qty = 1;
+                let searchCode = raw;
+                
+                // Parse "5*code"
+                const starPos = raw.indexOf('*');
+                if (starPos > 0) {
+                    const numPart = raw.substring(0, starPos);
+                    const codePart = raw.substring(starPos + 1).trim();
+                    const parsedQty = parseInt(numPart, 10);
+                    if (parsedQty > 0) {
+                        qty = parsedQty;
+                        searchCode = codePart;
+                    }
+                }
+                
+                searchCode = searchCode.toLowerCase().replace(/\\s*x\\s*/gi, 'x');
+                
+                // Use highlighted row if exists, else first visible
+                const highlighted = document.querySelector('.stock-row.highlighted');
+                const rows = document.querySelectorAll('.stock-row');
+                let found = highlighted;
+                
+                if (!found) {
+                    for (let row of rows) {
+                        if (row.style.display === 'none') continue;
+                        if (searchCode === '') { found = row; break; }
+                        let data = (row.getAttribute('data-search') || '').toLowerCase().replace(/\\s*x\\s*/gi, 'x');
+                        if (data.indexOf(searchCode) !== -1) { found = row; break; }
+                    }
+                }
+                
+                if (found) {
+                    const id = found.getAttribute('data-id');
+                    const code = found.getAttribute('data-code');
+                    const desc = found.getAttribute('data-desc');
+                    const price = parseFloat(found.getAttribute('data-price')) || 0;
+                    const stock = parseFloat(found.getAttribute('data-qty')) || 0;
+                    
+                    const existing = cart.find(item => item.id === id);
+                    if (existing) {
+                        existing.qty += qty;
+                    } else {
+                        cart.push({id, code, desc, price, qty: qty, maxQty: 99999});
+                    }
+                    updateCart();
+                    showAddedFeedback(code);
+                } else if (searchCode !== '') {
+                    alert('Not found: ' + searchCode);
+                }
+                
+                // Clear and reset
+                searchInput.value = '';
+                window.originalSearch = null;
+                document.querySelectorAll('.stock-row').forEach(r => r.classList.remove('highlighted'));
+                filterStock();
+                searchInput.focus();
+                return;
+            }
+            
+            // Arrow keys for navigation
+            if (e.key === 'ArrowDown' && isSearchInput) {
+                e.preventDefault();
+                navigateRows(1);
+                return;
+            }
+            
+            if (e.key === 'ArrowUp' && isSearchInput) {
+                e.preventDefault();
+                navigateRows(-1);
+                return;
+            }
+            
+            // F1 = Cash
+            if (e.key === 'F1') {
+                e.preventDefault();
+                if (cart.length > 0) completeSale('cash');
+                return;
+            }
+            
+            // F2 = Card
+            if (e.key === 'F2') {
+                e.preventDefault();
+                if (cart.length > 0) completeSale('card');
+                return;
+            }
+            
+            // F3 = Account
+            if (e.key === 'F3') {
+                e.preventDefault();
+                if (cart.length > 0 && getCurrentCustomer().id) {
+                    completeSale('account');
+                } else if (cart.length > 0) {
+                    alert('Warning: Select a customer for account sales (F8)');
+                }
+                return;
+            }
+            
+            // F4 = Quote (works with empty cart too - opens Quick Quote)
+            if (e.key === 'F4') {
+                e.preventDefault();
+                createQuote();
+                return;
+            }
+            
+            // F5 = PO (works with empty cart too - opens Quick PO)
+            if (e.key === 'F5') {
+                e.preventDefault();
+                createPO();
+                return;
+            }
+            
+            // F6 = Invoice
+            if (e.key === 'F6') {
+                e.preventDefault();
+                if (cart.length > 0 && getCurrentCustomer().id) {
+                    createInvoice();
+                } else if (cart.length > 0) {
+                    alert('Warning: Select a customer for invoice (F8)');
+                }
+                return;
+            }
+            
+            // F7 = Edit Customer Details
+            if (e.key === 'F7') {
+                e.preventDefault();
+                showEditCustomerModal();
+                return;
+            }
+            
+            // F8 = Customers
+            if (e.key === 'F8') {
+                e.preventDefault();
+                toggleEntity('customer');
+                return;
+            }
+            
+            // F9 = Suppliers
+            if (e.key === 'F9') {
+                e.preventDefault();
+                toggleEntity('supplier');
+                return;
+            }
+            
+            // F10 = Credit Note
+            if (e.key === 'F10') {
+                e.preventDefault();
+                if (cart.length > 0 && getCurrentCustomer().id) {
+                    createCreditNote();
+                } else if (cart.length > 0) {
+                    alert('Warning: Select a customer for credit note (F8)');
+                }
+                return;
+            }
+            
+            // F11 = Native browser fullscreen (not intercepted)
+            
+            // ESC = Clear search (if no dropdown/modal open)
+            
+            // === PRINT MODAL KEYBOARD HANDLING ===
+            const printModal = document.getElementById('printSlipModal');
+            if (printModal && printModal.style.display === 'flex') {
+                
+                // === REPRINT STATE: slip already printed, Enter = print again, Esc = done ===
+                if (_slipPrinted && !_printInProgress) {
+                    if (e.key === 'Enter' || e.key === ' ') {
+                        e.preventDefault();
+                        e.stopPropagation();
+                        _doReprint();
+                        return;
+                    } else if (e.key === 'Escape') {
+                        e.preventDefault();
+                        e.stopPropagation();
+                        _finishPrintAndReset();
+                        return;
+                    } else if (e.key === 'Tab' || e.key === 'ArrowRight' || e.key === 'ArrowLeft') {
+                        // Allow tab between Print Again and Done buttons
+                        e.preventDefault();
+                        e.stopPropagation();
+                        var rp = document.getElementById('btnReprint');
+                        var dn = document.getElementById('btnDone');
+                        if (document.activeElement === rp && dn) dn.focus();
+                        else if (rp) rp.focus();
+                        return;
+                    }
+                    // Ignore all other keys in reprint state
+                    e.preventDefault();
+                    e.stopPropagation();
+                    return;
+                }
+                
+                // === NORMAL STATE: choose print format ===
+                const buttons = [
+                    document.getElementById('btnPrintThermal'),
+                    document.getElementById('btnPrintA4'),
+                    document.getElementById('btnPrintSkip')
+                ].filter(b => b);
+                
+                if (buttons.length > 0) {
+                    const currentIndex = buttons.findIndex(btn => btn === document.activeElement);
+                    
+                    if (e.key === 'ArrowRight' || e.key === 'ArrowDown') {
+                        e.preventDefault();
+                        e.stopPropagation();
+                        const nextIndex = currentIndex < 0 ? 0 : (currentIndex + 1) % buttons.length;
+                        buttons[nextIndex].focus();
+                        return;
+                    } else if (e.key === 'ArrowLeft' || e.key === 'ArrowUp') {
+                        e.preventDefault();
+                        e.stopPropagation();
+                        const prevIndex = currentIndex < 0 ? 0 : (currentIndex - 1 + buttons.length) % buttons.length;
+                        buttons[prevIndex].focus();
+                        return;
+                    } else if (e.key === 'Tab') {
+                        e.preventDefault();
+                        e.stopPropagation();
+                        if (e.shiftKey) {
+                            const prevIndex = currentIndex < 0 ? buttons.length - 1 : (currentIndex - 1 + buttons.length) % buttons.length;
+                            buttons[prevIndex].focus();
+                        } else {
+                            const nextIndex = currentIndex < 0 ? 0 : (currentIndex + 1) % buttons.length;
+                            buttons[nextIndex].focus();
+                        }
+                        return;
+                    } else if (e.key === 'Enter' || e.key === ' ') {
+                        e.preventDefault();
+                        e.stopPropagation();
+                        if (document.activeElement && buttons.includes(document.activeElement)) {
+                            document.activeElement.click();
+                        } else {
+                            buttons[0].click();
+                        }
+                        return;
+                    } else if (e.key === 'Escape') {
+                        e.preventDefault();
+                        e.stopPropagation();
+                        closePrintModal();
+                        return;
+                    } else if (e.key === '1') {
+                        e.preventDefault();
+                        e.stopPropagation();
+                        doPrintSlip('thermal');
+                        return;
+                    } else if (e.key === '2') {
+                        e.preventDefault();
+                        e.stopPropagation();
+                        doPrintSlip('a4');
+                        return;
+                    } else if (e.key === '3') {
+                        e.preventDefault();
+                        e.stopPropagation();
+                        closePrintModal();
+                        return;
+                    }
+                }
+            }
+            
+            // ESC = Close dropdown first, then clear search, then cart
+            if (e.key === 'Escape') {
+                e.preventDefault();
+                
+                // If quick customer modal is open, close it first
+                const quickCustModal = document.getElementById('quickCustomerModal');
+                if (quickCustModal && quickCustModal.style.display === 'flex') {
+                    closeQuickCustomerModal();
+                    return;
+                }
+                
+                // If custom item modal is open, close it first
+                const customModal = document.getElementById('customItemModal');
+                if (customModal && customModal.style.display === 'flex') {
+                    closeCustomItemModal();
+                    return;
+                }
+                
+                // If entity dropdown is open, close it
+                if (dropdownOpen) {
+                    closeEntityDropdown(false);
+                    return;
+                }
+                
+                // If navigating or search has text, just clear search
+                const hasHighlight = document.querySelector('.stock-row.highlighted');
+                if (searchInput.value || hasHighlight || window.originalSearch) {
+                    searchInput.value = '';
+                    window.originalSearch = null;
+                    document.querySelectorAll('.stock-row').forEach(r => r.classList.remove('highlighted'));
+                    filterStock();
+                    return;
+                }
+                
+                // If search already empty, offer to clear cart
+                if (cart.length > 0 && confirm('🗑️ Clear cart?')) {
+                    clearCart();
+                }
+                return;
+            }
+            
+            // Focus search on typing
+            if (!isInput && /^[a-zA-Z0-9]$/.test(e.key)) {
+                var f11El = document.getElementById('f11Search');
+                if (f11El) f11El.focus();
+            }
+        }, true);
+        
+        function navigateRows(direction) {
+            const rows = Array.from(document.querySelectorAll('.stock-row')).filter(r => r.style.display !== 'none');
+            if (rows.length === 0) return;
+            
+            const searchInput = document.getElementById('stockSearch');
+            
+            // Store original search on first navigation
+            if (window.originalSearch === undefined || window.originalSearch === null) {
+                window.originalSearch = searchInput.value;
+            }
+            
+            const currentIndex = rows.findIndex(r => r.classList.contains('highlighted'));
+            let newIndex = currentIndex + direction;
+            
+            // If no highlight yet, start at first (down) or last (up)
+            if (currentIndex === -1) {
+                newIndex = direction > 0 ? 0 : rows.length - 1;
+            }
+            
+            if (newIndex < 0) newIndex = rows.length - 1;
+            if (newIndex >= rows.length) newIndex = 0;
+            
+            rows.forEach(r => r.classList.remove('highlighted'));
+            rows[newIndex].classList.add('highlighted');
+            rows[newIndex].scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+            
+            // Show selected item in search bar (set flag to prevent filterStock)
+            const code = rows[newIndex].getAttribute('data-code') || '';
+            const desc = rows[newIndex].getAttribute('data-desc') || '';
+            window.isNavigating = true;
+            searchInput.value = code + ' - ' + desc;
+        }
+        
+        // Initial focus
+        document.getElementById('stockSearch').focus();
+        
+        // === CUSTOM ITEM FUNCTIONS ===
+        function showCustomItemModal(forPO = false) {
+            // Update modal for PO mode (no price required) or sale mode (price required)
+            if (forPO || currentEntityType === 'supplier') {
+                document.getElementById('customModalTitle').innerHTML = 'Add Item to PO';
+                document.getElementById('customModalDesc').innerHTML = 'Add item to order from supplier (price optional)';
+                document.getElementById('customPriceLabel').innerHTML = '💰 Est. Cost (optional)';
+                document.getElementById('customAddBtn').innerHTML = 'GOOD: Add to PO (Enter)';
+                document.getElementById('customPrice').placeholder = 'Leave blank if unknown';
+            } else {
+                document.getElementById('customModalTitle').innerHTML = 'Add Custom Item';
+                document.getElementById('customModalDesc').innerHTML = 'Add any item not in your stock list - perfect for special orders, services, or once-off items';
+                document.getElementById('customPriceLabel').innerHTML = '💰 Price (incl VAT) *';
+                document.getElementById('customAddBtn').innerHTML = 'GOOD: Add to Cart (Enter)';
+                document.getElementById('customPrice').placeholder = '0.00';
+            }
+            document.getElementById('customItemModal').style.display = 'flex';
+            document.getElementById('customDesc').value = '';
+            document.getElementById('customPrice').value = '';
+            document.getElementById('customQty').value = '1';
+            setTimeout(() => document.getElementById('customDesc').focus(), 100);
+        }
+        
+        function closeCustomItemModal() {
+            document.getElementById('customItemModal').style.display = 'none';
+            document.getElementById('customDesc').value = '';
+            document.getElementById('customPrice').value = '';
+            document.getElementById('customQty').value = '1';
+        }
+        
+        function addCustomItem() {
+            const desc = document.getElementById('customDesc').value.trim();
+            const price = parseFloat(document.getElementById('customPrice').value) || 0;
+            const qty = parseInt(document.getElementById('customQty').value) || 1;
+            
+            if (!desc) {
+                alert('Please enter a description');
+                return;
+            }
+            
+            // For PO mode (supplier selected), price is optional
+            // For sale mode, price is required
+            const isPOMode = currentEntityType === 'supplier';
+            if (!isPOMode && price <= 0) {
+                alert('Please enter a valid price');
+                return;
+            }
+            
+            // Generate unique ID for custom item
+            const customId = 'CUSTOM-' + Date.now();
+            
+            // Add to cart
+            cart.push({
+                id: customId,
+                code: isPOMode ? 'ORDER' : 'CUSTOM',
+                desc: desc,
+                price: price,
+                qty: qty,
+                maxQty: 99999,
+                isCustom: true,
+                isPOItem: isPOMode
+            });
+            
+            updateCart();
+            closeCustomItemModal();
+            showAddedFeedback(isPOMode ? 'ORDER' : 'CUSTOM');
+        }
+        
+        // === EDIT CUSTOMER (F7) ===
+        async function showEditCustomerModal() {
+            const customer = getCurrentCustomer();
+            if (!customer.id) {
+                alert('Select a customer first (F8)');
+                toggleEntity('customer');
+                return;
+            }
+            
+            // Fetch full customer details
+            try {
+                const response = await fetch('/api/customer/' + customer.id);
+                const data = await response.json();
+                
+                if (data.success) {
+                    const c = data.customer;
+                    document.getElementById('editCustId').value = c.id;
+                    document.getElementById('editCustName').value = c.name || '';
+                    document.getElementById('editCustPhone').value = c.phone || '';
+                    document.getElementById('editCustEmail').value = c.email || '';
+                    document.getElementById('editCustVat').value = c.vat_number || '';
+                    document.getElementById('editCustAddress').value = c.address || '';
+                    document.getElementById('editCustSubtitle').textContent = 'Editing: ' + (c.name || 'Customer');
+                    
+                    document.getElementById('editCustomerModal').style.display = 'flex';
+                    setTimeout(() => document.getElementById('editCustName').focus(), 100);
+                } else {
+                    alert('Could not load customer details');
+                }
+            } catch (err) {
+                alert('Error: ' + err.message);
+            }
+        }
+        
+        function closeEditCustomerModal() {
+            document.getElementById('editCustomerModal').style.display = 'none';
+        }
+        
+        async function submitEditCustomer() {
+            const id = document.getElementById('editCustId').value;
+            const name = document.getElementById('editCustName').value.trim();
+            const phone = document.getElementById('editCustPhone').value.trim();
+            const email = document.getElementById('editCustEmail').value.trim();
+            const vat_number = document.getElementById('editCustVat').value.trim();
+            const address = document.getElementById('editCustAddress').value.trim();
+            
+            if (!name) {
+                alert('Customer name is required');
+                document.getElementById('editCustName').focus();
+                return;
+            }
+            
+            try {
+                const response = await fetch('/api/customer/' + id + '/update', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({name, phone, email, vat_number, address})
                 });
                 const data = await response.json();
                 
-                document.getElementById('reportLoading').style.display = 'none';
-                document.getElementById('reportOutput').style.display = 'block';
-                document.getElementById('reportTitle').textContent = title;
-                document.getElementById('reportContent').innerHTML = data.success ? (data.report || '') : ('Error: ' + (data.error || 'Failed'));
-                document.getElementById('reportOutput').scrollIntoView({behavior: 'smooth'});
-            } catch (e) {
-                document.getElementById('reportLoading').style.display = 'none';
-                alert('Error generating report.');
+                if (data.success) {
+                    // Update the displayed name
+                    document.getElementById('entitySearch').value = name;
+                    closeEditCustomerModal();
+                    alert('Customer updated!');
+                } else {
+                    alert('Error: ' + (data.error || 'Update failed'));
+                }
+            } catch (err) {
+                alert('Error: ' + err.message);
             }
         }
         
-        // ═══ CLIENT TB REPORTS ═══
-        async function runClientTBReport(type, title, customRequest) {
-            document.getElementById('reportLoading').style.display = 'block';
-            document.getElementById('reportOutput').style.display = 'none';
+        // === QUICK QUOTE (F4 with empty cart) ===
+        let qqLineItems = [];
+        let qqLineCounter = 0;
+        
+        // Store selected customer/supplier for quick modals
+        let qqSelectedCustomerId = null;
+        let qpSelectedSupplierId = null;
+        
+        function showQuickQuoteModal(customerId = null, customerName = '') {
+            qqLineItems = [];
+            qqLineCounter = 0;
+            qqSelectedCustomerId = customerId;
+            
+            // Clear or prefill customer fields
+            if (customerId && customerName) {
+                // Existing customer - prefill name but keep it EDITABLE so user can change
+                document.getElementById('qqCustSection').innerHTML = `
+                    <h3 style="margin:0 0 15px 0;color:#10b981;font-size:16px;">👤 Customer Details</h3>
+                    <div style="display:grid;grid-template-columns:1fr 1fr;gap:15px;">
+                        <div>
+                            <label style="display:block;margin-bottom:5px;color:white;font-size:13px;">Name *</label>
+                            <input type="text" id="qqCustName" value="${customerName}"
+                                style="width:100%;padding:10px;border-radius:6px;border:1px solid rgba(16,185,129,0.4);background:#1a1a2e;color:white;font-size:14px;box-sizing:border-box;">
+                        </div>
+                        <div>
+                            <label style="display:block;margin-bottom:5px;color:white;font-size:13px;">Phone</label>
+                            <input type="text" id="qqCustPhone" placeholder="082 123 4567" 
+                                style="width:100%;padding:10px;border-radius:6px;border:1px solid rgba(255,255,255,0.2);background:#1a1a2e;color:white;font-size:14px;box-sizing:border-box;">
+                        </div>
+                        <div>
+                            <label style="display:block;margin-bottom:5px;color:white;font-size:13px;">Email</label>
+                            <input type="text" id="qqCustEmail" placeholder="email@example.com" 
+                                style="width:100%;padding:10px;border-radius:6px;border:1px solid rgba(255,255,255,0.2);background:#1a1a2e;color:white;font-size:14px;box-sizing:border-box;">
+                        </div>
+                        <div>
+                            <label style="display:block;margin-bottom:5px;color:white;font-size:13px;">VAT Number</label>
+                            <input type="text" id="qqCustVat" placeholder="4123456789" 
+                                style="width:100%;padding:10px;border-radius:6px;border:1px solid rgba(255,255,255,0.2);background:#1a1a2e;color:white;font-size:14px;box-sizing:border-box;">
+                        </div>
+                    </div>
+                    <div style="margin-top:15px;">
+                        <label style="display:block;margin-bottom:5px;color:white;font-size:13px;">Address</label>
+                        <input type="text" id="qqCustAddress" placeholder="Street, City, Code" 
+                            style="width:100%;padding:10px;border-radius:6px;border:1px solid rgba(255,255,255,0.2);background:#1a1a2e;color:white;font-size:14px;box-sizing:border-box;">
+                    </div>
+                `;
+            } else {
+                // New customer - reset to editable
+                document.getElementById('qqCustName').value = '';
+                document.getElementById('qqCustName').readOnly = false;
+                document.getElementById('qqCustName').style.background = '#1a1a2e';
+                document.getElementById('qqCustSection').innerHTML = `
+                    <h3 style="margin:0 0 15px 0;color:#10b981;font-size:16px;">👤 Customer Details</h3>
+                    <div style="display:grid;grid-template-columns:1fr 1fr;gap:15px;">
+                        <div>
+                            <label style="display:block;margin-bottom:5px;color:white;font-size:13px;">Name *</label>
+                            <input type="text" id="qqCustName" placeholder="Company or person" 
+                                style="width:100%;padding:10px;border-radius:6px;border:1px solid rgba(255,255,255,0.2);background:#1a1a2e;color:white;font-size:14px;box-sizing:border-box;">
+                        </div>
+                        <div>
+                            <label style="display:block;margin-bottom:5px;color:white;font-size:13px;">Phone</label>
+                            <input type="text" id="qqCustPhone" placeholder="082 123 4567" 
+                                style="width:100%;padding:10px;border-radius:6px;border:1px solid rgba(255,255,255,0.2);background:#1a1a2e;color:white;font-size:14px;box-sizing:border-box;">
+                        </div>
+                        <div>
+                            <label style="display:block;margin-bottom:5px;color:white;font-size:13px;">Email</label>
+                            <input type="text" id="qqCustEmail" placeholder="email@example.com" 
+                                style="width:100%;padding:10px;border-radius:6px;border:1px solid rgba(255,255,255,0.2);background:#1a1a2e;color:white;font-size:14px;box-sizing:border-box;">
+                        </div>
+                        <div>
+                            <label style="display:block;margin-bottom:5px;color:white;font-size:13px;">VAT Number</label>
+                            <input type="text" id="qqCustVat" placeholder="4123456789" 
+                                style="width:100%;padding:10px;border-radius:6px;border:1px solid rgba(255,255,255,0.2);background:#1a1a2e;color:white;font-size:14px;box-sizing:border-box;">
+                        </div>
+                    </div>
+                    <div style="margin-top:15px;">
+                        <label style="display:block;margin-bottom:5px;color:white;font-size:13px;">Address</label>
+                        <input type="text" id="qqCustAddress" placeholder="Street, City, Code" 
+                            style="width:100%;padding:10px;border-radius:6px;border:1px solid rgba(255,255,255,0.2);background:#1a1a2e;color:white;font-size:14px;box-sizing:border-box;">
+                    </div>
+                `;
+            }
+            
+            document.getElementById('qqLines').innerHTML = '';
+            qqUpdateTotal();
+            
+            // Add first empty line
+            qqAddLine();
+            
+            document.getElementById('quickQuoteModal').style.display = 'flex';
+            // Focus on first line item description instead of customer name if customer is pre-selected
+            setTimeout(() => {
+                const firstInput = document.querySelector('#qqLines input');
+                if (firstInput) firstInput.focus();
+                else if (!customerId) document.getElementById('qqCustName')?.focus();
+            }, 100);
+        }
+        
+        function closeQuickQuoteModal() {
+            document.getElementById('quickQuoteModal').style.display = 'none';
+        }
+        
+        function qqAddLine() {
+            qqLineCounter++;
+            const lineId = 'qqLine' + qqLineCounter;
+            
+            const lineHtml = `
+            <div id="${lineId}" style="display:grid;grid-template-columns:2fr 80px 100px 40px;gap:10px;margin-bottom:10px;align-items:center;">
+                <input type="text" placeholder="Description" onchange="qqUpdateLine('${lineId}')" 
+                    style="padding:10px;border-radius:6px;border:1px solid rgba(255,255,255,0.2);background:#1a1a2e;color:white;font-size:14px;">
+                <input type="number" placeholder="Qty" value="1" min="1" onchange="qqUpdateLine('${lineId}')"
+                    style="padding:10px;border-radius:6px;border:1px solid rgba(255,255,255,0.2);background:#1a1a2e;color:white;font-size:14px;text-align:center;">
+                <input type="number" placeholder="Price" step="0.01" onchange="qqUpdateLine('${lineId}')"
+                    style="padding:10px;border-radius:6px;border:1px solid rgba(255,255,255,0.2);background:#1a1a2e;color:white;font-size:14px;text-align:right;">
+                <button onclick="qqRemoveLine('${lineId}')" style="background:#ef4444;color:white;border:none;padding:8px;border-radius:6px;cursor:pointer;">✕</button>
+            </div>`;
+            
+            document.getElementById('qqLines').insertAdjacentHTML('beforeend', lineHtml);
+        }
+        
+        function qqRemoveLine(lineId) {
+            const el = document.getElementById(lineId);
+            if (el) el.remove();
+            qqUpdateTotal();
+        }
+        
+        function qqUpdateLine(lineId) {
+            qqUpdateTotal();
+        }
+        
+        function qqUpdateTotal() {
+            let subtotal = 0;
+            const lines = document.getElementById('qqLines').children;
+            
+            for (let line of lines) {
+                const inputs = line.querySelectorAll('input');
+                if (inputs.length >= 3) {
+                    const qty = parseFloat(inputs[1].value) || 0;
+                    const price = parseFloat(inputs[2].value) || 0;
+                    subtotal += qty * price;
+                }
+            }
+            
+            const vat = subtotal * 0.15;
+            const total = subtotal + vat;
+            
+            document.getElementById('qqSubtotal').textContent = 'R' + subtotal.toFixed(2);
+            document.getElementById('qqVat').textContent = 'R' + vat.toFixed(2);
+            document.getElementById('qqTotal').textContent = 'R' + total.toFixed(2);
+        }
+        
+        async function submitQuickQuote() {
+            // Get customer name from visible element or section text
+            let custName = '';
+            const custNameEl = document.getElementById('qqCustName');
+            if (custNameEl) {
+                custName = custNameEl.value.trim();
+            } else if (qqSelectedCustomerId) {
+                // Customer was pre-selected, get name from section
+                const section = document.getElementById('qqCustSection');
+                const match = section?.innerText?.match(/Customer: (.+)/);
+                custName = match ? match[1].trim() : '';
+            }
+            
+            const custPhone = document.getElementById('qqCustPhone')?.value?.trim() || '';
+            const custEmail = document.getElementById('qqCustEmail')?.value?.trim() || '';
+            const custVat = document.getElementById('qqCustVat')?.value?.trim() || '';
+            const custAddress = document.getElementById('qqCustAddress')?.value?.trim() || '';
+            
+            if (!custName && !qqSelectedCustomerId) {
+                alert('Please enter a customer name');
+                document.getElementById('qqCustName')?.focus();
+                return;
+            }
+            
+            // Gather line items
+            const items = [];
+            const lines = document.getElementById('qqLines').children;
+            
+            for (let line of lines) {
+                const inputs = line.querySelectorAll('input');
+                if (inputs.length >= 3) {
+                    const desc = inputs[0].value.trim();
+                    const qty = parseFloat(inputs[1].value) || 0;
+                    const price = parseFloat(inputs[2].value) || 0;
+                    
+                    if (desc && qty > 0 && price > 0) {
+                        items.push({
+                            description: desc,
+                            quantity: qty,
+                            price: price,
+                            total: qty * price
+                        });
+                    }
+                }
+            }
+            
+            if (items.length === 0) {
+                alert('Please add at least one line item');
+                return;
+            }
             
             try {
-                const lang = document.documentElement.lang || 'en';
-                let reportHtml = '';
+                const response = await fetch('/api/pos/quick-quote', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({
+                        customer_id: qqSelectedCustomerId || null,
+                        customer: {
+                            name: custName,
+                            phone: custPhone,
+                            email: custEmail,
+                            vat_number: custVat,
+                            address: custAddress
+                        },
+                        items: items,
+                        salesman_id: currentCashierId,
+                        salesman_name: currentCashierName
+                    })
+                });
                 
-                if (type === 'tb_analysis') {
-                    // Full TB analysis (existing endpoint)
-                    const response = await fetch('/api/reports/tb/analyze', {
-                        method: 'POST',
-                        headers: {'Content-Type': 'application/json'},
-                        body: JSON.stringify({
-                            accounts: clientTBData.accounts,
-                            total_debit: clientTBData.total_debit,
-                            total_credit: clientTBData.total_credit,
-                            is_balanced: clientTBData.is_balanced,
-                            lang: lang,
-                            source_file: clientFileName,
-                            company_name: '',
-                            tb_control_profit: clientTBData.tb_control_profit || null
-                        })
-                    });
-                    const data = await response.json();
-                    reportHtml = data.success ? (data.analysis || '') : ('Error: ' + (data.error || 'Failed'));
-                    
-                    // Store payload for insights fetch after DOM update
-                    if (data.success && data.insights_payload) {
-                        window._tbInsightsPayload = data.insights_payload;
+                const data = await response.json();
+                
+                if (data.success) {
+                    closeQuickQuoteModal();
+                    alert('Quote ' + data.quote_number + ' created!');
+                    if (confirm('Open quote now?')) {
+                        window.location = '/quote/' + data.quote_id;
                     }
-                    
                 } else {
-                    // Other report types from TB data (management, kpi, etc.)
-                    const response = await fetch('/api/reports/tb/smart-report', {
-                        method: 'POST',
-                        headers: {'Content-Type': 'application/json'},
-                        body: JSON.stringify({
-                            accounts: clientTBData.accounts,
-                            total_debit: clientTBData.total_debit,
-                            total_credit: clientTBData.total_credit,
-                            is_balanced: clientTBData.is_balanced,
-                            tb_control_profit: clientTBData.tb_control_profit || null,
-                            report_type: type,
-                            custom_request: customRequest || null,
-                            lang: lang,
-                            source_file: clientFileName
-                        })
-                    });
-                    const data = await response.json();
-                    reportHtml = data.success ? (data.report || '') : ('Error: ' + (data.error || 'Failed'));
+                    alert('Error: ' + (data.error || 'Quote creation failed'));
                 }
-                
-                document.getElementById('reportLoading').style.display = 'none';
-                document.getElementById('reportOutput').style.display = 'block';
-                document.getElementById('reportTitle').textContent = title + ' — ' + clientFileName;
-                document.getElementById('reportContent').innerHTML = reportHtml;
-                document.getElementById('reportOutput').scrollIntoView({behavior: 'smooth'});
-                
-                // Fire async insights fetch for TB analysis (after DOM has the placeholder)
-                if (window._tbInsightsPayload) {
-                    const _payload = window._tbInsightsPayload;
-                    window._tbInsightsPayload = null;
-                    setTimeout(() => {
-                        const insightBox = document.getElementById('aiInsightsContent');
-                        if (insightBox) {
-                            insightBox.innerHTML = '<p style="color:var(--text-muted);">Zane is analyzing...</p>';
-                            fetch('/api/reports/tb/insights', {
-                                method: 'POST',
-                                headers: {'Content-Type': 'application/json'},
-                                body: JSON.stringify({lang: document.documentElement.lang || 'en', insights_payload: _payload})
-                            })
-                            .then(r => r.json())
-                            .then(idata => {
-                                if (idata.success && idata.insights) {
-                                    insightBox.innerHTML = idata.insights;
-                                } else {
-                                    insightBox.innerHTML = '<p style="color:#f97316;">' + (idata.error || 'Insights unavailable') + '. Figures above are 100% accurate.</p>';
-                                }
-                            })
-                            .catch(() => {
-                                insightBox.innerHTML = '<p style="color:#f97316;">Insights timeout - figures above are 100% accurate.</p>';
-                            });
-                        }
-                    }, 100);
-                }
-            } catch (e) {
-                document.getElementById('reportLoading').style.display = 'none';
-                alert('Error generating report: ' + e.message);
+            } catch (err) {
+                alert('Error: ' + err.message);
             }
         }
+        
+        // === QUICK PO (F5 with empty cart) ===
+        let qpLineCounter = 0;
+        
+        function showQuickPOModal(supplierId = null, supplierName = '') {
+            qpLineCounter = 0;
+            qpSelectedSupplierId = supplierId;
+            
+            // Clear or prefill supplier fields
+            if (supplierId && supplierName) {
+                // Existing supplier - show simplified header
+                document.getElementById('qpSupplierSection').innerHTML = `
+                    <h3 style="margin:0 0 15px 0;color:#3b82f6;font-size:16px;">🏭 Supplier: ${supplierName}</h3>
+                    <p style="color:rgba(255,255,255,0.5);font-size:12px;margin:0;">Adding custom items for existing supplier</p>
+                `;
+            } else {
+                // New supplier - show full form
+                document.getElementById('qpSupplierSection').innerHTML = `
+                    <h3 style="margin:0 0 15px 0;color:#3b82f6;font-size:16px;">🏭 Supplier Details</h3>
+                    <div style="display:grid;grid-template-columns:1fr 1fr;gap:15px;">
+                        <div>
+                            <label style="display:block;margin-bottom:5px;color:white;font-size:13px;">Supplier Name *</label>
+                            <input type="text" id="qpSupplierName" placeholder="Company name" 
+                                style="width:100%;padding:10px;border-radius:6px;border:1px solid rgba(255,255,255,0.2);background:#1a1a2e;color:white;font-size:14px;box-sizing:border-box;">
+                        </div>
+                        <div>
+                            <label style="display:block;margin-bottom:5px;color:white;font-size:13px;">Phone</label>
+                            <input type="text" id="qpSupplierPhone" placeholder="012 345 6789" 
+                                style="width:100%;padding:10px;border-radius:6px;border:1px solid rgba(255,255,255,0.2);background:#1a1a2e;color:white;font-size:14px;box-sizing:border-box;">
+                        </div>
+                        <div>
+                            <label style="display:block;margin-bottom:5px;color:white;font-size:13px;">Email</label>
+                            <input type="text" id="qpSupplierEmail" placeholder="orders@supplier.com" 
+                                style="width:100%;padding:10px;border-radius:6px;border:1px solid rgba(255,255,255,0.2);background:#1a1a2e;color:white;font-size:14px;box-sizing:border-box;">
+                        </div>
+                        <div>
+                            <label style="display:block;margin-bottom:5px;color:white;font-size:13px;">VAT Number</label>
+                            <input type="text" id="qpSupplierVat" placeholder="4123456789" 
+                                style="width:100%;padding:10px;border-radius:6px;border:1px solid rgba(255,255,255,0.2);background:#1a1a2e;color:white;font-size:14px;box-sizing:border-box;">
+                        </div>
+                    </div>
+                `;
+            }
+            
+            document.getElementById('qpNotes').value = '';
+            if (document.getElementById('qpReference')) document.getElementById('qpReference').value = '';
+            document.getElementById('qpLines').innerHTML = '';
+            document.getElementById('qpTotalItems').textContent = '0';
+            
+            // Add first empty line
+            qpAddLine();
+            
+            document.getElementById('quickPOModal').style.display = 'flex';
+            // Focus on first line item if supplier pre-selected
+            setTimeout(() => {
+                const firstInput = document.querySelector('#qpLines input');
+                if (firstInput) firstInput.focus();
+                else if (!supplierId) document.getElementById('qpSupplierName')?.focus();
+            }, 100);
+        }
+        
+        function closeQuickPOModal() {
+            document.getElementById('quickPOModal').style.display = 'none';
+        }
+        
+        function qpAddLine() {
+            qpLineCounter++;
+            const lineId = 'qpLine' + qpLineCounter;
+            
+            const lineHtml = `
+            <div id="${lineId}" style="display:grid;grid-template-columns:2fr 80px 40px;gap:10px;margin-bottom:10px;align-items:center;">
+                <input type="text" placeholder="Description / Item" onchange="qpUpdateTotal()" 
+                    style="padding:10px;border-radius:6px;border:1px solid rgba(255,255,255,0.2);background:#1a1a2e;color:white;font-size:14px;">
+                <input type="number" placeholder="Qty" value="1" min="1" onchange="qpUpdateTotal()"
+                    style="padding:10px;border-radius:6px;border:1px solid rgba(255,255,255,0.2);background:#1a1a2e;color:white;font-size:14px;text-align:center;">
+                <button onclick="qpRemoveLine('${lineId}')" style="background:#ef4444;color:white;border:none;padding:8px;border-radius:6px;cursor:pointer;">✕</button>
+            </div>`;
+            
+            document.getElementById('qpLines').insertAdjacentHTML('beforeend', lineHtml);
+            qpUpdateTotal();
+        }
+        
+        function qpRemoveLine(lineId) {
+            const el = document.getElementById(lineId);
+            if (el) el.remove();
+            qpUpdateTotal();
+        }
+        
+        function qpUpdateTotal() {
+            let totalItems = 0;
+            const lines = document.getElementById('qpLines').children;
+            
+            for (let line of lines) {
+                const inputs = line.querySelectorAll('input');
+                if (inputs.length >= 2) {
+                    const desc = inputs[0].value.trim();
+                    const qty = parseInt(inputs[1].value) || 0;
+                    if (desc && qty > 0) {
+                        totalItems += qty;
+                    }
+                }
+            }
+            
+            document.getElementById('qpTotalItems').textContent = totalItems;
+        }
+        
+        async function submitQuickPO() {
+            // Get supplier name from visible element or section text
+            let supplierName = '';
+            const supplierNameEl = document.getElementById('qpSupplierName');
+            if (supplierNameEl) {
+                supplierName = supplierNameEl.value.trim();
+            } else if (qpSelectedSupplierId) {
+                // Supplier was pre-selected, get name from section
+                const section = document.getElementById('qpSupplierSection');
+                const match = section?.innerText?.match(/Supplier: (.+)/);
+                supplierName = match ? match[1].trim() : '';
+            }
+            
+            const supplierPhone = document.getElementById('qpSupplierPhone')?.value?.trim() || '';
+            const supplierEmail = document.getElementById('qpSupplierEmail')?.value?.trim() || '';
+            const supplierVat = document.getElementById('qpSupplierVat')?.value?.trim() || '';
+            const notes = document.getElementById('qpNotes').value.trim();
+            const reference = document.getElementById('qpReference')?.value?.trim() || '';
+            
+            if (!supplierName && !qpSelectedSupplierId) {
+                alert('Please enter a supplier name');
+                document.getElementById('qpSupplierName')?.focus();
+                return;
+            }
+            
+            // Gather line items
+            const items = [];
+            const lines = document.getElementById('qpLines').children;
+            
+            for (let line of lines) {
+                const inputs = line.querySelectorAll('input');
+                if (inputs.length >= 2) {
+                    const desc = inputs[0].value.trim();
+                    const qty = parseInt(inputs[1].value) || 0;
+                    
+                    if (desc && qty > 0) {
+                        items.push({
+                            description: desc,
+                            qty: qty
+                        });
+                    }
+                }
+            }
+            
+            if (items.length === 0) {
+                alert('Please add at least one item');
+                return;
+            }
+            
+            try {
+                const response = await fetch('/api/pos/quick-po', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({
+                        supplier_id: qpSelectedSupplierId || null,
+                        supplier: {
+                            name: supplierName,
+                            phone: supplierPhone,
+                            email: supplierEmail,
+                            vat_number: supplierVat
+                        },
+                        items: items,
+                        notes: notes,
+                        reference: reference
+                    })
+                });
+                
+                const data = await response.json();
+                
+                if (data.success) {
+                    closeQuickPOModal();
+                    
+                    // Offer options: View, Email, or Done
+                    const choice = prompt(
+                        'PO ' + data.po_number + ' created!\\n\\n' +
+                        'What would you like to do?\\n\\n' +
+                        '1 = Open PO\\n' +
+                        '2 = Email to Supplier\\n' +
+                        '3 = Done\\n\\n' +
+                        'Enter 1, 2, or 3:',
+                        '2'
+                    );
+                    
+                    if (choice === '1') {
+                        window.location = '/purchase/' + data.po_id;
+                    } else if (choice === '2') {
+                        try {
+                            const emailResp = await fetch('/api/purchase/' + data.po_id + '/email', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({})});
+                            const emailData = await emailResp.json();
+                            if (emailData.success) {
+                                alert('✅ ' + emailData.message);
+                            } else {
+                                alert('❌ ' + emailData.error + '\\n\\nOpen PO to add supplier email.');
+                                window.location = '/purchase/' + data.po_id;
+                            }
+                        } catch(e) {
+                            alert('Email error: ' + e.message);
+                        }
+                    }
+                } else {
+                    alert('Error: ' + (data.error || 'PO creation failed'));
+                }
+            } catch (err) {
+                alert('Error: ' + err.message);
+            }
+        }
+        
+        // === QUICK CUSTOMER FOR QUOTES ===
+        function showQuickCustomerModal() {
+            document.getElementById('quickCustomerModal').style.display = 'flex';
+            document.getElementById('quickCustName').value = '';
+            document.getElementById('quickCustPhone').value = '';
+            document.getElementById('quickCustEmail').value = '';
+            document.getElementById('quickCustVat').value = '';
+            document.getElementById('quickCustAddress').value = '';
+            setTimeout(() => document.getElementById('quickCustName').focus(), 100);
+        }
+        
+        function closeQuickCustomerModal() {
+            document.getElementById('quickCustomerModal').style.display = 'none';
+        }
+        
+        async function submitQuickCustomer() {
+            const name = document.getElementById('quickCustName').value.trim();
+            const phone = document.getElementById('quickCustPhone').value.trim();
+            const email = document.getElementById('quickCustEmail').value.trim();
+            const vat_number = document.getElementById('quickCustVat').value.trim();
+            const address = document.getElementById('quickCustAddress').value.trim();
+            
+            if (!name) {
+                alert('Please enter a customer name');
+                document.getElementById('quickCustName').focus();
+                return;
+            }
+            
+            // Create customer first
+            try {
+                const response = await fetch('/api/customer/quick-add', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({name, phone, email, vat_number, address})
+                });
+                const result = await response.json();
+                
+                if (result.success) {
+                    // Set this customer as selected
+                    document.getElementById('entityValue').value = result.customer_id;
+                    document.getElementById('entitySearch').value = name;
+                    currentEntityType = 'customer';
+                    
+                    closeQuickCustomerModal();
+                    
+                    // Now create the quote
+                    await createQuoteWithCustomer(result.customer_id, name);
+                } else {
+                    alert('Error creating customer: ' + (result.error || 'Unknown error'));
+                }
+            } catch (err) {
+                alert('Error: ' + err.message);
+            }
+        }
+        
+        async function createQuoteWithCustomer(customerId, customerName) {
+            const items = cart.map(item => ({
+                stock_id: (item.isCustom || item.isPOItem) ? null : item.id,
+                code: item.code,
+                description: item.desc,
+                quantity: item.qty,
+                price: item.price,
+                total: item.price * item.qty
+            }));
+            
+            const total = items.reduce((sum, item) => sum + item.total, 0);
+            
+            // Salesman = currently logged-in cashier (auto)
+            const salesmanId = currentCashierId;
+            const salesmanName = currentCashierName;
+            
+            try {
+                const response = await fetch('/api/pos/quote', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({
+                        items: items,
+                        customer_id: customerId,
+                        customer_name: customerName,
+                        total: total,
+                        cashier_id: currentCashierId,
+                        cashier_name: currentCashierName,
+                        salesman_id: salesmanId,
+                        salesman_name: salesmanName
+                    })
+                });
+                
+                const data = await response.json();
+                
+                if (data.success) {
+                    alert('Quote ' + data.quote_number + ' created!');
+                    clearCart();
+                    if (confirm('Open quote now?')) {
+                        window.location = '/quote/' + data.quote_id;
+                    }
+                } else {
+                    alert('Error: ' + (data.error || 'Quote failed'));
+                }
+            } catch (err) {
+                if (!navigator.onLine || err.message.includes('fetch') || err.message.includes('network') || err.message.includes('Network')) {
+                    try {
+                        const subtotal = Math.round(total * 100) / 100;
+                        const vatAmt = Math.round(subtotal * 0.15 * 100) / 100;
+                        await (window.queueOfflineItem || queueOfflineSale)('quote_queue', {
+                            items: items, customer_id: customerId, customer_name: customerName,
+                            subtotal: subtotal, vat: vatAmt, total: Math.round((subtotal + vatAmt) * 100) / 100,
+                            offline_date: new Date().toISOString().slice(0,10), offline_time: new Date().toISOString()
+                        });
+                        alert('📴 OFFLINE QUOTE SAVED\\n\\nFor: ' + (customerName || 'Walk-in') + '\\nTotal: R' + total.toFixed(2) + '\\n\\nWill sync when internet returns.');
+                        clearCart();
+                    } catch(e) { alert('Could not save quote offline'); }
+                } else { alert('Connection error: ' + err.message); }
+            }
+        }
+        
+        // === CREDIT NOTE FUNCTIONS ===
+        function showCreditNoteModal() {
+            const customerId = document.getElementById('entityValue').value;
+            const customerName = document.getElementById('entitySearch').value || '';
+            
+            if (!customerId || currentEntityType !== 'customer') {
+                alert('Warning: Select a customer first (F8)');
+                toggleEntity('customer');
+                return;
+            }
+            
+            document.getElementById('cnCustomerName').textContent = 'Invoices for: ' + customerName;
+            document.getElementById('creditNoteModal').style.display = 'flex';
+            
+            // Load customer invoices
+            document.getElementById('invoiceList').innerHTML = '<p style="color:rgba(255,255,255,0.5);text-align:center;padding:20px;">Loading...</p>';
+            
+            fetch('/api/pos/customer-invoices?customer_id=' + customerId)
+                .then(r => r.json())
+                .then(data => {
+                    if (data.success && data.invoices.length > 0) {
+                        let html = '';
+                        data.invoices.forEach(inv => {
+                            const statusColor = inv.status === 'paid' ? '#10b981' : inv.status === 'credited' ? '#888' : '#f59e0b';
+                            const disabled = inv.status === 'credited' ? 'pointer-events:none;opacity:0.5;' : '';
+                            const invNum = inv.invoice_number || 'INV-?';
+                            html += '<div onclick="createCreditNote(\\'' + inv.id + '\\', \\'' + invNum + '\\')" style="'+disabled+'padding:12px;margin-bottom:8px;background:rgba(255,255,255,0.05);border-radius:8px;cursor:pointer;border:1px solid rgba(255,255,255,0.1);" onmouseover="this.style.background=\\'rgba(239,68,68,0.2)\\'" onmouseout="this.style.background=\\'rgba(255,255,255,0.05)\\'">';
+                            html += '<div style="display:flex;justify-content:space-between;align-items:center;">';
+                            html += '<div><strong style="color:white;">' + invNum + '</strong>';
+                            html += '<span style="color:rgba(255,255,255,0.5);font-size:12px;margin-left:10px;">' + (inv.date || '-') + '</span></div>';
+                            html += '<div style="text-align:right;">';
+                            html += '<div style="color:white;font-weight:bold;">R' + (inv.total || 0).toFixed(2) + '</div>';
+                            html += '<div style="color:' + statusColor + ';font-size:11px;text-transform:uppercase;">' + (inv.status || 'outstanding') + '</div>';
+                            html += '</div></div></div>';
+                        });
+                        document.getElementById('invoiceList').innerHTML = html;
+                    } else {
+                        document.getElementById('invoiceList').innerHTML = '<p style="color:rgba(255,255,255,0.5);text-align:center;padding:20px;">No invoices found for this customer</p>';
+                    }
+                })
+                .catch(err => {
+                    document.getElementById('invoiceList').innerHTML = '<p style="color:#ef4444;text-align:center;padding:20px;">Error loading invoices</p>';
+                });
+        }
+        
+        function closeCreditNoteModal() {
+            document.getElementById('creditNoteModal').style.display = 'none';
+        }
+        
+        function createCreditNote(invoiceId, invoiceNum) {
+            const invDisplay = invoiceNum || 'this invoice';
+            if (confirm('Create credit note for ' + invDisplay + '?')) {
+                window.location = '/invoice/' + invoiceId + '/credit-note';
+            }
+        }
+        
+        // ═══ PRINT FUNCTIONS ═══
+        let posSettings = {};
+        let lastSaleData = null;
+        
+        function loadPosSettings() {
+            try {
+                const settingsJson = document.getElementById('posSettings').value.replace(/&#39;/g, "'");
+                posSettings = JSON.parse(settingsJson);
+            } catch (e) {
+                posSettings = { auto_print: false, print_format: 'ask', slip_footer: 'Thank you!' };
+            }
+        }
+        
+        function showPrintDialog(saleNum, saleId, method, customerObj, items, subtotal, vat, total, cashReceived = 0, changeGiven = 0, paymentTotal = null, roundingAdj = 0) {
+            loadPosSettings();
+            
+            // Handle both old string format and new object format
+            const customerName = (typeof customerObj === 'string') ? customerObj : (customerObj.name || 'Countersale');
+            const customerAddress = (typeof customerObj === 'object') ? (customerObj.address || '') : '';
+            const customerPhone = (typeof customerObj === 'object') ? (customerObj.phone || '') : '';
+            const customerVat = (typeof customerObj === 'object') ? (customerObj.vat_number || '') : '';
+            
+            // paymentTotal defaults to total when not provided (card/account/legacy callers)
+            if (paymentTotal === null || paymentTotal === undefined) paymentTotal = total;
+            
+            lastSaleData = { saleNum, saleId, method, customerName, items, subtotal, vat, total, cashReceived, changeGiven, paymentTotal, roundingAdj };
+            
+            // Build slip content
+            const now = new Date();
+            const time = now.toLocaleTimeString('en-ZA', {hour: '2-digit', minute: '2-digit'});
+            const date = now.toLocaleDateString('en-ZA');
+            
+            const methodLabel = {cash: '💵 CASH', card: '💳 CARD', account: '📒 ACCOUNT'}[method] || method.toUpperCase();
+            
+            let itemsHtml = '';
+            items.forEach(item => {
+                const lineTotal = item.price * item.quantity;
+                // Prefer description, fall back to code only if description is empty/missing
+                const itemName = (item.description && item.description.trim()) ? item.description : (item.code || 'Item');
+                itemsHtml += '<tr><td style="padding:3px 0;font-size:13px;">' + item.quantity + 'x ' + itemName + '</td><td style="text-align:right;padding:3px 0;font-size:13px;white-space:nowrap;">R' + lineTotal.toFixed(2) + '</td></tr>';
+            });
+            
+            // Cash payment details (only for cash sales)
+            let cashHtml = '';
+            if (method === 'cash' && cashReceived > 0) {
+                cashHtml = `
+                    <div style="margin-top:8px;padding:8px;background:#f5f5f5;border-radius:6px;">
+                        <div style="display:flex;justify-content:space-between;font-size:14px;padding:2px 0;">
+                            <span>Cash Received</span><span>R${cashReceived.toFixed(2)}</span>
+                        </div>
+                        <div style="display:flex;justify-content:space-between;font-size:18px;font-weight:bold;padding:2px 0;color:#10b981;">
+                            <span>Change</span><span>R${changeGiven.toFixed(2)}</span>
+                        </div>
+                    </div>
+                `;
+            }
+            
+            const slipHtml = `
+                <div style="text-align:center;border-bottom:2px dashed #000;padding-bottom:8px;margin-bottom:8px;">
+                    <div style="font-size:18px;font-weight:bold;">${posSettings.business_name || 'Business'}</div>
+                    ${posSettings.phone ? '<div style="font-size:12px;color:#666;">Tel: ' + posSettings.phone + '</div>' : ''}
+                    ${posSettings.vat_number ? '<div style="font-size:12px;color:#666;">VAT: ' + posSettings.vat_number + '</div>' : ''}
+                    <div style="margin-top:6px;font-size:15px;font-weight:bold;">${saleNum}</div>
+                    ${saleNum.startsWith('OFF') ? '<div style="background:#dc2626;color:white;padding:2px 6px;border-radius:3px;font-size:11px;display:inline-block;margin-top:4px;">OFFLINE</div>' : ''}
+                    <div style="font-size:12px;color:#666;">${date} ${time}</div>
+                    ${currentCashierName ? '<div style="font-size:12px;color:#666;margin-top:2px;">Cashier: ' + currentCashierName + '</div>' : ''}
+                </div>
+                
+                <div style="margin-bottom:8px;font-size:13px;">
+                    <span style="background:#333;color:white;padding:3px 8px;border-radius:3px;font-size:12px;">${methodLabel}</span>
+                    <span style="margin-left:8px;font-size:13px;">${customerName || 'Countersale'}</span>
+                    ${customerAddress ? '<div style="font-size:11px;color:#666;margin-top:4px;margin-left:4px;">' + customerAddress.replace(/\\n/g, '<br>') + '</div>' : ''}
+                    ${customerPhone ? '<div style="font-size:11px;color:#666;margin-left:4px;">Tel: ' + customerPhone + '</div>' : ''}
+                    ${customerVat ? '<div style="font-size:11px;color:#666;margin-left:4px;font-weight:bold;">VAT: ' + customerVat + '</div>' : ''}
+                </div>
+                
+                <table style="width:100%;border-collapse:collapse;margin-bottom:8px;">
+                    ${itemsHtml}
+                </table>
+                
+                <div style="border-top:2px dashed #000;padding-top:6px;">
+                    <div style="display:flex;justify-content:space-between;font-size:13px;color:#666;padding:2px 0;">
+                        <span>Subtotal</span><span>R${subtotal.toFixed(2)}</span>
+                    </div>
+                    <div style="display:flex;justify-content:space-between;font-size:13px;color:#666;padding:2px 0;">
+                        <span>VAT (15%)</span><span>R${vat.toFixed(2)}</span>
+                    </div>
+                    ${Math.abs(roundingAdj) >= 0.01 ? `
+                    <div style="display:flex;justify-content:space-between;font-size:13px;color:#666;padding:2px 0;">
+                        <span>Sub-total</span><span>R${total.toFixed(2)}</span>
+                    </div>
+                    <div style="display:flex;justify-content:space-between;font-size:13px;color:#666;padding:2px 0;">
+                        <span>Rounding</span><span>${roundingAdj >= 0 ? '+' : '-'}R${Math.abs(roundingAdj).toFixed(2)}</span>
+                    </div>
+                    ` : ''}
+                    <div style="display:flex;justify-content:space-between;font-size:22px;font-weight:bold;margin-top:6px;">
+                        <span>TOTAL</span><span>R${paymentTotal.toFixed(2)}</span>
+                    </div>
+                </div>
+                
+                ${cashHtml}
+                
+                <div style="text-align:center;margin-top:8px;padding-top:8px;border-top:2px dashed #000;font-size:12px;color:#666;">
+                    ${posSettings.slip_footer || 'Thank you for your purchase!'}
+                </div>
+            `;
+            
+            document.getElementById('slipContent').innerHTML = slipHtml;
+            
+            // Show CHANGE banner if cash sale with change due
+            var changeBanner = document.getElementById('changeBanner');
+            if (!changeBanner) {
+                changeBanner = document.createElement('div');
+                changeBanner.id = 'changeBanner';
+                changeBanner.style.cssText = 'text-align:center;padding:20px;font-size:36px;font-weight:900;border-radius:8px 8px 0 0;display:none;';
+                var modalInner = document.querySelector('#printSlipModal > div');
+                if (modalInner) modalInner.insertBefore(changeBanner, modalInner.firstChild);
+            }
+            if (changeGiven >= 0.01) {
+                changeBanner.style.display = 'block';
+                changeBanner.style.background = '#10b981';
+                changeBanner.style.color = 'white';
+                changeBanner.textContent = 'CHANGE: R' + changeGiven.toFixed(2);
+            } else {
+                changeBanner.style.display = 'none';
+            }
+            
+            // Check settings for auto behavior
+            posLocked = false;  // Sale is committed — unlock POS for next sale
+            
+            // === ALWAYS AUTO-PRINT THERMAL — no format selection needed ===
+            // Show the modal briefly (for change banner visibility), then auto-fire thermal
+            document.getElementById('printSlipModal').style.display = 'flex';
+            // Hide the button row — we're going straight to thermal
+            var _btnRow = document.getElementById('printButtonRow');
+            if (_btnRow) _btnRow.style.display = 'none';
+            
+            // Small delay so change banner is visible before print dialog opens
+            // doPrintSlip handles all cleanup after print() returns
+            setTimeout(function() {
+                doPrintSlip('thermal');
+            }, changeGiven >= 0.01 ? 1200 : 200);  // longer delay if there's change to show
+        }
+        
+        var _slipPrinted = false;  // Track if slip was printed (Enter = reprint, Esc = done)
+        var _lastPrintFormat = null;
+        var _lastPrintHtml = null;  // Cache the HTML so reprint doesn't need to rebuild
+        var _printInProgress = false;  // Prevent double-fire
+        
+        function doPrintSlip(format) {
+            if (_printInProgress) return;  // Already printing
+            _printInProgress = true;
+            _lastPrintFormat = format;
+            
+            var fullHtml;
+            
+            if (format === 'a4' && lastSaleData) {
+                // === BUILD FULL A4 TAX INVOICE ===
+                var sd = lastSaleData;
+                var now = new Date();
+                var dateStr = now.toLocaleDateString('en-ZA');
+                var timeStr = now.toLocaleTimeString('en-ZA', {hour:'2-digit', minute:'2-digit'});
+                var methodLabel = {cash:'Cash', card:'Card', account:'Account', eft:'EFT'}[sd.method] || sd.method;
+                
+                var biz = posSettings || {};
+                var bizName = biz.business_name || 'Business';
+                var bizVat = biz.vat_number || '';
+                var bizPhone = biz.phone || '';
+                var bizAddr = (biz.address || '').replace(/\\n/g, '<br>');
+                var bizEmail = biz.email || '';
+                var bizBank = biz.bank_name || '';
+                var bizBankAcc = biz.bank_account || '';
+                var bizBankBranch = biz.bank_branch || '';
+                
+                var itemsRows = '';
+                (sd.items || []).forEach(function(item) {
+                    var qty = item.quantity || item.qty || 1;
+                    var desc = item.description || item.desc || '-';
+                    var price = parseFloat(item.price || 0);
+                    var lineTotal = parseFloat(item.total || (qty * price));
+                    var vatAmt = Math.round(lineTotal * 0.15 * 100) / 100;
+                    var inclTotal = Math.round((lineTotal + vatAmt) * 100) / 100;
+                    itemsRows += '<tr style="border-bottom:1px solid #e5e7eb;">' +
+                        '<td style="padding:6px 8px;font-size:12px;">' + desc + '</td>' +
+                        '<td style="text-align:center;padding:6px 8px;font-size:12px;">' + qty + '</td>' +
+                        '<td style="text-align:right;padding:6px 8px;font-size:12px;">R' + price.toFixed(2) + '</td>' +
+                        '<td style="text-align:center;padding:6px 8px;font-size:12px;">15%</td>' +
+                        '<td style="text-align:right;padding:6px 8px;font-size:12px;">R' + lineTotal.toFixed(2) + '</td>' +
+                        '<td style="text-align:right;padding:6px 8px;font-size:12px;font-weight:600;">R' + inclTotal.toFixed(2) + '</td>' +
+                        '</tr>';
+                });
+                
+                var cashierLine = currentCashierName ? '<tr><td style="padding:4px 0;color:#888;">Prepared By:</td><td style="padding:4px 0;font-weight:600;">' + currentCashierName + '</td></tr>' : '';
+                
+                var paymentInfo = '';
+                if (sd.method === 'cash' && sd.cashReceived) {
+                    paymentInfo = '<div style="margin-top:10px;font-size:11px;color:#555;">' +
+                        'Cash Received: R' + parseFloat(sd.cashReceived).toFixed(2) +
+                        ' | Change: R' + parseFloat(sd.changeGiven || 0).toFixed(2) + '</div>';
+                }
+                
+                var bankingHtml = '';
+                if (bizBankAcc) {
+                    bankingHtml = '<div style="border:1px solid #e5e7eb;border-radius:6px;padding:12px;background:#fafafa;margin-bottom:10px;">' +
+                        '<div style="font-weight:600;color:#333;margin-bottom:6px;font-size:13px;">Banking Details</div>' +
+                        '<div style="font-size:12px;">Bank: ' + bizBank + '</div>' +
+                        '<div style="font-size:12px;">Account: ' + bizBankAcc + '</div>' +
+                        '<div style="font-size:12px;">Branch: ' + bizBankBranch + '</div></div>';
+                }
+                
+                fullHtml = '<!DOCTYPE html><html><head><title>Tax Invoice</title>' +
+                    '<style>' +
+                    '* { margin:0; padding:0; box-sizing:border-box; }' +
+                    'body { font-family: Arial, Helvetica, sans-serif; color:#333; background:#fff; padding:0; font-size:12px; }' +
+                    'table { width:100%; border-collapse:collapse; page-break-inside:auto; }' +
+                    'tr { page-break-inside:avoid; }' +
+                    'thead { display:table-header-group; }' +
+                    '@media print { @page { size:A4; margin:10mm 12mm; } body { padding:0; } }' +
+                    '</style></head><body>' +
+                    
+                    '<div style="background:#1a1a2e;color:white;padding:12px 25px;display:flex;justify-content:space-between;align-items:center;">' +
+                    '<div><h1 style="margin:0;font-size:16px;font-weight:700;letter-spacing:0.5px;">' + bizName + '</h1>' +
+                    (bizAddr ? '<p style="margin:4px 0 0 0;font-size:10px;opacity:0.8;">' + bizAddr + '</p>' : '') +
+                    '</div>' +
+                    '<div style="text-align:right;">' +
+                    '<h2 style="margin:0;font-size:20px;font-weight:700;letter-spacing:2px;">TAX INVOICE</h2>' +
+                    '<span style="background:#10b981;color:white;padding:4px 12px;border-radius:20px;font-size:11px;">' + methodLabel.toUpperCase() + '</span>' +
+                    '</div></div>' +
+                    
+                    '<div style="padding:10px 25px;display:flex;gap:40px;border-bottom:1px solid #e5e7eb;">' +
+                    '<div style="flex:1;border-right:1px solid #e5e7eb;padding-right:25px;">' +
+                    '<table style="font-size:11px;color:#333;">' +
+                    '<tr><td style="padding:4px 0;color:#888;width:110px;">Number:</td><td style="padding:4px 0;font-weight:600;">' + (sd.saleNum || '-') + '</td></tr>' +
+                    '<tr><td style="padding:4px 0;color:#888;">Date:</td><td style="padding:4px 0;">' + dateStr + ' ' + timeStr + '</td></tr>' +
+                    (bizVat ? '<tr><td style="padding:4px 0;color:#888;">Our VAT No:</td><td style="padding:4px 0;">' + bizVat + '</td></tr>' : '') +
+                    cashierLine +
+                    '</table>' +
+                    (bizPhone ? '<div style="margin-top:8px;font-size:10px;color:#666;">Tel: ' + bizPhone + '</div>' : '') +
+                    '</div>' +
+                    '<div style="flex:1;padding-left:25px;">' +
+                    '<div style="font-size:11px;color:#888;text-transform:uppercase;letter-spacing:1px;margin-bottom:4px;font-weight:600;">Bill To</div>' +
+                    '<div style="font-size:13px;font-weight:700;color:#1a1a2e;">' + (sd.customerName || 'Cash Customer') + '</div>' +
+                    '</div></div>' +
+                    
+                    '<div style="padding:0 25px;">' +
+                    '<table>' +
+                    '<thead><tr style="background:#f1f5f9;border-bottom:2px solid #cbd5e1;">' +
+                    '<th style="padding:6px 8px;text-align:left;color:#475569;font-weight:600;font-size:10px;text-transform:uppercase;">Description</th>' +
+                    '<th style="padding:6px 8px;text-align:center;color:#475569;font-weight:600;font-size:10px;text-transform:uppercase;width:60px;">Qty</th>' +
+                    '<th style="padding:6px 8px;text-align:right;color:#475569;font-weight:600;font-size:10px;text-transform:uppercase;width:100px;">Excl. Price</th>' +
+                    '<th style="padding:6px 8px;text-align:center;color:#475569;font-weight:600;font-size:10px;text-transform:uppercase;width:60px;">VAT %</th>' +
+                    '<th style="padding:6px 8px;text-align:right;color:#475569;font-weight:600;font-size:10px;text-transform:uppercase;width:100px;">Excl. Total</th>' +
+                    '<th style="padding:6px 8px;text-align:right;color:#475569;font-weight:600;font-size:10px;text-transform:uppercase;width:100px;">Incl. Total</th>' +
+                    '</tr></thead>' +
+                    '<tbody>' + itemsRows + '</tbody>' +
+                    '</table></div>' +
+                    
+                    '<div style="padding:15px 25px;display:flex;justify-content:space-between;align-items:flex-end;">' +
+                    '<div style="font-size:12px;color:#666;max-width:55%;">' +
+                    bankingHtml +
+                    paymentInfo +
+                    '<p style="margin:8px 0 2px;font-size:11px;color:#999;">Thank you for your purchase!</p>' +
+                    '</div>' +
+                    '<table style="width:220px;border-collapse:collapse;">' +
+                    '<tr style="border-bottom:1px solid #e5e7eb;"><td style="padding:4px 8px;color:#666;font-size:11px;">Total Exclusive</td><td style="padding:4px 8px;text-align:right;font-size:11px;">R' + parseFloat(sd.subtotal || 0).toFixed(2) + '</td></tr>' +
+                    '<tr style="border-bottom:1px solid #e5e7eb;"><td style="padding:4px 8px;color:#666;font-size:11px;">VAT (15%)</td><td style="padding:4px 8px;text-align:right;font-size:11px;">R' + parseFloat(sd.vat || 0).toFixed(2) + '</td></tr>' +
+                    '<tr style="background:#1a1a2e;"><td style="padding:8px;color:white;font-size:13px;font-weight:700;">TOTAL</td><td style="padding:8px;text-align:right;color:white;font-size:13px;font-weight:700;">R' + parseFloat(sd.total || 0).toFixed(2) + '</td></tr>' +
+                    '</table></div>' +
+                    
+                    '</body></html>';
+            } else {
+                // === THERMAL SLIP ===
+                var slipContent = document.getElementById('slipContent');
+                if (slipContent) {
+                    var styles = 'body { width: 72mm; margin: 0; padding: 4mm; font-family: "Courier New", monospace; font-size: 16px; font-weight: bold; color: #000; background: #fff; -webkit-print-color-adjust: exact; print-color-adjust: exact; } * { font-weight: bold !important; color: #000 !important; background: transparent !important; } table { width: 100%; border-collapse: collapse; } td { font-weight: bold !important; padding: 2px 0; } @page { size: 80mm auto; margin: 0; } @media print { body { width: 72mm; } }';
+                    fullHtml = '<!DOCTYPE html><html><head><title>POS Slip</title><style>' + styles + '</style></head><body>' + slipContent.innerHTML + '</body></html>';
+                }
+            }
+            
+            if (!fullHtml) {
+                // Use cached HTML from last print if slipContent is gone
+                fullHtml = _lastPrintHtml;
+            }
+            if (!fullHtml) {
+                console.log('[POS] No slip content available for print');
+                _printInProgress = false;
+                return;
+            }
+            
+            // Cache for reprint
+            _lastPrintHtml = fullHtml;
+            
+            // Exit fullscreen before print
+            if (document.fullscreenElement) { try { document.exitFullscreen(); } catch(e) {} }
+            
+            // === PRINT via hidden iframe ===
+            // ALWAYS destroy old iframe and create fresh one
+            var oldPf = document.getElementById('posPrintFrame');
+            if (oldPf) oldPf.remove();
+            
+            var pf = document.createElement('iframe');
+            pf.id = 'posPrintFrame';
+            pf.style.cssText = 'position:fixed;top:-9999px;left:-9999px;width:80mm;height:600px;border:none;';
+            document.body.appendChild(pf);
+            
+            var fd = pf.contentDocument || pf.contentWindow.document;
+            fd.open(); fd.write(fullHtml + '<!-- t=' + Date.now() + ' -->'); fd.close();
+            
+            var _printed = false;
+            function _executePrint() {
+                if (_printed) return;  // Only fire once
+                _printed = true;
+                try {
+                    pf.contentWindow.focus();
+                    pf.contentWindow.print();
+                } catch(e) {
+                    console.log('[POS] Print error:', e);
+                }
+                _printInProgress = false;
+                _slipPrinted = true;
+                _showReprintState();
+                // CRITICAL: Return focus to main page so keyboard events work again
+                // print() steals focus to the iframe — we must reclaim it
+                setTimeout(function() {
+                    try { document.body.focus(); } catch(e) {}
+                    var rb = document.getElementById('btnReprint');
+                    if (rb) rb.focus();
+                }, 300);
+            }
+            
+            pf.onload = function() { setTimeout(_executePrint, 250); };
+            setTimeout(_executePrint, 1500);  // Fallback — only fires if onload didn't
+        }
+        
+        function _showReprintState() {
+            // Hide normal buttons, show reprint message with clickable buttons
+            var btnRow = document.getElementById('printButtonRow');
+            if (btnRow) btnRow.style.display = 'none';
+            
+            var reprintRow = document.getElementById('reprintRow');
+            if (!reprintRow) {
+                reprintRow = document.createElement('div');
+                reprintRow.id = 'reprintRow';
+                reprintRow.style.cssText = 'padding:20px;text-align:center;border-top:2px solid #eee;';
+                var modal = document.getElementById('printSlipModal');
+                if (modal) modal.querySelector('div').appendChild(reprintRow);
+            }
+            reprintRow.innerHTML = '<div style="font-size:18px;font-weight:bold;color:#10b981;margin-bottom:15px;">&#10004; Printed!</div>' +
+                '<div style="display:flex;gap:12px;justify-content:center;">' +
+                '<button id="btnReprint" tabindex="0" onclick="_doReprint()" ' +
+                'style="padding:16px 30px;border-radius:8px;border:3px solid #10b981;background:#10b981;color:white;cursor:pointer;font-weight:bold;font-size:16px;">&#9166; Print Again</button>' +
+                '<button id="btnDone" tabindex="0" onclick="_finishPrintAndReset()" ' +
+                'style="padding:16px 30px;border-radius:8px;border:2px solid #ccc;background:white;color:#333;cursor:pointer;font-size:16px;">Esc &#10005; Done</button>' +
+                '</div>';
+            reprintRow.style.display = 'block';
+        }
+        
+        function _doReprint() {
+            _slipPrinted = false;
+            _hideReprintState();
+            doPrintSlip(_lastPrintFormat || 'thermal');
+        }
+        
+        function _hideReprintState() {
+            var reprintRow = document.getElementById('reprintRow');
+            if (reprintRow) reprintRow.style.display = 'none';
+            var btnRow = document.getElementById('printButtonRow');
+            if (btnRow) btnRow.style.display = 'flex';
+        }
+        
+        function _finishPrintAndReset() {
+            _slipPrinted = false;
+            _lastPrintFormat = null;
+            _lastPrintHtml = null;
+            _printInProgress = false;
+            _hideReprintState();
+            var modal = document.getElementById('printSlipModal');
+            if (modal) modal.style.display = 'none';
+            if (typeof afterSaleReset === 'function') afterSaleReset();
+        }
+        
+        function closePrintModal() {
+            _slipPrinted = false;
+            _lastPrintFormat = null;
+            _lastPrintHtml = null;
+            _printInProgress = false;
+            _hideReprintState();
+            document.getElementById('printSlipModal').style.display = 'none';
+            var _btnRow = document.getElementById('printButtonRow');
+            if (_btnRow) _btnRow.style.display = 'flex';
+            afterSaleReset();
+        }
+        
+        function afterSaleReset() {
+            // Update stock quantities LOCALLY — no page reload needed
+            if (lastSaleData && lastSaleData.items) {
+                lastSaleData.items.forEach(function(item) {
+                    // Find stock row by ID or code
+                    var row = document.querySelector('tr[data-id="' + item.stock_id + '"]') || 
+                              document.querySelector('tr[data-code="' + item.code + '"]');
+                    if (row) {
+                        var oldQty = parseFloat(row.getAttribute('data-qty')) || 0;
+                        var newQty = oldQty - item.quantity;
+                        row.setAttribute('data-qty', newQty);
+                        
+                        // Update the onclick to pass new qty
+                        var id = row.getAttribute('data-id');
+                        var code = row.getAttribute('data-code');
+                        var desc = row.getAttribute('data-desc');
+                        var price = parseFloat(row.getAttribute('data-price')) || 0;
+                        row.setAttribute('onclick', "addToCart('" + id + "', '" + code + "', '" + desc + "', " + price + ", " + newQty + ")");
+                        
+                        // Update qty badge display
+                        var badgeCell = row.querySelector('.col-stock');
+                        if (badgeCell) {
+                            var cls = '';
+                            var badgeCls = 'stock-badge';
+                            if (newQty < 0) { cls = 'negative'; badgeCls += ' negative'; }
+                            else if (newQty === 0) { cls = 'zero'; badgeCls += ' zero'; }
+                            else if (newQty < 5) { cls = 'low'; badgeCls += ' low'; }
+                            badgeCell.innerHTML = '<span class="' + badgeCls + '">' + Math.round(newQty) + '</span>';
+                            
+                            // Update row class
+                            row.classList.remove('negative', 'zero', 'low');
+                            if (cls) row.classList.add(cls);
+                        }
+                    }
+                });
+            }
+            
+            // Clear cart and reset state
+            cart = [];
+            updateCart();
+            posLocked = false;
+            lastSaleData = null;
+            
+            // Focus search bar after sale
+            setTimeout(function() {
+                var f11s = document.getElementById('f11Search');
+                if (f11s) { f11s.value = ''; f11s.focus(); }
+                if (typeof renderF11Table === 'function') renderF11Table();
+                if (typeof syncF11Buttons === 'function') syncF11Buttons();
+            }, 400);
+            
+            // Flash success on reactor
+            var rx = document.querySelector('.pos-rx-core');
+            if (rx) {
+                rx.style.transition = 'box-shadow 0.3s';
+                rx.style.boxShadow = '0 0 40px rgba(16,185,129,0.5)';
+                setTimeout(function() { rx.style.boxShadow = ''; }, 1500);
+            }
+        }
+        
+        function showEmailSlipModal() {
+            // Try to get customer email if one was selected
+            const customer = getCurrentCustomer ? getCurrentCustomer() : {id: '', name: ''};
+            let customerEmail = '';
+            
+            // Look up customer email from customerData
+            try {
+                const customers = JSON.parse(document.getElementById('customerData').value);
+                const found = customers.find(c => c.id === customer.id);
+                if (found && found.email) customerEmail = found.email;
+            } catch(e) {}
+            
+            document.getElementById('slipEmailTo').value = customerEmail;
+            document.getElementById('emailSlipModal').style.display = 'flex';
+            document.getElementById('slipEmailTo').focus();
+        }
+        
+        function closeEmailSlipModal() {
+            document.getElementById('emailSlipModal').style.display = 'none';
+        }
+        
+        async function sendSlipEmail() {
+            const email = document.getElementById('slipEmailTo').value.trim();
+            if (!email || !email.includes('@')) {
+                alert('Please enter a valid email address');
+                return;
+            }
+            
+            if (!lastSaleData) {
+                alert('No sale data available');
+                return;
+            }
+            
+            try {
+                const response = await fetch('/api/pos/email-slip', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({
+                        to_email: email,
+                        sale_number: lastSaleData.saleNum,
+                        sale_id: lastSaleData.saleId,
+                        customer_name: lastSaleData.customerName,
+                        items: lastSaleData.items,
+                        subtotal: lastSaleData.subtotal,
+                        vat: lastSaleData.vat,
+                        total: lastSaleData.total,
+                        payment_method: lastSaleData.method
+                    })
+                });
+                
+                const data = await response.json();
+                if (data.success) {
+                    alert('✅ Slip emailed to ' + email);
+                    closeEmailSlipModal();
+                } else {
+                    alert('❌ ' + (data.error || 'Failed to send email'));
+                }
+            } catch(e) {
+                alert('❌ Error: ' + e.message);
+            }
+        }
+        
+        // Add keyboard shortcut for email (4)
+        document.addEventListener('keydown', function(e) {
+            if (document.getElementById('printSlipModal').style.display === 'flex' && e.key === '4') {
+                showEmailSlipModal();
+            }
+            if (document.getElementById('emailSlipModal').style.display === 'flex' && e.key === 'Escape') {
+                closeEmailSlipModal();
+            }
+        });
+        </script>
+        
+        <!-- Custom Item Modal - BIG & WELCOMING -->
+        <div id="customItemModal" style="display:none;position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.85);z-index:9999;justify-content:center;align-items:center;">
+            <div style="background:linear-gradient(135deg, #1e1e32 0%, #2a2a4a 100%);padding:40px;border-radius:20px;max-width:700px;width:95%;border:2px solid rgba(139,92,246,0.5);box-shadow:0 25px 50px rgba(0,0,0,0.5);">
+                <div style="text-align:center;margin-bottom:30px;">
+                    <div style="font-size:48px;margin-bottom:10px;">✏️</div>
+                    <h2 style="margin:0;color:white;font-size:28px;" id="customModalTitle">Add Custom Item</h2>
+                    <p style="color:rgba(255,255,255,0.6);font-size:16px;margin-top:10px;" id="customModalDesc">
+                        Add any item not in your stock list - perfect for special orders, services, or once-off items
+                    </p>
+                </div>
+                
+                <div style="margin-bottom:25px;">
+                    <label style="display:block;margin-bottom:8px;color:white;font-size:16px;font-weight:bold;">📝 Description *</label>
+                    <input type="text" id="customDesc" placeholder="e.g. Special order bracket, Transport, Labour, etc..." 
+                        style="width:100%;padding:18px;border-radius:10px;border:2px solid rgba(139,92,246,0.3);background:#1a1a2e;color:white;font-size:18px;box-sizing:border-box;"
+                        onkeypress="if(event.key==='Enter'){document.getElementById('customPrice').focus();}">
+                </div>
+                
+                <div style="display:grid;grid-template-columns:1fr 1fr;gap:25px;margin-bottom:30px;">
+                    <div id="customPriceDiv">
+                        <label style="display:block;margin-bottom:8px;color:white;font-size:16px;font-weight:bold;" id="customPriceLabel">💰 Price (incl VAT) *</label>
+                        <input type="number" id="customPrice" placeholder="0.00" step="0.01"
+                            style="width:100%;padding:18px;border-radius:10px;border:2px solid rgba(139,92,246,0.3);background:#1a1a2e;color:white;font-size:24px;text-align:right;box-sizing:border-box;"
+                            onkeypress="if(event.key==='Enter'){document.getElementById('customAddBtn').click();}">
+                    </div>
+                    <div>
+                        <label style="display:block;margin-bottom:8px;color:white;font-size:16px;font-weight:bold;">📦 Quantity</label>
+                        <input type="number" id="customQty" value="1" min="1"
+                            style="width:100%;padding:18px;border-radius:10px;border:2px solid rgba(139,92,246,0.3);background:#1a1a2e;color:white;font-size:24px;text-align:center;box-sizing:border-box;">
+                    </div>
+                </div>
+                
+                <div style="display:flex;gap:15px;">
+                    <button onclick="closeCustomItemModal()" style="flex:1;padding:18px;border-radius:10px;border:2px solid rgba(255,255,255,0.3);background:transparent;color:white;cursor:pointer;font-size:16px;font-weight:bold;">✕ Cancel (Esc)</button>
+                    <button onclick="addCustomItem()" style="flex:2;padding:18px;border-radius:10px;border:none;background:linear-gradient(135deg, #8b5cf6 0%, #a78bfa 100%);color:white;cursor:pointer;font-size:18px;font-weight:bold;box-shadow:0 4px 15px rgba(139,92,246,0.4);" id="customAddBtn">GOOD: Add to Cart (Enter)</button>
+                </div>
+                
+                <p style="text-align:center;color:rgba(255,255,255,0.4);font-size:13px;margin-top:20px;">
+                    Tip: After adding, press <kbd style="background:#333;padding:2px 6px;border-radius:4px;">F4</kbd> to create a quote
+                </p>
+            </div>
+        </div>
+        
+        <!-- Quick Quote Modal (F4 with empty cart) - Full quote without stock/customer -->
+        <div id="quickQuoteModal" style="display:none;position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.9);z-index:9999;justify-content:center;align-items:flex-start;overflow-y:auto;padding:20px;">
+            <div style="background:linear-gradient(135deg, #1e1e32 0%, #2a2a4a 100%);padding:30px;border-radius:20px;max-width:800px;width:95%;border:2px solid rgba(16,185,129,0.5);box-shadow:0 25px 50px rgba(0,0,0,0.5);margin:auto;">
+                <div style="text-align:center;margin-bottom:20px;">
+                    <div style="font-size:40px;margin-bottom:8px;">📝</div>
+                    <h2 style="margin:0;color:white;font-size:24px;">Quick Quote</h2>
+                    <p style="color:rgba(255,255,255,0.6);font-size:13px;margin-top:5px;">
+                        Create a quote without stock items or saved customer
+                    </p>
+                </div>
+                
+                <!-- Customer Section -->
+                <div id="qqCustSection" style="background:rgba(0,0,0,0.2);padding:20px;border-radius:12px;margin-bottom:20px;">
+                    <h3 style="margin:0 0 15px 0;color:#10b981;font-size:16px;">👤 Customer Details</h3>
+                    <div style="display:grid;grid-template-columns:1fr 1fr;gap:15px;">
+                        <div>
+                            <label style="display:block;margin-bottom:5px;color:white;font-size:13px;">Name *</label>
+                            <input type="text" id="qqCustName" placeholder="Company or person" 
+                                style="width:100%;padding:10px;border-radius:6px;border:1px solid rgba(255,255,255,0.2);background:#1a1a2e;color:white;font-size:14px;box-sizing:border-box;">
+                        </div>
+                        <div>
+                            <label style="display:block;margin-bottom:5px;color:white;font-size:13px;">Phone</label>
+                            <input type="text" id="qqCustPhone" placeholder="082 123 4567" 
+                                style="width:100%;padding:10px;border-radius:6px;border:1px solid rgba(255,255,255,0.2);background:#1a1a2e;color:white;font-size:14px;box-sizing:border-box;">
+                        </div>
+                        <div>
+                            <label style="display:block;margin-bottom:5px;color:white;font-size:13px;">Email</label>
+                            <input type="text" id="qqCustEmail" placeholder="email@example.com" 
+                                style="width:100%;padding:10px;border-radius:6px;border:1px solid rgba(255,255,255,0.2);background:#1a1a2e;color:white;font-size:14px;box-sizing:border-box;">
+                        </div>
+                        <div>
+                            <label style="display:block;margin-bottom:5px;color:white;font-size:13px;">VAT Number</label>
+                            <input type="text" id="qqCustVat" placeholder="4123456789" 
+                                style="width:100%;padding:10px;border-radius:6px;border:1px solid rgba(255,255,255,0.2);background:#1a1a2e;color:white;font-size:14px;box-sizing:border-box;">
+                        </div>
+                    </div>
+                    <div style="margin-top:15px;">
+                        <label style="display:block;margin-bottom:5px;color:white;font-size:13px;">Address</label>
+                        <input type="text" id="qqCustAddress" placeholder="Street, City, Code" 
+                            style="width:100%;padding:10px;border-radius:6px;border:1px solid rgba(255,255,255,0.2);background:#1a1a2e;color:white;font-size:14px;box-sizing:border-box;">
+                    </div>
+                </div>
+                
+                <!-- Salesman (auto from logged-in user) -->
+                <div style="background:rgba(0,0,0,0.2);padding:15px 20px;border-radius:12px;margin-bottom:20px;display:flex;align-items:center;gap:10px;">
+                    <span style="color:white;font-size:14px;font-weight:bold;">🧑‍💼 Salesman:</span>
+                    <span style="color:#10b981;font-size:16px;font-weight:bold;" id="qqSalesmanDisplay">{current_user_name}</span>
+                </div>
+                
+                <!-- Line Items Section -->
+                <div style="background:rgba(0,0,0,0.2);padding:20px;border-radius:12px;margin-bottom:20px;">
+                    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:15px;">
+                        <h3 style="margin:0;color:#f59e0b;font-size:16px;">📦 Line Items</h3>
+                        <button onclick="qqAddLine()" style="background:#f59e0b;color:white;border:none;padding:6px 12px;border-radius:6px;cursor:pointer;font-size:13px;">+ Add Item</button>
+                    </div>
+                    <div id="qqLines" style="max-height:250px;overflow-y:auto;">
+                        <!-- Line items will be added here -->
+                    </div>
+                    <div style="display:flex;justify-content:flex-end;margin-top:15px;padding-top:15px;border-top:1px solid rgba(255,255,255,0.1);">
+                        <div style="text-align:right;">
+                            <span style="color:var(--text-muted);font-size:14px;">Total (excl VAT):</span>
+                            <span id="qqSubtotal" style="color:white;font-size:18px;font-weight:bold;margin-left:10px;">R0.00</span>
+                        </div>
+                    </div>
+                    <div style="display:flex;justify-content:flex-end;margin-top:5px;">
+                        <div style="text-align:right;">
+                            <span style="color:var(--text-muted);font-size:14px;">VAT (15%):</span>
+                            <span id="qqVat" style="color:white;font-size:16px;margin-left:10px;">R0.00</span>
+                        </div>
+                    </div>
+                    <div style="display:flex;justify-content:flex-end;margin-top:5px;">
+                        <div style="text-align:right;">
+                            <span style="color:#10b981;font-size:16px;font-weight:bold;">Total (incl VAT):</span>
+                            <span id="qqTotal" style="color:#10b981;font-size:22px;font-weight:bold;margin-left:10px;">R0.00</span>
+                        </div>
+                    </div>
+                </div>
+                
+                <!-- Buttons -->
+                <div style="display:flex;gap:15px;">
+                    <button onclick="closeQuickQuoteModal()" style="flex:1;padding:15px;border-radius:10px;border:2px solid rgba(255,255,255,0.3);background:transparent;color:white;cursor:pointer;font-size:16px;">✕ Cancel</button>
+                    <button onclick="submitQuickQuote()" style="flex:2;padding:15px;border-radius:10px;border:none;background:linear-gradient(135deg, #10b981 0%, #34d399 100%);color:white;cursor:pointer;font-size:18px;font-weight:bold;box-shadow:0 4px 15px rgba(16,185,129,0.4);">GOOD: Create Quote</button>
+                </div>
+            </div>
+        </div>
+        
+        <!-- Quick PO Modal (F5 with empty cart) - Full PO without stock/supplier -->
+        <div id="quickPOModal" style="display:none;position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.9);z-index:9999;justify-content:center;align-items:flex-start;overflow-y:auto;padding:20px;">
+            <div style="background:linear-gradient(135deg, #1e1e32 0%, #2a2a4a 100%);padding:30px;border-radius:20px;max-width:800px;width:95%;border:2px solid rgba(59,130,246,0.5);box-shadow:0 25px 50px rgba(0,0,0,0.5);margin:auto;">
+                <div style="text-align:center;margin-bottom:20px;">
+                    <div style="font-size:40px;margin-bottom:8px;">📦</div>
+                    <h2 style="margin:0;color:white;font-size:24px;">Quick Purchase Order</h2>
+                    <p style="color:rgba(255,255,255,0.6);font-size:13px;margin-top:5px;">
+                        Create a PO without stock items or saved supplier
+                    </p>
+                </div>
+                
+                <!-- Supplier Section -->
+                <div id="qpSupplierSection" style="background:rgba(0,0,0,0.2);padding:20px;border-radius:12px;margin-bottom:20px;">
+                    <h3 style="margin:0 0 15px 0;color:#3b82f6;font-size:16px;">🏭 Supplier Details</h3>
+                    <div style="display:grid;grid-template-columns:1fr 1fr;gap:15px;">
+                        <div>
+                            <label style="display:block;margin-bottom:5px;color:white;font-size:13px;">Supplier Name *</label>
+                            <input type="text" id="qpSupplierName" placeholder="Company name" 
+                                style="width:100%;padding:10px;border-radius:6px;border:1px solid rgba(255,255,255,0.2);background:#1a1a2e;color:white;font-size:14px;box-sizing:border-box;">
+                        </div>
+                        <div>
+                            <label style="display:block;margin-bottom:5px;color:white;font-size:13px;">Phone</label>
+                            <input type="text" id="qpSupplierPhone" placeholder="012 345 6789" 
+                                style="width:100%;padding:10px;border-radius:6px;border:1px solid rgba(255,255,255,0.2);background:#1a1a2e;color:white;font-size:14px;box-sizing:border-box;">
+                        </div>
+                        <div>
+                            <label style="display:block;margin-bottom:5px;color:white;font-size:13px;">Email</label>
+                            <input type="text" id="qpSupplierEmail" placeholder="orders@supplier.com" 
+                                style="width:100%;padding:10px;border-radius:6px;border:1px solid rgba(255,255,255,0.2);background:#1a1a2e;color:white;font-size:14px;box-sizing:border-box;">
+                        </div>
+                        <div>
+                            <label style="display:block;margin-bottom:5px;color:white;font-size:13px;">VAT Number</label>
+                            <input type="text" id="qpSupplierVat" placeholder="4123456789" 
+                                style="width:100%;padding:10px;border-radius:6px;border:1px solid rgba(255,255,255,0.2);background:#1a1a2e;color:white;font-size:14px;box-sizing:border-box;">
+                        </div>
+                    </div>
+                </div>
+                
+                <!-- Line Items Section -->
+                <div style="background:rgba(0,0,0,0.2);padding:20px;border-radius:12px;margin-bottom:20px;">
+                    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:15px;">
+                        <h3 style="margin:0;color:#f59e0b;font-size:16px;">📋 Order Items</h3>
+                        <button onclick="qpAddLine()" style="background:#f59e0b;color:white;border:none;padding:6px 12px;border-radius:6px;cursor:pointer;font-size:13px;">+ Add Item</button>
+                    </div>
+                    <div id="qpLines" style="max-height:250px;overflow-y:auto;">
+                        <!-- Line items will be added here -->
+                    </div>
+                    <div style="display:flex;justify-content:flex-end;margin-top:15px;padding-top:15px;border-top:1px solid rgba(255,255,255,0.1);">
+                        <div style="text-align:right;">
+                            <span style="color:var(--text-muted);font-size:14px;">Total Items:</span>
+                            <span id="qpTotalItems" style="color:white;font-size:18px;font-weight:bold;margin-left:10px;">0</span>
+                        </div>
+                    </div>
+                </div>
+                
+                <!-- Reference -->
+                <div style="background:rgba(0,0,0,0.2);padding:15px;border-radius:12px;margin-bottom:15px;">
+                    <label style="display:block;margin-bottom:5px;color:white;font-size:13px;">Reference (who is ordering)</label>
+                    <input type="text" id="qpReference" placeholder="Name / reference" 
+                        style="width:100%;padding:10px;border-radius:6px;border:1px solid rgba(255,255,255,0.2);background:#1a1a2e;color:white;font-size:14px;box-sizing:border-box;">
+                </div>
+                
+                <!-- Notes -->
+                <div style="background:rgba(0,0,0,0.2);padding:15px;border-radius:12px;margin-bottom:20px;">
+                    <label style="display:block;margin-bottom:5px;color:white;font-size:13px;">Notes / Special Instructions</label>
+                    <textarea id="qpNotes" rows="2" placeholder="Delivery instructions, urgency, etc." 
+                        style="width:100%;padding:10px;border-radius:6px;border:1px solid rgba(255,255,255,0.2);background:#1a1a2e;color:white;font-size:14px;box-sizing:border-box;resize:none;"></textarea>
+                </div>
+                
+                <!-- Buttons -->
+                <div style="display:flex;gap:15px;">
+                    <button onclick="closeQuickPOModal()" style="flex:1;padding:15px;border-radius:10px;border:2px solid rgba(255,255,255,0.3);background:transparent;color:white;cursor:pointer;font-size:16px;">✕ Cancel</button>
+                    <button onclick="submitQuickPO()" style="flex:2;padding:15px;border-radius:10px;border:none;background:linear-gradient(135deg, #3b82f6 0%, #2563eb 100%);color:white;cursor:pointer;font-size:18px;font-weight:bold;box-shadow:0 4px 15px rgba(59,130,246,0.4);">GOOD: Create PO</button>
+                </div>
+            </div>
+        </div>
+        
+        <!-- Edit Customer Modal (F7) -->
+        <div id="editCustomerModal" style="display:none;position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.85);z-index:9999;justify-content:center;align-items:center;">
+            <div style="background:linear-gradient(135deg, #1e1e32 0%, #2a2a4a 100%);padding:40px;border-radius:20px;max-width:600px;width:95%;border:2px solid rgba(99,102,241,0.5);box-shadow:0 25px 50px rgba(0,0,0,0.5);">
+                <div style="text-align:center;margin-bottom:25px;">
+                    <div style="font-size:48px;margin-bottom:10px;">📝</div>
+                    <h2 style="margin:0;color:white;font-size:28px;">Edit Customer Details</h2>
+                    <p style="color:rgba(255,255,255,0.6);font-size:14px;margin-top:10px;" id="editCustSubtitle">
+                        Update customer information
+                    </p>
+                </div>
+                
+                <input type="hidden" id="editCustId">
+                
+                <div style="margin-bottom:20px;">
+                    <label style="display:block;margin-bottom:8px;color:white;font-size:16px;font-weight:bold;">👤 Customer Name *</label>
+                    <input type="text" id="editCustName" placeholder="Company or person name" 
+                        style="width:100%;padding:15px;border-radius:10px;border:2px solid rgba(99,102,241,0.3);background:#1a1a2e;color:white;font-size:18px;box-sizing:border-box;">
+                </div>
+                
+                <div style="display:grid;grid-template-columns:1fr 1fr;gap:20px;margin-bottom:20px;">
+                    <div>
+                        <label style="display:block;margin-bottom:8px;color:white;font-size:14px;">📱 Phone</label>
+                        <input type="text" id="editCustPhone" placeholder="e.g. 082 123 4567" 
+                            style="width:100%;padding:12px;border-radius:8px;border:2px solid rgba(255,255,255,0.2);background:#1a1a2e;color:white;font-size:16px;box-sizing:border-box;">
+                    </div>
+                    <div>
+                        <label style="display:block;margin-bottom:8px;color:white;font-size:14px;">Email</label>
+                        <input type="text" id="editCustEmail" placeholder="email@example.com" 
+                            style="width:100%;padding:12px;border-radius:8px;border:2px solid rgba(255,255,255,0.2);background:#1a1a2e;color:white;font-size:16px;box-sizing:border-box;">
+                    </div>
+                </div>
+                
+                <div style="display:grid;grid-template-columns:1fr 1fr;gap:20px;margin-bottom:20px;">
+                    <div>
+                        <label style="display:block;margin-bottom:8px;color:white;font-size:14px;">🏢 VAT Number</label>
+                        <input type="text" id="editCustVat" placeholder="e.g. 4123456789" 
+                            style="width:100%;padding:12px;border-radius:8px;border:2px solid rgba(255,255,255,0.2);background:#1a1a2e;color:white;font-size:16px;box-sizing:border-box;">
+                    </div>
+                    <div>
+                        <label style="display:block;margin-bottom:8px;color:white;font-size:14px;">📍 Address</label>
+                        <input type="text" id="editCustAddress" placeholder="Street, City, Code" 
+                            style="width:100%;padding:12px;border-radius:8px;border:2px solid rgba(255,255,255,0.2);background:#1a1a2e;color:white;font-size:16px;box-sizing:border-box;">
+                    </div>
+                </div>
+                
+                <div style="display:flex;gap:15px;">
+                    <button onclick="closeEditCustomerModal()" style="flex:1;padding:15px;border-radius:10px;border:2px solid rgba(255,255,255,0.3);background:transparent;color:white;cursor:pointer;font-size:16px;">✕ Cancel</button>
+                    <button onclick="submitEditCustomer()" style="flex:2;padding:15px;border-radius:10px;border:none;background:linear-gradient(135deg, #6366f1 0%, #8b5cf6 100%);color:white;cursor:pointer;font-size:18px;font-weight:bold;box-shadow:0 4px 15px rgba(99,102,241,0.4);">GOOD: Save Changes</button>
+                </div>
+            </div>
+        </div>
+        
+        <!-- Quick Customer Modal for Quotes -->
+        <div id="quickCustomerModal" style="display:none;position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.85);z-index:9999;justify-content:center;align-items:center;">
+            <div style="background:linear-gradient(135deg, #1e1e32 0%, #2a2a4a 100%);padding:40px;border-radius:20px;max-width:600px;width:95%;border:2px solid rgba(16,185,129,0.5);box-shadow:0 25px 50px rgba(0,0,0,0.5);">
+                <div style="text-align:center;margin-bottom:25px;">
+                    <div style="font-size:48px;margin-bottom:10px;">👤</div>
+                    <h2 style="margin:0;color:white;font-size:28px;">Customer Details for Quote</h2>
+                    <p style="color:rgba(255,255,255,0.6);font-size:14px;margin-top:10px;">
+                        Enter customer details for this quote (will also be saved for future use)
+                    </p>
+                </div>
+                
+                <div style="margin-bottom:20px;">
+                    <label style="display:block;margin-bottom:8px;color:white;font-size:16px;font-weight:bold;">👤 Customer Name *</label>
+                    <input type="text" id="quickCustName" placeholder="Company or person name" 
+                        style="width:100%;padding:15px;border-radius:10px;border:2px solid rgba(16,185,129,0.3);background:#1a1a2e;color:white;font-size:18px;box-sizing:border-box;">
+                </div>
+                
+                <div style="display:grid;grid-template-columns:1fr 1fr;gap:20px;margin-bottom:20px;">
+                    <div>
+                        <label style="display:block;margin-bottom:8px;color:white;font-size:14px;">📱 Phone</label>
+                        <input type="text" id="quickCustPhone" placeholder="e.g. 082 123 4567" 
+                            style="width:100%;padding:12px;border-radius:8px;border:2px solid rgba(255,255,255,0.2);background:#1a1a2e;color:white;font-size:16px;box-sizing:border-box;">
+                    </div>
+                    <div>
+                        <label style="display:block;margin-bottom:8px;color:white;font-size:14px;">Email</label>
+                        <input type="text" id="quickCustEmail" placeholder="email@example.com" 
+                            style="width:100%;padding:12px;border-radius:8px;border:2px solid rgba(255,255,255,0.2);background:#1a1a2e;color:white;font-size:16px;box-sizing:border-box;">
+                    </div>
+                </div>
+                
+                <div style="display:grid;grid-template-columns:1fr 1fr;gap:20px;margin-bottom:20px;">
+                    <div>
+                        <label style="display:block;margin-bottom:8px;color:white;font-size:14px;">🏢 VAT Number</label>
+                        <input type="text" id="quickCustVat" placeholder="e.g. 4123456789" 
+                            style="width:100%;padding:12px;border-radius:8px;border:2px solid rgba(255,255,255,0.2);background:#1a1a2e;color:white;font-size:16px;box-sizing:border-box;">
+                    </div>
+                    <div>
+                        <label style="display:block;margin-bottom:8px;color:white;font-size:14px;">📍 Address</label>
+                        <input type="text" id="quickCustAddress" placeholder="Street, City, Code" 
+                            style="width:100%;padding:12px;border-radius:8px;border:2px solid rgba(255,255,255,0.2);background:#1a1a2e;color:white;font-size:16px;box-sizing:border-box;">
+                    </div>
+                </div>
+                
+                <div style="margin-bottom:20px;">
+                    <label style="display:block;margin-bottom:8px;color:white;font-size:16px;font-weight:bold;">🧑‍💼 Salesman</label>
+                    <div style="width:100%;padding:12px;border-radius:8px;border:2px solid rgba(16,185,129,0.3);background:#2a2a4a;color:#10b981;font-size:16px;box-sizing:border-box;font-weight:bold;">
+                        <span id="quickQuoteSalesmanDisplay">{current_user_name}</span>
+                    </div>
+                </div>
+                
+                <div style="display:flex;gap:15px;">
+                    <button onclick="closeQuickCustomerModal()" style="flex:1;padding:15px;border-radius:10px;border:2px solid rgba(255,255,255,0.3);background:transparent;color:white;cursor:pointer;font-size:16px;">✕ Cancel</button>
+                    <button onclick="submitQuickCustomer()" style="flex:2;padding:15px;border-radius:10px;border:none;background:linear-gradient(135deg, #10b981 0%, #34d399 100%);color:white;cursor:pointer;font-size:18px;font-weight:bold;box-shadow:0 4px 15px rgba(16,185,129,0.4);" id="quickCustSubmitBtn">GOOD: Create Quote</button>
+                </div>
+            </div>
+        </div>
+        
+        <!-- Credit Note Modal -->
+        <div id="creditNoteModal" style="display:none;position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.8);z-index:9999;justify-content:center;align-items:center;">
+            <div style="background:#1e1e32;padding:25px;border-radius:12px;max-width:500px;width:90%;border:1px solid rgba(239,68,68,0.3);">
+                <h3 style="margin:0 0 15px 0;color:white;">Credit Note from Invoice</h3>
+                <p style="color:rgba(255,255,255,0.6);font-size:13px;margin-bottom:15px;" id="cnCustomerName">
+                    Select a customer first (F8)
+                </p>
+                
+                <div id="invoiceList" style="max-height:300px;overflow-y:auto;margin-bottom:15px;">
+                    <p style="color:rgba(255,255,255,0.5);text-align:center;padding:20px;">Loading invoices...</p>
+                </div>
+                
+                <div style="display:flex;gap:10px;">
+                    <button onclick="closeCreditNoteModal()" style="flex:1;padding:12px;border-radius:6px;border:1px solid rgba(255,255,255,0.2);background:transparent;color:white;cursor:pointer;">Cancel</button>
+                </div>
+            </div>
+        </div>
+        
+        <!-- Print Slip Modal -->
+        <div id="printSlipModal" style="display:none;position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.9);z-index:9999;justify-content:center;align-items:flex-start;overflow-y:auto;padding:20px;">
+            <div style="background:white;border-radius:8px;max-width:450px;width:100%;margin:auto;">
+                <div id="slipContent" style="padding:12px;font-family:'Courier New',monospace;font-size:13px;color:#000;"></div>
+                <div style="padding:20px;border-top:2px solid #eee;display:flex;gap:15px;flex-wrap:wrap;" id="printButtonRow">
+                    <button id="btnPrintThermal" tabindex="0" onclick="doPrintSlip('thermal')" 
+                        onfocus="this.style.outline='4px solid yellow';this.style.outlineOffset='2px';this.style.transform='scale(1.05)'" 
+                        onblur="this.style.outline='none';this.style.transform='scale(1)'"
+                        style="flex:1;padding:18px;border-radius:8px;border:3px solid #10b981;background:#10b981;color:white;cursor:pointer;font-weight:bold;font-size:16px;transition:transform 0.1s;" autofocus>🖨️ THERMAL [1]</button>
+                    <button id="btnPrintA4" tabindex="0" onclick="doPrintSlip('a4')" 
+                        onfocus="this.style.outline='4px solid yellow';this.style.outlineOffset='2px';this.style.transform='scale(1.05)'" 
+                        onblur="this.style.outline='none';this.style.transform='scale(1)'"
+                        style="flex:1;padding:18px;border-radius:8px;border:3px solid #3b82f6;background:#3b82f6;color:white;cursor:pointer;font-weight:bold;font-size:16px;transition:transform 0.1s;">📄 A4 [2]</button>
+                    <button id="btnPrintSkip" tabindex="0" onclick="closePrintModal()" 
+                        onfocus="this.style.outline='4px solid yellow';this.style.outlineOffset='2px';this.style.transform='scale(1.05)'" 
+                        onblur="this.style.outline='none';this.style.transform='scale(1)'"
+                        style="flex:1;padding:18px;border-radius:8px;border:2px solid #ccc;background:white;color:#333;cursor:pointer;font-size:16px;transition:transform 0.1s;">✕ Skip [3]</button>
+                </div>
+                <div style="padding:10px 20px 20px 20px;border-top:1px solid #eee;">
+                    <button onclick="showEmailSlipModal()" style="width:100%;padding:15px;border-radius:8px;border:2px solid #8b5cf6;background:white;color:#8b5cf6;cursor:pointer;font-size:14px;">Email Slip to Customer [4]</button>
+                </div>
+                <div style="text-align:center;padding:10px;color:#666;font-size:12px;">
+                    Enter = Print • Esc = Skip • After print: Enter = another copy, Esc = done
+                </div>
+            </div>
+        </div>
+        
+        <!-- Email Slip Modal -->
+        <div id="emailSlipModal" style="display:none;position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.9);z-index:10000;justify-content:center;align-items:center;">
+            <div style="background:var(--card);border-radius:12px;max-width:400px;width:90%;padding:25px;">
+                <h3 style="margin:0 0 15px 0;">Email Slip</h3>
+                <input type="email" id="slipEmailTo" placeholder="customer@email.com" 
+                       style="width:100%;padding:12px;border-radius:8px;border:1px solid var(--border);background:var(--bg);color:var(--text);font-size:16px;margin-bottom:15px;">
+                <div style="display:flex;gap:10px;">
+                    <button onclick="closeEmailSlipModal()" style="flex:1;padding:12px;border-radius:8px;border:1px solid var(--border);background:var(--card);color:var(--text);cursor:pointer;">Cancel</button>
+                    <button onclick="sendSlipEmail()" style="flex:1;padding:12px;border-radius:8px;border:none;background:#10b981;color:white;cursor:pointer;font-weight:bold;">Send</button>
+                </div>
+            </div>
+        </div>
+        
+        <script>
+        // ═══════════════════════════════════════════════════════════
+        // OFFLINE POS — IndexedDB Queue & Auto-Sync
+        // Safe: If anything fails, POS works exactly as before
+        // ═══════════════════════════════════════════════════════════
+        (function() {
+            const DB_NAME = 'clickai_offline';
+            const DB_VERSION = 2;
+            const STORE_NAME = 'pos_queue';
+            
+            function openDB() {
+                return new Promise((resolve, reject) => {
+                    const req = indexedDB.open(DB_NAME, DB_VERSION);
+                    req.onupgradeneeded = (e) => {
+                        const db = e.target.result;
+                        ['pos_queue','expense_queue','quote_queue','customer_queue'].forEach(s => {
+                            if (!db.objectStoreNames.contains(s)) db.createObjectStore(s, { keyPath: 'id', autoIncrement: true });
+                        });
+                    };
+                    req.onsuccess = (e) => resolve(e.target.result);
+                    req.onerror = (e) => reject(e.target.error);
+                });
+            }
+            
+            // Queue a sale for later sync
+            window.queueOfflineSale = async function(saleData) {
+                const db = await openDB();
+                return new Promise((resolve, reject) => {
+                    const tx = db.transaction(STORE_NAME, 'readwrite');
+                    saleData.queued_at = new Date().toISOString();
+                    const req = tx.objectStore(STORE_NAME).add(saleData);
+                    req.onsuccess = () => { console.log('[OFFLINE] Sale queued: R' + saleData.total); resolve(); };
+                    req.onerror = () => reject(req.error);
+                });
+            };
+            
+            // Get all queued sales
+            async function getQueue() {
+                const db = await openDB();
+                return new Promise((resolve, reject) => {
+                    const req = db.transaction(STORE_NAME, 'readonly').objectStore(STORE_NAME).getAll();
+                    req.onsuccess = () => resolve(req.result || []);
+                    req.onerror = () => resolve([]);
+                });
+            }
+            
+            // Clear queue after sync
+            async function clearQueue() {
+                const db = await openDB();
+                return new Promise((resolve) => {
+                    const req = db.transaction(STORE_NAME, 'readwrite').objectStore(STORE_NAME).clear();
+                    req.onsuccess = () => resolve();
+                    req.onerror = () => resolve();
+                });
+            }
+            
+            // Sync offline sales to server
+            window.syncOfflineSales = async function() {
+                if (!navigator.onLine) { alert('Still offline — connect to internet first.'); return; }
+                
+                const queue = await getQueue();
+                if (queue.length === 0) { updateUI(); return; }
+                
+                const textEl = document.getElementById('offlineText');
+                if (textEl) textEl.textContent = 'SYNCING ' + queue.length + '...';
+                
+                try {
+                    const resp = await fetch('/api/pos/sync-offline', {
+                        method: 'POST',
+                        headers: {'Content-Type': 'application/json'},
+                        body: JSON.stringify({ sales: queue })
+                    });
+                    const data = await resp.json();
+                    
+                    if (data.success) {
+                        await clearQueue();
+                        let msg = 'SYNC COMPLETE\\n\\n' + data.message;
+                        if (data.errors && data.errors.length) msg += '\\n\\nErrors:\\n' + data.errors.join('\\n');
+                        alert(msg);
+                        updateUI();
+                        if (data.synced > 0) location.reload();
+                    } else {
+                        alert('Sync failed: ' + (data.error || 'Unknown'));
+                        updateUI();
+                    }
+                } catch (err) {
+                    alert('Sync failed: ' + err.message);
+                    updateUI();
+                }
+            };
+            
+            // Update online/offline indicator
+            async function updateUI() {
+                const offlineEl = document.getElementById('offlineIndicator');
+                const onlineEl = document.getElementById('onlineIndicator');
+                const countEl = document.getElementById('offlineCount');
+                const textEl = document.getElementById('offlineText');
+                if (!offlineEl) return;
+                
+                try {
+                    const queue = await getQueue();
+                    const n = queue.length;
+                    
+                    if (!navigator.onLine) {
+                        // Offline
+                        offlineEl.style.display = 'inline-flex';
+                        offlineEl.style.alignItems = 'center';
+                        offlineEl.style.background = 'rgba(239,68,68,0.2)';
+                        offlineEl.style.color = '#fca5a5';
+                        if (onlineEl) onlineEl.style.display = 'none';
+                        textEl.textContent = '🔴 OFFLINE';
+                        if (n > 0) { countEl.style.display = 'inline'; countEl.textContent = n + ' queued'; }
+                        else { countEl.style.display = 'none'; }
+                    } else if (n > 0) {
+                        // Online with pending sales — auto-sync
+                        offlineEl.style.display = 'inline-flex';
+                        offlineEl.style.alignItems = 'center';
+                        offlineEl.style.background = 'rgba(245,158,11,0.2)';
+                        offlineEl.style.color = '#fcd34d';
+                        if (onlineEl) onlineEl.style.display = 'none';
+                        textEl.textContent = '⚠️ SYNC';
+                        countEl.style.display = 'inline';
+                        countEl.textContent = n + ' pending';
+                        // Auto-sync after 2 seconds
+                        setTimeout(() => syncOfflineSales(), 2000);
+                    } else {
+                        // Online, nothing pending
+                        offlineEl.style.display = 'none';
+                        if (onlineEl) { onlineEl.style.display = 'inline'; setTimeout(() => { onlineEl.style.display = 'none'; }, 3000); }
+                    }
+                } catch (e) { console.log('[OFFLINE] UI update failed:', e); }
+            }
+            window.updateOfflineIndicator = updateUI;
+            
+            // Listen for connection changes
+            window.addEventListener('online', () => { console.log('[OFFLINE] Internet restored'); updateUI(); });
+            window.addEventListener('offline', () => { console.log('[OFFLINE] Internet lost'); updateUI(); });
+            
+            // Check on load
+            updateUI();
+            
+            // Cache POS page for offline via service worker
+            if ('serviceWorker' in navigator && navigator.serviceWorker.controller) {
+                navigator.serviceWorker.controller.postMessage({ type: 'CACHE_POS' });
+            }
+        })();
         </script>
         '''
+        _safe_uid = str(current_user_id or '').replace("'", "")
+        _safe_uname = str(current_user_name or 'Me').replace("'", "").replace("\\", "")
         
-        return render_page("Smart Reports", content, user, "reports")
+        # Fix: pos_js is a plain string, not an f-string, so {_safe_uid} and {_safe_uname}
+        # remain as literal text. Replace them now that the variables are defined.
+        pos_js = pos_js.replace("{_safe_uid}", _safe_uid).replace("{_safe_uname}", _safe_uname)
+        
+        return f'''<!DOCTYPE html>
+    <html lang="en" data-theme="{_pos_theme}">
+    <head>
+        <meta charset="UTF-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <title>POS - Click AI</title>
+        <link rel="manifest" href="/manifest.json">
+        <meta name="theme-color" content="#8b5cf6">
+        {CSS}
+        {pos_css}
+        <style>
+        .stock-row.highlighted {{
+            background: linear-gradient(90deg, rgba(99, 102, 241, 0.25), rgba(99, 102, 241, 0.1)) !important;
+            outline: 2px solid var(--primary);
+        }}
+        </style>
+    </head>
+    <body>
+        <script>
+        /* ═══ F11 CORE — must be before pos_js ═══ */
+        var f11Mode = false;
+        var f11SelectedRow = 0;
+        
+        function toggleF11() {{
+            f11Mode = !f11Mode;
+            document.body.classList.toggle('f11-mode', f11Mode);
+            if (f11Mode) {{
+                if (typeof renderF11Table === 'function') renderF11Table();
+                if (typeof syncF11Buttons === 'function') syncF11Buttons();
+                if (typeof updateF11CustName === 'function') updateF11CustName();
+                setTimeout(function() {{
+                    var hdr = document.querySelector('.f11-header');
+                    var wrap = document.querySelector('.f11-order-wrap');
+                    if (hdr && wrap) {{ wrap.style.top = hdr.offsetHeight + 'px'; }}
+                }}, 50);
+                var el = document.getElementById('f11Search');
+                if (el) {{ el.value = ''; el.focus(); }}
+            }} else {{
+                var el = document.getElementById('stockSearch');
+                if (el) el.focus();
+            }}
+        }}
+        </script>
+        <script>
+        document.addEventListener('fullscreenchange', function() {{
+            // DO NOTHING — browser fullscreen may drop due to prompt/alert/permissions
+            // but our F11 CSS mode must stay active. Only toggleF11() can exit F11.
+        }});
+        
+        // === POS NORMAL MODE — no auto-fullscreen ===
+        // F11 is now native browser fullscreen only
+        </script>
+        <header class="pos-header" style="padding:6px 20px 4px;">
+            <div class="pos-header-nav">
+                <a href="/">Dashboard</a>
+                <a href="/pos" class="active">POS</a>
+                <a href="/pos/history">History</a>
+                <a href="/stock">Stock</a>
+                <a href="/customers">Customers</a>
+                <span id="offlineIndicator" style="display:none;padding:4px 10px;font-size:11px;font-weight:700;margin-left:8px;cursor:pointer;" onclick="syncOfflineSales()" title="Click to sync when online">
+                    <span id="offlineText">🔴 OFFLINE</span>
+                    <span id="offlineCount" style="display:none;background:rgba(255,255,255,0.2);padding:1px 6px;margin-left:4px;font-size:10px;"></span>
+                </span>
+                <span id="onlineIndicator" style="padding:2px 8px;font-size:10px;color:#10b981;display:none;">🟢 Online</span>
+            </div>
+        </header>
     
+        <div class="pos-reactor-wrap">
+            <div class="pos-reactor-hero">
+                <div class="pos-btn-flank L">
+                    <button class="pos-hud-btn" onclick="completeSale('cash')" id="btnCash" disabled><span class="pk">F1</span>CASH</button>
+                    <button class="pos-hud-btn" onclick="completeSale('card')" id="btnCard" disabled><span class="pk">F2</span>CARD</button>
+                    <button class="pos-hud-btn" onclick="completeSale('account')" id="btnAccount" disabled><span class="pk">F3</span>ACCOUNT</button>
+                    <button class="pos-hud-btn" onclick="createQuote()" id="btnQuote" disabled><span class="pk">F4</span>QUOTE</button>
+                </div>
+                <div class="pos-reactor-cn"></div>
+                <div class="pos-rx">
+                    <div class="j-rg r1"></div><div class="j-rg r2"></div><div class="j-rg r3"></div><div class="j-rg r4"></div>
+                    <div class="pos-rx-core">
+                        <div class="j-brand">CLICK.AI</div>
+                        <div class="j-sub">// POINT OF SALE</div>
+                        <div class="pos-hud-total" id="headerTotal">R0.00</div>
+                    </div>
+                </div>
+                <div class="pos-reactor-cn R"></div>
+                <div class="pos-btn-flank R">
+                    <button class="pos-hud-btn" onclick="createPO()" id="btnPO" disabled>PO<span class="pk">F5</span></button>
+                    <button class="pos-hud-btn" onclick="createInvoice()" id="btnInvoice" disabled>INVOICE<span class="pk">F6</span></button>
+                    <button class="pos-hud-btn" onclick="createCreditNote()" id="btnCredit" disabled>CREDIT NOTE<span class="pk">F10</span></button>
+                    <button class="pos-hud-btn" onclick="toggleF11()">FULLSCREEN<span class="pk">F11</span></button>
+                    <button class="pos-hud-btn" onclick="window.location='/cashup'" style="border-color:rgba(0,255,136,0.3);color:#00ff88;">CASH UP<span class="pk">💰</span></button>
+                </div>
+                <div class="pos-lbl"><span>POINT OF SALE</span></div>
+            </div>
+            <div class="pos-entity-bar">
+                <select id="cashierSelect" class="pos-cashier-select" onchange="switchCashierDD(this)">{cashier_dropdown_options}</select>
+                <button class="pos-entity-btn L active" id="btnCust" onclick="toggleEntity('customer')" title="F8"><span class="pk">F8</span>C</button>
+                <div class="entity-dropdown" style="position:relative;">
+                    <input type="text" class="pos-entity-input entity-search" id="entitySearch" placeholder="F7 · CASH SALE" onclick="openEntityDropdown()" autocomplete="off">
+                    <input type="hidden" id="entityValue" value="">
+                    <div class="entity-list" id="entityList" style="display:none;position:absolute;top:100%;left:0;right:0;z-index:9500;max-height:300px;overflow-y:auto;background:rgba(10,20,40,0.95);border:1px solid rgba(80,180,255,0.2);"></div>
+                </div>
+                <button class="pos-entity-btn R" id="btnSupp" onclick="toggleEntity('supplier')" title="F9">S<span class="pk">F9</span></button>
+                <input type="hidden" id="supplierData" value='{supplier_json}'>
+                <input type="hidden" id="customerData" value='{customer_json}'>
+                <input type="hidden" id="posSettings" value='{pos_settings_json}'>
+            </div>
+        </div>
     
-    # 
-    # BUDGET VS ACTUAL
-    # 
+        <!-- F11 FULLSCREEN HEADER -->
+        <div class="f11-header">
+            <div class="f11-left">
+                <button class="f11-btn" onclick="completeSale('cash')" id="f11Cash" disabled><span class="pk">F1</span>CASH</button>
+                <button class="f11-btn" onclick="completeSale('card')" id="f11Card" disabled><span class="pk">F2</span>CARD</button>
+                <button class="f11-btn" onclick="completeSale('account')" id="f11Account" disabled><span class="pk">F3</span>ACC</button>
+                <button class="f11-btn" onclick="createQuote()" id="f11Quote" disabled><span class="pk">F4</span>QTE</button>
+                <button class="f11-btn" onclick="createPO()" id="f11PO" disabled><span class="pk">F5</span>PO</button>
+                <button class="f11-btn" onclick="createInvoice()" id="f11Invoice" disabled><span class="pk">F6</span>INV</button>
+                <button class="f11-btn" onclick="showEditCustomerModal()"><span class="pk">F7</span>EDIT</button>
+                <button class="f11-btn" onclick="toggleEntity('customer')"><span class="pk">F8</span>CUST</button>
+                <button class="f11-btn" onclick="toggleEntity('supplier')"><span class="pk">F9</span>SUPP</button>
+                <button class="f11-btn" onclick="createCreditNote()" id="f11Credit" disabled><span class="pk">F10</span>CR</button>
+                <button class="f11-btn" onclick="showCustomItemModal()" style="border-color:rgba(139,92,246,0.3);color:#c4b5fd;">+ITEM</button>
+            </div>
+            <div class="f11-right">
+                <div class="f11-cust" id="f11CustName">Countersale</div>
+                <div class="f11-total" id="f11Total">R0.00</div>
+                <button class="f11-exit" onclick="toggleF11()"><span class="pk">F11</span>EXIT</button>
+            </div>
+        </div>
     
-    @app.route("/reports/budget")
+        <!-- F11 ORDER TABLE -->
+        <div class="f11-order-wrap">
+            <div class="f11-search">
+                <input type="text" id="f11Search" placeholder="Scan barcode or type code / description..." autocomplete="off">
+            </div>
+            <div class="f11-table-wrap">
+                <table class="f11-table">
+                    <thead><tr>
+                        <th style="width:140px;">CODE</th><th>DESCRIPTION</th>
+                        <th class="r" style="width:60px;">QTY</th><th class="r" style="width:100px;">PRICE</th>
+                        <th class="r" style="width:80px;">DISC</th><th class="r" style="width:110px;">TOTAL</th>
+                        <th style="width:80px;">ON-HAND</th>
+                        <th style="width:44px;"></th>
+                    </tr></thead>
+                    <tbody id="f11Body"></tbody>
+                </table>
+            </div>
+        </div>
+    
+        <main class="container" style="display:none !important;">
+            {pos_html}
+        </main>
+        
+        {get_zane_chat()}
+        {pos_js}
+        <script>
+        // Cashier fallback - ensure currentCashierId is never null
+        if (!currentCashierId) {{
+            currentCashierId = '{_safe_uid}';
+            currentCashierName = '{_safe_uname}';
+        }}
+        </script>
+    
+        <!-- Custom prompt modal (replaces native prompt which breaks F11 fullscreen) -->
+        <div id="posPromptOverlay" style="display:none;position:fixed;top:0;left:0;width:100vw;height:100vh;background:rgba(0,0,0,0.6);z-index:99999;align-items:center;justify-content:center;">
+            <div style="background:#1a1a2e;border:1px solid rgba(99,102,241,0.4);border-radius:12px;padding:24px 28px;min-width:320px;box-shadow:0 8px 32px rgba(0,0,0,0.5);">
+                <div id="posPromptLabel" style="color:#e2e8f0;font-size:15px;font-weight:600;margin-bottom:14px;"></div>
+                <input type="text" id="posPromptInput" style="width:100%;padding:10px 14px;border-radius:8px;border:1px solid rgba(99,102,241,0.4);background:#0f0f23;color:#fff;font-size:16px;outline:none;" />
+                <div style="display:flex;gap:10px;margin-top:16px;justify-content:flex-end;">
+                    <button onclick="posPromptCancel()" style="padding:8px 20px;border-radius:8px;border:1px solid rgba(255,255,255,0.15);background:rgba(255,255,255,0.05);color:#aaa;cursor:pointer;font-size:14px;">Cancel</button>
+                    <button onclick="posPromptOk()" style="padding:8px 20px;border-radius:8px;border:none;background:linear-gradient(135deg,#6366f1,#8b5cf6);color:#fff;cursor:pointer;font-size:14px;font-weight:600;">OK</button>
+                </div>
+            </div>
+        </div>
+        <script>
+        var _posPromptResolve = null;
+        function posPrompt(label, defaultVal) {{
+            return new Promise(function(resolve) {{
+                _posPromptResolve = resolve;
+                document.getElementById('posPromptLabel').textContent = label;
+                var inp = document.getElementById('posPromptInput');
+                inp.value = defaultVal || '';
+                var overlay = document.getElementById('posPromptOverlay');
+                overlay.style.display = 'flex';
+                setTimeout(function() {{ inp.focus(); inp.select(); }}, 50);
+            }});
+        }}
+        function posPromptOk() {{
+            var val = document.getElementById('posPromptInput').value;
+            document.getElementById('posPromptOverlay').style.display = 'none';
+            if (_posPromptResolve) {{ _posPromptResolve(val); _posPromptResolve = null; }}
+        }}
+        function posPromptCancel() {{
+            document.getElementById('posPromptOverlay').style.display = 'none';
+            if (_posPromptResolve) {{ _posPromptResolve(null); _posPromptResolve = null; }}
+        }}
+        document.getElementById('posPromptInput').addEventListener('keydown', function(e) {{
+            if (e.key === 'Enter') {{ e.preventDefault(); posPromptOk(); }}
+            if (e.key === 'Escape') {{ e.preventDefault(); posPromptCancel(); }}
+        }});
+        document.getElementById('posPromptOverlay').addEventListener('click', function(e) {{
+            if (e.target === this) posPromptCancel();
+        }});
+        </script>
+    
+        <script>
+        /* ═══ F11 FULLSCREEN ORDER MODE ═══ */
+        // f11Mode and f11SelectedRow declared in earlier script block
+        // toggleF11 defined in earlier script block
+    
+        function renderF11Table() {{
+            const tbody = document.getElementById('f11Body');
+            if (!tbody) return;
+            if (cart.length === 0) {{
+                tbody.innerHTML = '<tr><td colspan="8" style="text-align:center;padding:40px;color:#5a8aaa;font-size:16px;">Scan barcode or type to add items...</td></tr>';
+                document.getElementById('f11Total').textContent = 'R0.00';
+                return;
+            }}
+            let html = '';
+            let grandTotal = 0;
+            cart.forEach((item, idx) => {{
+                const lineTotal = item.price * item.qty;
+                grandTotal += lineTotal;
+                const sel = idx === f11SelectedRow ? ' f11-sel' : '';
+                // Find stock qty
+                const stockRow = document.querySelector('.stock-row[data-id="' + item.id + '"]');
+                const onHand = stockRow ? stockRow.getAttribute('data-qty') : '—';
+                html += '<tr class="' + sel + '" onclick="f11SelectedRow=' + idx + ';renderF11Table();">';
+                html += '<td class="code">' + item.code + '</td>';
+                html += '<td>' + item.desc + '</td>';
+                html += '<td class="r qty" style="cursor:pointer;" onclick="event.stopPropagation();f11EditQty(' + idx + ')">' + item.qty + '</td>';
+                html += '<td class="r" style="cursor:pointer;" onclick="event.stopPropagation();f11EditPrice(' + idx + ')">R' + item.price.toFixed(2) + '</td>';
+                html += '<td class="r" style="color:#5a8aaa;cursor:pointer;" onclick="event.stopPropagation();f11EditDisc(' + idx + ')">' + (item.disc ? item.disc + '%' : '—') + '</td>';
+                html += '<td class="r tot">R' + lineTotal.toFixed(2) + '</td>';
+                html += '<td><span class="f11-onhand">' + onHand + '</span></td>';
+                html += '<td style="text-align:center;"><button class="f11-del-btn" onclick="event.stopPropagation();f11RemoveItem(' + idx + ')" title="Remove item">✕</button></td>';
+                html += '</tr>';
+            }});
+            tbody.innerHTML = html;
+            const vat = Math.round(grandTotal * 0.15 * 100) / 100;
+            document.getElementById('f11Total').textContent = 'R' + (grandTotal + vat).toFixed(2);
+        }}
+    
+        function syncF11Buttons() {{
+            const hasItems = cart.length > 0;
+            const hasCust = !!document.getElementById('entityValue').value;
+            ['f11Cash','f11Card'].forEach(id => {{ const el = document.getElementById(id); if(el) el.disabled = !hasItems; }});
+            ['f11Account','f11Invoice','f11Credit'].forEach(id => {{ const el = document.getElementById(id); if(el) el.disabled = !(hasItems && hasCust); }});
+            ['f11Quote','f11PO'].forEach(id => {{ const el = document.getElementById(id); if(el) el.disabled = !hasItems; }});
+        }}
+    
+        async function f11EditQty(idx) {{
+            if (idx < 0 || idx >= cart.length) return;
+            var item = cart[idx];
+            var newQty = await posPrompt('Qty for ' + item.code + ':', item.qty);
+            if (newQty === null) return;
+            var qty = parseFloat(newQty);
+            if (isNaN(qty) || qty < 0) {{ alert('Invalid qty'); return; }}
+            if (qty === 0) {{ cart.splice(idx, 1); if (f11SelectedRow >= cart.length) f11SelectedRow = Math.max(0, cart.length - 1); }}
+            else {{ item.qty = qty; }}
+            updateCart(); renderF11Table(); syncF11Buttons();
+        }}
+    
+        async function f11EditPrice(idx) {{
+            if (idx < 0 || idx >= cart.length) return;
+            var item = cart[idx];
+            var newPrice = await posPrompt('Price for ' + item.code + ':', item.price.toFixed(2));
+            if (newPrice === null) return;
+            var price = parseFloat(newPrice);
+            if (isNaN(price) || price < 0) {{ alert('Invalid price'); return; }}
+            item.price = price;
+            updateCart(); renderF11Table(); syncF11Buttons();
+        }}
+    
+        async function f11EditDisc(idx) {{
+            if (idx < 0 || idx >= cart.length) return;
+            var item = cart[idx];
+            var cur = item.disc || 0;
+            var newDisc = await posPrompt('Discount % for ' + item.code + ':', cur);
+            if (newDisc === null) return;
+            var disc = parseFloat(newDisc);
+            if (isNaN(disc) || disc < 0 || disc > 100) {{ alert('Invalid discount (0-100)'); return; }}
+            item.disc = disc;
+            updateCart(); renderF11Table(); syncF11Buttons();
+        }}
+    
+        function f11RemoveItem(idx) {{
+            if (idx < 0 || idx >= cart.length) return;
+            cart.splice(idx, 1);
+            if (f11SelectedRow >= cart.length) f11SelectedRow = Math.max(0, cart.length - 1);
+            updateCart(); renderF11Table(); syncF11Buttons();
+        }}
+    
+        function updateF11CustName() {{
+            const el = document.getElementById('f11CustName');
+            if (!el) return;
+            const search = document.getElementById('entitySearch');
+            el.textContent = (search && search.value) ? search.value : 'Countersale';
+        }}
+    
+        // F11 smart search with live dropdown
+        document.addEventListener('DOMContentLoaded', function() {{
+            const f11Input = document.getElementById('f11Search');
+            const f11DD = document.getElementById('f11Dropdown');
+            if (!f11Input || !f11DD) return;
+            let f11Matches = [];
+            let f11Sel = -1;
+    
+            function f11ShowDD() {{
+                const rect = f11Input.getBoundingClientRect();
+                f11DD.style.top = (rect.bottom + 2) + 'px';
+                f11DD.classList.add('show');
+            }}
+    
+            function f11FilterDD() {{
+                let raw = f11Input.value.trim();
+                if (!raw) {{ f11DD.classList.remove('show'); f11Matches = []; f11Sel = -1; return; }}
+                let qty = 1, searchTerm = raw;
+                const star = raw.indexOf('*');
+                if (star > 0) {{
+                    const num = parseInt(raw.substring(0, star), 10);
+                    if (num > 0) {{ qty = num; searchTerm = raw.substring(star + 1).trim(); }}
+                }}
+                const terms = searchTerm.toLowerCase().replace(/\s*x\s*/gi, 'x').split(/\s+/).filter(t => t.length > 0);
+                if (!terms.length) {{ f11DD.classList.remove('show'); return; }}
+    
+                f11Matches = [];
+                const rows = document.querySelectorAll('.stock-row');
+                for (let row of rows) {{
+                    let data = ((row.getAttribute('data-code') || '') + ' ' + (row.getAttribute('data-desc') || '')).toLowerCase().replace(/\s*x\s*/gi, 'x');
+                    if (terms.every(t => data.indexOf(t) !== -1)) {{
+                        f11Matches.push({{
+                            el: row, id: row.getAttribute('data-id'),
+                            code: row.getAttribute('data-code') || '',
+                            desc: row.getAttribute('data-desc') || '',
+                            price: parseFloat(row.getAttribute('data-price')) || 0,
+                            qty: qty, related: false
+                        }});
+                        if (f11Matches.length >= 500) break;
+                    }}
+                }}
+                f11Sel = f11Matches.length > 0 ? 0 : -1;
+                f11RenderDD();
+            }}
+    
+            function f11RenderDD() {{
+                if (f11Matches.length === 0) {{
+                    f11DD.innerHTML = '<div class="f11-dd-empty">No matches found</div>';
+                    f11ShowDD();
+                    return;
+                }}
+                var seenRH = false;
+                f11DD.innerHTML = f11Matches.map(function(m, i) {{
+                    var hdr = '';
+                    if (m.related && !seenRH) {{ seenRH = true; hdr = '<div style="padding:5px 16px;font-size:10px;font-weight:700;color:#f59e0b;letter-spacing:2px;border-top:1px solid rgba(245,158,11,0.3);background:rgba(245,158,11,0.05);">⚡ ALSO NEEDED?</div>'; }}
+                    return hdr + '<div class="f11-dd-item' + (i === f11Sel ? ' sel' : '') + (m.related ? ' f11-dd-rel' : '') + '" data-idx="' + i + '">' +
+                    '<span class="f11-dd-code">' + m.code + '</span>' +
+                    '<span class="f11-dd-desc">' + m.desc.replace(/&/g,'&amp;').replace(/</g,'&lt;') + '</span>' +
+                    '<span class="f11-dd-price">R' + m.price.toFixed(2) + '</span></div>';
+                }}).join('');
+                f11ShowDD();
+    
+                f11DD.querySelectorAll('.f11-dd-item').forEach(el => {{
+                    el.addEventListener('click', function() {{
+                        f11AddMatch(parseInt(this.getAttribute('data-idx')));
+                    }});
+                }});
+    
+                const selEl = f11DD.querySelector('.sel');
+                if (selEl) selEl.scrollIntoView({{block: 'nearest'}});
+            }}
+    
+            function f11AddMatch(idx) {{
+                if (idx < 0 || idx >= f11Matches.length) return;
+                const m = f11Matches[idx];
+                const existing = cart.find(item => item.id === m.id);
+                if (existing) {{ existing.qty += m.qty; }}
+                else {{ cart.push({{id: m.id, code: m.code, desc: m.desc, price: m.price, qty: m.qty, maxQty: 99999}}); }}
+                updateCart();
+                renderF11Table();
+                syncF11Buttons();
+                f11SelectedRow = cart.length - 1;
+                renderF11Table();
+                f11Input.value = '';
+                f11DD.classList.remove('show');
+                f11Matches = [];
+                f11Sel = -1;
+                f11Input.focus();
+            }}
+    
+            f11Input.addEventListener('input', f11FilterDD);
+    
+            f11Input.addEventListener('keydown', function(e) {{
+                if (f11DD.classList.contains('show') && f11Matches.length > 0) {{
+                    if (e.key === 'ArrowDown') {{ e.preventDefault(); f11Sel = Math.min(f11Sel + 1, f11Matches.length - 1); f11RenderDD(); return; }}
+                    if (e.key === 'ArrowUp') {{ e.preventDefault(); f11Sel = Math.max(f11Sel - 1, 0); f11RenderDD(); return; }}
+                    if (e.key === 'Enter') {{ e.preventDefault(); f11AddMatch(f11Sel); return; }}
+                    if (e.key === 'Escape') {{ e.preventDefault(); f11DD.classList.remove('show'); return; }}
+                }}
+                if (e.key === 'Delete' && cart.length > 0 && !f11DD.classList.contains('show')) {{
+                    e.preventDefault();
+                    cart.splice(f11SelectedRow, 1);
+                    if (f11SelectedRow >= cart.length) f11SelectedRow = Math.max(0, cart.length - 1);
+                    updateCart();
+                    renderF11Table();
+                    syncF11Buttons();
+                }}
+                if (!f11DD.classList.contains('show') && !f11Input.value.trim()) {{
+                    if (e.key === 'ArrowDown') {{ e.preventDefault(); f11SelectedRow = Math.min(f11SelectedRow + 1, cart.length - 1); renderF11Table(); }}
+                    if (e.key === 'ArrowUp') {{ e.preventDefault(); f11SelectedRow = Math.max(f11SelectedRow - 1, 0); renderF11Table(); }}
+                    if ((e.key === '+' || e.key === '=') && cart.length > 0) {{ e.preventDefault(); cart[f11SelectedRow].qty++; updateCart(); renderF11Table(); syncF11Buttons(); }}
+                    if (e.key === '-' && cart.length > 0 && cart[f11SelectedRow].qty > 1) {{ e.preventDefault(); cart[f11SelectedRow].qty--; updateCart(); renderF11Table(); syncF11Buttons(); }}
+                    if ((e.key === 'q' || e.key === 'Q') && cart.length > 0) {{ e.preventDefault(); f11EditQty(f11SelectedRow); }}
+                    if ((e.key === 'p' || e.key === 'P') && cart.length > 0) {{ e.preventDefault(); f11EditPrice(f11SelectedRow); }}
+                    if ((e.key === 'd' || e.key === 'D') && cart.length > 0) {{ e.preventDefault(); f11EditDisc(f11SelectedRow); }}
+                }}
+            }});
+        }});
+    
+        // Hook into updateCart to sync F11 view
+        const _origUpdateCart = typeof updateCart === 'function' ? updateCart : null;
+        // We'll override after pos_js loads — see observer below
+    
+        // Sync F11 when entity changes
+        const _origToggleEntity = typeof toggleEntity === 'function' ? toggleEntity : null;
+        
+        // Initial render of order table on page load
+        document.addEventListener('DOMContentLoaded', function() {{
+            if (typeof renderF11Table === 'function') renderF11Table();
+            if (typeof syncF11Buttons === 'function') syncF11Buttons();
+            if (typeof updateF11CustName === 'function') updateF11CustName();
+            // Focus the main search bar
+            var f11s = document.getElementById('f11Search');
+            if (f11s) setTimeout(function() {{ f11s.focus(); }}, 100);
+        }});
+        </script>
+        <script>
+        if ('serviceWorker' in navigator) {{
+            navigator.serviceWorker.register('/sw.js', {{scope: '/'}})
+                .then(r => console.log('[SW] POS registered'))
+                .catch(e => console.log('[SW] Non-critical:', e));
+        }}
+        </script>
+        <div class="f11-dd" id="f11Dropdown" style="position:fixed;z-index:99999;"></div>
+    </body>
+    </html>'''
+    
+    @app.route("/pos/history")
     @login_required
-    def report_budget():
-        """Budget vs Actual"""
+    def pos_history():
+        """POS History - View all transactions with X-Read and Z-Read"""
         
         user = Auth.get_current_user()
         business = Auth.get_current_business()
         biz_id = business.get("id") if business else None
         
-        # Get budgets (if any)
-        budgets = db.get("budgets", {"business_id": biz_id}) if biz_id else []
+        # Staff/cashier roles only see TODAY - no previous Z-reads or history
+        user_role = get_user_role()
+        is_staff_pos = user_role in ("staff", "cashier", "pos_only", "sales", "waiter")
         
-        # Get actuals
-        invoices = db.get("invoices", {"business_id": biz_id}) if biz_id else []
-        expenses = db.get("expenses", {"business_id": biz_id}) if biz_id else []
+        # Get filter params - support date range
+        date_from = request.args.get("from", "")
+        date_to = request.args.get("to", "")
+        single_date = request.args.get("date", "")  # Backward compatible
+        show_type = request.args.get("type", "all")
+        search_q = request.args.get("q", "").strip().lower()
         
-        actual_sales = sum(float(inv.get("subtotal", 0)) for inv in invoices)
-        actual_expenses = sum(float(e.get("amount", 0)) for e in expenses)
+        # STAFF OVERRIDE: Force today only — no access to previous days
+        if is_staff_pos:
+            date_from = today()
+            date_to = today()
+            single_date = ""
+        # Determine date range (managers/owners)
+        elif single_date:
+            # Single date mode (backward compatible, used for Z-Read cash-up)
+            date_from = single_date
+            date_to = single_date
+        elif not date_from and not date_to:
+            # Default: last 30 days
+            from datetime import timedelta
+            date_to = today()
+            date_from = (datetime.now() - timedelta(days=30)).strftime("%Y-%m-%d")
+        elif date_from and not date_to:
+            date_to = today()
+        elif date_to and not date_from:
+            date_from = "2020-01-01"
         
-        # Default budgets if none set
-        budget_sales = next((b.get("amount", 0) for b in budgets if b.get("type") == "sales"), 100000)
-        budget_expenses = next((b.get("amount", 0) for b in budgets if b.get("type") == "expenses"), 50000)
+        is_single_day = (date_from == date_to)
         
-        sales_variance = actual_sales - float(budget_sales)
-        expense_variance = actual_expenses - float(budget_expenses)
+        # Get all sales in date range
+        all_sales = db.get("sales", {"business_id": biz_id}) if biz_id else []
+        sales = [s for s in all_sales if date_from <= (s.get("date") or "") <= date_to]
+        sales = sorted(sales, key=lambda x: x.get("created_at", ""), reverse=True)
+        
+        # Get invoices in date range
+        all_invoices = db.get("invoices", {"business_id": biz_id}) if biz_id else []
+        invoices = [i for i in all_invoices if date_from <= (i.get("date") or "") <= date_to]
+        
+        # Get quotes in date range
+        all_quotes = db.get("quotes", {"business_id": biz_id}) if biz_id else []
+        quotes = [q for q in all_quotes if date_from <= (q.get("date") or "") <= date_to]
+        
+        # Calculate totals — POS Sales
+        cash_total = sum(float(s.get("total", 0)) for s in sales if s.get("payment_method") == "cash")
+        card_total = sum(float(s.get("total", 0)) for s in sales if s.get("payment_method") == "card")
+        account_total = sum(float(s.get("total", 0)) for s in sales if s.get("payment_method") == "account")
+        invoice_total = sum(float(i.get("total", 0)) for i in invoices)
+        quote_total = sum(float(q.get("total", 0)) for q in quotes)
+        
+        # Calculate totals — Invoices by payment method
+        inv_cash_total = sum(float(i.get("total", 0)) for i in invoices if i.get("payment_method") == "cash")
+        inv_card_total = sum(float(i.get("total", 0)) for i in invoices if i.get("payment_method") == "card")
+        inv_eft_total = sum(float(i.get("total", 0)) for i in invoices if i.get("payment_method") == "eft")
+        inv_account_total = sum(float(i.get("total", 0)) for i in invoices if i.get("payment_method") in ("account", ""))
+        
+        # COMBINED totals — what actually matters for the cash drawer
+        all_cash = cash_total + inv_cash_total
+        all_card = card_total + inv_card_total
+        all_account = account_total + inv_account_total
+        
+        grand_total = cash_total + card_total + account_total
+        transaction_count = len(sales)
+        
+        # === EXPECTED CASH FOR Z-READ ===
+        # Cash in drawer = ALL cash received today (POS sales + cash-paid invoices)
+        today_str = today()
+        today_cash_sales = sum(float(s.get("total", 0)) for s in all_sales 
+                              if s.get("payment_method") == "cash" and (s.get("date") or "") == today_str)
+        today_cash_invoices = sum(float(i.get("total", 0)) for i in all_invoices 
+                                 if i.get("payment_method") in ("cash",) and (i.get("date") or "") == today_str)
+        expected_cash_drawer = today_cash_sales + today_cash_invoices
+
+        # === TODAY-ONLY TOTALS FOR Z-READ SLIP (never use date-range totals) ===
+        today_sales = [s for s in all_sales if (s.get("date") or "") == today_str]
+        zr_cash = sum(float(s.get("total", 0)) for s in today_sales if s.get("payment_method") == "cash")
+        zr_card = sum(float(s.get("total", 0)) for s in today_sales if s.get("payment_method") == "card")
+        zr_account = sum(float(s.get("total", 0)) for s in today_sales if s.get("payment_method") == "account")
+        zr_total = zr_cash + zr_card + zr_account
+        zr_count = len(today_sales)
+        today_invoices = [i for i in all_invoices if (i.get("date") or "") == today_str]
+        zr_inv_cash = sum(float(i.get("total", 0)) for i in today_invoices if i.get("payment_method") == "cash")
+        zr_inv_card = sum(float(i.get("total", 0)) for i in today_invoices if i.get("payment_method") == "card")
+        zr_inv_eft = sum(float(i.get("total", 0)) for i in today_invoices if i.get("payment_method") == "eft")
+        
+        # Build transaction rows
+        rows = ""
+        
+        # Combine and sort by time
+        transactions = []
+        for s in sales:
+            # Handle items that might be a list or JSON string
+            s_items = s.get("items", [])
+            if isinstance(s_items, str):
+                try:
+                    s_items = json.loads(s_items)
+                except:
+                    s_items = []
+            
+            # Build searchable text from items
+            items_text = " ".join([str(it.get("description", "")) for it in s_items]) if s_items else ""
+            
+            # Default customer name based on payment method
+            pm = s.get("payment_method", "cash").lower()
+            default_name = {"cash": "Countersale Cash", "card": "Countersale Card", "account": "Countersale Account"}.get(pm, "Countersale")
+            
+            transactions.append({
+                "id": s.get("id"),
+                "number": s.get("sale_number", "-"),
+                "date": s.get("date", ""),
+                "time": extract_time(s.get("created_at", "")),
+                "type": pm.upper(),
+                "customer": s.get("customer_name") or default_name,
+                "total": float(s.get("total", 0)),
+                "items": len(s_items) if s_items else 0,
+                "items_text": items_text,
+                "source": "sale",
+                "created_at": s.get("created_at", "")
+            })
+        
+        for i in invoices:
+            # Handle items that might be a list or JSON string
+            i_items = i.get("items", [])
+            if isinstance(i_items, str):
+                try:
+                    i_items = json.loads(i_items)
+                except:
+                    i_items = []
+            
+            items_text = " ".join([str(it.get("description", "")) for it in i_items]) if i_items else ""
+            
+            transactions.append({
+                "id": i.get("id"),
+                "number": i.get("invoice_number", "-"),
+                "date": i.get("date", ""),
+                "time": extract_time(i.get("created_at", "")),
+                "type": "INVOICE",
+                "customer": i.get("customer_name", "-"),
+                "total": float(i.get("total", 0)),
+                "items": len(i_items) if i_items else 0,
+                "items_text": items_text,
+                "source": "invoice",
+                "created_at": i.get("created_at", "")
+            })
+        
+        for q in quotes:
+            # Handle items that might be a list or JSON string
+            q_items = q.get("items", [])
+            if isinstance(q_items, str):
+                try:
+                    q_items = json.loads(q_items)
+                except:
+                    q_items = []
+            
+            items_text = " ".join([str(it.get("description", "")) for it in q_items]) if q_items else ""
+            
+            transactions.append({
+                "id": q.get("id"),
+                "number": q.get("quote_number", "-"),
+                "date": q.get("date", ""),
+                "time": extract_time(q.get("created_at", "")),
+                "type": "QUOTE",
+                "customer": q.get("customer_name", "-"),
+                "total": float(q.get("total", 0)),
+                "items": len(q_items) if q_items else 0,
+                "items_text": items_text,
+                "source": "quote",
+                "created_at": q.get("created_at", "")
+            })
+        
+        # Sort by created_at descending
+        transactions = sorted(transactions, key=lambda x: x.get("created_at", ""), reverse=True)
+        
+        # Filter by type
+        if show_type != "all":
+            transactions = [t for t in transactions if t.get("type", "").lower() == show_type.lower()]
+        
+        # Search filter - search by customer name, slip number, or item description
+        if search_q:
+            transactions = [t for t in transactions if 
+                search_q in t.get("customer", "").lower() or
+                search_q in t.get("number", "").lower() or
+                search_q in t.get("items_text", "").lower() or
+                search_q in str(t.get("total", ""))
+            ]
+        
+        for t in transactions:
+            type_color = {
+                "CASH": "#10b981",
+                "CARD": "#3b82f6",
+                "ACCOUNT": "#f59e0b",
+                "INVOICE": "#8b5cf6",
+                "QUOTE": "#ec4899"
+            }.get(t["type"], "#888")
+            
+            if t["source"] == "sale":
+                view_url = f"/sale/{t['id']}"
+            elif t["source"] == "invoice":
+                view_url = f"/invoice/{t['id']}"
+            else:
+                view_url = f"/quote/{t['id']}"
+            
+            rows += f'''
+            <tr onclick="window.location='{view_url}'" style="cursor:pointer;">
+                <td><strong>{t["number"]}</strong></td>
+                {"" if is_single_day else f'<td>{t["date"]}</td>'}
+                <td>{t["time"]}</td>
+                <td><span style="background:{type_color};color:white;padding:2px 8px;border-radius:4px;font-size:11px;">{t["type"]}</span></td>
+                <td>{safe_string(t["customer"])}</td>
+                <td style="text-align:center;">{t["items"]}</td>
+                <td style="text-align:right;font-weight:bold;">{money(t["total"])}</td>
+            </tr>
+            '''
+        
+        # Date range description
+        if is_single_day:
+            date_desc = date_from
+        else:
+            date_desc = f"{date_from} to {date_to}"
+        
+        # ═══ Load today's cash-up records for display ═══
+        _today_cashups = []
+        try:
+            _today_cashups = db.get("cash_ups", {"business_id": biz_id, "date": today()}) or []
+        except:
+            pass
+        _today_cashups_json = json.dumps(_today_cashups, default=str)
+
+        # Build date filter HTML (staff can't see date controls)
+        if is_staff_pos:
+            date_filter_html = ""
+            zread_buttons_html = ""
+        else:
+            date_filter_html = f'''<input type="date" id="dateFrom" value="{date_from}" style="padding:8px 12px;border-radius:6px;border:1px solid var(--border);background:var(--card);color:var(--text);">
+                <span style="color:var(--text-muted);">to</span>
+                <input type="date" id="dateTo" value="{date_to}" style="padding:8px 12px;border-radius:6px;border:1px solid var(--border);background:var(--card);color:var(--text);">'''
+            zread_buttons_html = '<a href="/cashup" class="btn btn-secondary" style="text-decoration:none;">Blind Cash Up</a><button onclick="printXRead()" class="btn btn-secondary">X-Read</button><button onclick="printZRead()" class="btn btn-primary">Z-Read (Close Day)</button>'
+        
+        # Pre-build Z-read invoice section — ALWAYS uses today-only totals
+        _zr_inv_section = ""
+        if zr_inv_cash or zr_inv_card or zr_inv_eft:
+            _zr_inv_rows = f'<tr><td>Cash Invoices:</td><td style="text-align:right;">{money(zr_inv_cash)}</td></tr>'
+            if zr_inv_card:
+                _zr_inv_rows += f'<tr><td>Card Invoices:</td><td style="text-align:right;">{money(zr_inv_card)}</td></tr>'
+            if zr_inv_eft:
+                _zr_inv_rows += f'<tr><td>EFT Invoices:</td><td style="text-align:right;">{money(zr_inv_eft)}</td></tr>'
+            _zr_inv_section = f'<hr style="border:1px dashed #000;margin:12px 0;"><div style="margin-bottom:8px;"><strong>INVOICES (Cash Paid)</strong></div><table style="width:100%;border-collapse:collapse;">{_zr_inv_rows}</table>'
+        
+        _zr_cash_inv_row = f'<tr><td style="font-size:12px;">+ Cash Invoices:</td><td style="text-align:right;font-size:12px;">{money(zr_inv_cash)}</td></tr>' if zr_inv_cash else ''
         
         content = f'''
-        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:20px;">
-            <a href="/reports" style="color:var(--text-muted);">-> Back to Reports</a>
-            <button class="btn btn-secondary" onclick="window.print();"> Print</button>
-        </div>
-        
         <div class="card">
-            <h2 style="margin-bottom:5px;"> Budget vs Actual</h2>
-            <p style="color:var(--text-muted);margin-bottom:20px;">For the period ending {today()}</p>
+            <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:15px;margin-bottom:20px;">
+                <div>
+                    <h2 style="margin:0;">POS History</h2>
+                    <p style="color:var(--text-muted);margin:5px 0 0 0;">{date_desc} &bull; {len(transactions)} transactions</p>
+                </div>
+                <a href="/pos" class="btn btn-primary">← Back to POS</a>
+            </div>
             
+            <!-- Search & Filters -->
+            <div style="display:flex;flex-wrap:wrap;gap:10px;align-items:center;margin-bottom:15px;">
+                <input type="text" id="searchBox" value="{search_q}" placeholder="🔍 Search customer, slip #, item..." 
+                       style="padding:8px 12px;border-radius:6px;border:1px solid var(--border);background:var(--card);color:var(--text);flex:1;min-width:200px;"
+                       onkeydown="if(event.key==='Enter')applyFilters()">
+                {date_filter_html}
+                <select id="typeFilter" style="padding:8px 12px;border-radius:6px;border:1px solid var(--border);background:var(--card);color:var(--text);">
+                    <option value="all" {"selected" if show_type == "all" else ""}>All Types</option>
+                    <option value="cash" {"selected" if show_type == "cash" else ""}>Cash</option>
+                    <option value="card" {"selected" if show_type == "card" else ""}>Card</option>
+                    <option value="account" {"selected" if show_type == "account" else ""}>Account</option>
+                    <option value="invoice" {"selected" if show_type == "invoice" else ""}>Invoice</option>
+                    <option value="quote" {"selected" if show_type == "quote" else ""}>Quote</option>
+                </select>
+                <button onclick="applyFilters()" class="btn btn-primary" style="padding:8px 16px;">Filter</button>
+            </div>
+            
+            <!-- Quick Filters -->
+            <div style="display:flex;flex-wrap:wrap;gap:8px;margin-bottom:20px;">
+                <button onclick="quickFilter('today')" class="btn btn-secondary" style="padding:6px 14px;font-size:13px;">Today</button>
+                <button onclick="quickFilter('yesterday')" class="btn btn-secondary" style="padding:6px 14px;font-size:13px;">Yesterday</button>
+                <button onclick="quickFilter('week')" class="btn btn-secondary" style="padding:6px 14px;font-size:13px;">This Week</button>
+                <button onclick="quickFilter('month')" class="btn btn-secondary" style="padding:6px 14px;font-size:13px;">This Month</button>
+                <button onclick="quickFilter('30days')" class="btn btn-secondary" style="padding:6px 14px;font-size:13px;">Last 30 Days</button>
+                <button onclick="quickFilter('90days')" class="btn btn-secondary" style="padding:6px 14px;font-size:13px;">Last 90 Days</button>
+                <button onclick="quickFilter('year')" class="btn btn-secondary" style="padding:6px 14px;font-size:13px;">This Year</button>
+                <button onclick="quickFilter('all')" class="btn btn-secondary" style="padding:6px 14px;font-size:13px;">All Time</button>
+            </div>
+            <!-- Summary Cards -->
+            <div style="display:grid;grid-template-columns:repeat(auto-fit, minmax(140px, 1fr));gap:15px;margin-bottom:25px;">
+                <div style="background:linear-gradient(135deg,#10b981,#059669);padding:20px;border-radius:12px;text-align:center;">
+                    <div style="font-size:24px;font-weight:bold;color:white;">{money(cash_total)}</div>
+                    <div style="color:rgba(255,255,255,0.8);font-size:13px;">💵 Cash</div>
+                </div>
+                <div style="background:linear-gradient(135deg,#3b82f6,#2563eb);padding:20px;border-radius:12px;text-align:center;">
+                    <div style="font-size:24px;font-weight:bold;color:white;">{money(card_total)}</div>
+                    <div style="color:rgba(255,255,255,0.8);font-size:13px;">💳 Card</div>
+                </div>
+                <div style="background:linear-gradient(135deg,#f59e0b,#d97706);padding:20px;border-radius:12px;text-align:center;">
+                    <div style="font-size:24px;font-weight:bold;color:white;">{money(account_total)}</div>
+                    <div style="color:rgba(255,255,255,0.8);font-size:13px;">📒 Account</div>
+                </div>
+            </div>
+            
+            <!-- Grand Total -->
+            <div style="background:var(--bg);padding:20px;border-radius:12px;margin-bottom:25px;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:15px;">
+                <div>
+                    <span style="font-size:32px;font-weight:bold;">{money(grand_total)}</span>
+                    <span style="color:var(--text-muted);margin-left:10px;">{transaction_count} transactions</span>
+                </div>
+                <div style="display:flex;gap:10px;">
+                    {zread_buttons_html}
+                </div>
+            </div>
+            
+            <!-- Today's Cash Ups Section -->
+            <div id="cashupHistorySection" style="margin-bottom:25px;"></div>
+            
+            <!-- Transactions Table -->
             <table class="table">
                 <thead>
                     <tr>
-                        <th>Category</th>
-                        <th style="text-align:right;">Budget</th>
-                        <th style="text-align:right;">Actual</th>
-                        <th style="text-align:right;">Variance</th>
-                        <th style="text-align:right;">%</th>
+                        <th>Slip #</th>
+                        {"" if is_single_day else "<th>Date</th>"}
+                        <th>Time</th>
+                        <th>Type</th>
+                        <th>Customer</th>
+                        <th style="text-align:center;">Items</th>
+                        <th style="text-align:right;">Total</th>
                     </tr>
                 </thead>
                 <tbody>
-                    <tr>
-                        <td><strong>Sales Revenue</strong></td>
-                        <td style="text-align:right;">{money(budget_sales)}</td>
-                        <td style="text-align:right;">{money(actual_sales)}</td>
-                        <td style="text-align:right;color:{"var(--green)" if sales_variance >= 0 else "var(--red)"};">
-                            {money(abs(sales_variance))} {"" if sales_variance >= 0 else ""}
-                        </td>
-                        <td style="text-align:right;">{(actual_sales/float(budget_sales)*100 if budget_sales else 0):.0f}%</td>
-                    </tr>
-                    <tr>
-                        <td><strong>Expenses</strong></td>
-                        <td style="text-align:right;">{money(budget_expenses)}</td>
-                        <td style="text-align:right;">{money(actual_expenses)}</td>
-                        <td style="text-align:right;color:{"var(--red)" if expense_variance > 0 else "var(--green)"};">
-                            {money(abs(expense_variance))} {"" if expense_variance > 0 else ""}
-                        </td>
-                        <td style="text-align:right;">{(actual_expenses/float(budget_expenses)*100 if budget_expenses else 0):.0f}%</td>
-                    </tr>
+                    {rows or f"<tr><td colspan='{'7' if not is_single_day else '6'}' style='text-align:center;color:var(--text-muted);padding:40px;'>No transactions found</td></tr>"}
                 </tbody>
             </table>
-            
-            <p style="color:var(--text-muted);margin-top:20px;">
-                 Say "Set budget for sales R150000" to update budgets
-            </p>
         </div>
+        
+        <!-- X-Read Modal -->
+        <div id="xreadModal" style="display:none;position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.8);z-index:9999;justify-content:center;align-items:center;">
+            <div style="background:white;padding:0;border-radius:8px;max-width:400px;width:90%;max-height:90vh;overflow-y:auto;">
+                <div id="xreadContent" style="padding:30px;font-family:monospace;font-size:14px;color:#000;"></div>
+                <div style="padding:15px;border-top:1px solid #eee;display:flex;gap:10px;">
+                    <button onclick="window.print()" class="btn btn-primary" style="flex:1;">🖨️ Print</button>
+                    <button onclick="closeModal('xreadModal')" class="btn btn-secondary" style="flex:1;">Close</button>
+                </div>
+            </div>
+        </div>
+        
+        <!-- Z-Read Modal with Cash Denomination Count -->
+        <div id="zreadModal" style="display:none;position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.8);z-index:9999;justify-content:center;align-items:center;">
+            <div style="background:white;padding:0;border-radius:8px;max-width:500px;width:95%;max-height:95vh;overflow-y:auto;">
+                <div id="zreadContent" style="padding:30px;font-family:monospace;font-size:14px;color:#000;"></div>
+                <!-- Cash Count Section -->
+                <div id="cashCountSection" style="padding:0 30px 15px 30px;font-family:monospace;color:#000;">
+                    <div style="border-top:2px dashed #000;margin:10px 0 15px 0;"></div>
+                    <strong style="font-size:15px;">CASH COUNT</strong>
+                    <p style="color:#666;font-size:11px;margin:4px 0 12px 0;">Enter quantity of each denomination:</p>
+                    <table style="width:100%;border-collapse:collapse;" id="denomTable">
+                        <tr style="background:#f5f5f5;font-weight:bold;">
+                            <td style="padding:4px 8px;">Denomination</td>
+                            <td style="padding:4px 8px;text-align:center;width:70px;">Qty</td>
+                            <td style="padding:4px 8px;text-align:right;width:100px;">Total</td>
+                        </tr>
+                        <tr><td style="padding:4px 8px;">R200 Notes</td><td style="text-align:center;"><input type="number" class="denom-input" data-val="200" value="0" min="0" onchange="calcCashUp()" oninput="calcCashUp()" style="width:55px;text-align:center;padding:4px;border:1px solid #ccc;border-radius:4px;font-family:monospace;"></td><td style="text-align:right;padding:4px 8px;" class="denom-total">R0.00</td></tr>
+                        <tr style="background:#fafafa;"><td style="padding:4px 8px;">R100 Notes</td><td style="text-align:center;"><input type="number" class="denom-input" data-val="100" value="0" min="0" onchange="calcCashUp()" oninput="calcCashUp()" style="width:55px;text-align:center;padding:4px;border:1px solid #ccc;border-radius:4px;font-family:monospace;"></td><td style="text-align:right;padding:4px 8px;" class="denom-total">R0.00</td></tr>
+                        <tr><td style="padding:4px 8px;">R50 Notes</td><td style="text-align:center;"><input type="number" class="denom-input" data-val="50" value="0" min="0" onchange="calcCashUp()" oninput="calcCashUp()" style="width:55px;text-align:center;padding:4px;border:1px solid #ccc;border-radius:4px;font-family:monospace;"></td><td style="text-align:right;padding:4px 8px;" class="denom-total">R0.00</td></tr>
+                        <tr style="background:#fafafa;"><td style="padding:4px 8px;">R20 Notes</td><td style="text-align:center;"><input type="number" class="denom-input" data-val="20" value="0" min="0" onchange="calcCashUp()" oninput="calcCashUp()" style="width:55px;text-align:center;padding:4px;border:1px solid #ccc;border-radius:4px;font-family:monospace;"></td><td style="text-align:right;padding:4px 8px;" class="denom-total">R0.00</td></tr>
+                        <tr><td style="padding:4px 8px;">R10 Notes</td><td style="text-align:center;"><input type="number" class="denom-input" data-val="10" value="0" min="0" onchange="calcCashUp()" oninput="calcCashUp()" style="width:55px;text-align:center;padding:4px;border:1px solid #ccc;border-radius:4px;font-family:monospace;"></td><td style="text-align:right;padding:4px 8px;" class="denom-total">R0.00</td></tr>
+                        <tr style="background:#fafafa;"><td style="padding:4px 8px;">R5 Coins</td><td style="text-align:center;"><input type="number" class="denom-input" data-val="5" value="0" min="0" onchange="calcCashUp()" oninput="calcCashUp()" style="width:55px;text-align:center;padding:4px;border:1px solid #ccc;border-radius:4px;font-family:monospace;"></td><td style="text-align:right;padding:4px 8px;" class="denom-total">R0.00</td></tr>
+                        <tr><td style="padding:4px 8px;">R2 Coins</td><td style="text-align:center;"><input type="number" class="denom-input" data-val="2" value="0" min="0" onchange="calcCashUp()" oninput="calcCashUp()" style="width:55px;text-align:center;padding:4px;border:1px solid #ccc;border-radius:4px;font-family:monospace;"></td><td style="text-align:right;padding:4px 8px;" class="denom-total">R0.00</td></tr>
+                        <tr style="background:#fafafa;"><td style="padding:4px 8px;">R1 Coins</td><td style="text-align:center;"><input type="number" class="denom-input" data-val="1" value="0" min="0" onchange="calcCashUp()" oninput="calcCashUp()" style="width:55px;text-align:center;padding:4px;border:1px solid #ccc;border-radius:4px;font-family:monospace;"></td><td style="text-align:right;padding:4px 8px;" class="denom-total">R0.00</td></tr>
+                        <tr><td style="padding:4px 8px;">50c Coins</td><td style="text-align:center;"><input type="number" class="denom-input" data-val="0.5" value="0" min="0" onchange="calcCashUp()" oninput="calcCashUp()" style="width:55px;text-align:center;padding:4px;border:1px solid #ccc;border-radius:4px;font-family:monospace;"></td><td style="text-align:right;padding:4px 8px;" class="denom-total">R0.00</td></tr>
+                        <tr style="background:#fafafa;"><td style="padding:4px 8px;">20c Coins</td><td style="text-align:center;"><input type="number" class="denom-input" data-val="0.2" value="0" min="0" onchange="calcCashUp()" oninput="calcCashUp()" style="width:55px;text-align:center;padding:4px;border:1px solid #ccc;border-radius:4px;font-family:monospace;"></td><td style="text-align:right;padding:4px 8px;" class="denom-total">R0.00</td></tr>
+                        <tr><td style="padding:4px 8px;">10c Coins</td><td style="text-align:center;"><input type="number" class="denom-input" data-val="0.1" value="0" min="0" onchange="calcCashUp()" oninput="calcCashUp()" style="width:55px;text-align:center;padding:4px;border:1px solid #ccc;border-radius:4px;font-family:monospace;"></td><td style="text-align:right;padding:4px 8px;" class="denom-total">R0.00</td></tr>
+                    </table>
+                    <div style="border-top:2px dashed #000;margin:12px 0;"></div>
+                    <table style="width:100%;border-collapse:collapse;">
+                        <tr style="font-size:16px;font-weight:bold;">
+                            <td style="padding:4px 8px;">COUNTED:</td>
+                            <td style="text-align:right;padding:4px 8px;" id="cashCounted">R0.00</td>
+                        </tr>
+                        <tr style="font-size:14px;">
+                            <td style="padding:4px 8px;">Expected Cash:</td>
+                            <td style="text-align:right;padding:4px 8px;" id="cashExpected">{money(expected_cash_drawer)}</td>
+                        </tr>
+                        <tr id="diffRow" style="font-size:16px;font-weight:bold;">
+                            <td style="padding:4px 8px;">DIFFERENCE:</td>
+                            <td style="text-align:right;padding:4px 8px;" id="cashDiff">R0.00</td>
+                        </tr>
+                    </table>
+                    <div id="cashStatus" style="text-align:center;padding:10px;margin-top:10px;border-radius:6px;font-weight:bold;font-size:13px;background:#fef3c7;color:#92400e;">
+                        Count the cash and enter quantities below
+                    </div>
+                </div>
+                <div style="padding:15px;border-top:1px solid #eee;display:flex;gap:10px;">
+                    <button onclick="confirmZRead()" class="btn btn-primary" style="flex:1;background:#ef4444;">GOOD: Close Day & Print</button>
+                    <button onclick="closeModal('zreadModal')" class="btn btn-secondary" style="flex:1;">Cancel</button>
+                </div>
+            </div>
+        </div>
+        
+        <script>
+        // ═══ TODAY'S CASH UPS ═══
+        const TODAY_CASHUPS = {_today_cashups_json};
+        try {{
+        (function renderCashupHistory() {{
+            const section = document.getElementById('cashupHistorySection');
+            if (!section || !TODAY_CASHUPS || TODAY_CASHUPS.length === 0) return;
+            const n = (v) => parseFloat(v || 0) || 0;
+            
+            let html = '<div style="background:var(--card);border:1px solid var(--border);border-radius:12px;padding:20px;">';
+            html += '<h3 style="margin:0 0 15px 0;font-size:16px;">Today&#39;s Cash Ups</h3>';
+            
+            const sorted = TODAY_CASHUPS.sort((a, b) => (b.created_at || '').localeCompare(a.created_at || ''));
+            sorted.forEach(h => {{
+                const type = h.type || 'unknown';
+                let badge = '', detail = '';
+                
+                if (type === 'blind_cashup') {{
+                    badge = '<span style="background:#065f46;color:#6ee7b7;padding:2px 10px;border-radius:4px;font-size:12px;font-weight:bold;">BLIND CASH UP</span>';
+                    const disc = n(h.total_discrepancy);
+                    const discText = Math.abs(disc) < 0.01 ? 'Exact match' : (disc > 0 ? '+R' + disc.toFixed(2) + ' over' : '-R' + Math.abs(disc).toFixed(2) + ' short');
+                    detail = '<div style="margin-top:8px;display:grid;grid-template-columns:1fr 1fr;gap:4px 20px;font-size:13px;">';
+                    detail += '<span style="color:var(--text-muted);">Cashier:</span><span style="font-weight:600;">' + (h.cashier_name || '—') + '</span>';
+                    detail += '<span style="color:var(--text-muted);">Declared:</span><span style="font-weight:600;">R' + n(h.declared_total).toFixed(2) + '</span>';
+                    detail += '<span style="color:var(--text-muted);">System:</span><span style="font-weight:600;">R' + n(h.system_total).toFixed(2) + '</span>';
+                    detail += '<span style="color:var(--text-muted);">Cash Diff:</span><span style="font-weight:600;color:' + (Math.abs(n(h.cash_discrepancy)) < 0.01 ? '#10b981' : n(h.cash_discrepancy) < 0 ? '#ef4444' : '#10b981') + ';">' + (n(h.cash_discrepancy) > 0 ? '+' : '') + 'R' + n(h.cash_discrepancy).toFixed(2) + '</span>';
+                    detail += '<span style="color:var(--text-muted);">Card Diff:</span><span style="font-weight:600;color:' + (Math.abs(n(h.card_discrepancy)) < 0.01 ? '#10b981' : n(h.card_discrepancy) < 0 ? '#ef4444' : '#10b981') + ';">' + (n(h.card_discrepancy) > 0 ? '+' : '') + 'R' + n(h.card_discrepancy).toFixed(2) + '</span>';
+                    detail += '</div>';
+                    detail += '<div style="margin-top:8px;padding:6px 12px;border-radius:6px;text-align:center;font-weight:bold;font-size:13px;background:' + (Math.abs(disc) < 0.01 ? '#d1fae5' : disc > 0 ? '#dbeafe' : '#fee2e2') + ';color:' + (Math.abs(disc) < 0.01 ? '#065f46' : disc > 0 ? '#1e40af' : '#991b1b') + ';">' + discText + '</div>';
+                }} else if (type === 'x_reading') {{
+                    badge = '<span style="background:#1e3a5f;color:#7dd3fc;padding:2px 10px;border-radius:4px;font-size:12px;font-weight:bold;">X-READ</span>';
+                    detail = '<div style="margin-top:6px;font-size:13px;">Total: <strong>R' + n(h.system_total).toFixed(2) + '</strong> | ' + (h.sale_count || 0) + ' sales</div>';
+                }} else if (type === 'z_reading') {{
+                    badge = '<span style="background:#78350f;color:#fde68a;padding:2px 10px;border-radius:4px;font-size:12px;font-weight:bold;">Z-READ</span>';
+                    const cashDiff = n(h.cash_difference);
+                    const zStatus = h.cash_status || (Math.abs(cashDiff) < 0.01 ? 'Balanced' : 'R' + Math.abs(cashDiff).toFixed(2) + (cashDiff > 0 ? ' over' : ' short'));
+                    detail = '<div style="margin-top:6px;font-size:13px;">Day closed | System: <strong>R' + n(h.system_total).toFixed(2) + '</strong> | ' + (h.sale_count || 0) + ' sales';
+                    if (h.cash_counted) detail += ' | Counted: <strong>R' + n(h.cash_counted).toFixed(2) + '</strong> | ' + zStatus;
+                    if (h.created_by_name) detail += ' | By: <strong>' + h.created_by_name + '</strong>';
+                    detail += '</div>';
+                }}
+                
+                const time = h.created_at ? new Date(h.created_at).toLocaleTimeString() : '';
+                html += '<div style="background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:14px;margin-bottom:10px;">';
+                html += '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px;">' + badge + '<span style="color:var(--text-muted);font-size:13px;">' + time + '</span></div>';
+                html += detail;
+                html += '</div>';
+            }});
+            
+            html += '</div>';
+            section.innerHTML = html;
+        }})();
+        }} catch(e) {{ console.error('Cashup history render error:', e); }}
+
+        function applyFilters() {{
+            const from = document.getElementById('dateFrom').value;
+            const to = document.getElementById('dateTo').value;
+            const type = document.getElementById('typeFilter').value;
+            const q = document.getElementById('searchBox').value.trim();
+            let url = '/pos/history?from=' + from + '&to=' + to + '&type=' + type;
+            if (q) url += '&q=' + encodeURIComponent(q);
+            window.location = url;
+        }}
+        
+        function quickFilter(period) {{
+            const today = new Date();
+            let from, to;
+            to = today.toISOString().split('T')[0];
+            
+            if (period === 'today') {{
+                from = to;
+            }} else if (period === 'yesterday') {{
+                const y = new Date(today); y.setDate(y.getDate() - 1);
+                from = to = y.toISOString().split('T')[0];
+            }} else if (period === 'week') {{
+                const d = new Date(today); d.setDate(d.getDate() - d.getDay() + 1); // Monday
+                from = d.toISOString().split('T')[0];
+            }} else if (period === 'month') {{
+                from = today.getFullYear() + '-' + String(today.getMonth()+1).padStart(2,'0') + '-01';
+            }} else if (period === '30days') {{
+                const d = new Date(today); d.setDate(d.getDate() - 30);
+                from = d.toISOString().split('T')[0];
+            }} else if (period === '90days') {{
+                const d = new Date(today); d.setDate(d.getDate() - 90);
+                from = d.toISOString().split('T')[0];
+            }} else if (period === 'year') {{
+                from = today.getFullYear() + '-01-01';
+            }} else if (period === 'all') {{
+                from = '2020-01-01';
+            }}
+            
+            const type = document.getElementById('typeFilter').value;
+            const q = document.getElementById('searchBox').value.trim();
+            let url = '/pos/history?from=' + from + '&to=' + to + '&type=' + type;
+            if (q) url += '&q=' + encodeURIComponent(q);
+            window.location = url;
+        }}
+        
+        function closeModal(id) {{
+            document.getElementById(id).style.display = 'none';
+        }}
+        
+        function printXRead() {{
+            const content = `
+    <div style="text-align:center;margin-bottom:20px;">
+    <strong style="font-size:18px;">X-READ</strong><br>
+    <span style="color:#666;">Interim Report</span><br>
+    <span>{date_desc}</span><br>
+    <span style="font-size:11px;">Printed: ${{new Date().toLocaleTimeString()}}</span>
+    </div>
+    <hr style="border:1px dashed #000;margin:15px 0;">
+    <div style="margin-bottom:15px;">
+    <strong>SALES SUMMARY</strong>
+    </div>
+    <table style="width:100%;border-collapse:collapse;">
+    <tr><td>Cash Sales:</td><td style="text-align:right;">{money(cash_total)}</td></tr>
+    <tr><td>Card Sales:</td><td style="text-align:right;">{money(card_total)}</td></tr>
+    <tr><td>Account Sales:</td><td style="text-align:right;">{money(account_total)}</td></tr>
+    <tr><td>Invoices:</td><td style="text-align:right;">{money(invoice_total)}</td></tr>
+    <tr><td>Quotes:</td><td style="text-align:right;">{money(quote_total)}</td></tr>
+    </table>
+    <hr style="border:1px dashed #000;margin:15px 0;">
+    <table style="width:100%;border-collapse:collapse;">
+    <tr style="font-size:18px;font-weight:bold;">
+    <td>TOTAL:</td>
+    <td style="text-align:right;">{money(grand_total)}</td>
+    </tr>
+    <tr><td>Transactions:</td><td style="text-align:right;">{transaction_count}</td></tr>
+    </table>
+    <hr style="border:1px dashed #000;margin:15px 0;">
+    <div style="text-align:center;color:#666;font-size:11px;">
+    *** X-READ - NOT A CLOSE ***
+    </div>
+            `;
+            document.getElementById('xreadContent').innerHTML = content;
+            document.getElementById('xreadModal').style.display = 'flex';
+        }}
+        
+        const expectedCash = {float(expected_cash_drawer)};
+        
+        function calcCashUp() {{
+            let counted = 0;
+            document.querySelectorAll('.denom-input').forEach((input, idx) => {{
+                const val = parseFloat(input.dataset.val);
+                const qty = parseInt(input.value) || 0;
+                const lineTotal = val * qty;
+                counted += lineTotal;
+                const totalCells = document.querySelectorAll('.denom-total');
+                if (totalCells[idx]) totalCells[idx].textContent = 'R' + lineTotal.toFixed(2);
+            }});
+            
+            document.getElementById('cashCounted').textContent = 'R' + counted.toFixed(2);
+            const diff = counted - expectedCash;
+            const diffEl = document.getElementById('cashDiff');
+            const diffRow = document.getElementById('diffRow');
+            const statusEl = document.getElementById('cashStatus');
+            
+            diffEl.textContent = (diff >= 0 ? 'R' : '-R') + Math.abs(diff).toFixed(2);
+            
+            if (Math.abs(diff) < 0.01) {{
+                diffEl.style.color = '#059669';
+                diffRow.style.color = '#059669';
+                statusEl.style.background = '#d1fae5';
+                statusEl.style.color = '#065f46';
+                statusEl.textContent = 'Cash balances perfectly!';
+            }} else if (diff > 0) {{
+                diffEl.style.color = '#2563eb';
+                diffRow.style.color = '#2563eb';
+                statusEl.style.background = '#dbeafe';
+                statusEl.style.color = '#1e40af';
+                statusEl.textContent = 'R' + diff.toFixed(2) + ' OVER (surplus)';
+            }} else {{
+                diffEl.style.color = '#dc2626';
+                diffRow.style.color = '#dc2626';
+                statusEl.style.background = '#fee2e2';
+                statusEl.style.color = '#991b1b';
+                statusEl.textContent = 'R' + Math.abs(diff).toFixed(2) + ' SHORT (deficit)';
+            }}
+        }}
+        
+        function printZRead() {{
+            // ═══ CHECK: Has day already been closed with a Z-read? ═══
+            fetch('/api/cashup/history?date=' + '{date_from}')
+                .then(r => r.json())
+                .then(data => {{
+                    if (data.success && data.cash_ups) {{
+                        const existing = (data.cash_ups || []).filter(c => c.type === 'z_reading');
+                        if (existing.length > 0) {{
+                            alert('Day has already been closed with a Z-Read. You cannot do another Z-Read.');
+                            return;
+                        }}
+                    }}
+                    _showZReadModal();
+                }})
+                .catch(e => {{
+                    console.log('Z-read check failed, proceeding:', e);
+                    _showZReadModal();
+                }});
+        }}
+        
+        function _showZReadModal() {{
+            // Reset denomination inputs
+            document.querySelectorAll('.denom-input').forEach(input => {{ input.value = 0; }});
+            document.querySelectorAll('.denom-total').forEach(cell => {{ cell.textContent = 'R0.00'; }});
+            document.getElementById('cashCounted').textContent = 'R0.00';
+            document.getElementById('cashDiff').textContent = 'R0.00';
+            document.getElementById('cashDiff').style.color = '#000';
+            document.getElementById('diffRow').style.color = '#000';
+            document.getElementById('cashStatus').textContent = 'Count the cash and enter quantities below';
+            document.getElementById('cashStatus').style.background = '#fef3c7';
+            document.getElementById('cashStatus').style.color = '#92400e';
+            
+            const content = `
+    <div style="text-align:center;margin-bottom:20px;">
+    <strong style="font-size:18px;">Z-READ</strong><br>
+    <span style="color:#666;">End of Day Report</span><br>
+    <span>{date_desc}</span><br>
+    <span style="font-size:11px;">Printed: ${{new Date().toLocaleTimeString()}}</span>
+    </div>
+    <hr style="border:1px dashed #000;margin:15px 0;">
+    <div style="margin-bottom:8px;">
+    <strong>POS SALES</strong>
+    </div>
+    <table style="width:100%;border-collapse:collapse;">
+    <tr><td>Cash (POS):</td><td style="text-align:right;">{money(zr_cash)}</td></tr>
+    <tr><td>Card (POS):</td><td style="text-align:right;">{money(zr_card)}</td></tr>
+    <tr><td>Account (POS):</td><td style="text-align:right;">{money(zr_account)}</td></tr>
+    <tr style="font-weight:bold;border-top:1px solid #000;"><td>POS Total:</td><td style="text-align:right;">{money(zr_total)}</td></tr>
+    <tr><td style="font-size:11px;">Transactions:</td><td style="text-align:right;font-size:11px;">{zr_count}</td></tr>
+    </table>
+    {_zr_inv_section}
+    <hr style="border:2px solid #000;margin:15px 0;">
+    <div style="margin-bottom:8px;">
+    <strong>CASH IN DRAWER (Expected)</strong>
+    </div>
+    <table style="width:100%;border-collapse:collapse;">
+    <tr><td style="font-size:12px;">POS Cash Sales:</td><td style="text-align:right;font-size:12px;">{money(zr_cash)}</td></tr>
+    {_zr_cash_inv_row}
+    <tr style="font-size:18px;font-weight:bold;border-top:1px solid #000;">
+    <td>EXPECTED CASH:</td>
+    <td style="text-align:right;">{money(expected_cash_drawer)}</td>
+    </tr>
+    </table>
+            `;
+            document.getElementById('zreadContent').innerHTML = content;
+            document.getElementById('zreadModal').style.display = 'flex';
+        }}
+        
+        function buildCashCountPrintHtml() {{
+            let html = '<hr style="border:1px dashed #000;margin:15px 0;"><strong>CASH DENOMINATION COUNT</strong><br><br>';
+            html += '<table style="width:100%;border-collapse:collapse;font-size:12px;">';
+            html += '<tr style="font-weight:bold;"><td>Denom</td><td style="text-align:center;">Qty</td><td style="text-align:right;">Total</td></tr>';
+            const denomLabels = ['R200','R100','R50','R20','R10','R5','R2','R1','50c','20c','10c'];
+            document.querySelectorAll('.denom-input').forEach((input, idx) => {{
+                const qty = parseInt(input.value) || 0;
+                if (qty > 0) {{
+                    const val = parseFloat(input.dataset.val);
+                    const lineTotal = val * qty;
+                    html += '<tr><td>' + denomLabels[idx] + '</td><td style="text-align:center;">' + qty + '</td><td style="text-align:right;">R' + lineTotal.toFixed(2) + '</td></tr>';
+                }}
+            }});
+            html += '</table>';
+            
+            const counted = document.getElementById('cashCounted').textContent;
+            const diff = document.getElementById('cashDiff').textContent;
+            const status = document.getElementById('cashStatus').textContent;
+            
+            html += '<hr style="border:1px dashed #000;margin:10px 0;">';
+            html += '<table style="width:100%;border-collapse:collapse;">';
+            html += '<tr style="font-weight:bold;"><td>Counted:</td><td style="text-align:right;">' + counted + '</td></tr>';
+            html += '<tr><td>Expected:</td><td style="text-align:right;">{money(expected_cash_drawer)}</td></tr>';
+            html += '<tr style="font-weight:bold;font-size:16px;"><td>Difference:</td><td style="text-align:right;">' + diff + '</td></tr>';
+            html += '</table>';
+            html += '<div style="text-align:center;margin:10px 0;font-weight:bold;">' + status + '</div>';
+            
+            return html;
+        }}
+        
+        async function confirmZRead() {{
+            const countedText = document.getElementById('cashCounted').textContent;
+            const diffText = document.getElementById('cashDiff').textContent;
+            const status = document.getElementById('cashStatus').textContent;
+            
+            if (!confirm('Close day for {date_desc}?\\n\\n' + status + '\\nCounted: ' + countedText + '\\nDifference: ' + diffText + '\\n\\nThis will mark the day as CLOSED.')) return;
+            
+            // Strip R prefix and commas for numeric storage
+            const countedNum = parseFloat(countedText.replace(/[R,\\s]/g, '')) || 0;
+            const diffNum = parseFloat(diffText.replace(/[R,\\s]/g, '')) || 0;
+            
+            // ═══ SAVE Z-READ TO DATABASE — marks day as closed ═══
+            try {{
+                const resp = await fetch('/api/cashup/save', {{
+                    method: 'POST',
+                    headers: {{ 'Content-Type': 'application/json' }},
+                    body: JSON.stringify({{
+                        type: 'z_reading',
+                        system_cash: {zr_cash},
+                        system_card: {zr_card},
+                        system_account: {zr_account},
+                        system_total: {zr_total},
+                        sale_count: {zr_count},
+                        cash_counted: countedNum,
+                        cash_difference: diffNum,
+                        cash_status: status
+                    }})
+                }});
+                const data = await resp.json();
+                if (!data.success) {{
+                    alert('Z-Read save failed: ' + (data.error || 'Unknown'));
+                }}
+            }} catch(e) {{
+                console.error('Z-Read save error:', e);
+            }}
+            
+            // Build print content with cash count
+            const zContent = document.getElementById('zreadContent').innerHTML;
+            const cashHtml = buildCashCountPrintHtml();
+            
+            const printWindow = window.open('', '_blank', 'width=400,height=700');
+            printWindow.document.write('<html><head><title>Z-Read</title><style>body {{ font-family: monospace; font-size: 14px; padding: 20px; color: #000; max-width: 80mm; margin: 0 auto; }} table {{ width: 100%; border-collapse: collapse; }} td {{ padding: 3px 0; }} @media print {{ @page {{ size: 80mm auto; margin: 5mm; }} }}</style></head><body>' + zContent + cashHtml + '<hr style="border:1px dashed #000;margin:15px 0;"><div style="text-align:center;margin-top:30px;"><div style="border-top:1px solid #000;width:200px;margin:0 auto;padding-top:5px;">Cashier Signature</div></div><div style="text-align:center;color:#666;font-size:11px;margin-top:20px;">*** Z-READ - DAY CLOSED ***</div></body></html>');
+            printWindow.document.close();
+            setTimeout(function() {{ printWindow.print(); }}, 300);
+            closeModal('zreadModal');
+        }}
+        
+        // Close modal on background click
+        document.getElementById('xreadModal').addEventListener('click', function(e) {{
+            if (e.target === this) closeModal('xreadModal');
+        }});
+        document.getElementById('zreadModal').addEventListener('click', function(e) {{
+            if (e.target === this) closeModal('zreadModal');
+        }});
+        </script>
+        
+        <style>
+        @media print {{
+            body * {{ visibility: hidden; }}
+            #xreadContent, #xreadContent *, #zreadContent, #zreadContent * {{ visibility: visible; }}
+            #xreadContent, #zreadContent {{ position: absolute; left: 0; top: 0; width: 80mm; }}
+        }}
+        </style>
         '''
         
-        return render_page("Budget vs Actual", content, user, "reports")
+        return render_page("POS History", content, user, "pos")
     
     
-    # ═══════════════════════════════════════════════════════════════════════════════
-    # TAX SAVER - Help businesses pay ONLY what they legally must
-    # ═══════════════════════════════════════════════════════════════════════════════
+    @app.route("/sale/<sale_id>")
+    @login_required
+    def view_sale(sale_id):
+        """View individual sale/slip - matches POS slip format exactly"""
+        
+        user = Auth.get_current_user()
+        business = Auth.get_current_business()
+        biz_name = business.get("name", "Business") if business else "Business"
+        biz_phone = business.get("phone", "") if business else ""
+        biz_vat = business.get("vat_number", "") if business else ""
+        slip_footer = business.get("pos_slip_footer", "Thank you for your purchase!") if business else "Thank you for your purchase!"
+        
+        sale = db.get_one("sales", sale_id)
+        if not sale:
+            flash("Sale not found", "error")
+            return redirect("/pos/history")
+        
+        # Handle items that might be a list or JSON string
+        items = sale.get("items", [])
+        if isinstance(items, str):
+            try:
+                items = json.loads(items)
+            except:
+                items = []
+        elif not isinstance(items, list):
+            items = []
+        
+        # Build items HTML exactly like POS slip: qty x description | total
+        items_html = ""
+        for item in items:
+            qty = item.get("quantity") or item.get("qty", 1)
+            price = float(item.get("price", 0))
+            total = qty * price
+            item_name = safe_string(item.get("description") or item.get("code") or "Item")
+            items_html += f'<tr><td style="padding:3px 0;font-size:13px;">{qty}x {item_name}</td><td style="text-align:right;padding:3px 0;font-size:13px;white-space:nowrap;">R{total:.2f}</td></tr>'
+        
+        payment_method = sale.get("payment_method", "cash").lower()
+        method_label = {"cash": "💵 CASH", "card": "💳 CARD", "account": "📒 ACCOUNT"}.get(payment_method, payment_method.upper())
+        customer_name = safe_string(sale.get("customer_name") or {"cash": "Countersale", "card": "Countersale", "account": "Countersale"}.get(payment_method, "Countersale"))
+        
+        # Extract sale date/time
+        sale_date = sale.get("date", "-")
+        sale_time = extract_time(sale.get("created_at", ""))
+        sale_number = sale.get("sale_number", "-")
+        
+        # Cash payment details
+        cash_html = ""
+        cash_received = float(sale.get("cash_received", 0) or 0)
+        change_given = float(sale.get("change_given", 0) or 0)
+        if payment_method == "cash" and cash_received > 0:
+            cash_html = f'''
+                <div style="margin-top:8px;padding:8px;background:#f5f5f5;border-radius:6px;">
+                    <div style="display:flex;justify-content:space-between;font-size:14px;padding:2px 0;">
+                        <span>Cash Received</span><span>R{cash_received:.2f}</span>
+                    </div>
+                    <div style="display:flex;justify-content:space-between;font-size:18px;font-weight:bold;padding:2px 0;color:#10b981;">
+                        <span>Change</span><span>R{change_given:.2f}</span>
+                    </div>
+                </div>
+            '''
+        
+        # Rounding details (pre-built to avoid nested f-string in Python 3.11)
+        rounding_html = ""
+        rounding_val = float(sale.get("rounding", 0) or 0)
+        if abs(rounding_val) >= 0.01:
+            sale_total_val = float(sale.get("total", 0))
+            rounding_sign = "+" if rounding_val >= 0 else "-"
+            rounding_abs = abs(rounding_val)
+            rounding_html = f'''<div style="display:flex;justify-content:space-between;font-size:13px;color:#666;padding:2px 0;">
+                        <span>Sub-total</span><span>R{sale_total_val:.2f}</span>
+                    </div>
+                    <div style="display:flex;justify-content:space-between;font-size:13px;color:#666;padding:2px 0;">
+                        <span>Rounding</span><span>{rounding_sign}R{rounding_abs:.2f}</span>
+                    </div>'''
+        
+        # Build slip HTML matching POS format exactly
+        content = f'''
+        <div style="max-width:500px;margin:0 auto;">
+            <a href="/pos/history" style="color:var(--text-muted);display:block;margin-bottom:15px;">← Back to History</a>
+            
+            <div id="reprintContent" class="card" style="background:white;color:#000;padding:12px;font-family:'Courier New',monospace;font-size:13px;">
+                <div style="text-align:center;border-bottom:2px dashed #000;padding-bottom:8px;margin-bottom:8px;">
+                    <div style="font-size:18px;font-weight:bold;">{biz_name}</div>
+                    {f'<div style="font-size:12px;color:#666;">Tel: {biz_phone}</div>' if biz_phone else ''}
+                    {f'<div style="font-size:12px;color:#666;">VAT: {biz_vat}</div>' if biz_vat else ''}
+                    <div style="margin-top:6px;font-size:15px;font-weight:bold;">{sale_number}</div>
+                    <div style="font-size:12px;color:#666;">{sale_date} {sale_time}</div>
+                    {f'<div style="font-size:12px;color:#666;margin-top:2px;">Cashier: {safe_string(sale.get("cashier_name", ""))}</div>' if sale.get("cashier_name") else ''}
+                </div>
+                
+                <div style="margin-bottom:8px;font-size:13px;">
+                    <span style="background:#333;color:white;padding:3px 8px;border-radius:3px;font-size:12px;">{method_label}</span>
+                    <span style="margin-left:8px;font-size:13px;">{customer_name}</span>
+                </div>
+                
+                <table style="width:100%;border-collapse:collapse;margin-bottom:8px;">
+                    {items_html}
+                </table>
+                
+                <div style="border-top:2px dashed #000;padding-top:6px;">
+                    <div style="display:flex;justify-content:space-between;font-size:13px;color:#666;padding:2px 0;">
+                        <span>Subtotal</span><span>R{float(sale.get("subtotal", 0)):.2f}</span>
+                    </div>
+                    <div style="display:flex;justify-content:space-between;font-size:13px;color:#666;padding:2px 0;">
+                        <span>VAT (15%)</span><span>R{float(sale.get("vat", 0)):.2f}</span>
+                    </div>
+                    {rounding_html}
+                    <div style="display:flex;justify-content:space-between;font-size:22px;font-weight:bold;margin-top:6px;">
+                        <span>TOTAL</span><span>R{float(sale.get("payment_total") or sale.get("total", 0)):.2f}</span>
+                    </div>
+                </div>
+                
+                {cash_html}
+                
+                <div style="text-align:center;margin-top:8px;padding-top:8px;border-top:2px dashed #000;font-size:12px;color:#666;">
+                    {slip_footer}
+                </div>
+            </div>
+            
+            <div style="margin-top:20px;display:flex;gap:10px;">
+                <button onclick="reprintSlip('thermal')" class="btn btn-primary" style="flex:1;">🖨️ Thermal Slip</button>
+                <button onclick="reprintSlip('a4')" class="btn btn-secondary" style="flex:1;">🖨️ A4 Print</button>
+            </div>
+        </div>
+        
+        <script>
+        function reprintSlip(format) {{
+            const slipContent = document.getElementById('reprintContent').innerHTML;
+            
+            const styles = format === 'thermal' ?
+                'body {{ width: 72mm; margin: 0; padding: 4mm; font-family: Courier New, monospace; font-size: 16px; font-weight: bold; color: #000; background: #fff; -webkit-print-color-adjust: exact; print-color-adjust: exact; }} * {{ font-weight: bold !important; color: #000 !important; background: transparent !important; }} table {{ width: 100%; border-collapse: collapse; }} td {{ font-weight: bold !important; padding: 2px 0; }} @page {{ size: 80mm auto; margin: 0; }} @media print {{ body {{ width: 72mm; }} }}' :
+                'body {{ width: 210mm; margin: 20mm; font-family: Arial, sans-serif; font-size: 18px; color: #000; background: #fff; }} @page {{ size: A4; margin: 20mm; }}';
+            
+            var fullHtml = '<!DOCTYPE html><html><head><title>POS Slip</title><style>' + styles + '</style></head><body>' + slipContent + '</body></html>';
+            
+            var printWin = window.open('', 'pos_slip_print', 'width=400,height=600,menubar=no,toolbar=no,location=no,status=no');
+            if (printWin) {{
+                printWin.document.open();
+                printWin.document.write(fullHtml);
+                printWin.document.close();
+                var tryPrint = function() {{
+                    try {{ printWin.focus(); printWin.print(); }} catch(e) {{ console.log('[POS] Print error:', e); }}
+                    setTimeout(function() {{ try {{ printWin.close(); }} catch(e) {{}} }}, 2000);
+                }};
+                if (printWin.document.readyState === 'complete') {{ setTimeout(tryPrint, 400); }}
+                else {{ printWin.onload = function() {{ setTimeout(tryPrint, 200); }}; setTimeout(tryPrint, 1500); }}
+            }}
+        }}
+        </script>
+        '''
+        
+        return render_page(f"Sale {sale.get('sale_number', '')}", content, user, "pos")
+    
+    
+    @app.route("/api/pos/email-slip", methods=["POST"])
+    @login_required
+    def api_pos_email_slip():
+        """Email POS slip to customer"""
+        try:
+            data = request.get_json()
+            to_email = data.get("to_email", "").strip()
+            
+            if not to_email or "@" not in to_email:
+                return jsonify({"success": False, "error": "Valid email address required"})
+            
+            business = Auth.get_current_business()
+            biz_name = business.get("name", "Business") if business else "Business"
+            biz_phone = business.get("phone", "") if business else ""
+            biz_vat = business.get("vat_number", "") if business else ""
+            
+            sale_number = data.get("sale_number", "")
+            customer_name = data.get("customer_name", "Customer")
+            items = data.get("items", [])
+            subtotal = float(data.get("subtotal", 0))
+            vat = float(data.get("vat", 0))
+            total = float(data.get("total", 0))
+            payment_method = data.get("payment_method", "cash")
+            
+            # Build items HTML
+            items_html = ""
+            for item in items:
+                desc = item.get("description") or item.get("code", "Item")
+                qty = item.get("quantity", 1)
+                price = float(item.get("price", 0))
+                line_total = float(item.get("total", price * qty))
+                items_html += f'<tr><td style="padding:8px;border-bottom:1px solid #eee;">{qty}x {desc}</td><td style="padding:8px;border-bottom:1px solid #eee;text-align:right;">R{line_total:,.2f}</td></tr>'
+            
+            method_label = {"cash": "💵 Cash", "card": "💳 Card", "account": "📒 Account"}.get(payment_method, payment_method.upper())
+            
+            subject = f"Receipt {sale_number} from {biz_name}"
+            
+            body_html = f'''
+            <html>
+            <body style="font-family: 'Courier New', monospace; padding: 20px; background: #f5f5f5;">
+                <div style="max-width: 400px; margin: 0 auto; background: white; padding: 25px; border-radius: 8px; border: 1px solid #ddd;">
+                    <div style="text-align: center; border-bottom: 2px dashed #333; padding-bottom: 15px; margin-bottom: 15px;">
+                        <div style="font-size: 24px; font-weight: bold;">{biz_name}</div>
+                        {f'<div style="color: #666;">Tel: {biz_phone}</div>' if biz_phone else ''}
+                        {f'<div style="color: #666;">VAT: {biz_vat}</div>' if biz_vat else ''}
+                        <div style="margin-top: 10px; font-size: 18px; font-weight: bold;">{sale_number}</div>
+                    </div>
+                    
+                    <div style="margin-bottom: 15px;">
+                        <span style="background: #333; color: white; padding: 4px 8px; border-radius: 3px; font-size: 12px;">{method_label}</span>
+                        <span style="margin-left: 10px;">{customer_name}</span>
+                    </div>
+                    
+                    <table style="width: 100%; border-collapse: collapse; margin-bottom: 15px;">
+                        {items_html}
+                    </table>
+                    
+                    <div style="border-top: 2px dashed #333; padding-top: 10px;">
+                        <div style="display: flex; justify-content: space-between; color: #666; padding: 4px 0;">
+                            <span>Subtotal</span><span>R{subtotal:,.2f}</span>
+                        </div>
+                        <div style="display: flex; justify-content: space-between; color: #666; padding: 4px 0;">
+                            <span>VAT (15%)</span><span>R{vat:,.2f}</span>
+                        </div>
+                        <div style="display: flex; justify-content: space-between; font-size: 20px; font-weight: bold; margin-top: 10px;">
+                            <span>TOTAL</span><span>R{total:,.2f}</span>
+                        </div>
+                    </div>
+                    
+                    <div style="text-align: center; margin-top: 15px; padding-top: 15px; border-top: 2px dashed #333; color: #666;">
+                        Thank you for your purchase!
+                    </div>
+                </div>
+            </body>
+            </html>
+            '''
+            
+            body_text = f"Receipt {sale_number} from {biz_name}\n\nCustomer: {customer_name}\nPayment: {method_label}\n\nSubtotal: R{subtotal:,.2f}\nVAT: R{vat:,.2f}\nTOTAL: R{total:,.2f}\n\nThank you for your purchase!"
+            
+            success = Email.send(to_email, subject, body_html, body_text, business=business)
+            
+            if success:
+                logger.info(f"[POS] Slip {sale_number} emailed to {to_email}")
+                return jsonify({"success": True, "message": f"Slip emailed to {to_email}"})
+            else:
+                return jsonify({"success": False, "error": "Failed to send email. Check SMTP settings."})
+            
+        except Exception as e:
+            logger.error(f"[POS] Email slip error: {e}")
+            return jsonify({"success": False, "error": str(e)})
+    
+    
+    @app.route("/api/pos/sale", methods=["POST"])
+    @login_required
+    def api_pos_sale():
+        """
+        POS Sale API - with full GL integration
+        
+        GL Flow for POS Sales:
+        
+        CASH/CARD SALE:
+        - Debit: Cash (1100) or Bank (1000) - money in
+        - Credit: Sales (4000) - revenue
+        - Credit: VAT Output (2100) - VAT collected
+        
+        ACCOUNT SALE:
+        - Debit: Debtors (1200) - customer owes us
+        - Credit: Sales (4000) - revenue
+        - Credit: VAT Output (2100) - VAT collected
+        
+        Plus Cost of Sales (if stock has cost):
+        - Debit: Cost of Sales (5000)
+        - Credit: Stock (1300)
+        """
+        
+        user = Auth.get_current_user()
+        business = Auth.get_current_business()
+        biz_id = business.get("id") if business else None
+        
+        try:
+            data = request.get_json()
+            items = data.get("items", [])
+            customer_id = data.get("customer_id", "")
+            payment_method = data.get("payment_method", "cash")
+            # Build sale label: "Counter Sale Cash - Piet" or "Counter Sale Card - Isaac"
+            method_label = {"cash": "Cash", "card": "Card", "account": "Account"}.get(payment_method, "Sale")
+            cashier_display = data.get("cashier_name", "")
+            default_name = f"Counter Sale {method_label} - {cashier_display}" if cashier_display else f"Counter Sale {method_label}"
+            customer_name = data.get("customer_name") or default_name
+            cashier_id = data.get("cashier_id") or (user.get("id") if user else None)
+            
+            # ═══════════════════════════════════════════════════════════════
+            # COUNTER SALE AUTO-LINK (Deon's request 2026-05-06):
+            # If no customer was selected (counter sale), look up the
+            # business's existing "Counter Sale" customer record and link
+            # this sale to it, so the customer's statement/ledger picks up
+            # all counter sales. Also accepts "Countersale" (one word) for
+            # backward compatibility. NEVER auto-creates the record — if
+            # the business hasn't created a "Counter Sale" customer, the
+            # sale stays unlinked (legacy behaviour, no surprise records).
+            # ═══════════════════════════════════════════════════════════════
+            if not customer_id and biz_id:
+                try:
+                    _all_custs = db.get("customers", {"business_id": biz_id}) or []
+                    for _c in _all_custs:
+                        _cn = (_c.get("name") or "").strip().lower()
+                        if _cn in ("counter sale", "countersale", "counter-sale", "counter sales", "countersales"):
+                            customer_id = _c.get("id", "")
+                            customer_name = _c.get("name", customer_name)
+                            logger.info(f"[POS] Counter sale auto-linked to customer '{_c.get('name')}' (id={customer_id})")
+                            break
+                except Exception as _link_err:
+                    logger.warning(f"[POS] Counter sale lookup failed: {_link_err}")
+            
+            logger.info(f"[POS] Sale by cashier_id={cashier_id}, cashier_name={cashier_display}, logged_in_user={user.get('id') if user else 'none'}")
+            
+            if not items:
+                return jsonify({"success": False, "error": "No items in cart"})
+            
+            # Use frontend-calculated values (prices are EXCL VAT, VAT is ADDED)
+            subtotal = Decimal(str(data.get("subtotal", 0)))
+            vat = Decimal(str(data.get("vat", 0)))
+            total = Decimal(str(data.get("total", 0)))
+            
+            # Fallback calculation if frontend didn't send values
+            if subtotal == 0:
+                subtotal = sum(Decimal(str(item.get("total", 0))) for item in items)
+                vat = (subtotal * VAT_RATE).quantize(Decimal("0.01"))
+                total = subtotal + vat
+            
+            # Cash rounding to nearest 10c (SA — 1c/5c phased out)
+            # payment_total = what customer actually pays/tenders (rounded for cash)
+            # rounding = adjustment (positive = customer paid extra, negative = customer paid less)
+            payment_total = Decimal(str(data.get("payment_total", float(total))))
+            rounding_adj = Decimal(str(data.get("rounding", 0))).quantize(Decimal("0.01"))
+            # Safety: if frontend didn't send payment_total but did send rounding, derive it
+            if payment_total == total and rounding_adj != 0:
+                payment_total = (total + rounding_adj).quantize(Decimal("0.01"))
+            # Safety: if frontend sent payment_total but no rounding, derive it
+            if rounding_adj == 0 and payment_total != total:
+                rounding_adj = (payment_total - total).quantize(Decimal("0.01"))
+            
+            # Create sale record
+            sale_id = generate_id()
+            sale_num = f"POS{int(time.time()) % 100000:05d}"
+            sale = {
+                "id": sale_id,
+                "business_id": biz_id,
+                "sale_number": sale_num,
+                "date": today(),
+                "customer_id": safe_uuid(customer_id),
+                "customer_name": customer_name,
+                "payment_method": payment_method,
+                "items": json.dumps(items),
+                "subtotal": float(subtotal),
+                "vat": float(vat),
+                "total": float(total),
+                "payment_total": float(payment_total),
+                "rounding": float(rounding_adj),
+                "created_by": cashier_id,
+                "created_at": now()
+            }
+            
+            success, err = db.save("sales", sale)
+            
+            # If payment_total/rounding columns don't exist yet, retry without them
+            if not success and ("payment_total" in str(err) or "rounding" in str(err)):
+                logger.warning(f"[POS] payment_total/rounding columns missing, retrying without them")
+                sale.pop("payment_total", None)
+                sale.pop("rounding", None)
+                success, err = db.save("sales", sale)
+            
+            # If created_by column doesn't exist, retry without it
+            if not success and "created_by" in str(err):
+                logger.warning(f"[POS] created_by column missing, retrying without it")
+                sale.pop("created_by", None)
+                sale["notes"] = f"Cashier: {data.get('cashier_name', '')}"
+                success, err = db.save("sales", sale)
+            
+            if not success:
+                logger.error(f"[POS] Sale save failed: {err}")
+                return jsonify({"success": False, "error": f"Failed to save sale: {str(err)[:200]}"})
+            
+            # === GL ENTRIES ===
+            
+            # Determine debit account based on payment method
+            if payment_method == "cash":
+                debit_account = "1050"  # Cash On Hand (POS counter cash)
+                debit_name = "Cash"
+            elif payment_method == "card":
+                debit_account = "1000"  # Bank (card payments go to bank)
+                debit_name = "Card"
+            else:  # account
+                debit_account = "1200"  # Debtors
+                debit_name = "Account"
+            
+            # Build journal lines
+            # Cash leg uses payment_total (actual money in drawer / on card / owed by debtor)
+            # Sales + VAT credits stay at original (pre-rounding) values
+            # Rounding adjustment balances the entry via cash_short account
+            journal_lines = [
+                {"account_code": debit_account, "debit": float(payment_total), "credit": 0},  # Cash/Bank/Debtors
+                {"account_code": gl(biz_id, "sales"), "debit": 0, "credit": float(subtotal)},       # Sales
+                {"account_code": gl(biz_id, "vat_output"), "debit": 0, "credit": float(vat)},            # VAT Output
+            ]
+            if rounding_adj > 0:
+                # Customer paid MORE (e.g. R10.04 → R10.10) — small income to cash_short
+                journal_lines.append({"account_code": gl(biz_id, "cash_short"), "debit": 0, "credit": float(rounding_adj)})
+            elif rounding_adj < 0:
+                # Customer paid LESS (e.g. R10.06 → R10.00) — small expense to cash_short
+                journal_lines.append({"account_code": gl(biz_id, "cash_short"), "debit": float(abs(rounding_adj)), "credit": 0})
+            
+            # Create journal entry for the sale
+            create_journal_entry(
+                biz_id,
+                today(),
+                f"POS Sale {sale_num} - {customer_name} ({debit_name})",
+                sale_num,
+                journal_lines
+            )
+            
+            # Update stock quantities and create Cost of Sales entries
+            total_cost = Decimal("0")
+            for item in items:
+                stock_id = item.get("stock_id")
+                qty_sold = int(item.get("quantity", 0))
+                
+                if stock_id:
+                    stock_item = db.get_one_stock(stock_id)
+                    if stock_item:
+                        current_qty = float(stock_item.get("qty") or stock_item.get("quantity") or 0)
+                        new_qty = current_qty - qty_sold
+                        
+                        if qty_sold > 0:
+                            success = db.update_stock(stock_id, {"qty": new_qty, "quantity": new_qty}, biz_id)
+                            if not success:
+                                logger.error(f"[POS] Failed to update stock {stock_id} - qty was {current_qty}, tried to set {new_qty}")
+                            else:
+                                try:
+                                    db.save("stock_movements", RecordFactory.stock_movement(
+                                        business_id=biz_id, stock_id=stock_id, movement_type="out",
+                                        quantity=qty_sold, reference=f"POS Sale {sale_num}"
+                                    ))
+                                except Exception as sm_err: logger.error(f"[STOCK MOVEMENT] Save failed: {sm_err}")
+                        
+                        cost_price = Decimal(str(stock_item.get("cost") or stock_item.get("cost_price") or 0))
+                        line_cost = cost_price * qty_sold
+                        total_cost += line_cost
+            
+            # Create Cost of Sales journal entry (if there's cost)
+            if total_cost > 0:
+                create_journal_entry(
+                    biz_id,
+                    today(),
+                    f"COS - POS Sale {sale_num}",
+                    f"COS-{sale_num}",
+                    [
+                        {"account_code": gl(biz_id, "cogs"), "debit": float(total_cost), "credit": 0},   # Cost of Sales
+                        {"account_code": gl(biz_id, "stock"), "debit": 0, "credit": float(total_cost)},   # Stock
+                    ]
+                )
+            
+            # Update customer balance if account sale
+            if customer_id and payment_method == "account":
+                customer = db.get_one("customers", customer_id)
+                if customer:
+                    new_balance = float(customer.get("balance", 0)) + float(total)
+                    db.update("customers", customer_id, {"balance": new_balance})
+            
+            logger.info(f"[POS] Sale {sale_num}: R{total:.2f} ({payment_method}) - GL entries created")
+            
+            # === ALLOCATION LOG ===
+            try:
+                if log_allocation:
+                    _stock_moves = []
+                    for item in items:
+                        if item.get("stock_id"):
+                            _stock_moves.append({"stock_id": item.get("stock_id"), "code": item.get("code", ""), "description": item.get("description", ""), "qty_change": -int(item.get("quantity", 0))})
+                    log_allocation(
+                        business_id=biz_id, allocation_type="pos_sale", source_table="sales", source_id=sale_id,
+                        description=f"POS Sale {sale_num} - {customer_name} ({debit_name})",
+                        amount=float(total),
+                        gl_entries=[
+                            {"account_code": debit_account, "debit": float(total), "credit": 0},
+                            {"account_code": gl(biz_id, "sales"), "debit": 0, "credit": float(subtotal)},
+                            {"account_code": gl(biz_id, "vat_output"), "debit": 0, "credit": float(vat)},
+                        ],
+                        stock_movements=_stock_moves,
+                        customer_name=customer_name, payment_method=payment_method, reference=sale_num,
+                        transaction_date=today(),
+                        created_by=cashier_id or "", created_by_name=cashier_display or ""
+                    )
+            except Exception:
+                pass
+            
+            return jsonify({
+                "success": True,
+                "message": f"R{total:.2f} - {len(items)} items",
+                "sale_id": sale_id,
+                "sale_number": sale_num
+            })
+            
+        except Exception as e:
+            logger.error(f"[POS] Sale error: {e}")
+            return jsonify({"success": False, "error": str(e)})
+    
+    
+    @app.route("/api/pos/sync-offline", methods=["POST"])
+    @login_required
+    def api_pos_sync_offline():
+        """Process queued offline POS sales — called when internet returns"""
+        try:
+            data = request.get_json() or {}
+            sales_queue = data.get("sales", [])
+            
+            if not sales_queue:
+                return jsonify({"success": True, "synced": 0, "message": "Nothing to sync"})
+            
+            user = Auth.get_current_user()
+            business = Auth.get_current_business()
+            biz_id = business.get("id") if business else None
+            
+            synced = 0
+            errors = []
+            
+            for queued_sale in sales_queue:
+                try:
+                    items = queued_sale.get("items", [])
+                    customer_id = queued_sale.get("customer_id", "")
+                    payment_method = queued_sale.get("payment_method", "cash")
+                    method_label = {"cash": "Cash", "card": "Card", "account": "Account"}.get(payment_method, "Sale")
+                    cashier_display = queued_sale.get("cashier_name", "")
+                    default_name = f"Countersale {method_label} - {cashier_display}" if cashier_display else f"Countersale {method_label}"
+                    customer_name = queued_sale.get("customer_name") or default_name
+                    cashier_id = queued_sale.get("cashier_id") or (user.get("id") if user else None)
+                    
+                    subtotal = Decimal(str(queued_sale.get("subtotal", 0)))
+                    vat = Decimal(str(queued_sale.get("vat", 0)))
+                    total = Decimal(str(queued_sale.get("total", 0)))
+                    
+                    # Cash rounding (offline sales include payment_total/rounding from frontend)
+                    payment_total = Decimal(str(queued_sale.get("payment_total", float(total))))
+                    rounding_adj = Decimal(str(queued_sale.get("rounding", 0))).quantize(Decimal("0.01"))
+                    if payment_total == total and rounding_adj != 0:
+                        payment_total = (total + rounding_adj).quantize(Decimal("0.01"))
+                    if rounding_adj == 0 and payment_total != total:
+                        rounding_adj = (payment_total - total).quantize(Decimal("0.01"))
+                    
+                    # Use original date/time from when sale was made offline
+                    sale_date = queued_sale.get("offline_date") or today()
+                    sale_time = queued_sale.get("offline_time") or now()
+                    
+                    sale_id = generate_id()
+                    sale_num = f"POS{int(time.time()) % 100000:05d}"
+                    
+                    sale = {
+                        "id": sale_id,
+                        "business_id": biz_id,
+                        "sale_number": sale_num,
+                        "date": sale_date,
+                        "customer_id": safe_uuid(customer_id),
+                        "customer_name": customer_name,
+                        "payment_method": payment_method,
+                        "items": json.dumps(items),
+                        "subtotal": float(subtotal),
+                        "vat": float(vat),
+                        "total": float(total),
+                        "payment_total": float(payment_total),
+                        "rounding": float(rounding_adj),
+                        "created_by": cashier_id,
+                        "created_at": sale_time,
+                        "notes": f"OFFLINE SALE — synced {now()}"
+                    }
+                    
+                    success, err = db.save("sales", sale)
+                    if not success and ("payment_total" in str(err) or "rounding" in str(err)):
+                        sale.pop("payment_total", None)
+                        sale.pop("rounding", None)
+                        success, err = db.save("sales", sale)
+                    if not success and "created_by" in str(err):
+                        sale.pop("created_by", None)
+                        sale["notes"] = f"OFFLINE SALE — Cashier: {queued_sale.get('cashier_name', '')} — synced {now()}"
+                        success, err = db.save("sales", sale)
+                    
+                    if not success:
+                        errors.append(f"Sale R{total}: {str(err)[:100]}")
+                        continue
+                    
+                    # GL entries
+                    if payment_method == "cash":
+                        debit_account, debit_name = "1050", "Cash"
+                    elif payment_method == "card":
+                        debit_account, debit_name = "1000", "Card"
+                    else:
+                        debit_account, debit_name = "1200", "Account"
+                    
+                    journal_lines = [
+                        {"account_code": debit_account, "debit": float(payment_total), "credit": 0},
+                        {"account_code": gl(biz_id, "sales"), "debit": 0, "credit": float(subtotal)},
+                        {"account_code": gl(biz_id, "vat_output"), "debit": 0, "credit": float(vat)},
+                    ]
+                    if rounding_adj > 0:
+                        journal_lines.append({"account_code": gl(biz_id, "cash_short"), "debit": 0, "credit": float(rounding_adj)})
+                    elif rounding_adj < 0:
+                        journal_lines.append({"account_code": gl(biz_id, "cash_short"), "debit": float(abs(rounding_adj)), "credit": 0})
+                    
+                    create_journal_entry(
+                        biz_id, sale_date,
+                        f"OFFLINE POS Sale {sale_num} - {customer_name} ({debit_name})",
+                        sale_num,
+                        journal_lines
+                    )
+                    
+                    # Update stock
+                    for item in items:
+                        stock_id = item.get("stock_id")
+                        qty_sold = int(item.get("quantity", 0))
+                        if stock_id and qty_sold > 0:
+                            stock_item = db.get_one_stock(stock_id)
+                            if stock_item:
+                                current_qty = float(stock_item.get("qty") or stock_item.get("quantity") or 0)
+                                new_qty = current_qty - qty_sold
+                                db.update_stock(stock_id, {"qty": new_qty, "quantity": new_qty}, biz_id)
+                    
+                    # Update customer balance for account sales
+                    if payment_method == "account" and customer_id:
+                        try:
+                            cust = db.get_by_id("customers", customer_id)
+                            if cust:
+                                old_bal = float(cust.get("balance") or 0)
+                                db.update("customers", customer_id, {"balance": old_bal + float(total)})
+                        except Exception:
+                            pass
+                    
+                    synced += 1
+                    logger.info(f"[POS OFFLINE SYNC] Sale {sale_num}: R{total:.2f} ({payment_method}) — originally {sale_date} {sale_time}")
+                    
+                except Exception as e:
+                    errors.append(f"Sale error: {str(e)[:100]}")
+            
+            msg = f"Synced {synced}/{len(sales_queue)} offline sales"
+            if errors:
+                msg += f" ({len(errors)} errors)"
+            
+            logger.info(f"[POS OFFLINE SYNC] {msg}")
+            return jsonify({"success": True, "synced": synced, "errors": errors, "message": msg})
+            
+        except Exception as e:
+            logger.error(f"[POS OFFLINE SYNC] Failed: {e}")
+            return jsonify({"success": False, "error": str(e)[:200]})
+    
+    
+    @app.route("/api/pos/quote", methods=["POST"])
+    @login_required
+    def api_pos_quote():
+        """Create quote from POS cart"""
+        
+        user = Auth.get_current_user()
+        business = Auth.get_current_business()
+        biz_id = business.get("id") if business else None
+        
+        try:
+            data = request.get_json()
+            items = data.get("items", [])
+            customer_id = data.get("customer_id", "")
+            customer_name = data.get("customer_name", "")
+            cashier_id = data.get("cashier_id") or (user.get("id") if user else None)
+            cashier_display = data.get("cashier_name") or (user.get("name", "") if user else "")
+            
+            # DEBUG LOG
+            logger.info(f"[POS QUOTE] Received customer_id: '{customer_id}' name: '{customer_name}'")
+            
+            if not items:
+                return jsonify({"success": False, "error": "No items in cart"})
+            
+            if not customer_name:
+                return jsonify({"success": False, "error": "Customer required for quote"})
+            
+            # Use safe_uuid to handle invalid UUIDs (returns None if invalid)
+            safe_customer_id = safe_uuid(customer_id)
+            
+            logger.info(f"[POS QUOTE] UUID valid: {safe_customer_id is not None}, using: {safe_customer_id}")
+            
+            # Use frontend-calculated values (prices are EXCL VAT, VAT is ADDED)
+            subtotal = Decimal(str(data.get("subtotal", 0)))
+            vat = Decimal(str(data.get("vat", 0)))
+            total = Decimal(str(data.get("total", 0)))
+            
+            # Fallback calculation if frontend didn't send values
+            if subtotal == 0:
+                subtotal = sum(Decimal(str(item.get("total", 0))) for item in items)
+                vat = (subtotal * VAT_RATE).quantize(Decimal("0.01"))
+                total = subtotal + vat
+            
+            # Generate quote number
+            existing = db.get("quotes", {"business_id": biz_id}) if biz_id else []
+            quote_num = next_document_number("Q-", existing, "quote_number")
+            
+            # Create quote using RecordFactory
+            user = Auth.get_current_user()
+            pos_salesman_id = data.get("salesman_id") or cashier_id
+            pos_salesman_name = data.get("salesman_name") or cashier_display
+            quote = RecordFactory.quote(
+                business_id=biz_id,
+                customer_id=safe_customer_id,
+                customer_name=customer_name,
+                items=items,
+                quote_number=quote_num,
+                date=today(),
+                subtotal=float(subtotal),
+                vat=float(vat),
+                total=float(total),
+                status="draft",
+                created_by=cashier_id,
+                created_by_name=cashier_display,
+                salesman=pos_salesman_id,
+                salesman_name=pos_salesman_name
+            )
+            quote_id = quote["id"]
+            
+            success, err = db.save("quotes", quote)
+            
+            if success:
+                logger.info(f"[POS] Quote {quote_num} created: R{total:.2f}")
+                AuditLog.log("CREATE", "quotes", quote_id, details=f"Quote from POS - {customer_name}")
+                return jsonify({
+                    "success": True,
+                    "quote_id": quote_id,
+                    "quote_number": quote_num
+                })
+            else:
+                return jsonify({"success": False, "error": str(err)})
+                
+        except Exception as e:
+            logger.error(f"[POS] Quote error: {e}")
+            return jsonify({"success": False, "error": str(e)})
+    
+    
+    @app.route("/api/pos/quick-quote", methods=["POST"])
+    @login_required
+    def api_pos_quick_quote():
+        """
+        Create a quote on-the-fly without needing stock items or saved customer.
+        Customer is created if not exists, items are custom (non-stock).
+        If customer_id is provided, uses existing customer.
+        """
+        
+        user = Auth.get_current_user()
+        business = Auth.get_current_business()
+        biz_id = business.get("id") if business else None
+        
+        try:
+            data = request.get_json()
+            customer_data = data.get("customer", {})
+            items = data.get("items", [])
+            existing_customer_id = data.get("customer_id")  # Pre-selected customer
+            
+            customer_name = customer_data.get("name", "").strip()
+            customer_phone = customer_data.get("phone", "").strip()
+            customer_email = customer_data.get("email", "").strip()
+            customer_vat = customer_data.get("vat_number", "").strip()
+            customer_address = customer_data.get("address", "").strip()
+            
+            if not items:
+                return jsonify({"success": False, "error": "No items in quote"})
+            
+            # Use existing customer if provided
+            if existing_customer_id:
+                customer_id = existing_customer_id
+                # Use the name from the form if provided, otherwise get from DB
+                if not customer_name:
+                    cust = db.get_one("customers", existing_customer_id)
+                    customer_name = cust.get("name", "Customer") if cust else "Customer"
+            else:
+                if not customer_name:
+                    return jsonify({"success": False, "error": "Customer name required"})
+                
+                # Check if customer exists by name/phone, create if not
+                existing_customers = db.get("customers", {"business_id": biz_id}) or []
+                customer_id = None
+                
+                for c in existing_customers:
+                    if c.get("name", "").lower() == customer_name.lower():
+                        customer_id = c.get("id")
+                        # Update VAT if provided and not already set
+                        if customer_vat and not c.get("vat_number"):
+                            db.update("customers", customer_id, {"vat_number": customer_vat})
+                        break
+                    if customer_phone and c.get("phone") == customer_phone:
+                        customer_id = c.get("id")
+                        customer_name = c.get("name", customer_name)
+                        break
+                
+                # Create customer if not found
+                if not customer_id:
+                    new_customer = RecordFactory.customer(
+                        business_id=biz_id,
+                        name=customer_name,
+                        phone=customer_phone,
+                        email=customer_email,
+                        vat_number=customer_vat,
+                        address=customer_address
+                    )
+                    customer_id = new_customer["id"]
+                    db.save("customers", new_customer)
+                    logger.info(f"[QUICK QUOTE] Created new customer: {customer_name}")
+            
+            # Calculate totals - items come with excl VAT prices
+            subtotal = Decimal("0")
+            quote_items = []
+            
+            for item in items:
+                desc = item.get("description", "Item")
+                qty = Decimal(str(item.get("quantity", 1)))
+                price = Decimal(str(item.get("price", 0)))  # Price excl VAT
+                line_total = qty * price
+                subtotal += line_total
+                
+                quote_items.append({
+                    "code": "CUSTOM",
+                    "description": desc,
+                    "quantity": float(qty),
+                    "price": float(price),
+                    "total": float(line_total)
+                })
+            
+            # Prices are EXCL VAT - ADD VAT to get total
+            vat = (subtotal * VAT_RATE).quantize(Decimal("0.01"))
+            total = subtotal + vat
+            
+            # Generate quote number
+            existing_quotes = db.get("quotes", {"business_id": biz_id}) or []
+            quote_num = next_document_number("Q-", existing_quotes, "quote_number")
+            
+            # Create quote
+            qq_salesman_id = data.get("salesman_id") or (user.get("id") if user else None)
+            qq_salesman_name = data.get("salesman_name") or (user.get("name", "") if user else "")
+            quote = RecordFactory.quote(
+                business_id=biz_id,
+                customer_id=customer_id,
+                customer_name=customer_name,
+                items=quote_items,
+                quote_number=quote_num,
+                date=today(),
+                subtotal=float(subtotal),
+                vat=float(vat),
+                total=float(total),
+                status="draft",
+                created_by=user.get("id") if user else None,
+                created_by_name=user.get("name", "") if user else "",
+                salesman=qq_salesman_id,
+                salesman_name=qq_salesman_name
+            )
+            quote_id = quote["id"]
+            
+            success, err = db.save("quotes", quote)
+            
+            if success:
+                logger.info(f"[QUICK QUOTE] Created {quote_num} for {customer_name}: R{total:.2f}")
+                AuditLog.log("CREATE", "quotes", quote_id, details=f"Quick quote - {customer_name}")
+                return jsonify({
+                    "success": True,
+                    "quote_id": quote_id,
+                    "quote_number": quote_num,
+                    "customer_id": customer_id
+                })
+            else:
+                return jsonify({"success": False, "error": str(err)})
+                
+        except Exception as e:
+            logger.error(f"[QUICK QUOTE] Error: {e}")
+            return jsonify({"success": False, "error": str(e)})
+    
+    
+    @app.route("/api/pos/quick-po", methods=["POST"])
+    @login_required
+    def api_pos_quick_po():
+        """
+        Create a PO on-the-fly without needing stock items or saved supplier.
+        Supplier is created if not exists, items are custom (non-stock).
+        If supplier_id is provided, uses existing supplier.
+        """
+        
+        user = Auth.get_current_user()
+        business = Auth.get_current_business()
+        biz_id = business.get("id") if business else None
+        
+        try:
+            data = request.get_json()
+            supplier_data = data.get("supplier", {})
+            items = data.get("items", [])
+            notes = data.get("notes", "")
+            existing_supplier_id = data.get("supplier_id")  # Pre-selected supplier
+            
+            supplier_name = supplier_data.get("name", "").strip()
+            supplier_phone = supplier_data.get("phone", "").strip()
+            supplier_email = supplier_data.get("email", "").strip()
+            supplier_vat = supplier_data.get("vat_number", "").strip()
+            
+            if not items:
+                return jsonify({"success": False, "error": "No items in PO"})
+            
+            # Use existing supplier if provided
+            if existing_supplier_id:
+                supplier_id = existing_supplier_id
+                # Get supplier name if not provided
+                if not supplier_name:
+                    sup = db.get_one("suppliers", existing_supplier_id)
+                    supplier_name = sup.get("name", "Supplier") if sup else "Supplier"
+            else:
+                if not supplier_name:
+                    return jsonify({"success": False, "error": "Supplier name required"})
+                
+                # Check if supplier exists by name/phone, create if not
+                existing_suppliers = db.get("suppliers", {"business_id": biz_id}) or []
+                supplier_id = None
+                
+                for s in existing_suppliers:
+                    if s.get("name", "").lower() == supplier_name.lower():
+                        supplier_id = s.get("id")
+                        # Update VAT if provided and not already set
+                        if supplier_vat and not s.get("vat_number"):
+                            db.update("suppliers", supplier_id, {"vat_number": supplier_vat})
+                        break
+                    if supplier_phone and s.get("phone") == supplier_phone:
+                        supplier_id = s.get("id")
+                        supplier_name = s.get("name", supplier_name)
+                        break
+                
+                # Create supplier if not found
+                if not supplier_id:
+                    new_supplier = RecordFactory.supplier(
+                        business_id=biz_id,
+                        name=supplier_name,
+                        phone=supplier_phone,
+                        email=supplier_email,
+                        vat_number=supplier_vat
+                    )
+                    supplier_id = new_supplier["id"]
+                    db.save("suppliers", new_supplier)
+                    logger.info(f"[QUICK PO] Created new supplier: {supplier_name}")
+            
+            # Build PO items (no prices - PO is just a request)
+            po_items = []
+            total_qty = 0
+            
+            for item in items:
+                desc = item.get("description", "Item")
+                qty = int(item.get("qty", 1))
+                total_qty += qty
+                
+                po_items.append({
+                    "code": "CUSTOM",
+                    "description": desc,
+                    "qty": qty
+                })
+            
+            # Generate PO number using standard next_document_number()
+            existing_pos = db.get("purchase_orders", {"business_id": biz_id}) or []
+            po_num = next_document_number("PO-", existing_pos, field="po_number")
+            
+            # Create PO
+            po = {
+                "id": generate_id(),
+                "business_id": biz_id,
+                "supplier_id": supplier_id,
+                "supplier_name": supplier_name,
+                "po_number": po_num,
+                "date": today(),
+                "items": po_items,
+                "notes": notes,
+                "reference": data.get("reference", ""),
+                "status": "draft",
+                "created_at": now(),
+                "created_by": user.get("id") if user else None
+            }
+            
+            success, err = db.save("purchase_orders", po)
+            
+            if success:
+                logger.info(f"[QUICK PO] Created {po_num} for {supplier_name}: {total_qty} items")
+                AuditLog.log("CREATE", "purchase_orders", po["id"], details=f"Quick PO - {supplier_name}")
+                return jsonify({
+                    "success": True,
+                    "po_id": po["id"],
+                    "po_number": po_num,
+                    "supplier_id": supplier_id
+                })
+            else:
+                return jsonify({"success": False, "error": str(err)})
+                
+        except Exception as e:
+            logger.error(f"[QUICK PO] Error: {e}")
+            return jsonify({"success": False, "error": str(e)})
+    
+    
+    @app.route("/api/pos/invoice", methods=["POST"])
+    @login_required
+    def api_pos_invoice():
+        """Create invoice from POS cart"""
+        
+        user = Auth.get_current_user()
+        business = Auth.get_current_business()
+        biz_id = business.get("id") if business else None
+        
+        try:
+            data = request.get_json()
+            items = data.get("items", [])
+            customer_id = data.get("customer_id", "")
+            customer_name = data.get("customer_name", "")
+            cashier_id = data.get("cashier_id") or (user.get("id") if user else None)
+            cashier_display = data.get("cashier_name") or (user.get("name", "") if user else "")
+            
+            if not items:
+                return jsonify({"success": False, "error": "No items in cart"})
+            
+            # Validate customer_id using safe_uuid
+            safe_customer_id = safe_uuid(customer_id)
+            if not safe_customer_id:
+                return jsonify({"success": False, "error": "Please select a valid customer from the list"})
+            
+            # Use frontend-calculated values (prices are EXCL VAT, VAT is ADDED)
+            subtotal = Decimal(str(data.get("subtotal", 0)))
+            vat = Decimal(str(data.get("vat", 0)))
+            total = Decimal(str(data.get("total", 0)))
+            
+            # Fallback calculation if frontend didn't send values
+            if subtotal == 0:
+                subtotal = sum(Decimal(str(item.get("total", 0))) for item in items)
+                vat = (subtotal * VAT_RATE).quantize(Decimal("0.01"))
+                total = subtotal + vat
+            
+            # Generate invoice number (safe even after deletions)
+            existing = db.get("invoices", {"business_id": biz_id}) if biz_id else []
+            inv_num = next_document_number("INV-", existing, "invoice_number")
+            
+            # Create invoice
+            user = Auth.get_current_user()
+            invoice = RecordFactory.invoice(
+                business_id=biz_id,
+                customer_id=safe_customer_id,
+                customer_name=customer_name,
+                items=items,
+                invoice_number=inv_num,
+                date=today(),
+                due_date=today(),
+                subtotal=float(subtotal),
+                vat=float(vat),
+                total=float(total),
+                status="outstanding",
+                payment_method="account",
+                created_by=cashier_id,
+                created_by_name=cashier_display,
+                salesman=data.get("salesman_id") or cashier_id,
+                salesman_name=data.get("salesman_name") or cashier_display,
+                sales_rep=data.get("salesman_name") or cashier_display
+            )
+            invoice_id = invoice["id"]
+            
+            success, err = db.save("invoices", invoice)
+            
+            if not success:
+                return jsonify({"success": False, "error": str(err)})
+            
+            # Update stock quantities
+            for item in items:
+                stock_id = item.get("stock_id")
+                qty_sold = int(item.get("quantity", 0))
+                
+                if stock_id and qty_sold > 0:
+                    stock_item = db.get_one_stock(stock_id)
+                    if stock_item:
+                        current_qty = float(stock_item.get("qty") or stock_item.get("quantity") or 0)
+                        new_qty = current_qty - qty_sold
+                        db.update_stock(stock_id, {"qty": new_qty, "quantity": new_qty}, biz_id)
+                        logger.info(f"[POS INV] Stock {stock_id}: {current_qty} - {qty_sold} = {new_qty}")
+                        # Log stock movement
+                        try:
+                            db.save("stock_movements", RecordFactory.stock_movement(
+                                business_id=biz_id, stock_id=stock_id, movement_type="out",
+                                quantity=qty_sold, reference=f"Invoice {inv_num}"
+                            ))
+                        except Exception as sm_err: logger.error(f"[STOCK MOVEMENT] Save failed: {sm_err}")
+            
+            # Update customer balance
+            customer = db.get_one("customers", customer_id)
+            if customer:
+                new_balance = float(customer.get("balance", 0)) + float(total)
+                db.update("customers", customer_id, {"balance": new_balance})
+            
+            # Create journal entries (Debit Debtors, Credit Sales + VAT)
+            try:
+                create_journal_entry(biz_id, today(), f"Invoice {inv_num} - {customer_name}", inv_num, [
+                    {"account_code": gl(biz_id, "debtors"), "debit": float(total), "credit": 0},
+                    {"account_code": gl(biz_id, "sales"), "debit": 0, "credit": float(subtotal)},
+                    {"account_code": gl(biz_id, "vat_output"), "debit": 0, "credit": float(vat)},
+                ])
+            except Exception as je:
+                logger.warning(f"[POS INV] Journal entry failed: {je}")
+            
+            logger.info(f"[POS] Invoice {inv_num} created: R{total:.2f}")
+            AuditLog.log("CREATE", "invoices", invoice_id, details=f"Invoice from POS - {customer_name}")
+            
+            return jsonify({
+                "success": True,
+                "invoice_id": invoice_id,
+                "invoice_number": inv_num
+            })
+                
+        except Exception as e:
+            logger.error(f"[POS] Invoice error: {e}")
+            return jsonify({"success": False, "error": str(e)})
+    
+    
+    @app.route("/api/pos/customer-invoices")
+    @login_required
+    def api_pos_customer_invoices():
+        """Get invoices AND sales for a customer (for credit note selection)"""
+        
+        business = Auth.get_current_business()
+        biz_id = business.get("id") if business else None
+        customer_id = request.args.get("customer_id", "")
+        
+        if not customer_id:
+            return jsonify({"success": False, "error": "Customer ID required"})
+        
+        try:
+            # Get invoices
+            all_invoices = db.get("invoices", {"business_id": biz_id}) if biz_id else []
+            invoices = [inv for inv in all_invoices if inv.get("customer_id") == customer_id]
+            
+            # Also get sales for this customer
+            all_sales = db.get("sales", {"business_id": biz_id}) if biz_id else []
+            sales = [s for s in all_sales if s.get("customer_id") == customer_id]
+            
+            # Combine and sort
+            combined = []
+            
+            for inv in invoices:
+                combined.append({
+                    "id": inv.get("id"),
+                    "invoice_number": inv.get("invoice_number", "-"),
+                    "date": inv.get("date", "-"),
+                    "total": float(inv.get("total", 0)),
+                    "status": inv.get("status", "outstanding"),
+                    "type": "invoice"
+                })
+            
+            for sale in sales:
+                combined.append({
+                    "id": sale.get("id"),
+                    "invoice_number": sale.get("sale_number", "-"),
+                    "date": sale.get("date", "-"),
+                    "total": float(sale.get("total", 0)),
+                    "status": "paid",  # Sales are immediate payment
+                    "type": "sale",
+                    "payment_method": sale.get("payment_method", "cash")
+                })
+            
+            # Sort by date descending
+            combined = sorted(combined, key=lambda x: x.get("date", ""), reverse=True)[:20]
+            
+            return jsonify({"success": True, "invoices": combined})
+            
+        except Exception as e:
+            logger.error(f"[POS] Customer invoices error: {e}")
+            return jsonify({"success": False, "error": str(e)})
+    
+    
+    @app.route("/api/pos/credit-note", methods=["POST"])
+    @login_required
+    def api_pos_credit_note():
+        """Create credit note from POS cart"""
+        
+        user = Auth.get_current_user()
+        business = Auth.get_current_business()
+        biz_id = business.get("id") if business else None
+        
+        # ── FRAUD GUARD: Check role for POS credit notes ──
+        try:
+            if FraudGuard:
+                _role = get_user_role()
+                if _role in ("cashier", "pos_only", "waiter"):
+                    return jsonify({"success": False, "error": "Only a manager or owner can issue credit notes from POS. Ask your manager for help."})
+        except Exception:
+            pass
+        
+        try:
+            data = request.get_json()
+            items = data.get("items", [])
+            customer_id = data.get("customer_id", "")
+            customer_name = data.get("customer_name", "")
+            total = Decimal(str(data.get("total", 0)))
+            
+            if not items:
+                return jsonify({"success": False, "error": "No items in cart"})
+            
+            if not customer_id:
+                return jsonify({"success": False, "error": "Customer required for credit note"})
+            
+            # Use frontend-calculated values (prices are EXCL VAT, VAT is ADDED)
+            subtotal = Decimal(str(data.get("subtotal", 0)))
+            vat = Decimal(str(data.get("vat", 0)))
+            total = Decimal(str(data.get("total", 0)))
+            
+            # Fallback calculation if frontend didn't send values
+            if subtotal == 0:
+                subtotal = sum(Decimal(str(item.get("total", 0))) for item in items)
+                vat = (subtotal * VAT_RATE).quantize(Decimal("0.01"))
+                total = subtotal + vat
+            
+            # Generate credit note number
+            existing = db.get("credit_notes", {"business_id": biz_id}) if biz_id else []
+            cn_num = next_document_number("CN-", existing, "credit_note_number")
+            
+            # Create credit note
+            cn_id = generate_id()
+            credit_note = {
+                "id": cn_id,
+                "business_id": biz_id,
+                "credit_note_number": cn_num,
+                "date": today(),
+                "customer_id": customer_id,
+                "customer_name": customer_name,
+                "invoice_id": None,  # Direct credit note, not linked to invoice
+                "items": json.dumps(items),
+                "subtotal": float(subtotal),
+                "vat": float(vat),
+                "total": float(total),
+                "reason": "POS Credit Note",
+                "created_at": now()
+            }
+            
+            success, err = db.save("credit_notes", credit_note)
+            
+            if not success:
+                return jsonify({"success": False, "error": str(err)})
+            
+            # Return stock to inventory
+            for item in items:
+                stock_id = item.get("stock_id")
+                qty_returned = int(item.get("quantity", 0))
+                
+                if stock_id and qty_returned > 0:
+                    stock_item = db.get_one_stock(stock_id)
+                    if stock_item:
+                        current_qty = float(stock_item.get("qty") or stock_item.get("quantity") or 0)
+                        new_qty = current_qty + qty_returned
+                        db.update_stock(stock_id, {"qty": new_qty, "quantity": new_qty}, biz_id)
+                        logger.info(f"[POS CN] Stock {stock_id}: {current_qty} + {qty_returned} = {new_qty}")
+                        # Log stock movement
+                        try:
+                            db.save("stock_movements", RecordFactory.stock_movement(
+                                business_id=biz_id, stock_id=stock_id, movement_type="in",
+                                quantity=qty_returned, reference=f"Credit Note {cn_num}"
+                            ))
+                        except Exception as sm_err: logger.error(f"[STOCK MOVEMENT] Save failed: {sm_err}")
+            
+            # Update customer balance (reduce it)
+            customer = db.get_one("customers", customer_id)
+            if customer:
+                new_balance = float(customer.get("balance", 0)) - float(total)
+                db.update("customers", customer_id, {"balance": new_balance})
+            
+            # Create journal entries (reverse of invoice)
+            # Credit Debtors, Debit Sales + VAT
+            try:
+                create_journal_entry(biz_id, today(), f"Credit Note {cn_num} - {customer_name}", cn_num, [
+                    {"account_code": gl(biz_id, "debtors"), "debit": 0, "credit": float(total)},  # Credit Debtors
+                    {"account_code": gl(biz_id, "sales"), "debit": float(subtotal), "credit": 0},  # Debit Sales
+                    {"account_code": gl(biz_id, "vat_output"), "debit": float(vat), "credit": 0},  # Debit VAT
+                ])
+            except Exception as je:
+                logger.warning(f"[POS CN] Journal entry failed: {je}")
+            
+            logger.info(f"[POS] Credit Note {cn_num} created: -R{total:.2f}")
+            AuditLog.log("CREATE", "credit_notes", cn_id, details=f"Credit Note from POS - {customer_name}")
+            
+            # === ALLOCATION LOG ===
+            try:
+                if log_allocation:
+                    log_allocation(
+                        business_id=biz_id, allocation_type="credit_note", source_table="credit_notes", source_id=cn_id,
+                        description=f"POS Credit Note {cn_num} - {customer_name}",
+                        amount=float(total),
+                        gl_entries=[
+                            {"account_code": gl(biz_id, "debtors"), "debit": 0, "credit": float(total)},
+                            {"account_code": gl(biz_id, "sales"), "debit": float(subtotal), "credit": 0},
+                            {"account_code": gl(biz_id, "vat_output"), "debit": float(vat), "credit": 0},
+                        ],
+                        customer_name=customer_name, reference=cn_num,
+                        transaction_date=today(),
+                        created_by=user.get("id") if user else "", created_by_name=user.get("name", "") if user else ""
+                    )
+            except Exception:
+                pass
+            
+            return jsonify({
+                "success": True,
+                "credit_note_id": cn_id,
+                "credit_note_number": cn_num
+            })
+                
+        except Exception as e:
+            logger.error(f"[POS] Credit note error: {e}")
+            return jsonify({"success": False, "error": str(e)})
+    
+    
+    @app.route("/api/pos/purchase-order", methods=["POST"])
+    @login_required
+    def api_pos_purchase_order():
+        """Create purchase order from POS cart - NO PRICES"""
+        
+        user = Auth.get_current_user()
+        business = Auth.get_current_business()
+        biz_id = business.get("id") if business else None
+        
+        try:
+            data = request.get_json()
+            items = data.get("items", [])
+            supplier_id = data.get("supplier_id", "")
+            supplier_name = data.get("supplier_name", "")
+            
+            if not items:
+                return jsonify({"success": False, "error": "No items in cart"})
+            
+            if not supplier_name:
+                return jsonify({"success": False, "error": "Supplier name required"})
+            
+            # Use provided supplier_id or find/create supplier
+            supplier_email = ""
+            if not supplier_id:
+                suppliers = db.get("suppliers", {"business_id": biz_id, "name": supplier_name}) if biz_id else []
+                if suppliers:
+                    supplier_id = suppliers[0].get("id")
+                    supplier_email = suppliers[0].get("email", "")
+                else:
+                    # Create new supplier
+                    supplier_id = generate_id()
+                    db.save("suppliers", {
+                        "id": supplier_id,
+                        "business_id": biz_id,
+                        "name": supplier_name,
+                        "balance": 0,
+                        "created_at": now()
+                    })
+            else:
+                # Look up supplier email from existing record
+                sup = db.get_one("suppliers", supplier_id)
+                if sup:
+                    supplier_email = sup.get("email", "")
+            
+            # Generate PO number using standard next_document_number()
+            existing = db.get("purchase_orders", {"business_id": biz_id}) if biz_id else []
+            po_num = next_document_number("PO-", existing, field="po_number")
+            
+            # Clean items - remove any prices that might have snuck in
+            clean_items = []
+            for item in items:
+                sid = item.get("stock_id") or ""
+                # Clear fake IDs from custom items
+                if sid.startswith("CUSTOM") or not sid:
+                    sid = None
+                clean_items.append({
+                    "stock_id": sid,
+                    "code": item.get("code", ""),
+                    "description": item.get("description", ""),
+                    "qty": item.get("qty") or item.get("quantity", 1),
+                    "qty_received": 0
+                })
+            
+            # Create purchase order - NO PRICES
+            po_id = generate_id()
+            po = {
+                "id": po_id,
+                "business_id": biz_id,
+                "po_number": po_num,
+                "date": today(),
+                "supplier_id": supplier_id,
+                "supplier_name": supplier_name,
+                "items": json.dumps(clean_items),
+                "status": "draft",
+                "sales_person": data.get("sales_person", ""),
+                "reference": data.get("reference", ""),
+                "created_at": now()
+            }
+            
+            success, err = db.save("purchase_orders", po)
+            
+            if success:
+                logger.info(f"[POS] PO {po_num} created for {supplier_name}")
+                AuditLog.log("CREATE", "purchase_orders", po_id, details=f"PO from POS - {supplier_name}")
+                return jsonify({
+                    "success": True,
+                    "po_id": po_id,
+                    "po_number": po_num
+                })
+            else:
+                return jsonify({"success": False, "error": str(err)})
+                
+        except Exception as e:
+            logger.error(f"[POS] PO error: {e}")
+            return jsonify({"success": False, "error": str(e)})
+    
+    
 
-    logger.info("[REPORTS] All report routes registered ✓")
+    # === BAR / RESTAURANT POS ===
+
+    @app.route("/bar")
+    @login_required
+    def bar_pos():
+        """Bar/Restaurant POS with tables"""
+        
+        user = Auth.get_current_user()
+        business = Auth.get_current_business()
+        biz_id = business.get("id") if business else None
+        
+        # Get stock items (drinks/food) - from BOTH tables
+        items = db.get_all_stock(biz_id) if biz_id else []
+        items = sorted(items, key=lambda x: x.get("description", ""))
+        
+        # Get open tabs/tables
+        tabs = db.get("bar_tabs", {"business_id": biz_id, "status": "open"}) if biz_id else []
+        
+        # Group items by category
+        categories = {}
+        for item in items:
+            cat = item.get("category", "Other")
+            if cat not in categories:
+                categories[cat] = []
+            categories[cat].append(item)
+        
+        # Build category tabs
+        cat_tabs = ""
+        cat_content = ""
+        first = True
+        for cat, cat_items in categories.items():
+            active = "active" if first else ""
+            cat_tabs += f'<button class="tab-btn {active}" onclick="showCategory(this, \'{cat}\')">{cat}</button>'
+            
+            items_html = ""
+            for item in cat_items:
+                items_html += f'''
+                <div class="bar-item" onclick="addToOrder('{item.get("id")}', '{safe_string(item.get("description", ""))}', {item.get("selling_price", 0)})">
+                    <div style="font-weight:bold;">{safe_string(item.get("description", "-"))}</div>
+                    <div style="color:var(--green);">{money(item.get("selling_price", 0))}</div>
+                </div>
+                '''
+            
+            cat_content += f'<div class="cat-items {"" if first else "hidden"}" id="cat-{cat}">{items_html}</div>'
+            first = False
+        
+        # Build tables
+        tables_html = ""
+        for i in range(1, 13):
+            tab = next((t for t in tabs if t.get("table_number") == i), None)
+            status = "occupied" if tab else ""
+            amount = money(tab.get("total", 0)) if tab else ""
+            tables_html += f'''
+            <div class="table-btn {status}" onclick="selectTable({i})">
+                <div style="font-size:20px;">T{i}</div>
+                {f'<div style="font-size:12px;color:var(--green);">{amount}</div>' if amount else ''}
+            </div>
+            '''
+        
+        content = f'''
+        <style>
+        .bar-layout {{ display: grid; grid-template-columns: 1fr 300px; gap: 20px; height: calc(100vh - 200px); }}
+        .bar-items {{ overflow-y: auto; }}
+        .bar-item {{ background: var(--bg-card); padding: 15px; border-radius: 8px; cursor: pointer; margin-bottom: 10px; display: flex; justify-content: space-between; align-items: center; }}
+        .bar-item:hover {{ background: rgba(99,102,241,0.2); }}
+        .tab-btn {{ background: transparent; border: none; color: var(--text-muted); padding: 10px 20px; cursor: pointer; border-bottom: 2px solid transparent; }}
+        .tab-btn.active {{ color: var(--primary); border-bottom-color: var(--primary); }}
+        .hidden {{ display: none; }}
+        .table-btn {{ background: var(--bg-card); padding: 20px; border-radius: 8px; cursor: pointer; text-align: center; }}
+        .table-btn.occupied {{ background: rgba(239,68,68,0.2); border: 2px solid var(--red); }}
+        .table-btn.selected {{ background: rgba(99,102,241,0.3); border: 2px solid var(--primary); }}
+        .order-panel {{ background: var(--bg-card); border-radius: 12px; padding: 15px; display: flex; flex-direction: column; }}
+        .order-items {{ flex: 1; overflow-y: auto; }}
+        .order-item {{ display: flex; justify-content: space-between; padding: 8px 0; border-bottom: 1px solid var(--border); }}
+        @media (max-width: 768px) {{ .bar-layout {{ grid-template-columns: 1fr; }} }}
+        </style>
+        
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:15px;">
+            <h2 style="margin:0;"> Bar POS</h2>
+            <a href="/pos" class="btn btn-secondary">Standard POS</a>
+        </div>
+        
+        <div style="margin-bottom:15px;">
+            <h4 style="margin:0 0 10px 0;color:var(--text-muted);">Tables</h4>
+            <div style="display:grid;grid-template-columns:repeat(6,1fr);gap:10px;">
+                {tables_html}
+            </div>
+        </div>
+        
+        <div class="bar-layout">
+            <div class="bar-items">
+                <div style="display:flex;gap:5px;margin-bottom:15px;flex-wrap:wrap;">
+                    {cat_tabs}
+                </div>
+                {cat_content}
+            </div>
+            
+            <div class="order-panel">
+                <h3 style="margin:0 0 10px 0;">Current Order <span id="tableLabel"></span></h3>
+                <div class="order-items" id="orderItems">
+                    <p style="color:var(--text-muted);text-align:center;">Select a table first</p>
+                </div>
+                <div style="border-top:1px solid var(--border);padding-top:10px;margin-top:10px;">
+                    <div style="display:flex;justify-content:space-between;font-size:20px;font-weight:bold;margin-bottom:15px;">
+                        <span>Total</span>
+                        <span id="orderTotal">R0.00</span>
+                    </div>
+                    <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;">
+                        <button class="btn btn-secondary" onclick="printBill()"> Bill</button>
+                        <button class="btn btn-primary" onclick="payOrder()"> Pay</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+        
+        <script>
+        let currentTable = null;
+        let currentOrder = [];
+        let currentTabId = null;
+        
+        function showCategory(btn, cat) {{
+            document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+            document.querySelectorAll('.cat-items').forEach(c => c.classList.add('hidden'));
+            btn.classList.add('active');
+            document.getElementById('cat-' + cat).classList.remove('hidden');
+        }}
+        
+        function selectTable(num) {{
+            document.querySelectorAll('.table-btn').forEach(t => t.classList.remove('selected'));
+            event.target.closest('.table-btn').classList.add('selected');
+            currentTable = num;
+            document.getElementById('tableLabel').textContent = '- Table ' + num;
+            loadTableOrder(num);
+        }}
+        
+        async function loadTableOrder(tableNum) {{
+            const response = await fetch('/api/bar/table/' + tableNum);
+            const data = await response.json();
+            currentOrder = data.items || [];
+            currentTabId = data.tab_id;
+            renderOrder();
+        }}
+        
+        function addToOrder(itemId, name, price) {{
+            if (!currentTable) {{
+                alert('Select a table first');
+                return;
+            }}
+            currentOrder.push({{ id: itemId, name: name, price: price, qty: 1 }});
+            renderOrder();
+            saveOrder();
+        }}
+        
+        function renderOrder() {{
+            let html = '';
+            let total = 0;
+            currentOrder.forEach((item, i) => {{
+                total += item.price * item.qty;
+                html += '<div class="order-item"><span>' + item.qty + 'x ' + item.name + '</span><span>R' + (item.price * item.qty).toFixed(2) + '</span></div>';
+            }});
+            document.getElementById('orderItems').innerHTML = html || '<p style="color:var(--text-muted);text-align:center;">No items</p>';
+            document.getElementById('orderTotal').textContent = 'R' + total.toFixed(2);
+        }}
+        
+        async function saveOrder() {{
+            await fetch('/api/bar/save-order', {{
+                method: 'POST',
+                headers: {{'Content-Type': 'application/json'}},
+                body: JSON.stringify({{ table: currentTable, items: currentOrder, tab_id: currentTabId }})
+            }});
+        }}
+        
+        async function payOrder() {{
+            if (!currentTable || currentOrder.length === 0) return;
+            if (confirm('Complete payment for Table ' + currentTable + '?')) {{
+                await fetch('/api/bar/pay', {{
+                    method: 'POST',
+                    headers: {{'Content-Type': 'application/json'}},
+                    body: JSON.stringify({{ table: currentTable, tab_id: currentTabId }})
+                }});
+                location.reload();
+            }}
+        }}
+        
+        function printBill() {{
+            if (!currentTable) return;
+            window.open('/bar/bill/' + currentTable, '_blank');
+        }}
+        </script>
+        '''
+        
+        return render_page("Bar POS", content, user, "pos")
+    
+    
+    @app.route("/api/bar/table/<int:table_num>")
+    @login_required
+    def api_bar_table(table_num):
+        """Get table order"""
+        business = Auth.get_current_business()
+        biz_id = business.get("id") if business else None
+        
+        tabs = db.get("bar_tabs", {"business_id": biz_id, "table_number": table_num, "status": "open"}) if biz_id else []
+        tab = tabs[0] if tabs else None
+        
+        if tab:
+            try:
+                items = json.loads(tab.get("items", "[]"))
+            except:
+                items = []
+            return jsonify({"tab_id": tab.get("id"), "items": items})
+        
+        return jsonify({"tab_id": None, "items": []})
+    
+    
+    @app.route("/api/bar/save-order", methods=["POST"])
+    @login_required
+    def api_bar_save_order():
+        """Save table order"""
+        try:
+            data = request.get_json()
+            business = Auth.get_current_business()
+            biz_id = business.get("id") if business else None
+            
+            table_num = data.get("table")
+            items = data.get("items", [])
+            tab_id = data.get("tab_id")
+            
+            total = sum(item.get("price", 0) * item.get("qty", 1) for item in items)
+            
+            if tab_id:
+                # Update existing tab
+                db.save("bar_tabs", {
+                    "id": tab_id,
+                    "items": json.dumps(items),
+                    "total": total
+                })
+            else:
+                # Create new tab
+                tab_id = generate_id()
+                db.save("bar_tabs", {
+                    "id": tab_id,
+                    "business_id": biz_id,
+                    "table_number": table_num,
+                    "items": json.dumps(items),
+                    "total": total,
+                    "status": "open",
+                    "created_at": now()
+                })
+            
+            return jsonify({"success": True, "tab_id": tab_id})
+        except Exception as e:
+            return jsonify({"success": False, "error": str(e)})
+    
+    
+    @app.route("/api/bar/pay", methods=["POST"])
+    @login_required
+    def api_bar_pay():
+        """Close tab and record sale"""
+        try:
+            data = request.get_json()
+            business = Auth.get_current_business()
+            biz_id = business.get("id") if business else None
+            
+            tab_id = data.get("tab_id")
+            
+            if tab_id:
+                tab = db.get_one("bar_tabs", tab_id)
+                if tab:
+                    # Record as POS sale
+                    try:
+                        items = json.loads(tab.get("items", "[]"))
+                    except:
+                        items = []
+                    
+                    total = float(tab.get("total", 0))
+                    vat = total * float(VAT_RATE) / (1 + float(VAT_RATE))
+                    subtotal = total - vat
+                    
+                    db.save("sales", {
+                        "id": generate_id(),
+                        "business_id": biz_id,
+                        "date": today(),
+                        "items": json.dumps(items),
+                        "subtotal": subtotal,
+                        "vat": vat,
+                        "total": total,
+                        "payment_method": "cash",
+                        "source": "bar",
+                        "created_at": now()
+                    })
+                    
+                    # Close tab
+                    db.save("bar_tabs", {"id": tab_id, "status": "closed"})
+            
+            return jsonify({"success": True})
+        except Exception as e:
+            return jsonify({"success": False, "error": str(e)})
+    
+    
+    @app.route("/bar/bill/<int:table_num>")
+    @login_required
+    def bar_bill(table_num):
+        """Print bill for table"""
+        business = Auth.get_current_business()
+        biz_id = business.get("id") if business else None
+        biz_name = business.get("name", "Business") if business else "Business"
+        
+        tabs = db.get("bar_tabs", {"business_id": biz_id, "table_number": table_num, "status": "open"}) if biz_id else []
+        tab = tabs[0] if tabs else None
+        
+        if not tab:
+            return "No open tab for this table"
+        
+        try:
+            items = json.loads(tab.get("items", "[]"))
+        except:
+            items = []
+        
+        items_html = ""
+        for item in items:
+            items_html += f'<tr><td>{item.get("qty", 1)}x {item.get("name", "-")}</td><td style="text-align:right;">{money(item.get("price", 0) * item.get("qty", 1))}</td></tr>'
+        
+        return f'''
+        <html>
+        <head><title>Bill - Table {table_num}</title>
+        <style>
+            body {{ font-family: monospace; max-width: 300px; margin: 20px auto; }}
+            table {{ width: 100%; }}
+            .total {{ font-size: 18px; font-weight: bold; border-top: 2px solid #000; padding-top: 10px; }}
+        </style>
+        </head>
+        <body>
+            <h2 style="text-align:center;">{biz_name}</h2>
+            <p style="text-align:center;">Table {table_num}</p>
+            <hr>
+            <table>{items_html}</table>
+            <hr>
+            <div class="total" style="display:flex;justify-content:space-between;">
+                <span>TOTAL</span>
+                <span>{money(tab.get("total", 0))}</span>
+            </div>
+            <p style="text-align:center;margin-top:20px;color:#666;">Thank you!</p>
+            <script>window.print();</script>
+        </body>
+        </html>
+        '''
+
+
+    # === POS SETTINGS ===
+
+    @app.route("/api/settings/pos", methods=["POST"])
+    @login_required
+    def api_settings_pos():
+        """Save POS print settings"""
+        
+        try:
+            business = Auth.get_current_business()
+            if not business:
+                flash("No business found", "error")
+                return redirect("/settings")
+            
+            updates = {
+                "id": business.get("id"),
+                "pos_auto_print": bool(request.form.get("pos_auto_print")),
+                "pos_print_duplicates": bool(request.form.get("pos_print_duplicates")),
+                "pos_print_format": request.form.get("pos_print_format", "ask"),
+                "pos_slip_footer": request.form.get("pos_slip_footer", "Thank you for your purchase!"),
+            }
+            
+            db.save("businesses", updates)
+            flash("POS settings saved", "success")
+            
+            return redirect("/settings")
+        except Exception as e:
+            logger.error(f"[SETTINGS POS] Error: {e}")
+            flash(f"Error saving POS settings: {str(e)}", "error")
+            return redirect("/settings")
+
+    logger.info("[POS] All POS & Bar routes registered ✓")
+
