@@ -19,6 +19,23 @@ from flask import request, jsonify, session, redirect, flash
 logger = logging.getLogger(__name__)
 
 
+def safe_float(v):
+    """Module-level safe float — tolerates None, 'off', '', 'R1 234,50' etc."""
+    if v is None:
+        return 0.0
+    if isinstance(v, (int, float)):
+        return float(v)
+    if isinstance(v, str):
+        cleaned = v.replace(',', '').replace('R', '').replace('%', '').strip()
+        if not cleaned or cleaned.lower() in ('off', 'on', 'true', 'false', 'null', 'none', '-', ''):
+            return 0.0
+        try:
+            return float(cleaned)
+        except Exception:
+            return 0.0
+    return 0.0
+
+
 def register_payroll_routes(app, db, login_required, Auth, render_page,
                             generate_id, money, safe_string, now, today,
                             gl, create_journal_entry,
@@ -520,20 +537,7 @@ def register_payroll_routes(app, db, login_required, Auth, render_page,
             flash("No employees to run payroll for", "error")
             return redirect("/payroll")
         
-        # Safe float helper
-        def safe_float(v):
-            if v is None:
-                return 0.0
-            if isinstance(v, (int, float)):
-                return float(v)
-            if isinstance(v, str):
-                cleaned = v.replace(',', '').replace('R', '').replace('%', '').strip()
-                if not cleaned or cleaned.lower() in ('off', 'on', 'true', 'false', 'null', 'none', '-', ''):
-                    return 0.0
-                try:
-                    return float(cleaned)
-                except:
-                    return 0.0
+        # safe_float is now defined at module level (used by all routes)
             return 0.0
         
         if request.method == "POST":
@@ -1170,7 +1174,6 @@ def register_payroll_routes(app, db, login_required, Auth, render_page,
         <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:20px;flex-wrap:wrap;gap:10px;">
             <a href="/payroll" style="color:var(--text-muted);">← Back to Payroll</a>
             <a href="/employee/{emp_id}/edit" class="btn btn-secondary">✏️ Edit Employee</a>
-            <a href="/employee/{emp_id}/pay-conditions" class="btn btn-secondary">📋 Pay Conditions</a>
         </div>
         
         <div class="card">
@@ -1267,20 +1270,7 @@ def register_payroll_routes(app, db, login_required, Auth, render_page,
         if not employee:
             return redirect("/payroll")
         
-        def safe_float(v):
-            if v is None:
-                return 0.0
-            if isinstance(v, (int, float)):
-                return float(v)
-            if isinstance(v, str):
-                cleaned = v.replace(',', '').replace('R', '').replace('%', '').strip()
-                if not cleaned or cleaned.lower() in ('off', 'on', 'true', 'false', 'null', 'none', '-', ''):
-                    return 0.0
-                try:
-                    return float(cleaned)
-                except:
-                    return 0.0
-            return 0.0
+        # safe_float is module-level
         
         if request.method == "POST":
             # Get all form values
@@ -1562,11 +1552,7 @@ def register_payroll_routes(app, db, login_required, Auth, render_page,
         biz_name = business.get("name", "Business") if business else "Business"
         
         # Get all values safely
-        def safe_float(v):
-            try:
-                return float(v) if v else 0
-            except:
-                return 0
+        # safe_float is module-level
         
         basic = safe_float(payslip.get("basic", 0))
         gross = safe_float(payslip.get("gross", 0)) or basic
@@ -1706,11 +1692,7 @@ def register_payroll_routes(app, db, login_required, Auth, render_page,
         if not payslip:
             return redirect("/payroll")
         
-        def safe_float(v):
-            try:
-                return float(v) if v else 0
-            except:
-                return 0
+        # safe_float is module-level
         
         if request.method == "POST":
             # Update payslip with form values
