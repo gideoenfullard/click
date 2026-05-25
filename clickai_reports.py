@@ -84,6 +84,14 @@ def register_report_routes(app, db, login_required, Auth, render_page,
                 <h3> Creditors Aging</h3>
                 <p style="color:var(--text-muted)">Supplier aging analysis</p>
             </div>
+            <div class="card" style="cursor:pointer;border:1px solid rgba(99,102,241,0.3);" onclick="window.location='/reports/debtors-all'">
+                <h3> Debtors — All Businesses</h3>
+                <p style="color:var(--text-muted)">Consolidated debtors summary</p>
+            </div>
+            <div class="card" style="cursor:pointer;border:1px solid rgba(99,102,241,0.3);" onclick="window.location='/reports/creditors-all'">
+                <h3> Creditors — All Businesses</h3>
+                <p style="color:var(--text-muted)">Consolidated creditors summary</p>
+            </div>
         </div>
         
         <h3 style="margin:30px 0 10px 0;color:var(--text-muted);">Financial Statements</h3>
@@ -467,7 +475,15 @@ def register_report_routes(app, db, login_required, Auth, render_page,
         '''
         
         content = f'''
-        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:15px;">
+        <style>
+            @media print {{
+                body * {{ visibility: hidden !important; }}
+                #printArea, #printArea * {{ visibility: visible !important; }}
+                #printArea {{ position: absolute; left: 0; top: 0; width: 100%; }}
+                .no-print {{ display: none !important; }}
+            }}
+        </style>
+        <div class="no-print" style="display:flex;justify-content:space-between;align-items:center;margin-bottom:15px;">
             <a href="/reports" style="color:var(--text-muted);">← Back to Reports</a>
             <div style="display:flex;gap:10px;">
                 <button class="btn btn-primary" onclick="document.getElementById('aiInput').value='Email all overdue customers';document.getElementById('sendBtn').click();">[EMAIL] Email All</button>
@@ -475,7 +491,8 @@ def register_report_routes(app, db, login_required, Auth, render_page,
             </div>
         </div>
         
-        <h2 style="margin-bottom:5px;">[FORM] Debtors Report</h2>
+        <div id="printArea">
+        <h2 style="margin-bottom:5px;">{safe_string(business.get("name", "Business") if business else "Business")} — Debtors Report</h2>
         <p style="color:var(--text-muted);margin-bottom:15px;font-size:12px;">As at {today()} - Click customer to see unpaid invoices</p>
         
         <div class="stat-card red" style="margin-bottom:15px;">
@@ -485,6 +502,7 @@ def register_report_routes(app, db, login_required, Auth, render_page,
         
         {header_row}
         {debtors_html or '<div class="card" style="text-align:center;padding:40px;"><p style="color:var(--text-muted);">No outstanding debtors </p></div>'}
+        </div>
         '''
         
         return render_page("Debtors Report", content, user, "reports")
@@ -597,12 +615,21 @@ def register_report_routes(app, db, login_required, Auth, render_page,
         '''
         
         content = f'''
-        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:15px;">
+        <style>
+            @media print {{
+                body * {{ visibility: hidden !important; }}
+                #printArea, #printArea * {{ visibility: visible !important; }}
+                #printArea {{ position: absolute; left: 0; top: 0; width: 100%; }}
+                .no-print {{ display: none !important; }}
+            }}
+        </style>
+        <div class="no-print" style="display:flex;justify-content:space-between;align-items:center;margin-bottom:15px;">
             <a href="/reports" style="color:var(--text-muted);">← Back to Reports</a>
             <button class="btn btn-secondary" onclick="window.print();">🖨️ Print</button>
         </div>
         
-        <h2 style="margin-bottom:5px;">[FORM] Creditors Report</h2>
+        <div id="printArea">
+        <h2 style="margin-bottom:5px;">{safe_string(business.get("name", "Business") if business else "Business")} — Creditors Report</h2>
         <p style="color:var(--text-muted);margin-bottom:15px;font-size:12px;">As at {today()} - Click supplier to see unpaid invoices</p>
         
         <div class="stat-card orange" style="margin-bottom:15px;">
@@ -612,9 +639,128 @@ def register_report_routes(app, db, login_required, Auth, render_page,
         
         {header_row}
         {creditors_html or '<div class="card" style="text-align:center;padding:40px;"><p style="color:var(--text-muted);">No outstanding creditors </p></div>'}
+        </div>
         '''
         
         return render_page("Creditors Report", content, user, "reports")
+    
+    
+    @app.route("/reports/debtors-all")
+    @login_required
+    def report_debtors_all():
+        """Consolidated debtors across all businesses on the account."""
+        user = Auth.get_current_user()
+        businesses = db.get("businesses", {"user_id": user["id"]}) if user else []
+
+        rows = ""
+        grand_total = 0.0
+        for biz in businesses:
+            bid = biz.get("id")
+            customers = db.get("customers", {"business_id": bid}) if bid else []
+            owing = sum(float(c.get("balance", 0)) for c in customers if float(c.get("balance", 0)) > 0)
+            count = sum(1 for c in customers if float(c.get("balance", 0)) > 0)
+            grand_total += owing
+            rows += f'''
+            <tr style="cursor:pointer;border-bottom:1px solid var(--border);" onclick="window.location='/reports/debtors'">
+                <td style="padding:12px 8px;">{safe_string(biz.get("name", "-"))}</td>
+                <td style="padding:12px 8px;text-align:right;">{count}</td>
+                <td style="padding:12px 8px;text-align:right;font-weight:bold;color:var(--red);">{money(owing)}</td>
+                <td style="padding:12px 8px;text-align:right;"><span style="color:var(--accent);font-size:12px;">View details →</span></td>
+            </tr>'''
+
+        content = f'''
+        <style>
+            @media print {{
+                body * {{ visibility: hidden !important; }}
+                #printArea, #printArea * {{ visibility: visible !important; }}
+                #printArea {{ position: absolute; left: 0; top: 0; width: 100%; }}
+                .no-print {{ display: none !important; }}
+            }}
+        </style>
+        <div class="no-print" style="display:flex;justify-content:space-between;align-items:center;margin-bottom:15px;">
+            <a href="/reports" style="color:var(--text-muted);">← Back to Reports</a>
+            <button class="btn btn-secondary" onclick="window.print();">🖨️ Print</button>
+        </div>
+        <div id="printArea">
+        <h2 style="margin-bottom:5px;">All Businesses — Debtors Summary</h2>
+        <p style="color:var(--text-muted);margin-bottom:15px;font-size:12px;">As at {today()} — click a business to see its unpaid invoices</p>
+        <div class="stat-card red" style="margin-bottom:15px;">
+            <div class="stat-value">{money(grand_total)}</div>
+            <div class="stat-label">Total Outstanding across {len(businesses)} businesses</div>
+        </div>
+        <div class="card">
+            <table style="width:100%;border-collapse:collapse;">
+                <thead><tr style="border-bottom:2px solid var(--border);">
+                    <th style="text-align:left;padding:8px;">Business</th>
+                    <th style="text-align:right;padding:8px;">Debtors</th>
+                    <th style="text-align:right;padding:8px;">Outstanding</th>
+                    <th style="padding:8px;"></th>
+                </tr></thead>
+                <tbody>{rows or '<tr><td colspan="4" style="padding:20px;text-align:center;color:var(--text-muted);">No businesses found</td></tr>'}</tbody>
+            </table>
+        </div>
+        </div>
+        '''
+        return render_page("Debtors — All Businesses", content, user, "reports")
+    
+    
+    @app.route("/reports/creditors-all")
+    @login_required
+    def report_creditors_all():
+        """Consolidated creditors across all businesses on the account."""
+        user = Auth.get_current_user()
+        businesses = db.get("businesses", {"user_id": user["id"]}) if user else []
+
+        rows = ""
+        grand_total = 0.0
+        for biz in businesses:
+            bid = biz.get("id")
+            suppliers = db.get("suppliers", {"business_id": bid}) if bid else []
+            owing = sum(float(s.get("balance", 0)) for s in suppliers if float(s.get("balance", 0)) > 0)
+            count = sum(1 for s in suppliers if float(s.get("balance", 0)) > 0)
+            grand_total += owing
+            rows += f'''
+            <tr style="cursor:pointer;border-bottom:1px solid var(--border);" onclick="window.location='/reports/creditors'">
+                <td style="padding:12px 8px;">{safe_string(biz.get("name", "-"))}</td>
+                <td style="padding:12px 8px;text-align:right;">{count}</td>
+                <td style="padding:12px 8px;text-align:right;font-weight:bold;color:#f59e0b;">{money(owing)}</td>
+                <td style="padding:12px 8px;text-align:right;"><span style="color:var(--accent);font-size:12px;">View details →</span></td>
+            </tr>'''
+
+        content = f'''
+        <style>
+            @media print {{
+                body * {{ visibility: hidden !important; }}
+                #printArea, #printArea * {{ visibility: visible !important; }}
+                #printArea {{ position: absolute; left: 0; top: 0; width: 100%; }}
+                .no-print {{ display: none !important; }}
+            }}
+        </style>
+        <div class="no-print" style="display:flex;justify-content:space-between;align-items:center;margin-bottom:15px;">
+            <a href="/reports" style="color:var(--text-muted);">← Back to Reports</a>
+            <button class="btn btn-secondary" onclick="window.print();">🖨️ Print</button>
+        </div>
+        <div id="printArea">
+        <h2 style="margin-bottom:5px;">All Businesses — Creditors Summary</h2>
+        <p style="color:var(--text-muted);margin-bottom:15px;font-size:12px;">As at {today()} — click a business to see its unpaid invoices</p>
+        <div class="stat-card orange" style="margin-bottom:15px;">
+            <div class="stat-value">{money(grand_total)}</div>
+            <div class="stat-label">Total Owed across {len(businesses)} businesses</div>
+        </div>
+        <div class="card">
+            <table style="width:100%;border-collapse:collapse;">
+                <thead><tr style="border-bottom:2px solid var(--border);">
+                    <th style="text-align:left;padding:8px;">Business</th>
+                    <th style="text-align:right;padding:8px;">Creditors</th>
+                    <th style="text-align:right;padding:8px;">Owed</th>
+                    <th style="padding:8px;"></th>
+                </tr></thead>
+                <tbody>{rows or '<tr><td colspan="4" style="padding:20px;text-align:center;color:var(--text-muted);">No businesses found</td></tr>'}</tbody>
+            </table>
+        </div>
+        </div>
+        '''
+        return render_page("Creditors — All Businesses", content, user, "reports")
     
     
     # 

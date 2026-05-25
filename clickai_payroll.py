@@ -343,6 +343,8 @@ def register_payroll_routes(app, db, login_required, Auth, render_page,
                     bank_branch=bank_branch
                 )
                 employee["provident_fund_amount"] = provident_fund_amount
+                employee["employee_code"] = request.form.get("employee_code", "").strip()
+                employee["leave_balance"] = safe_float(request.form.get("leave_balance", 0))
                 emp_id = employee["id"]
 
                 # Pay Conditions — only attach if the schedule was filled in
@@ -403,6 +405,16 @@ def register_payroll_routes(app, db, login_required, Auth, render_page,
                     <div>
                         <label style="display:block;margin-bottom:5px;font-weight:500;">Tax Number</label>
                         <input type="text" name="tax_number" style="width:100%;padding:10px;border-radius:6px;border:1px solid var(--border);background:var(--card);color:var(--text);">
+                    </div>
+                </div>
+                <div style="display:grid;grid-template-columns:1fr 1fr;gap:15px;margin-bottom:15px;">
+                    <div>
+                        <label style="display:block;margin-bottom:5px;font-weight:500;">Employee Code</label>
+                        <input type="text" name="employee_code" placeholder="e.g., DAP001" style="width:100%;padding:10px;border-radius:6px;border:1px solid var(--border);background:var(--card);color:var(--text);">
+                    </div>
+                    <div>
+                        <label style="display:block;margin-bottom:5px;font-weight:500;">Leave Balance (days)</label>
+                        <input type="number" step="0.0001" name="leave_balance" value="0" style="width:100%;padding:10px;border-radius:6px;border:1px solid var(--border);background:var(--card);color:var(--text);">
                     </div>
                 </div>
                 
