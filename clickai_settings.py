@@ -18,6 +18,13 @@ from flask import request, jsonify, session, redirect, flash
 
 logger = logging.getLogger(__name__)
 
+# ── Account limits ──────────────────────────────────────────────────────────
+# Maximum businesses a single account may create. Central constant so the
+# limit lives in ONE place. When plan-based limits are built later, this
+# becomes the default/free-tier value and higher plans override it.
+MAX_BUSINESSES_PER_ACCOUNT = 3
+
+
 # Environment variables used by settings
 SMTP_HOST = os.environ.get("SMTP_HOST", "smtp.gmail.com")
 SMTP_PORT = int(os.environ.get("SMTP_PORT", "587"))
@@ -1591,9 +1598,9 @@ def register_settings_routes(app, db, login_required, Auth, render_page,
                 user_id = user.get("id")
                 existing_businesses = db.get("businesses", {"user_id": user_id}) or []
                 
-                # MAXIMUM 2 BUSINESSES PER USER!
-                if len(existing_businesses) >= 2:
-                    # Return error - user already has 2 businesses
+                # MAXIMUM BUSINESSES PER USER (central constant)
+                if len(existing_businesses) >= MAX_BUSINESSES_PER_ACCOUNT:
+                    # Return error - user already at the business limit
                     return f'''
                     <html>
                     <head>
@@ -1609,7 +1616,7 @@ def register_settings_routes(app, db, login_required, Auth, render_page,
                     <body>
                         <div class="card">
                             <h2>[!] Business Limit Reached</h2>
-                            <p>You can only create <strong>2 businesses</strong> per account.</p>
+                            <p>You can only create <strong>{MAX_BUSINESSES_PER_ACCOUNT} businesses</strong> per account.</p>
                             <p>You already have:</p>
                             <ul style="text-align:left;">
                                 {"".join(f"<li>{b.get('business_name', b.get('name', 'Unnamed'))}</li>" for b in existing_businesses)}
@@ -1955,6 +1962,11 @@ def register_settings_routes(app, db, login_required, Auth, render_page,
         
         try:
             user = Auth.get_current_user()
+            
+            # Enforce the same business limit as the settings page
+            _existing = db.get("businesses", {"user_id": user.get("id")}) if user else []
+            if len(_existing or []) >= MAX_BUSINESSES_PER_ACCOUNT:
+                return jsonify({"success": False, "error": f"Business limit reached ({MAX_BUSINESSES_PER_ACCOUNT} per account)"})
             
             data = request.get_json() if request.is_json else request.form
             name = data.get("name", "New Business") if data else "New Business"

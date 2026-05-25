@@ -21482,9 +21482,10 @@ def render_page(title: str, content: str, user: dict = None, active: str = "") -
         display_name = b.get("name") or b.get("business_name", "Unnamed Business")
         biz_options += f'<option value="{b.get("id")}" {selected}>{display_name}</option>'
     
-    # Show "+" link only if user has less than 2 businesses
-    can_add_business = len(businesses) < 2
-    add_business_link = '<a href="/settings?action=new" class="new-link" style="color:var(--primary);font-size:10px;margin-left:5px;" title="Add 2nd business">+</a>' if can_add_business else ''
+    # Show "+" link only if under the business limit
+    # NOTE: keep this in sync with MAX_BUSINESSES_PER_ACCOUNT in clickai_settings.py
+    can_add_business = len(businesses) < 3
+    add_business_link = '<a href="/settings?action=new" class="new-link" style="color:var(--primary);font-size:10px;margin-left:5px;" title="Add business">+</a>' if can_add_business else ''
     
     if role == "pos_only":
         business_html = f'<span style="color:var(--text-muted);font-size:11px;">{biz_name}</span>'
