@@ -20855,6 +20855,15 @@ select.form-input optgroup {
         font-size: 12pt;
         margin: 0;
         padding: 0;
+        position: static !important;
+        overflow: visible !important;
+        height: auto !important;
+        max-height: none !important;
+    }
+    html {
+        position: static !important;
+        overflow: visible !important;
+        height: auto !important;
     }
     
     /* Remove dark theme */
@@ -20875,6 +20884,14 @@ select.form-input optgroup {
         height: auto !important;
         max-height: none !important;
         overflow: visible !important;
+    }
+
+    /* Any full-screen pinned wrapper must release for print */
+    .nav-wrapper, #appRoot, .app-shell, .screen, .page-wrap {
+        position: static !important;
+        overflow: visible !important;
+        height: auto !important;
+        max-height: none !important;
     }
     
     /* Card styles - DO NOT prevent page break, let content flow */
