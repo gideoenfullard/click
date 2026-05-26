@@ -308,7 +308,7 @@ def register_report_routes(app, db, login_required, Auth, render_page,
                 #printArea {{ display: block !important; }}
                 #printArea .card {{ break-inside: avoid; }}
                 #printArea tr {{ break-inside: avoid; }}
-                @page {{ size: A4 landscape; margin: 12mm; }}
+                @page {{ size: A4; margin: 12mm; }}
             }}
         </style>
         <div class="no-print" style="display:flex;justify-content:space-between;align-items:center;margin-bottom:20px;">
@@ -952,7 +952,7 @@ def register_report_routes(app, db, login_required, Auth, render_page,
                 #printArea {{ display: block !important; }}
                 #printArea .card {{ break-inside: avoid; }}
                 #printArea tr {{ break-inside: avoid; }}
-                @page {{ size: A4 landscape; margin: 12mm; }}
+                @page {{ size: A4; margin: 12mm; }}
             }}
         </style>
         <div class="no-print" style="display:flex;justify-content:space-between;align-items:center;margin-bottom:20px;">
