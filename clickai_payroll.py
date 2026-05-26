@@ -1080,9 +1080,42 @@ def register_payroll_routes(app, db, login_required, Auth, render_page,
             ts_note = '<div class="card" style="margin-top:15px;"><p style="color:var(--text-muted);">No timesheet hours captured for this month.</p></div>'
         
         content = f'''
-        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:15px;">
+        <style>
+            .print-only {{ display: none; }}
+            @media print {{ .print-only {{ display: block !important; }} }}
+            @media print {{ .no-print {{ display: none !important; }} }}
+        </style>
+        <div class="no-print" style="display:flex;justify-content:space-between;align-items:center;margin-bottom:15px;">
             <a href="/payroll/run" style="color:var(--text-muted);">← Back to Run Payroll</a>
             <span style="background:rgba(245,158,11,0.2);border:1px solid #f59e0b;border-radius:6px;padding:5px 12px;font-size:12px;font-weight:600;">PREVIEW — not yet created</span>
+        </div>
+
+        <div class="print-only" style="background:white;color:#333;max-width:720px;margin:0 auto;padding:30px 30px 0;">
+            <div style="display:flex;justify-content:space-between;margin-bottom:12px;padding-bottom:12px;border-bottom:2px solid #333;">
+                <div>
+                    <h2 style="color:#333;margin:0;font-size:17px;">{safe_string(biz_name)}</h2>
+                    <p style="color:#666;margin:4px 0 0;font-size:12px;">{safe_string(biz_addr)}</p>
+                </div>
+                <div style="text-align:right;">
+                    <h1 style="color:#333;margin:0;font-size:20px;">PAYSLIP</h1>
+                    <p style="color:#666;margin:4px 0 0;font-size:12px;">Pay Date: {_today}</p>
+                </div>
+            </div>
+            <table style="width:100%;font-size:12px;color:#444;">
+                <tr>
+                    <td style="padding:3px 0;width:50%;"><strong>Employee:</strong> {safe_string(emp.get("name", "-"))}</td>
+                    <td style="padding:3px 0;"><strong>Employee Code:</strong> {safe_string(emp_code)}</td>
+                </tr>
+                <tr>
+                    <td style="padding:3px 0;"><strong>Job Title:</strong> {safe_string(emp_position) or "-"}</td>
+                    <td style="padding:3px 0;"><strong>ID Number:</strong> {safe_string(emp_id_num)}</td>
+                </tr>
+                <tr>
+                    <td style="padding:3px 0;"><strong>Employed From:</strong> {safe_string(emp_started)}</td>
+                    <td style="padding:3px 0;"><strong>Rate per Hour:</strong> {money(emp_rate) if emp_rate > 0 else "-"}</td>
+                </tr>
+            </table>
+            <div style="margin-top:14px;border-top:1px dashed #999;text-align:center;color:#999;font-size:9px;letter-spacing:2px;padding-top:4px;">FOLD HERE</div>
         </div>
 
         <div class="card" style="background:white;color:#333;max-width:720px;margin:0 auto;padding:30px;">
@@ -1856,6 +1889,8 @@ def register_payroll_routes(app, db, login_required, Auth, render_page,
         content = f'''
         <style>
             @media print {{ .no-print {{ display: none !important; }} }}
+            .print-only {{ display: none; }}
+            @media print {{ .print-only {{ display: block !important; }} }}
         </style>
         
         <div class="no-print" style="display:flex;justify-content:space-between;align-items:center;margin-bottom:20px;">
@@ -1865,6 +1900,34 @@ def register_payroll_routes(app, db, login_required, Auth, render_page,
                 <button class="btn btn-primary" onclick="window.print();">🖨️ Print</button>
                 <a href="/payslip/{payslip_id}/delete" class="btn" style="background:var(--red);color:white;" onclick="return confirm('Delete this payslip?');">🗑️ Delete</a>
             </div>
+        </div>
+
+        <div class="print-only" style="background:white;color:#333;max-width:720px;margin:0 auto;padding:30px 30px 0;">
+            <div style="display:flex;justify-content:space-between;margin-bottom:12px;padding-bottom:12px;border-bottom:2px solid #333;">
+                <div>
+                    <h2 style="color:#333;margin:0;font-size:17px;">{safe_string(biz_name)}</h2>
+                    <p style="color:#666;margin:4px 0 0;font-size:12px;">{safe_string(biz_addr)}</p>
+                </div>
+                <div style="text-align:right;">
+                    <h1 style="color:#333;margin:0;font-size:20px;">PAYSLIP</h1>
+                    <p style="color:#666;margin:4px 0 0;font-size:12px;">Pay Date: {payslip.get("date", "-")}</p>
+                </div>
+            </div>
+            <table style="width:100%;font-size:12px;color:#444;">
+                <tr>
+                    <td style="padding:3px 0;width:50%;"><strong>Employee:</strong> {safe_string(payslip.get("employee_name", "-"))}</td>
+                    <td style="padding:3px 0;"><strong>Employee Code:</strong> {safe_string(emp_code)}</td>
+                </tr>
+                <tr>
+                    <td style="padding:3px 0;"><strong>Job Title:</strong> {safe_string(emp_position) or "-"}</td>
+                    <td style="padding:3px 0;"><strong>ID Number:</strong> {safe_string(emp_id_num)}</td>
+                </tr>
+                <tr>
+                    <td style="padding:3px 0;"><strong>Employed From:</strong> {safe_string(emp_started)}</td>
+                    <td style="padding:3px 0;"><strong>Rate per Hour:</strong> {money(emp_rate) if emp_rate > 0 else "-"}</td>
+                </tr>
+            </table>
+            <div style="margin-top:14px;border-top:1px dashed #999;text-align:center;color:#999;font-size:9px;letter-spacing:2px;padding-top:4px;">FOLD HERE</div>
         </div>
         
         <div class="card" id="payslipPrint" style="background:white;color:#333;max-width:720px;margin:0 auto;padding:30px;">
