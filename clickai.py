@@ -2342,6 +2342,55 @@ def next_document_number(prefix: str, existing_docs: list, field: str = "invoice
                     max_num = num
     return f"{prefix}{max_num + 1:05d}"
 
+# ──────────────────────────────────────────────────────────────────────────
+# PAYMENT ALLOCATIONS — links a receipt to specific invoices.
+# The payment_allocations table is the source of truth for who paid what.
+# An invoice's amount_paid / status are derived from it (cached for speed).
+# ──────────────────────────────────────────────────────────────────────────
+
+def get_invoice_allocations(biz_id: str, invoice_id: str) -> list:
+    """All allocation rows posted against one invoice."""
+    if not biz_id or not invoice_id:
+        return []
+    try:
+        return db.get("payment_allocations",
+                      {"business_id": biz_id, "invoice_id": invoice_id}) or []
+    except Exception as e:
+        logger.warning(f"[ALLOC] get_invoice_allocations failed: {e}")
+        return []
+
+
+def invoice_allocated_total(biz_id: str, invoice_id: str) -> float:
+    """Sum of all amounts allocated to one invoice."""
+    return round(sum(float(a.get("amount", 0) or 0)
+                     for a in get_invoice_allocations(biz_id, invoice_id)), 2)
+
+
+def recalc_invoice_status(biz_id: str, invoice_id: str) -> dict:
+    """Recompute one invoice's amount_paid + status from its allocations,
+    then write the derived values back to the invoice (cache).
+    payment_allocations stays the source of truth — this can be re-run any
+    time to repair an invoice whose status has drifted.
+    Returns {"allocated": x, "total": y, "status": "paid"/"unpaid"}.
+    """
+    inv = db.get_one("invoices", invoice_id)
+    if not inv:
+        return {"allocated": 0.0, "total": 0.0, "status": "unknown"}
+    total = round(float(inv.get("total", 0) or 0), 2)
+    allocated = invoice_allocated_total(biz_id, invoice_id)
+    cur_status = (inv.get("status") or "").lower()
+    # Never override a credited/reversed invoice — those are final states.
+    if cur_status in ("credited", "reversed"):
+        return {"allocated": allocated, "total": total, "status": cur_status}
+    new_status = "paid" if allocated >= total and total > 0 else "unpaid"
+    try:
+        db.update("invoices", invoice_id,
+                  {"amount_paid": allocated, "status": new_status}, biz_id)
+    except Exception as e:
+        logger.warning(f"[ALLOC] recalc_invoice_status update failed: {e}")
+    return {"allocated": allocated, "total": total, "status": new_status}
+
+
 def extract_time(timestamp_str) -> str:
     """Extract HH:MM from any timestamp format, converted to SA time (UTC+2)
     Handles: 2026-02-16T18:57:32+00:00, 2026-02-16T18:57:32.123456+00:00, 
@@ -27710,6 +27759,47 @@ def customer_view(customer_id):
     # Pre-build customer name for GL Trail link (avoid backslash in f-string)
     _cust_name_for_link = safe_string(customer.get("name", ""))
     
+    # ── Open invoices for the Record Payment allocation list ──
+    # An invoice is "open" if it is not paid/credited/reversed and still has
+    # an outstanding amount (total minus what is already allocated to it).
+    _open_invoices = []
+    for _inv in invoices:
+        _st = (_inv.get("status") or "").lower()
+        if _st in ("paid", "credited", "reversed"):
+            continue
+        _inv_total = round(float(_inv.get("total", 0) or 0), 2)
+        if _inv_total <= 0:
+            continue
+        _already = invoice_allocated_total(biz_id, _inv.get("id", ""))
+        _outstanding = round(_inv_total - _already, 2)
+        if _outstanding <= 0:
+            continue
+        _open_invoices.append({
+            "id": _inv.get("id", ""),
+            "number": _inv.get("invoice_number", "-"),
+            "date": _inv.get("date", "-"),
+            "outstanding": _outstanding
+        })
+    # Oldest first — auto-allocate works through them in age order
+    _open_invoices.sort(key=lambda x: x["date"])
+    
+    _alloc_rows_html = ""
+    for _oi in _open_invoices:
+        _alloc_rows_html += f'''
+        <div style="display:flex;align-items:center;gap:10px;padding:8px 0;border-bottom:1px solid var(--border);">
+            <div style="flex:1;font-size:13px;">
+                <strong>{safe_string(_oi["number"])}</strong>
+                <span style="color:var(--text-muted);"> · {_oi["date"]}</span><br>
+                <span style="color:var(--text-muted);font-size:12px;">Outstanding: {money(_oi["outstanding"])}</span>
+            </div>
+            <input type="number" class="cpAllocAmt" data-invid="{_oi["id"]}" data-outstanding="{_oi["outstanding"]}"
+                   placeholder="0.00" step="0.01" min="0" max="{_oi["outstanding"]}"
+                   style="width:110px;padding:8px;border:1px solid var(--border);border-radius:6px;background:var(--bg);color:var(--text);text-align:right;">
+        </div>
+        '''
+    if not _alloc_rows_html:
+        _alloc_rows_html = '<p style="color:var(--text-muted);font-size:13px;padding:8px 0;">No open invoices — this payment will go on account.</p>'
+    
     content = f'''
     <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:20px;">
         <a href="/customers" style="color:var(--text-muted);">← Back to Customers</a>
@@ -28190,8 +28280,21 @@ def customer_view(customer_id):
             amount: amount,
             method: document.getElementById('cpMethod').value,
             date: document.getElementById('cpDate').value,
-            reference: document.getElementById('cpRef').value.trim()
+            reference: document.getElementById('cpRef').value.trim(),
+            allocations: cpCollectAllocations()
         }};
+        
+        // Guard: total allocated may not exceed the payment amount
+        let _allocSum = 0;
+        data.allocations.forEach(function(a) {{ _allocSum += a.amount; }});
+        if (_allocSum > amount + 0.001) {{
+            msg.style.display = 'block';
+            msg.style.color = 'var(--red)';
+            msg.textContent = 'Allocated total (R' + _allocSum.toFixed(2) + ') is more than the payment amount';
+            btn.disabled = false;
+            btn.textContent = 'Receive Now';
+            return;
+        }}
         
         fetch('/api/customer/record-payment', {{
             method: 'POST',
@@ -28222,6 +28325,58 @@ def customer_view(customer_id):
         }});
     }}
     
+    // Collect non-zero invoice allocations from the modal
+    function cpCollectAllocations() {{
+        const out = [];
+        document.querySelectorAll('.cpAllocAmt').forEach(function(inp) {{
+            const amt = parseFloat(inp.value) || 0;
+            if (amt > 0) {{
+                out.push({{ invoice_id: inp.dataset.invid, amount: Math.round(amt * 100) / 100 }});
+            }}
+        }});
+        return out;
+    }}
+    
+    // Auto-allocate: spread the entered amount across open invoices, oldest first
+    function cpAutoAllocate() {{
+        let remaining = parseFloat(document.getElementById('cpAmount').value) || 0;
+        document.querySelectorAll('.cpAllocAmt').forEach(function(inp) {{
+            const outstanding = parseFloat(inp.dataset.outstanding) || 0;
+            if (remaining <= 0) {{ inp.value = ''; return; }}
+            const give = Math.min(remaining, outstanding);
+            inp.value = give > 0 ? give.toFixed(2) : '';
+            remaining = Math.round((remaining - give) * 100) / 100;
+        }});
+        cpUpdateAllocSummary();
+    }}
+    
+    // Show how much of the payment is allocated vs left on account
+    function cpUpdateAllocSummary() {{
+        const summary = document.getElementById('cpAllocSummary');
+        if (!summary) return;
+        const amount = parseFloat(document.getElementById('cpAmount').value) || 0;
+        let allocated = 0;
+        document.querySelectorAll('.cpAllocAmt').forEach(function(inp) {{
+            allocated += parseFloat(inp.value) || 0;
+        }});
+        allocated = Math.round(allocated * 100) / 100;
+        const remainder = Math.round((amount - allocated) * 100) / 100;
+        if (amount <= 0) {{
+            summary.textContent = 'Unallocated remainder stays on the customer account.';
+            summary.style.color = 'var(--text-muted)';
+        }} else if (allocated > amount + 0.001) {{
+            summary.textContent = 'Allocated R' + allocated.toFixed(2) + ' — more than the payment amount';
+            summary.style.color = 'var(--red)';
+        }} else {{
+            summary.textContent = 'Allocated R' + allocated.toFixed(2) + ' · On account R' + remainder.toFixed(2);
+            summary.style.color = 'var(--text-muted)';
+        }}
+    }}
+    
+    document.querySelectorAll('.cpAllocAmt').forEach(function(inp) {{
+        inp.addEventListener('input', cpUpdateAllocSummary);
+    }});
+    
     // Set today's date when page loads (if modal exists)
     if (document.getElementById('cpDate')) {{
         document.getElementById('cpDate').value = new Date().toISOString().split('T')[0];
@@ -28235,7 +28390,7 @@ def customer_view(customer_id):
     
     <!-- Record Payment Modal (customer) -->
     <div id="paymentModal" style="display:none;position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.7);z-index:9999;justify-content:center;align-items:center;">
-        <div style="background:var(--card);border-radius:12px;padding:30px;width:90%;max-width:500px;border:1px solid var(--border);">
+        <div style="background:var(--card);border-radius:12px;padding:30px;width:90%;max-width:560px;max-height:90vh;overflow-y:auto;border:1px solid var(--border);">
             <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:20px;">
                 <h2 style="margin:0;">💰 Record Payment</h2>
                 <button onclick="document.getElementById('paymentModal').style.display='none'" style="background:none;border:none;color:var(--text-muted);font-size:24px;cursor:pointer;">&times;</button>
@@ -28262,7 +28417,17 @@ def customer_view(customer_id):
                 </div>
                 <div>
                     <label style="display:block;margin-bottom:4px;font-weight:600;font-size:13px;">Reference / Note</label>
-                    <input type="text" id="cpRef" placeholder="e.g. INV-001, POP ref, etc." style="width:100%;padding:10px;border:1px solid var(--border);border-radius:6px;background:var(--bg);color:var(--text);">
+                    <input type="text" id="cpRef" placeholder="e.g. POP ref, etc." style="width:100%;padding:10px;border:1px solid var(--border);border-radius:6px;background:var(--bg);color:var(--text);">
+                </div>
+                <div>
+                    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;">
+                        <label style="font-weight:600;font-size:13px;">Allocate to Invoices</label>
+                        <button type="button" onclick="cpAutoAllocate()" style="padding:5px 10px;font-size:12px;background:var(--bg);color:var(--text);border:1px solid var(--border);border-radius:6px;cursor:pointer;">Auto-allocate</button>
+                    </div>
+                    <div style="background:var(--bg);border:1px solid var(--border);border-radius:6px;padding:4px 12px;">
+                        {_alloc_rows_html}
+                    </div>
+                    <div id="cpAllocSummary" style="font-size:12px;color:var(--text-muted);margin-top:6px;">Unallocated remainder stays on the customer's account.</div>
                 </div>
             </div>
             
@@ -51247,10 +51412,57 @@ def api_customer_record_payment():
         except Exception:
             pass
         
-        return jsonify({
-            "success": True,
-            "message": f"Payment of R{amount:,.2f} from {customer_name} recorded ({method.upper()})"
-        })
+        # ── Invoice allocations ───────────────────────────────────────────
+        # data["allocations"] is a list of {"invoice_id": x, "amount": y}.
+        # Each becomes a payment_allocations row; the invoice is then
+        # recalculated from its allocations. Any unallocated remainder
+        # simply stays on the customer's account as a credit.
+        allocations = data.get("allocations", []) or []
+        allocated_total = 0.0
+        allocated_count = 0
+        for alloc in allocations:
+            inv_id = (alloc.get("invoice_id", "") or "").strip()
+            try:
+                alloc_amt = round(float(alloc.get("amount", 0) or 0), 2)
+            except Exception:
+                alloc_amt = 0.0
+            if not inv_id or alloc_amt <= 0:
+                continue
+            _inv = db.get_one("invoices", inv_id)
+            if not _inv or _inv.get("business_id") != biz_id:
+                continue
+            alloc_row = {
+                "id": generate_id(),
+                "business_id": biz_id,
+                "receipt_id": receipt_id,
+                "invoice_id": inv_id,
+                "invoice_number": _inv.get("invoice_number", ""),
+                "customer_id": customer_id,
+                "customer_name": customer_name,
+                "amount": alloc_amt,
+                "date": pay_date,
+                "created_at": now()
+            }
+            ok_alloc, alloc_err = db.save("payment_allocations", alloc_row)
+            if not ok_alloc:
+                logger.error(f"[CUST PAY] Allocation save failed for {inv_id}: {alloc_err}")
+                continue
+            allocated_total += alloc_amt
+            allocated_count += 1
+            # Recalculate that invoice's status from its allocations
+            recalc_invoice_status(biz_id, inv_id)
+        
+        unallocated = round(rounded - allocated_total, 2)
+        if allocated_count > 0:
+            _msg = (f"Payment of R{amount:,.2f} from {customer_name} recorded "
+                    f"({method.upper()}) — allocated to {allocated_count} invoice(s)")
+            if unallocated > 0:
+                _msg += f", R{unallocated:,.2f} left on account"
+        else:
+            _msg = (f"Payment of R{amount:,.2f} from {customer_name} recorded "
+                    f"({method.upper()}) — on account, not allocated")
+        
+        return jsonify({"success": True, "message": _msg})
     except Exception as e:
         logger.error(f"[CUST PAY] Error: {e}")
         return jsonify({"success": False, "error": str(e)[:300]}), 500
