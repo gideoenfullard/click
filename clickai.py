@@ -20890,6 +20890,7 @@ select.form-input optgroup {
     .header, .nav, .nav-wrapper, .user-info, .header-top,
     .zane-float, .zane-panel, .zane-chat, #zanePanel,
     .btn, button, .no-print, 
+    .j-hero, .j-hud-wrap, .j-hud-pad, .j-tl,
     a[href="/quotes"], a[href="/invoices"], a[href="/customers"],
     [onclick*="print"], [onclick*="Email"],
     form, select, input,
