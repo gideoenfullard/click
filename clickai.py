@@ -27602,15 +27602,38 @@ def customer_view(customer_id):
     except Exception:
         _alloc_paid = {}
     
+    # ── REAL payment allocations (the source of truth) ──
+    # Where an invoice has real payment_allocations rows, the actual allocated
+    # amount overrides the FIFO guess above. Invoices with no real allocations
+    # (e.g. old Sage-imported data) keep the FIFO estimate as a fallback.
+    _real_alloc = {}  # invoice_id -> amount actually allocated
+    try:
+        _all_allocs = db.get("payment_allocations", {"business_id": biz_id}) if biz_id else []
+        for _a in _all_allocs:
+            _aid = _a.get("invoice_id", "")
+            if _aid:
+                _real_alloc[_aid] = round(_real_alloc.get(_aid, 0) + float(_a.get("amount", 0) or 0), 2)
+    except Exception as _ra_err:
+        logger.warning(f"[CUSTOMER VIEW] payment_allocations load failed: {_ra_err}")
+        _real_alloc = {}
+    
     invoices_html = ""
     for inv in invoices[:200]:
         status = inv.get("status", "outstanding")
         # Override with effective status from FIFO allocation when DB status is
         # not already "paid"/"credited"/"reversed"/"delivered" (those are authoritative).
         _orig_status = status
+        # _is_real_alloc: True when this invoice has actual payment_allocations
+        _inv_id_for_alloc = inv.get("id")
+        _is_real_alloc = _inv_id_for_alloc in _real_alloc
         if status not in ("paid", "credited", "reversed", "delivered"):
             _inv_total_val = float(inv.get("total", 0) or 0)
-            _paid_against = float(_alloc_paid.get(inv.get("id"), 0) or 0)
+            if _is_real_alloc:
+                # Real allocations are the source of truth
+                _paid_against = float(_real_alloc.get(_inv_id_for_alloc, 0) or 0)
+            else:
+                # Fallback: FIFO estimate (old data with no real allocations)
+                _paid_against = float(_alloc_paid.get(_inv_id_for_alloc, 0) or 0)
             if _inv_total_val > 0 and _paid_against >= _inv_total_val - 0.01:
                 status = "paid"
             elif _paid_against > 0.01:
@@ -27626,8 +27649,14 @@ def customer_view(customer_id):
                 _inv_method = inv.get("payment_method", "").upper()
             _inv_paid_info = f' <span style="font-size:10px;color:var(--text-muted);">({inv.get("paid_date", "")[:10]}{" - " + _inv_method if _inv_method else ""})</span>'
         elif status == "partial":
-            _paid_against = float(_alloc_paid.get(inv.get("id"), 0) or 0)
+            if _is_real_alloc:
+                _paid_against = float(_real_alloc.get(_inv_id_for_alloc, 0) or 0)
+            else:
+                _paid_against = float(_alloc_paid.get(_inv_id_for_alloc, 0) or 0)
             _inv_paid_info = f' <span style="font-size:10px;color:var(--text-muted);">({money(_paid_against)} of {money(inv.get("total", 0))})</span>'
+        # Show a small marker when the status comes from real allocations
+        if _is_real_alloc and status in ("paid", "partial"):
+            _inv_paid_info += ' <span style="font-size:9px;color:var(--green);border:1px solid var(--green);border-radius:3px;padding:0 3px;">ALLOCATED</span>'
         
         # Build linked docs column (CN/DN references) — CLICKABLE links
         _inv_num = inv.get("invoice_number", "")
@@ -44978,6 +45007,98 @@ def api_import_execute():
 # PAYMENTS - Track all customer payments
 # ═══════════════════════════════════════════════════════════════════════════════
 
+@app.route("/allocation-health")
+@login_required
+def allocation_health():
+    """Diagnostic — lists invoices whose stored status does not match their
+    real payment_allocations. Read-only: it reports problems, it does not
+    fix anything. The bookkeeper reviews the list and decides per case.
+    """
+    user = Auth.get_current_user()
+    business = Auth.get_current_business()
+    biz_id = business.get("id") if business else None
+    if not biz_id:
+        return redirect("/")
+    
+    invoices = db.get("invoices", {"business_id": biz_id}) or []
+    allocs = db.get("payment_allocations", {"business_id": biz_id}) or []
+    
+    # Sum real allocations per invoice
+    alloc_by_inv = {}
+    for a in allocs:
+        _aid = a.get("invoice_id", "")
+        if _aid:
+            alloc_by_inv[_aid] = round(alloc_by_inv.get(_aid, 0) + float(a.get("amount", 0) or 0), 2)
+    
+    # Find mismatches
+    mismatches = []
+    for inv in invoices:
+        _st = (inv.get("status") or "").lower()
+        # Credited/reversed are final states — not checked
+        if _st in ("credited", "reversed"):
+            continue
+        total = round(float(inv.get("total", 0) or 0), 2)
+        if total <= 0:
+            continue
+        allocated = alloc_by_inv.get(inv.get("id"), 0)
+        # Expected status from the allocations
+        expected = "paid" if allocated >= total - 0.01 else ("partial" if allocated > 0.01 else "unpaid")
+        # Compare with stored status (treat "outstanding"/"sent"/"" as unpaid)
+        stored = "paid" if _st == "paid" else ("partial" if _st == "partial" else "unpaid")
+        if stored != expected:
+            mismatches.append({
+                "id": inv.get("id", ""),
+                "number": inv.get("invoice_number", "-"),
+                "date": inv.get("date", "-"),
+                "total": total,
+                "allocated": allocated,
+                "stored": stored,
+                "expected": expected,
+            })
+    
+    mismatches.sort(key=lambda x: x["date"])
+    
+    rows = ""
+    for m in mismatches:
+        rows += f'''
+        <tr style="cursor:pointer;" onclick="window.location='/invoice/{m["id"]}'">
+            <td>{safe_string(m["number"])}</td>
+            <td>{m["date"]}</td>
+            <td style="text-align:right;">{money(m["total"])}</td>
+            <td style="text-align:right;">{money(m["allocated"])}</td>
+            <td style="color:var(--orange);">{m["stored"].upper()}</td>
+            <td style="color:var(--green);">{m["expected"].upper()}</td>
+        </tr>
+        '''
+    if not rows:
+        rows = '<tr><td colspan="6" style="text-align:center;color:var(--text-muted);padding:20px;">No mismatches found — every invoice status matches its allocations.</td></tr>'
+    
+    content = f'''
+    <div style="margin-bottom:20px;">
+        <a href="/payments" style="color:var(--text-muted);">← Back to Payments</a>
+    </div>
+    <div class="card">
+        <h2 style="margin:0 0 6px;">Allocation Health Check</h2>
+        <p style="color:var(--text-muted);font-size:13px;margin:0 0 16px;">
+            Invoices where the stored status does not match the real payment allocations.
+            This list only reports — it does not change anything. Open an invoice to review and correct it.
+        </p>
+        <table class="table">
+            <thead>
+                <tr><th>Invoice</th><th>Date</th><th style="text-align:right;">Total</th><th style="text-align:right;">Allocated</th><th>Stored Status</th><th>Expected Status</th></tr>
+            </thead>
+            <tbody>
+                {rows}
+            </tbody>
+        </table>
+        <p style="color:var(--text-muted);font-size:12px;margin-top:14px;">
+            {len(mismatches)} mismatch(es) found across {len(invoices)} invoice(s).
+        </p>
+    </div>
+    '''
+    return render_page("Allocation Health", content, user, "payments")
+
+
 @app.route("/payments")
 @login_required
 def payments_page():
@@ -45018,6 +45139,7 @@ def payments_page():
     content = f'''
     <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:20px;">
         <h1 style="margin:0;">Payments Received</h1>
+        <a href="/allocation-health" class="btn btn-secondary">Allocation Health Check</a>
     </div>
     
     <div class="stats-grid" style="margin-bottom:25px;">
