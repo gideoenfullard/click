@@ -619,6 +619,7 @@ def register_purchases_routes(app, db, login_required, Auth, render_page,
                     <td style="color:var(--green);">{money(p.get("amount", 0))}</td>
                     <td>{p.get("method", "-")}</td>
                     <td>{_p_source_html}</td>
+                    <td><a href="/supplier-payment/{p.get("id", "")}/remittance" style="color:var(--primary);text-decoration:none;font-size:12px;">View</a></td>
                 </tr>
                 '''
         
@@ -925,10 +926,10 @@ def register_purchases_routes(app, db, login_required, Auth, render_page,
                 </div>
                 <table class="table" id="paymentsTable">
                     <thead>
-                        <tr><th>Reference</th><th>Date</th><th>Amount</th><th>Method</th><th>Source</th></tr>
+                        <tr><th>Reference</th><th>Date</th><th>Amount</th><th>Method</th><th>Source</th><th>Remittance</th></tr>
                     </thead>
                     <tbody>
-                        {payments_html or "<tr><td colspan='5' style='text-align:center;color:var(--text-muted);'>No payments yet</td></tr>"}
+                        {payments_html or "<tr><td colspan='6' style='text-align:center;color:var(--text-muted);'>No payments yet</td></tr>"}
                     </tbody>
                 </table>
             </div>
@@ -5227,6 +5228,129 @@ Nothing else."""
         except Exception as e:
             logger.error(f"[PAY] Error: {e}")
             return jsonify({"success": False, "error": str(e)})
+
+    @app.route("/supplier-payment/<payment_id>/remittance")
+    @login_required
+    def supplier_payment_remittance(payment_id):
+        """Printable remittance advice for one supplier payment — shows which
+        supplier invoices the payment was allocated to (from Stuk A's
+        supplier_payment_allocations table)."""
+        user = Auth.get_current_user()
+        business = Auth.get_current_business()
+        biz_id = business.get("id") if business else None
+        if not biz_id:
+            return redirect("/suppliers")
+        
+        payment = db.get_one("supplier_payments", payment_id)
+        if not payment or payment.get("business_id") != biz_id:
+            return redirect("/suppliers")
+        
+        supplier_name = payment.get("supplier_name", "Supplier")
+        supplier_id = payment.get("supplier_id", "")
+        pay_amount = round(float(payment.get("amount", 0) or 0), 2)
+        pay_date = payment.get("date", "-")
+        pay_method = (payment.get("method", "-") or "-").upper()
+        pay_ref = payment.get("reference", "") or f"PAY-{payment_id[:8]}"
+        
+        biz_name = business.get("name", "Business") if business else "Business"
+        biz_addr = business.get("address", "") if business else ""
+        
+        # Allocations for this payment
+        allocs = db.get("supplier_payment_allocations",
+                        {"business_id": biz_id, "supplier_payment_id": payment_id}) or []
+        
+        alloc_rows = ""
+        allocated_total = 0.0
+        for a in allocs:
+            amt = round(float(a.get("amount", 0) or 0), 2)
+            allocated_total += amt
+            alloc_rows += f'''
+            <tr style="border-bottom:1px solid #eee;">
+                <td style="padding:8px 0;color:#444;">{safe_string(a.get("invoice_number", "-"))}</td>
+                <td style="padding:8px 0;text-align:right;color:#444;">{money(amt)}</td>
+            </tr>
+            '''
+        allocated_total = round(allocated_total, 2)
+        on_account = round(pay_amount - allocated_total, 2)
+        
+        if not alloc_rows:
+            alloc_rows = '<tr><td colspan="2" style="padding:8px 0;color:#888;text-align:center;">This payment was not allocated to specific invoices — it is on the supplier account.</td></tr>'
+        
+        on_account_row = ""
+        if on_account > 0:
+            on_account_row = f'''
+            <tr style="border-bottom:1px solid #eee;">
+                <td style="padding:8px 0;color:#888;font-style:italic;">On account (unallocated)</td>
+                <td style="padding:8px 0;text-align:right;color:#888;font-style:italic;">{money(on_account)}</td>
+            </tr>
+            '''
+        
+        content = f'''
+        <style>
+            @media print {{
+                .no-print {{ display: none !important; }}
+                nav, header, .header, .header-top, .nav-wrapper, .nav, .mobile-nav, .nav-tap-hint, .sidebar {{ display: none !important; }}
+                body {{ background: white !important; color: black !important; }}
+                #printArea {{ display: block !important; }}
+                @page {{ size: A4; margin: 14mm; }}
+            }}
+        </style>
+        <div class="no-print" style="display:flex;justify-content:space-between;align-items:center;margin-bottom:20px;">
+            <a href="/supplier/{supplier_id}" style="color:var(--text-muted);">← Back to Supplier</a>
+            <button class="btn btn-secondary" onclick="window.print();">🖨️ Print</button>
+        </div>
+        
+        <div id="printArea">
+        <div class="card" style="background:white;color:#333;max-width:700px;margin:0 auto;padding:30px;">
+            <div style="display:flex;justify-content:space-between;margin-bottom:20px;padding-bottom:12px;border-bottom:2px solid #333;">
+                <div>
+                    <h2 style="color:#333;margin:0;font-size:17px;">{safe_string(biz_name)}</h2>
+                    <p style="color:#666;margin:4px 0 0;font-size:12px;">{safe_string(biz_addr)}</p>
+                </div>
+                <div style="text-align:right;">
+                    <h1 style="color:#333;margin:0;font-size:20px;">REMITTANCE ADVICE</h1>
+                    <p style="color:#666;margin:4px 0 0;font-size:12px;">Date: {pay_date}</p>
+                </div>
+            </div>
+            
+            <table style="width:100%;font-size:12px;color:#444;margin-bottom:20px;">
+                <tr>
+                    <td style="padding:3px 0;width:50%;"><strong>To:</strong> {safe_string(supplier_name)}</td>
+                    <td style="padding:3px 0;"><strong>Payment Reference:</strong> {safe_string(pay_ref)}</td>
+                </tr>
+                <tr>
+                    <td style="padding:3px 0;"><strong>Payment Method:</strong> {pay_method}</td>
+                    <td style="padding:3px 0;"><strong>Payment Date:</strong> {pay_date}</td>
+                </tr>
+            </table>
+            
+            <p style="color:#444;font-size:13px;margin-bottom:8px;">The following payment has been made to your account:</p>
+            
+            <table style="width:100%;border-collapse:collapse;font-size:12px;">
+                <thead>
+                    <tr style="border-bottom:2px solid #333;">
+                        <th style="padding:7px 0;text-align:left;color:#333;">Invoice</th>
+                        <th style="padding:7px 0;text-align:right;color:#333;">Amount Paid</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {alloc_rows}
+                    {on_account_row}
+                </tbody>
+            </table>
+            
+            <div style="display:flex;justify-content:space-between;align-items:center;padding:14px 18px;background:#10b981;border-radius:8px;color:white;margin-top:18px;">
+                <span style="font-size:15px;font-weight:bold;">TOTAL PAID</span>
+                <span style="font-size:22px;font-weight:bold;">{money(pay_amount)}</span>
+            </div>
+            
+            <div style="margin-top:20px;text-align:center;color:#999;font-size:10px;">
+                Generated by ClickAI · Computer-generated remittance advice · {pay_date}
+            </div>
+        </div>
+        </div>
+        '''
+        return render_page("Remittance Advice", content, user, "suppliers")
 
     @app.route("/api/scan/save-supplier-credit-note", methods=["POST"])
     @login_required
