@@ -980,11 +980,62 @@ def register_payroll_routes(app, db, login_required, Auth, render_page,
         ts_ot = sum(safe_float(e.get("overtime", 0)) for e in month_entries)
         ts_total = ts_normal + ts_ot
         
-        def ded_row(label, amount):
-            if amount <= 0:
-                return ""
-            return f'<tr><td style="padding:6px 0;">{label}</td><td style="text-align:right;color:var(--red);">-{money(amount)}</td></tr>'
-        
+        # Employer contributions (shown below the payslip as a check, not part of the payslip)
+        uif_employer = uif
+        sdl = basic * 0.01
+        coida = basic * 0.01
+        pension_employer = safe_float(emp.get("pension_employer", 0))
+        total_employer = uif_employer + sdl + coida + pension_employer
+        total_cost = basic + total_employer
+
+        # Sage-style payslip header data
+        biz_name = business.get("name", "Business") if business else "Business"
+        biz_addr = business.get("address", "") if business else ""
+        emp_code = emp.get("employee_code", "") or emp.get("code", "") or "-"
+        emp_id_num = emp.get("id_number", "-")
+        emp_position = emp.get("position", "")
+        emp_started = emp.get("start_date", "") or emp.get("employed_from", "") or "-"
+        emp_rate = safe_float(emp.get("hourly_rate", 0))
+        leave_balance = safe_float(emp.get("leave_balance", 0))
+
+        # YTD totals — sum this employee's payslips in the current tax year
+        ytd_gross = ytd_paye = ytd_uif = ytd_net = 0.0
+        try:
+            _pyear = today()[:4]
+            _all_ps = db.get("payslips", {"employee_id": emp_id}) if emp_id else []
+            for _p in _all_ps:
+                if str(_p.get("date", ""))[:4] == _pyear:
+                    ytd_gross += safe_float(_p.get("gross", 0)) or safe_float(_p.get("basic", 0))
+                    ytd_paye += safe_float(_p.get("paye", 0))
+                    ytd_uif += safe_float(_p.get("uif", 0)) or safe_float(_p.get("uif_employee", 0))
+                    ytd_net += safe_float(_p.get("net", 0))
+        except Exception as _e:
+            logger.error(f"[PAYSLIP-PREVIEW] YTD calc failed: {_e}")
+
+        # Build deduction rows - only show if > 0 (mirrors payslip_view)
+        deduction_rows = f'''
+            <tr style="border-bottom:1px solid #eee;">
+                <td style="padding:8px 0;color:#666;">PAYE (Tax)</td>
+                <td style="padding:8px 0;text-align:right;color:#ef4444;">-{money(paye)}</td>
+            </tr>
+            <tr style="border-bottom:1px solid #eee;">
+                <td style="padding:8px 0;color:#666;">UIF (1%)</td>
+                <td style="padding:8px 0;text-align:right;color:#ef4444;">-{money(uif)}</td>
+            </tr>
+        '''
+        if medical > 0:
+            deduction_rows += f'<tr style="border-bottom:1px solid #eee;"><td style="padding:8px 0;color:#666;">Medical Aid</td><td style="padding:8px 0;text-align:right;color:#ef4444;">-{money(medical)}</td></tr>'
+        if union_fees > 0:
+            deduction_rows += f'<tr style="border-bottom:1px solid #eee;"><td style="padding:8px 0;color:#666;">Union Fees</td><td style="padding:8px 0;text-align:right;color:#ef4444;">-{money(union_fees)}</td></tr>'
+        if pension > 0:
+            deduction_rows += f'<tr style="border-bottom:1px solid #eee;"><td style="padding:8px 0;color:#666;">Pension Fund (Employee)</td><td style="padding:8px 0;text-align:right;color:#ef4444;">-{money(pension)}</td></tr>'
+        if provident > 0:
+            deduction_rows += f'<tr style="border-bottom:1px solid #eee;"><td style="padding:8px 0;color:#666;">Provident Fund</td><td style="padding:8px 0;text-align:right;color:#ef4444;">-{money(provident)}</td></tr>'
+        if loan > 0:
+            deduction_rows += f'<tr style="border-bottom:1px solid #eee;"><td style="padding:8px 0;color:#666;">Loan Repayment</td><td style="padding:8px 0;text-align:right;color:#ef4444;">-{money(loan)}</td></tr>'
+        if other_ded > 0:
+            deduction_rows += f'<tr style="border-bottom:1px solid #eee;"><td style="padding:8px 0;color:#666;">Other Deductions</td><td style="padding:8px 0;text-align:right;color:#ef4444;">-{money(other_ded)}</td></tr>'
+
         # Check if a payslip already exists for this employee today
         _today = today()
         _existing = db.get("payslips", {"business_id": biz_id, "employee_id": emp_id, "date": _today}) if biz_id else []
@@ -1029,30 +1080,97 @@ def register_payroll_routes(app, db, login_required, Auth, render_page,
             ts_note = '<div class="card" style="margin-top:15px;"><p style="color:var(--text-muted);">No timesheet hours captured for this month.</p></div>'
         
         content = f'''
-        <div class="card">
-            <h2 style="margin-bottom:5px;">Payslip Preview</h2>
-            <p style="color:var(--text-muted);margin-bottom:20px;">{safe_string(emp.get("name", "-"))} — {safe_string(emp.get("position", ""))}</p>
-            <table style="width:100%;">
-                <tr style="font-weight:bold;border-bottom:2px solid var(--border);">
-                    <td style="padding:8px 0;">Gross Salary</td>
-                    <td style="text-align:right;">{money(basic)}</td>
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:15px;">
+            <a href="/payroll/run" style="color:var(--text-muted);">← Back to Run Payroll</a>
+            <span style="background:rgba(245,158,11,0.2);border:1px solid #f59e0b;border-radius:6px;padding:5px 12px;font-size:12px;font-weight:600;">PREVIEW — not yet created</span>
+        </div>
+
+        <div class="card" style="background:white;color:#333;max-width:720px;margin:0 auto;padding:30px;">
+            <div style="display:flex;justify-content:space-between;margin-bottom:20px;padding-bottom:12px;border-bottom:2px solid #333;">
+                <div>
+                    <h2 style="color:#333;margin:0;font-size:17px;">{safe_string(biz_name)}</h2>
+                    <p style="color:#666;margin:4px 0 0;font-size:12px;">{safe_string(biz_addr)}</p>
+                </div>
+                <div style="text-align:right;">
+                    <h1 style="color:#333;margin:0;font-size:20px;">PAYSLIP</h1>
+                    <p style="color:#666;margin:4px 0 0;font-size:12px;">Pay Date: {_today}</p>
+                </div>
+            </div>
+
+            <table style="width:100%;font-size:12px;color:#444;margin-bottom:20px;">
+                <tr>
+                    <td style="padding:3px 0;width:50%;"><strong>Employee:</strong> {safe_string(emp.get("name", "-"))}</td>
+                    <td style="padding:3px 0;"><strong>Employee Code:</strong> {safe_string(emp_code)}</td>
                 </tr>
-                {ded_row("PAYE", paye)}
-                {ded_row("UIF", uif)}
-                {ded_row("Medical Aid", medical)}
-                {ded_row("Union Fees", union_fees)}
-                {ded_row("Pension", pension)}
-                {ded_row("Provident Fund", provident)}
-                {ded_row("Loan Repayment", loan)}
-                {ded_row("Other Deduction", other_ded)}
-                <tr style="font-weight:bold;border-top:2px solid var(--border);">
-                    <td style="padding:8px 0;">Total Deductions</td>
-                    <td style="text-align:right;color:var(--red);">-{money(total_ded)}</td>
+                <tr>
+                    <td style="padding:3px 0;"><strong>Job Title:</strong> {safe_string(emp_position) or "-"}</td>
+                    <td style="padding:3px 0;"><strong>ID Number:</strong> {safe_string(emp_id_num)}</td>
                 </tr>
-                <tr style="font-weight:bold;font-size:1.1em;">
-                    <td style="padding:8px 0;">Net Pay</td>
-                    <td style="text-align:right;color:var(--green);">{money(net)}</td>
+                <tr>
+                    <td style="padding:3px 0;"><strong>Employed From:</strong> {safe_string(emp_started)}</td>
+                    <td style="padding:3px 0;"><strong>Rate per Hour:</strong> {money(emp_rate) if emp_rate > 0 else "-"}</td>
                 </tr>
+            </table>
+
+            <div style="display:flex;gap:20px;flex-wrap:wrap;">
+                <div style="flex:1;min-width:260px;">
+                    <h4 style="color:#333;margin:10px 0 6px;font-size:12px;border-bottom:1px solid #ccc;padding-bottom:3px;">EARNINGS</h4>
+                    <table style="width:100%;border-collapse:collapse;font-size:12px;">
+                        <tr style="border-bottom:1px solid #eee;">
+                            <td style="padding:6px 0;color:#666;">Basic Salary</td>
+                            <td style="padding:6px 0;text-align:right;color:#333;">{money(basic)}</td>
+                        </tr>
+                        <tr style="border-bottom:2px solid #333;background:#f9f9f9;">
+                            <td style="padding:7px 0;color:#333;font-weight:bold;">TOTAL EARNINGS</td>
+                            <td style="padding:7px 0;text-align:right;color:#333;font-weight:bold;">{money(basic)}</td>
+                        </tr>
+                    </table>
+                </div>
+                <div style="flex:1;min-width:260px;">
+                    <h4 style="color:#333;margin:10px 0 6px;font-size:12px;border-bottom:1px solid #ccc;padding-bottom:3px;">DEDUCTIONS</h4>
+                    <table style="width:100%;border-collapse:collapse;font-size:12px;">
+                        {deduction_rows}
+                        <tr style="border-bottom:2px solid #333;background:#fef2f2;">
+                            <td style="padding:7px 0;color:#333;font-weight:bold;">TOTAL DEDUCTIONS</td>
+                            <td style="padding:7px 0;text-align:right;color:#ef4444;font-weight:bold;">-{money(total_ded)}</td>
+                        </tr>
+                    </table>
+                </div>
+            </div>
+
+            <div style="display:flex;justify-content:space-between;align-items:center;padding:14px 18px;background:#10b981;border-radius:8px;color:white;margin-top:18px;">
+                <span style="font-size:16px;font-weight:bold;">NETT PAY</span>
+                <span style="font-size:24px;font-weight:bold;">{money(net)}</span>
+            </div>
+
+            <div style="margin-top:18px;padding:14px;background:#f5f5f5;border-radius:8px;">
+                <h4 style="margin:0 0 8px;color:#888;font-size:11px;">YEAR-TO-DATE TOTALS</h4>
+                <table style="width:100%;font-size:12px;color:#555;">
+                    <tr><td style="padding:3px 0;">Taxable Earnings</td><td style="text-align:right;">{money(ytd_gross)}</td></tr>
+                    <tr><td style="padding:3px 0;">PAYE Paid</td><td style="text-align:right;">{money(ytd_paye)}</td></tr>
+                    <tr><td style="padding:3px 0;">UIF Paid</td><td style="text-align:right;">{money(ytd_uif)}</td></tr>
+                    <tr style="border-top:1px solid #ccc;font-weight:bold;color:#333;"><td style="padding:5px 0;">Nett Paid YTD</td><td style="text-align:right;">{money(ytd_net)}</td></tr>
+                </table>
+            </div>
+
+            <div style="margin-top:14px;padding:10px 14px;background:#f5f5f5;border-radius:8px;font-size:12px;color:#555;">
+                <strong>Leave Type:</strong> Annual Leave &nbsp;·&nbsp; <strong>Closing Balance:</strong> {leave_balance:.4f} days
+            </div>
+
+            <div style="margin-top:20px;text-align:center;color:#999;font-size:10px;">
+                Preview · ClickAI · Computer-generated payslip · {_today}
+            </div>
+        </div>
+
+        <div style="max-width:720px;margin:20px auto 0;padding:14px;background:var(--card);border:1px solid var(--border);border-radius:8px;">
+            <h4 style="margin:0 0 8px;color:var(--text-muted);font-size:11px;">COMPANY CONTRIBUTIONS</h4>
+            <p style="color:var(--text-muted);font-size:11px;margin:0 0 8px;">For the business — not part of the employee's payslip and not printed.</p>
+            <table style="width:100%;font-size:12px;color:var(--text);">
+                <tr><td style="padding:3px 0;">UIF</td><td style="text-align:right;">{money(uif_employer)}</td></tr>
+                <tr><td style="padding:3px 0;">SDL (Skills Levy)</td><td style="text-align:right;">{money(sdl)}</td></tr>
+                <tr><td style="padding:3px 0;">COIDA</td><td style="text-align:right;">{money(coida)}</td></tr>
+                {f'<tr><td style="padding:3px 0;">Provident (Employer)</td><td style="text-align:right;">{money(pension_employer)}</td></tr>' if pension_employer > 0 else ""}
+                <tr style="border-top:1px solid var(--border);font-weight:bold;"><td style="padding:5px 0;">Total Cost to Company</td><td style="text-align:right;">{money(total_cost)}</td></tr>
             </table>
         </div>
         {action_block}
@@ -1807,26 +1925,14 @@ def register_payroll_routes(app, db, login_required, Auth, render_page,
                 <span style="font-size:24px;font-weight:bold;">{money(net)}</span>
             </div>
 
-            <div style="display:flex;gap:20px;flex-wrap:wrap;margin-top:18px;">
-                <div style="flex:1;min-width:260px;padding:14px;background:#f5f5f5;border-radius:8px;">
-                    <h4 style="margin:0 0 8px;color:#888;font-size:11px;">COMPANY CONTRIBUTIONS</h4>
-                    <table style="width:100%;font-size:12px;color:#555;">
-                        <tr><td style="padding:3px 0;">UIF</td><td style="text-align:right;">{money(uif_employer)}</td></tr>
-                        <tr><td style="padding:3px 0;">SDL (Skills Levy)</td><td style="text-align:right;">{money(sdl)}</td></tr>
-                        <tr><td style="padding:3px 0;">COIDA</td><td style="text-align:right;">{money(coida)}</td></tr>
-                        {f'<tr><td style="padding:3px 0;">Provident (Employer)</td><td style="text-align:right;">{money(pension_employer)}</td></tr>' if pension_employer > 0 else ""}
-                        <tr style="border-top:1px solid #ccc;font-weight:bold;color:#333;"><td style="padding:5px 0;">Total Cost to Company</td><td style="text-align:right;">{money(total_cost)}</td></tr>
-                    </table>
-                </div>
-                <div style="flex:1;min-width:260px;padding:14px;background:#f5f5f5;border-radius:8px;">
-                    <h4 style="margin:0 0 8px;color:#888;font-size:11px;">YEAR-TO-DATE TOTALS</h4>
-                    <table style="width:100%;font-size:12px;color:#555;">
-                        <tr><td style="padding:3px 0;">Taxable Earnings</td><td style="text-align:right;">{money(ytd_gross)}</td></tr>
-                        <tr><td style="padding:3px 0;">PAYE Paid</td><td style="text-align:right;">{money(ytd_paye)}</td></tr>
-                        <tr><td style="padding:3px 0;">UIF Paid</td><td style="text-align:right;">{money(ytd_uif)}</td></tr>
-                        <tr style="border-top:1px solid #ccc;font-weight:bold;color:#333;"><td style="padding:5px 0;">Nett Paid YTD</td><td style="text-align:right;">{money(ytd_net)}</td></tr>
-                    </table>
-                </div>
+            <div style="margin-top:18px;padding:14px;background:#f5f5f5;border-radius:8px;">
+                <h4 style="margin:0 0 8px;color:#888;font-size:11px;">YEAR-TO-DATE TOTALS</h4>
+                <table style="width:100%;font-size:12px;color:#555;">
+                    <tr><td style="padding:3px 0;">Taxable Earnings</td><td style="text-align:right;">{money(ytd_gross)}</td></tr>
+                    <tr><td style="padding:3px 0;">PAYE Paid</td><td style="text-align:right;">{money(ytd_paye)}</td></tr>
+                    <tr><td style="padding:3px 0;">UIF Paid</td><td style="text-align:right;">{money(ytd_uif)}</td></tr>
+                    <tr style="border-top:1px solid #ccc;font-weight:bold;color:#333;"><td style="padding:5px 0;">Nett Paid YTD</td><td style="text-align:right;">{money(ytd_net)}</td></tr>
+                </table>
             </div>
 
             <div style="margin-top:14px;padding:10px 14px;background:#f5f5f5;border-radius:8px;font-size:12px;color:#555;">
@@ -1836,6 +1942,18 @@ def register_payroll_routes(app, db, login_required, Auth, render_page,
             <div style="margin-top:20px;text-align:center;color:#999;font-size:10px;">
                 Generated by ClickAI · Computer-generated payslip · {payslip.get("date", "-")}
             </div>
+        </div>
+
+        <div class="no-print" style="max-width:720px;margin:20px auto 0;padding:14px;background:var(--card);border:1px solid var(--border);border-radius:8px;">
+            <h4 style="margin:0 0 8px;color:var(--text-muted);font-size:11px;">COMPANY CONTRIBUTIONS</h4>
+            <p style="color:var(--text-muted);font-size:11px;margin:0 0 8px;">For the business — not part of the employee's payslip and not printed.</p>
+            <table style="width:100%;font-size:12px;color:var(--text);">
+                <tr><td style="padding:3px 0;">UIF</td><td style="text-align:right;">{money(uif_employer)}</td></tr>
+                <tr><td style="padding:3px 0;">SDL (Skills Levy)</td><td style="text-align:right;">{money(sdl)}</td></tr>
+                <tr><td style="padding:3px 0;">COIDA</td><td style="text-align:right;">{money(coida)}</td></tr>
+                {f'<tr><td style="padding:3px 0;">Provident (Employer)</td><td style="text-align:right;">{money(pension_employer)}</td></tr>' if pension_employer > 0 else ""}
+                <tr style="border-top:1px solid var(--border);font-weight:bold;"><td style="padding:5px 0;">Total Cost to Company</td><td style="text-align:right;">{money(total_cost)}</td></tr>
+            </table>
         </div>
         '''
         
