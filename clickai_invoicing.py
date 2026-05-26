@@ -1448,6 +1448,7 @@ def register_invoicing_routes(app, db, login_required, Auth, render_page,
             total = float(invoice.get("total", 0))
             inv_number = invoice.get("invoice_number", "")
             customer_name = invoice.get("customer_name", "")
+            customer_id = invoice.get("customer_id", "") or ""
             
             # ACCOUNT = Customer is on account (owes money, no payment yet)
             if payment_method == "account":
@@ -1517,6 +1518,29 @@ def register_invoicing_routes(app, db, login_required, Auth, render_page,
                 created_by=user.get("id", "") if user else ""
             )
             db.save("payments", payment)
+            
+            # ── Payment allocation ────────────────────────────────────────
+            # Link this payment to this invoice in the payment_allocations
+            # table (the source of truth for which receipt covered which
+            # invoice). markPaid always settles the full invoice, so one
+            # allocation row for the full total. Mirrors the customer-page
+            # "Record Payment" allocation flow.
+            try:
+                _alloc_row = {
+                    "id": generate_id(),
+                    "business_id": biz_id,
+                    "receipt_id": payment.get("id", ""),
+                    "invoice_id": invoice_id,
+                    "invoice_number": inv_number,
+                    "customer_id": customer_id,
+                    "customer_name": customer_name,
+                    "amount": round(total, 2),
+                    "date": today(),
+                    "created_at": now()
+                }
+                db.save("payment_allocations", _alloc_row)
+            except Exception as _alloc_err:
+                logger.error(f"[PAYMENT] Allocation row failed (payment still saved): {_alloc_err}")
             
             logger.info(f"[PAYMENT] Invoice {inv_number} marked as PAID ({bank_name}) - R{total:.2f}")
             
