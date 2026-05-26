@@ -177,6 +177,7 @@ def register_purchases_routes(app, db, login_required, Auth, render_page,
             <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;">
                 <a href="/supplier-invoices" class="btn btn-secondary" style="font-size:12px;padding:6px 12px;">📋 Supplier Invoices</a>
                 <a href="/supplier-credit-notes" class="btn btn-secondary" style="font-size:12px;padding:6px 12px;">↩️ Credit Notes</a>
+                <a href="/supplier-return/new" class="btn btn-secondary" style="font-size:12px;padding:6px 12px;">↩️ Supplier Return</a>
                 <a href="/supplier-statements/print" class="btn btn-secondary" style="font-size:12px;padding:6px 12px;">🖨️ Bulk Statements</a>
                 <input type="text" id="supplierSearch" placeholder="🔍 Search name, code, phone..." 
                     oninput="filterSuppliers()" 
@@ -5607,6 +5608,315 @@ Nothing else."""
         </div>
         '''
         return render_page("Supplier Statements", content, user, "suppliers")
+
+    @app.route("/supplier-return/new")
+    @login_required
+    def supplier_return_new():
+        """Stuk 1 — the New Supplier Return screen. Build return lines by
+        picking stock items (or free lines), optionally referencing an open
+        supplier invoice. The save happens in Stuk 2 (/api/supplier-return/save)."""
+        user = Auth.get_current_user()
+        business = Auth.get_current_business()
+        biz_id = business.get("id") if business else None
+        if not biz_id:
+            return redirect("/suppliers")
+        
+        suppliers = db.get("suppliers", {"business_id": biz_id}) or []
+        suppliers = sorted(suppliers, key=lambda x: (x.get("name") or "").lower())
+        
+        stock = db.get_all_stock(biz_id) or []
+        stock = sorted(stock, key=lambda x: (x.get("description") or "").lower())
+        
+        # Open supplier invoices (not paid/credited/cancelled) — for the
+        # optional "From Invoice" picker. Grouped per supplier on the client.
+        all_sinvoices = db.get("supplier_invoices", {"business_id": biz_id}) or []
+        open_sinvoices = [si for si in all_sinvoices
+                          if (si.get("status") or "").lower() not in ("credited", "cancelled")]
+        
+        prefill_supplier = request.args.get("supplier_id", "")
+        
+        supplier_options = '<option value="">-- Select Supplier --</option>'
+        for s in suppliers:
+            sel = "selected" if s.get("id") == prefill_supplier else ""
+            supplier_options += f'<option value="{s.get("id")}" {sel}>{safe_string(s.get("name", ""))}</option>'
+        
+        # Stock data for the line-item typeahead (same shape as the PO screen)
+        _ret_stock_json = json.dumps([
+            {"id": s.get("id", ""), "code": safe_string(s.get("code", "")),
+             "desc": safe_string(s.get("description", "")),
+             "price": float(s.get("cost_price", 0) or 0)}
+            for s in stock
+        ])
+        # Open invoices keyed by supplier — the client filters this when a
+        # supplier is chosen, so the "From Invoice" picker only shows that
+        # supplier's open invoices.
+        _ret_inv_json = json.dumps([
+            {"id": si.get("id", ""), "supplier_id": si.get("supplier_id", ""),
+             "number": safe_string(si.get("invoice_number", "")),
+             "date": si.get("date", ""), "total": float(si.get("total", 0) or 0)}
+            for si in open_sinvoices
+        ])
+        
+        content = f'''
+        <style>
+        .sr-form-grid {{ display: grid; grid-template-columns: 1fr 280px; gap: 20px; }}
+        .sr-main {{ display: flex; flex-direction: column; gap: 15px; min-width: 0; }}
+        .sr-sidebar {{ position: sticky; top: 80px; display: flex; flex-direction: column; gap: 12px; align-self: start; }}
+        .sr-sidebar .card {{ padding: 16px; margin: 0; }}
+        .sr-item-row {{ display: grid; grid-template-columns: 3fr 2fr 70px 110px 100px 30px; gap: 8px; align-items: center; padding: 8px 0; border-bottom: 1px solid rgba(255,255,255,0.05); }}
+        .sr-item-row input {{ font-size: 13px; padding: 8px 10px; }}
+        .sr-item-hdr {{ display: grid; grid-template-columns: 3fr 2fr 70px 110px 100px 30px; gap: 8px; padding: 6px 0; font-size: 11px; color: var(--text-muted); font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px; border-bottom: 2px solid var(--border); }}
+        .sr-stock-td {{ position: relative; }}
+        .sr-rm {{ background: var(--red); color: #fff; border: none; border-radius: 4px; width: 24px; height: 24px; cursor: pointer; }}
+        .sr-add-btn {{ background: var(--card); color: var(--primary); border: 1px solid var(--primary); border-radius: 6px; padding: 8px 14px; cursor: pointer; font-weight: 600; }}
+        .sr-totals {{ border-top: 2px solid var(--border); margin-top: 10px; padding-top: 10px; }}
+        .sr-totals-row {{ display: flex; justify-content: space-between; padding: 4px 0; font-size: 13px; }}
+        .sr-totals-row.grand {{ font-size: 16px; font-weight: 700; border-top: 1px solid var(--border); margin-top: 4px; padding-top: 8px; }}
+        </style>
+        
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:15px;">
+            <h2 style="margin:0;">↩️ New Supplier Return</h2>
+            <a href="/suppliers" style="color:var(--text-muted);">← Back to Suppliers</a>
+        </div>
+        
+        <form id="returnForm" onsubmit="return submitReturn(event);">
+        <div class="sr-form-grid">
+            <div class="sr-main">
+                <div class="card" style="padding:20px;">
+                    <h3 style="margin:0 0 12px 0;">Return Details</h3>
+                    <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px;">
+                        <div>
+                            <label style="display:block;margin-bottom:4px;font-weight:600;font-size:13px;">Supplier</label>
+                            <select name="supplier_id" id="srSupplier" onchange="srSupplierChanged()" required style="width:100%;padding:10px;border:1px solid var(--border);border-radius:6px;background:var(--bg);color:var(--text);">
+                                {supplier_options}
+                            </select>
+                        </div>
+                        <div>
+                            <label style="display:block;margin-bottom:4px;font-weight:600;font-size:13px;">From Invoice (optional)</label>
+                            <select name="from_invoice_id" id="srFromInvoice" style="width:100%;padding:10px;border:1px solid var(--border);border-radius:6px;background:var(--bg);color:var(--text);">
+                                <option value="">-- No invoice (free return) --</option>
+                            </select>
+                        </div>
+                        <div>
+                            <label style="display:block;margin-bottom:4px;font-weight:600;font-size:13px;">Date</label>
+                            <input type="date" name="date" id="srDate" style="width:100%;padding:10px;border:1px solid var(--border);border-radius:6px;background:var(--bg);color:var(--text);">
+                        </div>
+                        <div>
+                            <label style="display:block;margin-bottom:4px;font-weight:600;font-size:13px;">Supplier Ref (optional)</label>
+                            <input type="text" name="supplier_ref" placeholder="Their credit note no." style="width:100%;padding:10px;border:1px solid var(--border);border-radius:6px;background:var(--bg);color:var(--text);">
+                        </div>
+                    </div>
+                    <div style="margin-top:14px;">
+                        <label style="display:block;margin-bottom:4px;font-weight:600;font-size:13px;">Reason</label>
+                        <input type="text" name="reason" id="srReason" placeholder="e.g. Goods returned, Damaged stock, Price adjustment" style="width:100%;padding:10px;border:1px solid var(--border);border-radius:6px;background:var(--bg);color:var(--text);">
+                    </div>
+                </div>
+                
+                <div class="card" style="padding:20px;">
+                    <h3 style="margin:0 0 12px 0;">Return Lines</h3>
+                    <div class="sr-item-hdr">
+                        <span>Stock Item</span><span>Description</span><span>Qty</span><span>Price (excl)</span><span style="text-align:right;">Total</span><span></span>
+                    </div>
+                    <div id="srItemsBody">
+                        <div class="sr-item-row">
+                            <div class="sr-stock-td">
+                                <input type="text" class="sr-stock-search" placeholder="Search stock (or leave blank for free line)..." autocomplete="off" oninput="srStockSearch(this)" onfocus="srStockSearch(this)" style="width:100%;border:1px solid var(--border);border-radius:6px;background:var(--bg);color:var(--text);">
+                                <input type="hidden" class="sr-stock-id" value="">
+                                <div class="ssp-dropdown sr-stock-dd"></div>
+                            </div>
+                            <input type="text" class="sr-desc" placeholder="Description" style="border:1px solid var(--border);border-radius:6px;background:var(--bg);color:var(--text);">
+                            <input type="number" class="sr-qty" value="1" min="0" step="any" onchange="srCalcTotals()" style="border:1px solid var(--border);border-radius:6px;background:var(--bg);color:var(--text);">
+                            <input type="number" class="sr-price" placeholder="0.00" step="0.01" onchange="srCalcTotals()" style="border:1px solid var(--border);border-radius:6px;background:var(--bg);color:var(--text);">
+                            <span class="sr-line-total" style="text-align:right;font-weight:600;">R0.00</span>
+                            <button type="button" class="sr-rm" onclick="this.closest('.sr-item-row').remove(); srCalcTotals();">✕</button>
+                        </div>
+                    </div>
+                    <button type="button" class="sr-add-btn" onclick="srAddRow()" style="margin-top:10px;">+ Add Line</button>
+                    <p style="color:var(--text-muted);font-size:11px;margin-top:8px;">Lines linked to a stock item reduce stock on save. Free lines (no stock item) only credit the supplier — no stock effect.</p>
+                </div>
+            </div>
+            
+            <div class="sr-sidebar">
+                <div class="card">
+                    <h3 style="margin:0 0 10px 0;">Return Total</h3>
+                    <div class="sr-totals">
+                        <div class="sr-totals-row"><span>Subtotal</span><span id="srSubtotal">R0.00</span></div>
+                        <div class="sr-totals-row"><span>VAT (15%)</span><span id="srVat">R0.00</span></div>
+                        <div class="sr-totals-row grand"><span>Total</span><span id="srTotal">R0.00</span></div>
+                    </div>
+                    <button type="submit" class="btn btn-primary" style="width:100%;margin-top:14px;padding:12px;font-weight:700;">Save Return</button>
+                    <div id="srMsg" style="margin-top:10px;text-align:center;font-size:13px;display:none;"></div>
+                </div>
+            </div>
+        </div>
+        </form>
+        
+        <script>
+        const srStockData = {_ret_stock_json};
+        const srInvData = {_ret_inv_json};
+        
+        document.getElementById('srDate').value = new Date().toISOString().split('T')[0];
+        
+        // When supplier changes, repopulate the "From Invoice" picker with
+        // only that supplier's open invoices.
+        function srSupplierChanged() {{
+            const supId = document.getElementById('srSupplier').value;
+            const sel = document.getElementById('srFromInvoice');
+            sel.innerHTML = '<option value="">-- No invoice (free return) --</option>';
+            srInvData.filter(i => i.supplier_id === supId).forEach(i => {{
+                const opt = document.createElement('option');
+                opt.value = i.id;
+                opt.textContent = i.number + ' · ' + (i.date || '') + ' · R' + i.total.toFixed(2);
+                sel.appendChild(opt);
+            }});
+        }}
+        srSupplierChanged();
+        
+        // Stock typeahead — same pattern as the PO screen
+        function srStockSearch(input) {{
+            const wrap = input.closest('.sr-stock-td');
+            let dd = wrap.querySelector('.sr-stock-dd');
+            const q = input.value.toLowerCase().trim().replace(/\\s*[xX]\\s*/g, 'x');
+            const terms = q.split(/\\s+/).filter(t => t.length > 0);
+            if (!terms.length) {{ dd.classList.remove('show'); return; }}
+            const matches = srStockData.filter(s => {{
+                const text = (s.code + ' ' + s.desc).toLowerCase().replace(/\\s*[xX]\\s*/g, 'x');
+                return terms.every(t => text.includes(t));
+            }}).slice(0, 20);
+            if (matches.length === 0) {{
+                dd.innerHTML = '<div class="ssp-empty">No stock found</div>';
+            }} else {{
+                dd.innerHTML = matches.map((s, i) => {{
+                    const safeDesc = s.desc.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/"/g,'&quot;');
+                    return '<div class="ssp-item" data-idx="' + i + '">' +
+                        (s.code ? '<span class="ssp-code">' + s.code + '</span>' : '') +
+                        '<span class="ssp-desc">' + safeDesc + '</span>' +
+                        (s.price ? '<span class="ssp-price">R' + s.price.toFixed(2) + '</span>' : '') +
+                        '</div>';
+                }}).join('');
+                dd.querySelectorAll('.ssp-item').forEach(el => {{
+                    el.addEventListener('click', function() {{
+                        const m = matches[parseInt(this.getAttribute('data-idx'))];
+                        const row = wrap.closest('.sr-item-row');
+                        row.querySelector('.sr-stock-search').value = m.code ? m.code + ' - ' + m.desc : m.desc;
+                        row.querySelector('.sr-stock-id').value = m.id;
+                        row.querySelector('.sr-desc').value = m.desc;
+                        if (m.price) row.querySelector('.sr-price').value = m.price.toFixed(2);
+                        srCalcTotals();
+                        dd.classList.remove('show');
+                    }});
+                }});
+            }}
+            const rect = input.getBoundingClientRect();
+            dd.style.left = rect.left + 'px';
+            dd.style.top = (rect.bottom + 2) + 'px';
+            dd.style.width = Math.max(rect.width, 600) + 'px';
+            dd.classList.add('show');
+        }}
+        
+        document.addEventListener('click', function(e) {{
+            if (!e.target.closest('.sr-stock-search') && !e.target.closest('.sr-stock-dd')) {{
+                document.querySelectorAll('.sr-stock-dd').forEach(d => d.classList.remove('show'));
+            }}
+        }});
+        
+        function srAddRow() {{
+            const body = document.getElementById('srItemsBody');
+            const row = document.createElement('div');
+            row.className = 'sr-item-row';
+            row.innerHTML = `
+                <div class="sr-stock-td">
+                    <input type="text" class="sr-stock-search" placeholder="Search stock (or leave blank for free line)..." autocomplete="off" oninput="srStockSearch(this)" onfocus="srStockSearch(this)" style="width:100%;border:1px solid var(--border);border-radius:6px;background:var(--bg);color:var(--text);">
+                    <input type="hidden" class="sr-stock-id" value="">
+                    <div class="ssp-dropdown sr-stock-dd"></div>
+                </div>
+                <input type="text" class="sr-desc" placeholder="Description" style="border:1px solid var(--border);border-radius:6px;background:var(--bg);color:var(--text);">
+                <input type="number" class="sr-qty" value="1" min="0" step="any" onchange="srCalcTotals()" style="border:1px solid var(--border);border-radius:6px;background:var(--bg);color:var(--text);">
+                <input type="number" class="sr-price" placeholder="0.00" step="0.01" onchange="srCalcTotals()" style="border:1px solid var(--border);border-radius:6px;background:var(--bg);color:var(--text);">
+                <span class="sr-line-total" style="text-align:right;font-weight:600;">R0.00</span>
+                <button type="button" class="sr-rm" onclick="this.closest('.sr-item-row').remove(); srCalcTotals();">✕</button>
+            `;
+            body.appendChild(row);
+            row.querySelector('.sr-stock-search').focus();
+        }}
+        
+        function srCalcTotals() {{
+            let subtotal = 0;
+            document.querySelectorAll('.sr-item-row').forEach(row => {{
+                const qty = parseFloat(row.querySelector('.sr-qty')?.value) || 0;
+                const price = parseFloat(row.querySelector('.sr-price')?.value) || 0;
+                const lineTotal = qty * price;
+                subtotal += lineTotal;
+                const lt = row.querySelector('.sr-line-total');
+                if (lt) lt.textContent = 'R' + lineTotal.toFixed(2);
+            }});
+            const vat = subtotal * 0.15;
+            document.getElementById('srSubtotal').textContent = 'R' + subtotal.toFixed(2);
+            document.getElementById('srVat').textContent = 'R' + vat.toFixed(2);
+            document.getElementById('srTotal').textContent = 'R' + (subtotal + vat).toFixed(2);
+        }}
+        srCalcTotals();
+        
+        // Collect the lines into a clean array
+        function srCollectLines() {{
+            const lines = [];
+            document.querySelectorAll('.sr-item-row').forEach(row => {{
+                const qty = parseFloat(row.querySelector('.sr-qty')?.value) || 0;
+                const price = parseFloat(row.querySelector('.sr-price')?.value) || 0;
+                const desc = (row.querySelector('.sr-desc')?.value || '').trim();
+                const stockId = row.querySelector('.sr-stock-id')?.value || '';
+                if (qty > 0 && price > 0 && (desc || stockId)) {{
+                    lines.push({{ stock_id: stockId, description: desc, quantity: qty, price: price }});
+                }}
+            }});
+            return lines;
+        }}
+        
+        async function submitReturn(e) {{
+            e.preventDefault();
+            const msg = document.getElementById('srMsg');
+            const supId = document.getElementById('srSupplier').value;
+            if (!supId) {{ msg.style.display='block'; msg.style.color='var(--red)'; msg.textContent='Select a supplier'; return false; }}
+            const lines = srCollectLines();
+            if (lines.length === 0) {{ msg.style.display='block'; msg.style.color='var(--red)'; msg.textContent='Add at least one valid line (qty and price)'; return false; }}
+            
+            const payload = {{
+                supplier_id: supId,
+                from_invoice_id: document.getElementById('srFromInvoice').value || '',
+                date: document.getElementById('srDate').value,
+                supplier_ref: document.querySelector('input[name="supplier_ref"]').value.trim(),
+                reason: document.getElementById('srReason').value.trim(),
+                lines: lines
+            }};
+            
+            const btn = e.target.querySelector('button[type="submit"]');
+            btn.disabled = true; btn.textContent = 'Saving...';
+            try {{
+                const resp = await fetch('/api/supplier-return/save', {{
+                    method: 'POST',
+                    headers: {{'Content-Type': 'application/json'}},
+                    body: JSON.stringify(payload)
+                }});
+                const data = await resp.json();
+                if (data.success) {{
+                    msg.style.display='block'; msg.style.color='var(--green)';
+                    msg.textContent = 'Return ' + (data.cn_number || '') + ' saved';
+                    setTimeout(() => {{ window.location = '/supplier-credit-note/' + data.cn_id; }}, 900);
+                }} else {{
+                    msg.style.display='block'; msg.style.color='var(--red)';
+                    msg.textContent = data.error || 'Save failed';
+                    btn.disabled = false; btn.textContent = 'Save Return';
+                }}
+            }} catch (err) {{
+                msg.style.display='block'; msg.style.color='var(--red)';
+                msg.textContent = 'Error: ' + err.message;
+                btn.disabled = false; btn.textContent = 'Save Return';
+            }}
+            return false;
+        }}
+        </script>
+        '''
+        return render_page("New Supplier Return", content, user, "suppliers")
 
     @app.route("/api/scan/save-supplier-credit-note", methods=["POST"])
     @login_required
