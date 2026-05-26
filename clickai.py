@@ -47589,33 +47589,42 @@ def register_page():
                     biz_id = generate_id()
                     user_id = generate_id()
                     
-                    db.save("businesses", {
+                    # The businesses table requires business_name (NOT NULL); the
+                    # rest of the code reads .get("name"), so write both.
+                    biz_ok, biz_err = db.save("businesses", {
                         "id": biz_id,
                         "name": business_name,
+                        "business_name": business_name,
                         "user_id": user_id,
                         "created_at": now()
                     })
                     
-                    # Create user
-                    pwd_hash = hashlib.sha256(password.encode()).hexdigest()
-                    db.save("users", {
-                        "id": user_id,
-                        "email": email,
-                        "encrypted_password": pwd_hash,
-                        "confirmed_at": now(),
-                        "raw_user_meta_data": json.dumps({"full_name": name}),
-                        "default_business_id": biz_id,
-                        "created_at": now(),
-                        "updated_at": now()
-                    })
-                    
-                    # Login
-                    session.permanent = True  # Keep logged in for 31 days
-                    session["user_id"] = user_id
-                    session["business_id"] = biz_id
-                    session["show_welcome"] = True
-                    
-                    return redirect("/welcome")
+                    # If the business could not be saved, do NOT create the user
+                    # — a user pointing at a non-existent business cannot log in.
+                    if not biz_ok:
+                        logger.error(f"[REGISTER] Business save failed for {email}: {biz_err}")
+                        error = "Could not create your business — please try again"
+                    else:
+                        # Create user
+                        pwd_hash = hashlib.sha256(password.encode()).hexdigest()
+                        db.save("users", {
+                            "id": user_id,
+                            "email": email,
+                            "encrypted_password": pwd_hash,
+                            "confirmed_at": now(),
+                            "raw_user_meta_data": json.dumps({"full_name": name}),
+                            "default_business_id": biz_id,
+                            "created_at": now(),
+                            "updated_at": now()
+                        })
+                        
+                        # Login
+                        session.permanent = True  # Keep logged in for 31 days
+                        session["user_id"] = user_id
+                        session["business_id"] = biz_id
+                        session["show_welcome"] = True
+                        
+                        return redirect("/welcome")
     
     return f'''<!DOCTYPE html>
 <html>
