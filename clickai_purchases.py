@@ -177,6 +177,7 @@ def register_purchases_routes(app, db, login_required, Auth, render_page,
             <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;">
                 <a href="/supplier-invoices" class="btn btn-secondary" style="font-size:12px;padding:6px 12px;">📋 Supplier Invoices</a>
                 <a href="/supplier-credit-notes" class="btn btn-secondary" style="font-size:12px;padding:6px 12px;">↩️ Credit Notes</a>
+                <a href="/supplier-statements/print" class="btn btn-secondary" style="font-size:12px;padding:6px 12px;">🖨️ Bulk Statements</a>
                 <input type="text" id="supplierSearch" placeholder="🔍 Search name, code, phone..." 
                     oninput="filterSuppliers()" 
                     style="padding:8px 12px;border-radius:6px;border:1px solid var(--border);background:var(--card);color:var(--text);width:250px;">
@@ -5351,6 +5352,261 @@ Nothing else."""
         </div>
         '''
         return render_page("Remittance Advice", content, user, "suppliers")
+
+    @app.route("/supplier-statements/print")
+    @login_required
+    def supplier_statements_print():
+        """Bulk printable supplier statements — one statement per supplier with
+        an outstanding balance, each on its own page. Sage-style layout:
+        FROM/TO header, a Brought Forward line (all OPENING-* entries summed),
+        the transaction ledger, and an aging block at the foot.
+        Print only — no email."""
+        user = Auth.get_current_user()
+        business = Auth.get_current_business()
+        biz_id = business.get("id") if business else None
+        if not biz_id:
+            return redirect("/suppliers")
+        
+        # Business (FROM) details
+        biz_name = business.get("business_name") or business.get("name", "Business")
+        biz_vat = business.get("vat_number", "") or ""
+        biz_addr = safe_string(business.get("address", "") or "").replace("\n", "<br>")
+        biz_phone = business.get("phone", "") or ""
+        
+        # Load all data once
+        suppliers = db.get("suppliers", {"business_id": biz_id}) or []
+        all_sinvoices = db.get("supplier_invoices", {"business_id": biz_id}) or []
+        all_payments = db.get("supplier_payments", {"business_id": biz_id}) or []
+        all_cns = db.get("supplier_credit_notes", {"business_id": biz_id}) or []
+        
+        today_str = today()
+        
+        def _is_opening(ref):
+            return (ref or "").upper().startswith("OPENING-")
+        
+        # Build one statement block per supplier with a balance
+        statements_html = ""
+        statement_count = 0
+        
+        for sup in sorted(suppliers, key=lambda x: (x.get("name") or "").upper()):
+            sup_id = sup.get("id", "")
+            sup_name = sup.get("name", "")
+            sup_name_upper = sup_name.upper().strip()
+            
+            # This supplier's documents
+            s_invoices = [si for si in all_sinvoices if si.get("supplier_id") == sup_id]
+            s_payments = [p for p in all_payments if
+                          p.get("supplier_id") == sup_id or
+                          (not p.get("supplier_id") and sup_name_upper and
+                           (p.get("supplier_name") or "").upper().strip() == sup_name_upper)]
+            s_cns = [c for c in all_cns if c.get("supplier_id") == sup_id
+                     and (c.get("status") or "active") == "active"]
+            
+            # ── Build ledger items (same logic as supplier_view) ──
+            ledger = []
+            for si in s_invoices:
+                if si.get("status") == "cancelled":
+                    continue
+                ledger.append({
+                    "date": si.get("date", ""),
+                    "type": "Invoice",
+                    "reference": si.get("invoice_number", "-"),
+                    "debit": 0.0,
+                    "credit": float(si.get("total", 0) or 0),
+                })
+            for p in s_payments:
+                ledger.append({
+                    "date": p.get("date", ""),
+                    "type": "Payment",
+                    "reference": p.get("reference", "") or p.get("payment_number", "-"),
+                    "debit": float(p.get("amount", 0) or 0),
+                    "credit": 0.0,
+                })
+            for c in s_cns:
+                ledger.append({
+                    "date": c.get("date", ""),
+                    "type": "Credit Note",
+                    "reference": c.get("cn_number", "-"),
+                    "debit": float(c.get("total", 0) or 0),
+                    "credit": 0.0,
+                })
+            
+            # ── Separate OPENING-* entries into a single Brought Forward ──
+            bf_credit = 0.0   # opening invoices = we owe more
+            bf_debit = 0.0    # opening payments/CNs = we owe less
+            bf_date = ""
+            normal = []
+            for item in ledger:
+                if _is_opening(item["reference"]):
+                    bf_credit += item["credit"]
+                    bf_debit += item["debit"]
+                    if not bf_date or (item["date"] and item["date"] < bf_date):
+                        bf_date = item["date"]
+                else:
+                    normal.append(item)
+            
+            brought_forward = round(bf_credit - bf_debit, 2)
+            normal.sort(key=lambda x: x.get("date", ""))
+            
+            # ── Running balance + aging buckets ──
+            running = brought_forward
+            rows_html = ""
+            if abs(brought_forward) > 0.001:
+                rows_html += f'''
+                <tr>
+                    <td>{bf_date or "-"}</td>
+                    <td></td>
+                    <td><em>Brought Forward</em></td>
+                    <td style="text-align:right;">-</td>
+                    <td style="text-align:right;">-</td>
+                    <td style="text-align:right;font-weight:bold;">{money(running)}</td>
+                </tr>
+                '''
+            
+            for item in normal:
+                running = round(running + item["credit"] - item["debit"], 2)
+                rows_html += f'''
+                <tr>
+                    <td>{item["date"] or "-"}</td>
+                    <td>{safe_string(item["type"])}</td>
+                    <td>{safe_string(item["reference"])}</td>
+                    <td style="text-align:right;">{money(item["debit"]) if item["debit"] else "-"}</td>
+                    <td style="text-align:right;">{money(item["credit"]) if item["credit"] else "-"}</td>
+                    <td style="text-align:right;font-weight:bold;">{money(running)}</td>
+                </tr>
+                '''
+            
+            amount_due = running
+            # Skip suppliers with no outstanding balance
+            if amount_due <= 0.009:
+                continue
+            
+            # ── Aging buckets (by age of each outstanding item's date) ──
+            # Simple approach: bucket the running outstanding by document date.
+            buckets = {"current": 0.0, "d30": 0.0, "d60": 0.0, "d90": 0.0, "d120": 0.0}
+            try:
+                today_d = datetime.strptime(today_str, "%Y-%m-%d").date()
+            except Exception:
+                today_d = datetime.now().date()
+            # Net each document into buckets (credit = owed, debit = reduces)
+            for item in normal:
+                net = item["credit"] - item["debit"]
+                if abs(net) < 0.001:
+                    continue
+                try:
+                    d = datetime.strptime((item["date"] or today_str)[:10], "%Y-%m-%d").date()
+                    age = (today_d - d).days
+                except Exception:
+                    age = 0
+                if age <= 30:
+                    buckets["current"] += net
+                elif age <= 60:
+                    buckets["d30"] += net
+                elif age <= 90:
+                    buckets["d60"] += net
+                elif age <= 120:
+                    buckets["d90"] += net
+                else:
+                    buckets["d120"] += net
+            # Brought forward goes into the oldest bucket
+            buckets["d120"] += brought_forward
+            
+            statement_count += 1
+            sup_vat = sup.get("vat_number", "") or ""
+            sup_addr = safe_string(sup.get("address", "") or "").replace("\n", "<br>")
+            sup_terms = sup.get("payment_terms", "") or ""
+            
+            statements_html += f'''
+            <div class="stmt-page">
+                <div style="display:flex;justify-content:space-between;margin-bottom:16px;">
+                    <div style="width:48%;">
+                        <div style="font-size:10px;color:#888;">FROM</div>
+                        <div style="font-weight:bold;font-size:14px;">{safe_string(biz_name)}</div>
+                        <div style="font-size:11px;color:#444;">{("VAT No: " + safe_string(biz_vat)) if biz_vat else ""}</div>
+                        <div style="font-size:11px;color:#444;">{biz_addr}</div>
+                        <div style="font-size:11px;color:#444;">{("Tel: " + safe_string(biz_phone)) if biz_phone else ""}</div>
+                    </div>
+                    <div style="width:48%;">
+                        <div style="font-size:10px;color:#888;">TO</div>
+                        <div style="font-weight:bold;font-size:14px;">{safe_string(sup_name)}</div>
+                        <div style="font-size:11px;color:#444;">{("Supplier VAT No: " + safe_string(sup_vat)) if sup_vat else ""}</div>
+                        <div style="font-size:11px;color:#444;">{sup_addr}</div>
+                        <div style="font-size:11px;color:#444;">{("Terms: " + safe_string(sup_terms)) if sup_terms else ""}</div>
+                    </div>
+                </div>
+                
+                <div style="text-align:center;font-weight:bold;font-size:15px;margin-bottom:4px;">STATEMENT OF ACCOUNT</div>
+                <div style="text-align:center;font-size:11px;color:#666;margin-bottom:12px;">As at {today_str}</div>
+                
+                <table style="width:100%;border-collapse:collapse;font-size:11px;">
+                    <thead>
+                        <tr style="border-bottom:2px solid #333;">
+                            <th style="text-align:left;padding:5px;">Date</th>
+                            <th style="text-align:left;padding:5px;">Type</th>
+                            <th style="text-align:left;padding:5px;">Reference</th>
+                            <th style="text-align:right;padding:5px;">Debit</th>
+                            <th style="text-align:right;padding:5px;">Credit</th>
+                            <th style="text-align:right;padding:5px;">Balance</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {rows_html or '<tr><td colspan="6" style="text-align:center;color:#888;padding:10px;">No transactions</td></tr>'}
+                    </tbody>
+                </table>
+                
+                <table style="width:100%;border-collapse:collapse;font-size:11px;margin-top:16px;border-top:2px solid #333;">
+                    <thead>
+                        <tr>
+                            <th style="text-align:right;padding:5px;">120+ Days</th>
+                            <th style="text-align:right;padding:5px;">90 Days</th>
+                            <th style="text-align:right;padding:5px;">60 Days</th>
+                            <th style="text-align:right;padding:5px;">30 Days</th>
+                            <th style="text-align:right;padding:5px;">Current</th>
+                            <th style="text-align:right;padding:5px;background:#f0f0f0;">Amount Due</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr>
+                            <td style="text-align:right;padding:5px;">{money(buckets["d120"])}</td>
+                            <td style="text-align:right;padding:5px;">{money(buckets["d90"])}</td>
+                            <td style="text-align:right;padding:5px;">{money(buckets["d60"])}</td>
+                            <td style="text-align:right;padding:5px;">{money(buckets["d30"])}</td>
+                            <td style="text-align:right;padding:5px;">{money(buckets["current"])}</td>
+                            <td style="text-align:right;padding:5px;font-weight:bold;background:#f0f0f0;">{money(amount_due)}</td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+            '''
+        
+        if statement_count == 0:
+            statements_html = '<div style="text-align:center;padding:40px;color:#888;">No suppliers with an outstanding balance.</div>'
+        
+        content = f'''
+        <style>
+            @media print {{
+                .no-print {{ display: none !important; }}
+                nav, header, .header, .header-top, .nav-wrapper, .nav, .mobile-nav, .nav-tap-hint, .sidebar, .j-hero, .j-hud-wrap, .j-hud-pad, .j-tl {{ display: none !important; }}
+                body {{ background: white !important; color: black !important; }}
+                #printArea {{ display: block !important; }}
+                .stmt-page {{ page-break-after: always; }}
+                .stmt-page:last-child {{ page-break-after: auto; }}
+                @page {{ size: A4; margin: 14mm; }}
+            }}
+            .stmt-page {{ background:white; color:#333; padding:20px; margin:0 auto 30px; max-width:760px; border:1px solid #ddd; }}
+        </style>
+        <div class="no-print" style="display:flex;justify-content:space-between;align-items:center;margin-bottom:20px;">
+            <a href="/suppliers" style="color:var(--text-muted);">← Back to Suppliers</a>
+            <div>
+                <span style="color:var(--text-muted);font-size:13px;margin-right:12px;">{statement_count} statement(s)</span>
+                <button class="btn btn-secondary" onclick="window.print();">🖨️ Print All</button>
+            </div>
+        </div>
+        <div id="printArea">
+            {statements_html}
+        </div>
+        '''
+        return render_page("Supplier Statements", content, user, "suppliers")
 
     @app.route("/api/scan/save-supplier-credit-note", methods=["POST"])
     @login_required
