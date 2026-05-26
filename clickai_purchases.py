@@ -5667,6 +5667,7 @@ Nothing else."""
         .sr-item-row input {{ font-size: 13px; padding: 8px 10px; }}
         .sr-item-hdr {{ display: grid; grid-template-columns: 3fr 2fr 70px 110px 100px 30px; gap: 8px; padding: 6px 0; font-size: 11px; color: var(--text-muted); font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px; border-bottom: 2px solid var(--border); }}
         .sr-stock-td {{ position: relative; }}
+        .sr-stock-td .ssp-dropdown.sr-stock-dd {{ position: fixed !important; left: auto !important; right: auto !important; z-index: 9999 !important; max-height: 60vh; min-width: 600px; overflow-y: auto; background: var(--card, #1e1e2e); border: 1px solid var(--border, #333); border-radius: 6px; box-shadow: 0 8px 24px rgba(0,0,0,0.4); }}
         .sr-rm {{ background: var(--red); color: #fff; border: none; border-radius: 4px; width: 24px; height: 24px; cursor: pointer; }}
         .sr-add-btn {{ background: var(--card); color: var(--primary); border: 1px solid var(--primary); border-radius: 6px; padding: 8px 14px; cursor: pointer; font-weight: 600; }}
         .sr-totals {{ border-top: 2px solid var(--border); margin-top: 10px; padding-top: 10px; }}
@@ -5917,6 +5918,182 @@ Nothing else."""
         </script>
         '''
         return render_page("New Supplier Return", content, user, "suppliers")
+
+    @app.route("/api/supplier-return/save", methods=["POST"])
+    @login_required
+    def api_supplier_return_save():
+        """Stuk 2 — save a Supplier Return. Builds a supplier_credit_notes
+        record from the chosen lines, posts the GL journal, decrements stock
+        for stock-linked lines, and (if an invoice was referenced) recalculates
+        that invoice's status so a partial return leaves it open."""
+        try:
+            user = Auth.get_current_user()
+            business = Auth.get_current_business()
+            biz_id = business.get("id") if business else None
+            if not biz_id:
+                return jsonify({"success": False, "error": "No business selected"})
+            
+            data = request.get_json() or {}
+            supplier_id = (data.get("supplier_id") or "").strip()
+            from_invoice_id = (data.get("from_invoice_id") or "").strip()
+            ret_date = data.get("date") or today()
+            supplier_ref = (data.get("supplier_ref") or "").strip()
+            reason = (data.get("reason") or "").strip() or "Supplier Return"
+            lines = data.get("lines", []) or []
+            
+            if not supplier_id:
+                return jsonify({"success": False, "error": "Select a supplier"})
+            if not lines:
+                return jsonify({"success": False, "error": "Add at least one return line"})
+            
+            supplier = db.get_one("suppliers", supplier_id)
+            if not supplier or supplier.get("business_id") != biz_id:
+                return jsonify({"success": False, "error": "Supplier not found"})
+            supplier_name = supplier.get("name", "Unknown")
+            
+            # ── Build clean line items + totals (prices are EXCL VAT) ──
+            clean_lines = []
+            subtotal = 0.0
+            stock_credit = 0.0   # net of stock-linked lines  -> CR Stock
+            free_credit = 0.0    # net of free lines          -> CR COS/Purchases
+            for ln in lines:
+                try:
+                    qty = round(float(ln.get("quantity", 0) or 0), 4)
+                    price = round(float(ln.get("price", 0) or 0), 2)
+                except Exception:
+                    continue
+                if qty <= 0 or price <= 0:
+                    continue
+                stock_id = (ln.get("stock_id") or "").strip()
+                desc = (ln.get("description") or "").strip()
+                if not desc and not stock_id:
+                    continue
+                line_total = round(qty * price, 2)
+                subtotal += line_total
+                if stock_id:
+                    stock_credit += line_total
+                else:
+                    free_credit += line_total
+                clean_lines.append({
+                    "stock_id": stock_id,
+                    "description": desc,
+                    "quantity": qty,
+                    "price": price,
+                    "line_total": line_total,
+                })
+            
+            if not clean_lines:
+                return jsonify({"success": False, "error": "No valid return lines (need qty and price)"})
+            
+            subtotal = round(subtotal, 2)
+            vat = round(subtotal * 0.15, 2)
+            total = round(subtotal + vat, 2)
+            
+            # ── Generate our SCR number ──
+            existing_cns = db.get("supplier_credit_notes", {"business_id": biz_id}) or []
+            cn_number = next_document_number("SCR-", existing_cns, field="cn_number")
+            cn_id = generate_id()
+            cn_ref = f"SCR-{cn_id[:8]}"
+            
+            # ── GL journal: DR Creditors, CR Stock (stock lines),
+            #    CR COS/Purchases (free lines), CR VAT Input ──
+            cn_journal_lines = []
+            if stock_credit > 0:
+                cn_journal_lines.append({"account_code": gl(biz_id, "stock"), "debit": 0, "credit": round(stock_credit, 2)})
+            if free_credit > 0:
+                cn_journal_lines.append({"account_code": gl(biz_id, "cogs"), "debit": 0, "credit": round(free_credit, 2)})
+            if vat > 0:
+                cn_journal_lines.append({"account_code": gl(biz_id, "vat_input"), "debit": 0, "credit": vat})
+            cn_journal_lines.append({"account_code": gl(biz_id, "creditors"), "debit": total, "credit": 0})
+            
+            try:
+                create_journal_entry(biz_id, ret_date, f"Supplier Return - {supplier_name}", cn_ref, cn_journal_lines)
+            except Exception as je:
+                logger.error(f"[SUP RETURN] GL entry failed (return still saving): {je}")
+            
+            # ── Decrement stock for stock-linked lines + log movements ──
+            for cl in clean_lines:
+                sid = cl["stock_id"]
+                if not sid:
+                    continue
+                try:
+                    stock_item = db.get_one_stock(sid)
+                    if stock_item:
+                        cur_qty = float(stock_item.get("qty") or stock_item.get("quantity") or 0)
+                        new_qty = cur_qty - cl["quantity"]
+                        db.update_stock(sid, {"qty": new_qty, "quantity": new_qty}, biz_id)
+                        db.save("stock_movements", RecordFactory.stock_movement(
+                            business_id=biz_id, stock_id=sid, movement_type="out",
+                            quantity=cl["quantity"],
+                            reference=f"{cn_number} | Supplier Return | {safe_string(supplier_name)}"
+                        ))
+                except Exception as se:
+                    logger.error(f"[SUP RETURN] Stock decrement failed for {sid}: {se}")
+            
+            # ── Build a reason that records the supplier's own ref ──
+            full_reason = reason
+            if supplier_ref:
+                full_reason = f"{reason} | META:{json.dumps({'supplier_cn_number': supplier_ref})}"
+            
+            # ── Save the supplier credit note record ──
+            cn_record = {
+                "id": cn_id,
+                "business_id": biz_id,
+                "supplier_id": supplier_id,
+                "supplier_name": supplier_name,
+                "cn_number": cn_number,
+                "original_invoice_id": from_invoice_id or None,
+                "date": ret_date,
+                "subtotal": subtotal,
+                "vat": vat,
+                "total": total,
+                "reason": full_reason,
+                "items": json.dumps(clean_lines),
+                "status": "active",
+                "stock_snapshots": "[]",
+                "created_by": user.get("id") if user else None,
+                "created_at": now()
+            }
+            ok, result = db.save("supplier_credit_notes", cn_record)
+            if not ok:
+                logger.error(f"[SUP RETURN] Failed to save: {result}")
+                return jsonify({"success": False, "error": f"Database error: {result}"})
+            
+            # ── If linked to an invoice, recalc its status (partial return
+            #    leaves it open; the supplier balance auto-deducts the CN) ──
+            if from_invoice_id:
+                try:
+                    recalc_supplier_invoice_status(biz_id, from_invoice_id)
+                except Exception as re:
+                    logger.warning(f"[SUP RETURN] recalc invoice status failed: {re}")
+            
+            # ── Pulse + allocation logs ──
+            try:
+                _log_pulse_event(biz_id, user, "supplier_return_created",
+                    f"Supplier Return {cn_number} created for {supplier_name}",
+                    f"Return of R{total:.2f} ({len(clean_lines)} line(s)). Reason: {reason}")
+            except Exception:
+                pass
+            try:
+                if log_allocation:
+                    log_allocation(
+                        business_id=biz_id, allocation_type="supplier_credit_note",
+                        source_table="supplier_credit_notes", source_id=cn_id,
+                        description=f"Supplier Return {cn_number} - {supplier_name}",
+                        amount=total, gl_entries=cn_journal_lines,
+                        category="Supplier Return", category_code=gl(biz_id, "creditors"),
+                        supplier_name=supplier_name, payment_method="account",
+                        reference=cn_number, transaction_date=ret_date,
+                        created_by=user.get("id") if user else "",
+                        created_by_name=user.get("name", "") if user else ""
+                    )
+            except Exception:
+                pass
+            
+            return jsonify({"success": True, "cn_number": cn_number, "cn_id": cn_id})
+        except Exception as e:
+            logger.exception(f"[SUP RETURN] Failed: {e}")
+            return jsonify({"success": False, "error": str(e)})
 
     @app.route("/api/scan/save-supplier-credit-note", methods=["POST"])
     @login_required
