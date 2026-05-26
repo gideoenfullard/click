@@ -36,6 +36,61 @@ def safe_float(v):
     return 0.0
 
 
+def calc_monthly_paye(basic, age=0, pension=0, provident=0, medical_members=0):
+    """Monthly PAYE — SARS 2026/27 tax tables.
+
+    Section 11F: retirement-fund contributions (pension + provident) reduce
+    taxable income before PAYE is calculated.
+    Section 6A: the medical scheme fees tax credit reduces PAYE after the
+    age rebate. 2026/27 monthly credit: R376 main member, R376 first
+    dependant, R254 each further dependant. medical_members is the total
+    number of people on the scheme including the employee.
+    """
+    basic = safe_float(basic)
+    pension = safe_float(pension)
+    provident = safe_float(provident)
+    age = safe_float(age)
+    members = int(safe_float(medical_members))
+
+    # Section 11F — taxable income is salary less retirement contributions
+    taxable_monthly = max(0.0, basic - pension - provident)
+    annual = taxable_monthly * 12
+
+    if annual <= 245100:
+        paye = (annual * 0.18) / 12
+    elif annual <= 383100:
+        paye = (44118 + (annual - 245100) * 0.26) / 12
+    elif annual <= 530200:
+        paye = (79998 + (annual - 383100) * 0.31) / 12
+    elif annual <= 695800:
+        paye = (125599 + (annual - 530200) * 0.36) / 12
+    elif annual <= 887000:
+        paye = (185215 + (annual - 695800) * 0.39) / 12
+    elif annual <= 1878600:
+        paye = (259783 + (annual - 887000) * 0.41) / 12
+    else:
+        paye = (666339 + (annual - 1878600) * 0.45) / 12
+
+    # Age rebates — primary for all; secondary 65+; tertiary 75+
+    annual_rebate = 17820
+    if age >= 75:
+        annual_rebate += 9765 + 3249
+    elif age >= 65:
+        annual_rebate += 9765
+    paye = max(0.0, paye - (annual_rebate / 12))
+
+    # Section 6A — medical scheme fees tax credit
+    if members >= 1:
+        mtc = 376.0  # main member
+        if members >= 2:
+            mtc += 376.0  # first dependant
+        if members > 2:
+            mtc += 254.0 * (members - 2)  # each further dependant
+        paye = max(0.0, paye - mtc)
+
+    return paye
+
+
 def register_payroll_routes(app, db, login_required, Auth, render_page,
                             generate_id, money, safe_string, now, today,
                             gl, create_journal_entry,
@@ -287,6 +342,11 @@ def register_payroll_routes(app, db, login_required, Auth, render_page,
             except:
                 provident_fund_amount = 0
             
+            try:
+                medical_members = int(float(request.form.get("medical_members", 0) or 0))
+            except:
+                medical_members = 0
+            
             # Industry fund (MIBFA/CETA)
             provident_fund = request.form.get("provident_fund", "off")
             if provident_fund == "mibfa":
@@ -343,6 +403,7 @@ def register_payroll_routes(app, db, login_required, Auth, render_page,
                     bank_branch=bank_branch
                 )
                 employee["provident_fund_amount"] = provident_fund_amount
+                employee["medical_members"] = medical_members
                 employee["employee_code"] = request.form.get("employee_code", "").strip()
                 employee["leave_balance"] = safe_float(request.form.get("leave_balance", 0))
                 emp_id = employee["id"]
@@ -453,6 +514,13 @@ def register_payroll_routes(app, db, login_required, Auth, render_page,
                         <label style="display:block;margin-bottom:5px;font-weight:500;">Medical Aid (R)</label>
                         <input type="number" name="medical_aid" step="0.01" value="0" style="width:100%;padding:10px;border-radius:6px;border:1px solid var(--border);background:var(--card);color:var(--text);">
                     </div>
+                    <div>
+                        <label style="display:block;margin-bottom:5px;font-weight:500;">Medical Aid Members</label>
+                        <input type="number" name="medical_members" step="1" min="0" value="0" placeholder="Total people on the scheme, including the employee" style="width:100%;padding:10px;border-radius:6px;border:1px solid var(--border);background:var(--card);color:var(--text);">
+                        <p style="color:var(--text-muted);font-size:11px;margin:4px 0 0;">Total people on the medical scheme, including the employee. Used for the SARS medical tax credit. Leave 0 if no medical aid.</p>
+                    </div>
+                </div>
+                <div style="display:grid;grid-template-columns:1fr 1fr;gap:15px;margin-bottom:15px;">
                     <div>
                         <label style="display:block;margin-bottom:5px;font-weight:500;">Union Fees (R)</label>
                         <input type="number" name="union_fees" step="0.01" value="0" placeholder="NUMSA, etc." style="width:100%;padding:10px;border-radius:6px;border:1px solid var(--border);background:var(--card);color:var(--text);">
@@ -663,34 +731,14 @@ def register_payroll_routes(app, db, login_required, Auth, render_page,
                 loan = safe_float(emp.get("loan_deduction", 0))
                 other_ded = safe_float(emp.get("other_deduction", 0))
                 pension_employer = safe_float(emp.get("pension_employer", 0))
+                # Provident fund — separate employee deduction (apart from pension)
+                provident = safe_float(emp.get("provident_fund_amount", 0))
                 
-                # PAYE calculation — SARS 2026/27 tax tables
-                # (Year of assessment 2027: 1 March 2026 – 28 February 2027)
-                annual = basic * 12
-                if annual <= 245100:
-                    paye = (annual * 0.18) / 12
-                elif annual <= 383100:
-                    paye = (44118 + (annual - 245100) * 0.26) / 12
-                elif annual <= 530200:
-                    paye = (79998 + (annual - 383100) * 0.31) / 12
-                elif annual <= 695800:
-                    paye = (125599 + (annual - 530200) * 0.36) / 12
-                elif annual <= 887000:
-                    paye = (185215 + (annual - 695800) * 0.39) / 12
-                elif annual <= 1878600:
-                    paye = (259783 + (annual - 887000) * 0.41) / 12
-                else:
-                    paye = (666339 + (annual - 1878600) * 0.45) / 12
-                
-                # Rebates — primary for all; secondary 65+; tertiary 75+
-                # 2026/27: primary R17 820, secondary R9 765, tertiary R3 249
+                # PAYE — SARS 2026/27 (Section 11F retirement deduction +
+                # Section 6A medical credit applied inside the helper)
                 _emp_age = safe_float(emp.get("age", 0))
-                annual_rebate = 17820
-                if _emp_age >= 75:
-                    annual_rebate += 9765 + 3249
-                elif _emp_age >= 65:
-                    annual_rebate += 9765
-                paye = max(0, paye - (annual_rebate / 12))
+                _medical_members = safe_float(emp.get("medical_members", 0))
+                paye = calc_monthly_paye(basic, _emp_age, pension, provident, _medical_members)
                 
                 # UIF - 1% capped at R177.12
                 uif = min(basic * 0.01, 177.12)
@@ -701,9 +749,6 @@ def register_payroll_routes(app, db, login_required, Auth, render_page,
                 
                 # COIDA - ~1% (employer only)
                 coida = basic * 0.01
-                
-                # Provident fund — separate employee deduction (apart from pension)
-                provident = safe_float(emp.get("provident_fund_amount", 0))
                 
                 # Total deductions from employee
                 total_ded = paye + uif + medical + union_fees + pension + provident + loan + other_ded
@@ -826,36 +871,19 @@ def register_payroll_routes(app, db, login_required, Auth, render_page,
             if already_exists:
                 existing_count += 1
             
-            # PAYE calculation — SARS 2026/27 tax tables (same as payroll_run)
-            annual = basic * 12
-            if annual <= 245100:
-                paye = (annual * 0.18) / 12
-            elif annual <= 383100:
-                paye = (44118 + (annual - 245100) * 0.26) / 12
-            elif annual <= 530200:
-                paye = (79998 + (annual - 383100) * 0.31) / 12
-            elif annual <= 695800:
-                paye = (125599 + (annual - 530200) * 0.36) / 12
-            elif annual <= 887000:
-                paye = (185215 + (annual - 695800) * 0.39) / 12
-            elif annual <= 1878600:
-                paye = (259783 + (annual - 887000) * 0.41) / 12
-            else:
-                paye = (666339 + (annual - 1878600) * 0.45) / 12
-            
-            _emp_age = safe_float(emp.get("age", 0))
-            annual_rebate = 17820
-            if _emp_age >= 75:
-                annual_rebate += 9765 + 3249
-            elif _emp_age >= 65:
-                annual_rebate += 9765
-            paye = max(0, paye - (annual_rebate / 12))
-            uif = min(basic * 0.01, 177.12)
+            # Deductions from employee
             medical = safe_float(emp.get("medical_aid", 0))
             union_fees = safe_float(emp.get("union_fees", 0))
             pension = safe_float(emp.get("pension", 0))
             provident = safe_float(emp.get("provident_fund_amount", 0))
             other = safe_float(emp.get("loan_deduction", 0)) + safe_float(emp.get("other_deduction", 0))
+
+            # PAYE — SARS 2026/27 (Section 11F retirement deduction +
+            # Section 6A medical credit applied inside the helper)
+            _emp_age = safe_float(emp.get("age", 0))
+            _medical_members = safe_float(emp.get("medical_members", 0))
+            paye = calc_monthly_paye(basic, _emp_age, pension, provident, _medical_members)
+            uif = min(basic * 0.01, 177.12)
             
             total_ded = paye + uif + medical + union_fees + pension + provident + other
             net = basic - total_ded
@@ -937,38 +965,21 @@ def register_payroll_routes(app, db, login_required, Auth, render_page,
         
         basic = safe_float(emp.get("basic_salary", 0))
         
-        # PAYE — SARS 2026/27 tax tables (same calculation as payroll_run)
-        annual = basic * 12
-        if annual <= 245100:
-            paye = (annual * 0.18) / 12
-        elif annual <= 383100:
-            paye = (44118 + (annual - 245100) * 0.26) / 12
-        elif annual <= 530200:
-            paye = (79998 + (annual - 383100) * 0.31) / 12
-        elif annual <= 695800:
-            paye = (125599 + (annual - 530200) * 0.36) / 12
-        elif annual <= 887000:
-            paye = (185215 + (annual - 695800) * 0.39) / 12
-        elif annual <= 1878600:
-            paye = (259783 + (annual - 887000) * 0.41) / 12
-        else:
-            paye = (666339 + (annual - 1878600) * 0.45) / 12
-        
-        _emp_age = safe_float(emp.get("age", 0))
-        annual_rebate = 17820
-        if _emp_age >= 75:
-            annual_rebate += 9765 + 3249
-        elif _emp_age >= 65:
-            annual_rebate += 9765
-        paye = max(0, paye - (annual_rebate / 12))
-        
-        uif = min(basic * 0.01, 177.12)
+        # Deductions from employee
         medical = safe_float(emp.get("medical_aid", 0))
         union_fees = safe_float(emp.get("union_fees", 0))
         pension = safe_float(emp.get("pension", 0))
         provident = safe_float(emp.get("provident_fund_amount", 0))
         loan = safe_float(emp.get("loan_deduction", 0))
         other_ded = safe_float(emp.get("other_deduction", 0))
+        
+        # PAYE — SARS 2026/27 (Section 11F retirement deduction +
+        # Section 6A medical credit applied inside the helper)
+        _emp_age = safe_float(emp.get("age", 0))
+        _medical_members = safe_float(emp.get("medical_members", 0))
+        paye = calc_monthly_paye(basic, _emp_age, pension, provident, _medical_members)
+        
+        uif = min(basic * 0.01, 177.12)
         total_ded = paye + uif + medical + union_fees + pension + provident + loan + other_ded
         net = basic - total_ded
         
@@ -1252,30 +1263,11 @@ def register_payroll_routes(app, db, login_required, Auth, render_page,
         pension_employer = safe_float(emp.get("pension_employer", 0))
         provident = safe_float(emp.get("provident_fund_amount", 0))
 
-        # PAYE — SARS 2026/27 tax tables (same calculation as payroll_run)
-        annual = basic * 12
-        if annual <= 245100:
-            paye = (annual * 0.18) / 12
-        elif annual <= 383100:
-            paye = (44118 + (annual - 245100) * 0.26) / 12
-        elif annual <= 530200:
-            paye = (79998 + (annual - 383100) * 0.31) / 12
-        elif annual <= 695800:
-            paye = (125599 + (annual - 530200) * 0.36) / 12
-        elif annual <= 887000:
-            paye = (185215 + (annual - 695800) * 0.39) / 12
-        elif annual <= 1878600:
-            paye = (259783 + (annual - 887000) * 0.41) / 12
-        else:
-            paye = (666339 + (annual - 1878600) * 0.45) / 12
-
+        # PAYE — SARS 2026/27 (Section 11F retirement deduction +
+        # Section 6A medical credit applied inside the helper)
         _emp_age = safe_float(emp.get("age", 0))
-        annual_rebate = 17820
-        if _emp_age >= 75:
-            annual_rebate += 9765 + 3249
-        elif _emp_age >= 65:
-            annual_rebate += 9765
-        paye = max(0, paye - (annual_rebate / 12))
+        _medical_members = safe_float(emp.get("medical_members", 0))
+        paye = calc_monthly_paye(basic, _emp_age, pension, provident, _medical_members)
 
         # UIF — 1% capped at R177.12
         uif = min(basic * 0.01, 177.12)
@@ -1566,6 +1558,7 @@ def register_payroll_routes(app, db, login_required, Auth, render_page,
                 "travel_allowance": travel_allowance,
                 "other_allowance": other_allowance,
                 "medical_aid": medical_aid,
+                "medical_members": int(safe_float(request.form.get("medical_members", 0))),
                 "union_fees": union_fees,
                 "provident_fund": provident_fund,
                 "pension": pension,
@@ -1671,6 +1664,11 @@ def register_payroll_routes(app, db, login_required, Auth, render_page,
                     <div>
                         <label style="display:block;margin-bottom:5px;font-weight:500;">Medical Aid (R)</label>
                         <input type="number" name="medical_aid" step="0.01" value="{safe_float(employee.get('medical_aid', 0))}" style="width:100%;padding:10px;border-radius:6px;border:1px solid var(--border);background:var(--card);color:var(--text);">
+                    </div>
+                    <div>
+                        <label style="display:block;margin-bottom:5px;font-weight:500;">Medical Aid Members</label>
+                        <input type="number" name="medical_members" step="1" min="0" value="{int(safe_float(employee.get('medical_members', 0)))}" style="width:100%;padding:10px;border-radius:6px;border:1px solid var(--border);background:var(--card);color:var(--text);">
+                        <p style="color:var(--text-muted);font-size:11px;margin:4px 0 0;">Total people on the medical scheme, including the employee. Used for the SARS medical tax credit. Leave 0 if no medical aid.</p>
                     </div>
                     <div>
                         <label style="display:block;margin-bottom:5px;font-weight:500;">Union Fees (R)</label>
