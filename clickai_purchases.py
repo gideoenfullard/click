@@ -44,6 +44,53 @@ def register_purchases_routes(app, db, login_required, Auth, render_page,
         import clickai as _main
         return _main._get_form_fields(*args, **kwargs)
 
+    # ──────────────────────────────────────────────────────────────────────
+    # SUPPLIER PAYMENT ALLOCATIONS — links a supplier payment to specific
+    # supplier invoices. The supplier_payment_allocations table is the source
+    # of truth for which of our payments covered which supplier invoice.
+    # A supplier invoice's amount_paid / status are derived from it (cached).
+    # ──────────────────────────────────────────────────────────────────────
+
+    def get_supplier_invoice_allocations(biz_id, invoice_id):
+        """All allocation rows posted against one supplier invoice."""
+        if not biz_id or not invoice_id:
+            return []
+        try:
+            return db.get("supplier_payment_allocations",
+                          {"business_id": biz_id, "supplier_invoice_id": invoice_id}) or []
+        except Exception as e:
+            logger.warning(f"[SUP ALLOC] get_supplier_invoice_allocations failed: {e}")
+            return []
+
+    def supplier_invoice_allocated_total(biz_id, invoice_id):
+        """Sum of all amounts allocated to one supplier invoice."""
+        return round(sum(float(a.get("amount", 0) or 0)
+                         for a in get_supplier_invoice_allocations(biz_id, invoice_id)), 2)
+
+    def recalc_supplier_invoice_status(biz_id, invoice_id):
+        """Recompute one supplier invoice's amount_paid + status from its
+        allocations, then write the derived values back (cache).
+        supplier_payment_allocations stays the source of truth — this can be
+        re-run any time to repair a supplier invoice whose status has drifted.
+        Returns {"allocated": x, "total": y, "status": "paid"/"unpaid"}.
+        """
+        inv = db.get_one("supplier_invoices", invoice_id)
+        if not inv:
+            return {"allocated": 0.0, "total": 0.0, "status": "unknown"}
+        total = round(float(inv.get("total", 0) or 0), 2)
+        allocated = supplier_invoice_allocated_total(biz_id, invoice_id)
+        cur_status = (inv.get("status") or "").lower()
+        # Never override a credited/cancelled invoice — those are final states.
+        if cur_status in ("credited", "cancelled"):
+            return {"allocated": allocated, "total": total, "status": cur_status}
+        new_status = "paid" if allocated >= total and total > 0 else "unpaid"
+        try:
+            db.update("supplier_invoices", invoice_id,
+                      {"amount_paid": allocated, "status": new_status}, biz_id)
+        except Exception as e:
+            logger.warning(f"[SUP ALLOC] recalc_supplier_invoice_status update failed: {e}")
+        return {"allocated": allocated, "total": total, "status": new_status}
+
     # === SUPPLIERS ===
 
     @app.route("/suppliers")
@@ -421,10 +468,62 @@ def register_purchases_routes(app, db, login_required, Auth, render_page,
         
         _gl_json_str = json.dumps(_gl_json)
         
-        # Calculate balance from source documents (supplier_invoices - payments)
+        # Calculate balance from source documents
+        # (supplier_invoices - payments - active supplier credit notes)
         _si_total = sum(float(si.get("total", 0)) for si in supplier_invoices if si.get("status") != "cancelled")
         _pay_total = sum(float(p.get("amount", 0)) for p in payments)
-        balance = round(_si_total - _pay_total, 2) if can_see_balances else 0
+        # Active supplier credit notes reduce what we owe
+        _scn_total = 0.0
+        if can_see_balances:
+            try:
+                _bal_cns = db.get("supplier_credit_notes", {"business_id": biz_id}) if biz_id else []
+                _scn_total = sum(float(_c.get("total", 0) or 0) for _c in _bal_cns
+                                 if _c.get("supplier_id") == supplier_id
+                                 and (_c.get("status") or "active") == "active")
+            except Exception:
+                _scn_total = 0.0
+        balance = round(_si_total - _pay_total - _scn_total, 2) if can_see_balances else 0
+        
+        # ── Open supplier invoices for the Record Payment allocation list ──
+        # Open = not paid/credited/cancelled and still has an outstanding amount
+        # (total minus what is already allocated to it).
+        _open_sinvoices = []
+        if can_see_balances:
+            for _si in supplier_invoices:
+                _sist = (_si.get("status") or "").lower()
+                if _sist in ("paid", "credited", "cancelled"):
+                    continue
+                _si_tot = round(float(_si.get("total", 0) or 0), 2)
+                if _si_tot <= 0:
+                    continue
+                _si_already = supplier_invoice_allocated_total(biz_id, _si.get("id", ""))
+                _si_outstanding = round(_si_tot - _si_already, 2)
+                if _si_outstanding <= 0:
+                    continue
+                _open_sinvoices.append({
+                    "id": _si.get("id", ""),
+                    "number": _si.get("invoice_number", "-"),
+                    "date": _si.get("date", "-"),
+                    "outstanding": _si_outstanding
+                })
+            _open_sinvoices.sort(key=lambda x: x["date"])
+        
+        _sp_alloc_rows_html = ""
+        for _osi in _open_sinvoices:
+            _sp_alloc_rows_html += f'''
+            <div style="display:flex;align-items:center;gap:10px;padding:8px 0;border-bottom:1px solid var(--border);">
+                <div style="flex:1;font-size:13px;">
+                    <strong>{safe_string(_osi["number"])}</strong>
+                    <span style="color:var(--text-muted);"> · {_osi["date"]}</span><br>
+                    <span style="color:var(--text-muted);font-size:12px;">Outstanding: {money(_osi["outstanding"])}</span>
+                </div>
+                <input type="number" class="spAllocAmt" data-invid="{_osi["id"]}" data-outstanding="{_osi["outstanding"]}"
+                       placeholder="0.00" step="0.01" min="0" max="{_osi["outstanding"]}"
+                       style="width:110px;padding:8px;border:1px solid var(--border);border-radius:6px;background:var(--bg);color:var(--text);text-align:right;">
+            </div>
+            '''
+        if not _sp_alloc_rows_html:
+            _sp_alloc_rows_html = '<p style="color:var(--text-muted);font-size:13px;padding:8px 0;">No open invoices — this payment will go on account.</p>'
         
         # Stats - only if can see balances
         total_billed = sum(float(e.get("total", e.get("amount", 0))) for e in expenses) if can_see_balances else 0
@@ -1202,7 +1301,7 @@ def register_purchases_routes(app, db, login_required, Auth, render_page,
         
         <!-- Record Payment Modal -->
         <div id="paymentModal" style="display:none;position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.7);z-index:9999;justify-content:center;align-items:center;">
-            <div style="background:var(--card);border-radius:12px;padding:30px;width:90%;max-width:500px;border:1px solid var(--border);">
+            <div style="background:var(--card);border-radius:12px;padding:30px;width:90%;max-width:560px;max-height:90vh;overflow-y:auto;border:1px solid var(--border);">
                 <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:20px;">
                     <h2 style="margin:0;">💰 Record Payment</h2>
                     <button onclick="document.getElementById('paymentModal').style.display='none'" style="background:none;border:none;color:var(--text-muted);font-size:24px;cursor:pointer;">&times;</button>
@@ -1229,7 +1328,17 @@ def register_purchases_routes(app, db, login_required, Auth, render_page,
                     </div>
                     <div>
                         <label style="display:block;margin-bottom:4px;font-weight:600;font-size:13px;">Reference / Note</label>
-                        <input type="text" id="payRef" placeholder="e.g. INV-001, POP ref, etc." style="width:100%;padding:10px;border:1px solid var(--border);border-radius:6px;background:var(--bg);color:var(--text);">
+                        <input type="text" id="payRef" placeholder="e.g. POP ref, etc." style="width:100%;padding:10px;border:1px solid var(--border);border-radius:6px;background:var(--bg);color:var(--text);">
+                    </div>
+                    <div>
+                        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;">
+                            <label style="font-weight:600;font-size:13px;">Allocate to Invoices</label>
+                            <button type="button" onclick="spAutoAllocate()" style="padding:5px 10px;font-size:12px;background:var(--bg);color:var(--text);border:1px solid var(--border);border-radius:6px;cursor:pointer;">Auto-allocate</button>
+                        </div>
+                        <div style="background:var(--bg);border:1px solid var(--border);border-radius:6px;padding:4px 12px;">
+                            {_sp_alloc_rows_html}
+                        </div>
+                        <div id="spAllocSummary" style="font-size:12px;color:var(--text-muted);margin-top:6px;">Unallocated remainder stays on the supplier's account.</div>
                     </div>
                 </div>
                 
@@ -1247,6 +1356,58 @@ def register_purchases_routes(app, db, login_required, Auth, render_page,
         
         document.getElementById('paymentModal').addEventListener('click', function(e) {{
             if (e.target === this) this.style.display = 'none';
+        }});
+        
+        // Collect non-zero supplier-invoice allocations from the modal
+        function spCollectAllocations() {{
+            const out = [];
+            document.querySelectorAll('.spAllocAmt').forEach(function(inp) {{
+                const amt = parseFloat(inp.value) || 0;
+                if (amt > 0) {{
+                    out.push({{ supplier_invoice_id: inp.dataset.invid, amount: Math.round(amt * 100) / 100 }});
+                }}
+            }});
+            return out;
+        }}
+        
+        // Auto-allocate: spread the amount across open invoices, oldest first
+        function spAutoAllocate() {{
+            let remaining = parseFloat(document.getElementById('payAmount').value) || 0;
+            document.querySelectorAll('.spAllocAmt').forEach(function(inp) {{
+                const outstanding = parseFloat(inp.dataset.outstanding) || 0;
+                if (remaining <= 0) {{ inp.value = ''; return; }}
+                const give = Math.min(remaining, outstanding);
+                inp.value = give > 0 ? give.toFixed(2) : '';
+                remaining = Math.round((remaining - give) * 100) / 100;
+            }});
+            spUpdateAllocSummary();
+        }}
+        
+        // Show how much of the payment is allocated vs left on account
+        function spUpdateAllocSummary() {{
+            const summary = document.getElementById('spAllocSummary');
+            if (!summary) return;
+            const amount = parseFloat(document.getElementById('payAmount').value) || 0;
+            let allocated = 0;
+            document.querySelectorAll('.spAllocAmt').forEach(function(inp) {{
+                allocated += parseFloat(inp.value) || 0;
+            }});
+            allocated = Math.round(allocated * 100) / 100;
+            const remainder = Math.round((amount - allocated) * 100) / 100;
+            if (amount <= 0) {{
+                summary.textContent = 'Unallocated remainder stays on the supplier account.';
+                summary.style.color = 'var(--text-muted)';
+            }} else if (allocated > amount + 0.001) {{
+                summary.textContent = 'Allocated R' + allocated.toFixed(2) + ' — more than the payment amount';
+                summary.style.color = 'var(--red)';
+            }} else {{
+                summary.textContent = 'Allocated R' + allocated.toFixed(2) + ' · On account R' + remainder.toFixed(2);
+                summary.style.color = 'var(--text-muted)';
+            }}
+        }}
+        
+        document.querySelectorAll('.spAllocAmt').forEach(function(inp) {{
+            inp.addEventListener('input', spUpdateAllocSummary);
         }});
         
         function tryZanePayment() {{
@@ -1284,8 +1445,21 @@ def register_purchases_routes(app, db, login_required, Auth, render_page,
                 amount: amount,
                 method: document.getElementById('payMethod').value,
                 date: document.getElementById('payDate').value,
-                reference: document.getElementById('payRef').value.trim()
+                reference: document.getElementById('payRef').value.trim(),
+                allocations: spCollectAllocations()
             }};
+            
+            // Guard: total allocated may not exceed the payment amount
+            let _spAllocSum = 0;
+            data.allocations.forEach(function(a) {{ _spAllocSum += a.amount; }});
+            if (_spAllocSum > amount + 0.001) {{
+                msg.style.display = 'block';
+                msg.style.color = 'var(--red)';
+                msg.textContent = 'Allocated total (R' + _spAllocSum.toFixed(2) + ') is more than the payment amount';
+                btn.disabled = false;
+                btn.textContent = 'Pay Now';
+                return;
+            }}
             
             try {{
                 const resp = await fetch('/api/supplier/record-payment', {{
@@ -4999,10 +5173,56 @@ Nothing else."""
             except Exception:
                 pass
             
-            return jsonify({
-                "success": True,
-                "message": f"Payment of R{amount:,.2f} to {supplier_name} recorded ({method.upper()})"
-            })
+            # ── Supplier invoice allocations ──────────────────────────────
+            # data["allocations"] is a list of {"supplier_invoice_id": x, "amount": y}.
+            # Each becomes a supplier_payment_allocations row; the supplier
+            # invoice is then recalculated from its allocations. Any unallocated
+            # remainder simply stays on the supplier's account as a credit.
+            allocations = data.get("allocations", []) or []
+            allocated_total = 0.0
+            allocated_count = 0
+            for alloc in allocations:
+                sinv_id = (alloc.get("supplier_invoice_id", "") or "").strip()
+                try:
+                    alloc_amt = round(float(alloc.get("amount", 0) or 0), 2)
+                except Exception:
+                    alloc_amt = 0.0
+                if not sinv_id or alloc_amt <= 0:
+                    continue
+                _sinv = db.get_one("supplier_invoices", sinv_id)
+                if not _sinv or _sinv.get("business_id") != biz_id:
+                    continue
+                alloc_row = {
+                    "id": generate_id(),
+                    "business_id": biz_id,
+                    "supplier_payment_id": payment["id"],
+                    "supplier_invoice_id": sinv_id,
+                    "invoice_number": _sinv.get("invoice_number", ""),
+                    "supplier_id": supplier_id,
+                    "supplier_name": supplier_name,
+                    "amount": alloc_amt,
+                    "date": pay_date,
+                    "created_at": now()
+                }
+                ok_alloc, alloc_err = db.save("supplier_payment_allocations", alloc_row)
+                if not ok_alloc:
+                    logger.error(f"[PAY] Allocation save failed for {sinv_id}: {alloc_err}")
+                    continue
+                allocated_total += alloc_amt
+                allocated_count += 1
+                recalc_supplier_invoice_status(biz_id, sinv_id)
+            
+            unallocated = round(rounded - allocated_total, 2)
+            if allocated_count > 0:
+                _msg = (f"Payment of R{amount:,.2f} to {supplier_name} recorded "
+                        f"({method.upper()}) — allocated to {allocated_count} invoice(s)")
+                if unallocated > 0:
+                    _msg += f", R{unallocated:,.2f} left on account"
+            else:
+                _msg = (f"Payment of R{amount:,.2f} to {supplier_name} recorded "
+                        f"({method.upper()}) — on account, not allocated")
+            
+            return jsonify({"success": True, "message": _msg})
             
         except Exception as e:
             logger.error(f"[PAY] Error: {e}")

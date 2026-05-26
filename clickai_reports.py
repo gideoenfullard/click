@@ -275,8 +275,8 @@ def register_report_routes(app, db, login_required, Auth, render_page,
             
             aging_data[cust_id]["total"] += amount
         
-        # Sort by total descending
-        sorted_aging = sorted(aging_data.values(), key=lambda x: x["total"], reverse=True)
+        # Sort alphabetically by customer name
+        sorted_aging = sorted(aging_data.values(), key=lambda x: (x["name"] or "").upper())
         
         # Calculate totals
         totals = {"current": 0, "d30": 0, "d60": 0, "d90": 0, "d120": 0, "total": 0}
@@ -300,11 +300,23 @@ def register_report_routes(app, db, login_required, Auth, render_page,
             '''
         
         content = f'''
-        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:20px;">
-            <a href="/reports" style="color:var(--text-muted);">-> Back to Reports</a>
-            <button class="btn btn-secondary" onclick="window.print();"> Print</button>
+        <style>
+            @media print {{
+                .no-print {{ display: none !important; }}
+                nav, header, .header, .header-top, .nav-wrapper, .nav, .mobile-nav, .nav-tap-hint, .sidebar {{ display: none !important; }}
+                body {{ background: white !important; color: black !important; }}
+                #printArea {{ display: block !important; }}
+                #printArea .card {{ break-inside: avoid; }}
+                #printArea tr {{ break-inside: avoid; }}
+                @page {{ size: A4 landscape; margin: 12mm; }}
+            }}
+        </style>
+        <div class="no-print" style="display:flex;justify-content:space-between;align-items:center;margin-bottom:20px;">
+            <a href="/reports" style="color:var(--text-muted);">← Back to Reports</a>
+            <button class="btn btn-secondary" onclick="window.print();">🖨️ Print</button>
         </div>
         
+        <div id="printArea">
         <div class="card">
             <h2 style="margin-bottom:5px;"> Debtors Aging Report</h2>
             <p style="color:var(--text-muted);margin-bottom:20px;">As at {today()}</p>
@@ -355,6 +367,7 @@ def register_report_routes(app, db, login_required, Auth, render_page,
                     </tr>
                 </tfoot>
             </table>
+        </div>
         </div>
         '''
         
@@ -908,7 +921,8 @@ def register_report_routes(app, db, login_required, Auth, render_page,
                     "current": balance, "d30": 0, "d60": 0, "d90": 0, "d120": 0, "total": balance
                 }
         
-        sorted_aging = sorted(aging_data.values(), key=lambda x: x["total"], reverse=True)
+        # Sort alphabetically by supplier name
+        sorted_aging = sorted(aging_data.values(), key=lambda x: (x["name"] or "").upper())
         
         totals = {"current": 0, "d30": 0, "d60": 0, "d90": 0, "d120": 0, "total": 0}
         for a in sorted_aging:
@@ -930,11 +944,23 @@ def register_report_routes(app, db, login_required, Auth, render_page,
             '''
         
         content = f'''
-        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:20px;">
-            <a href="/reports" style="color:var(--text-muted);">-> Back to Reports</a>
-            <button class="btn btn-secondary" onclick="window.print();"> Print</button>
+        <style>
+            @media print {{
+                .no-print {{ display: none !important; }}
+                nav, header, .header, .header-top, .nav-wrapper, .nav, .mobile-nav, .nav-tap-hint, .sidebar {{ display: none !important; }}
+                body {{ background: white !important; color: black !important; }}
+                #printArea {{ display: block !important; }}
+                #printArea .card {{ break-inside: avoid; }}
+                #printArea tr {{ break-inside: avoid; }}
+                @page {{ size: A4 landscape; margin: 12mm; }}
+            }}
+        </style>
+        <div class="no-print" style="display:flex;justify-content:space-between;align-items:center;margin-bottom:20px;">
+            <a href="/reports" style="color:var(--text-muted);">← Back to Reports</a>
+            <button class="btn btn-secondary" onclick="window.print();">🖨️ Print</button>
         </div>
         
+        <div id="printArea">
         <div class="card">
             <h2 style="margin-bottom:5px;"> Creditors Aging Report</h2>
             <p style="color:var(--text-muted);margin-bottom:20px;">As at {today()}</p>
@@ -966,6 +992,7 @@ def register_report_routes(app, db, login_required, Auth, render_page,
                     </tr>
                 </tfoot>
             </table>
+        </div>
         </div>
         '''
         
