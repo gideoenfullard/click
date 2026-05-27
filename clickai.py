@@ -33392,6 +33392,7 @@ CLICKAI_DEFAULTS = {
     "salaries": "6000", "rent": "6100", "electricity": "6200", "telephone": "6300",
     "insurance": "6400", "fuel": "6500", "repairs": "6600", "bank_charges": "6700",
     "advertising": "6800", "depreciation": "6900", "general": "7000", "cash_short": "7050",
+    "discount_allowed": "8400",
 }
 
 # Keywords to match Sage/Xero account names → ClickAI roles
@@ -33432,6 +33433,7 @@ COA_KEYWORD_MAP = [
     (["purchase", "stock purchase"], "purchases", ["cost of sales"]),
     (["carriage inward", "freight inward"], "carriage_in", ["cost of sales"]),
     # Expenses — these CAN match freely (category=None) since they're all expenses anyway
+    (["discount allowed", "settlement discount", "discount given"], "discount_allowed", None),
     (["salary", "salaries", "wages", "payroll"], "salaries", None),
     (["rent", "lease", "premises"], "rent", None),
     (["electric", "water", "municipal", "utilities"], "electricity", None),
@@ -33522,6 +33524,44 @@ def gl(biz_id: str, role: str) -> str:
 # Keep old name as alias for backwards compatibility
 def resolve_gl_account(biz_id: str, role: str) -> str:
     return gl(biz_id, role)
+
+
+def ensure_gl_account(biz_id: str, role: str, default_name: str, default_type: str = "expense", default_category: str = "Expenses") -> str:
+    """
+    Resolve a GL role to a code AND make sure the account record exists in the
+    business's chart_of_accounts. If the resolved code has no COA record yet,
+    create one. Platform-wide: works for any business, no manual SQL needed.
+
+    Returns the GL code (same as gl()).
+    """
+    code = gl(biz_id, role)
+    if not biz_id or not code:
+        return code
+    try:
+        coa = db.get("chart_of_accounts", {"business_id": biz_id}) or []
+        for acc in coa:
+            existing = str(acc.get("account_code", "") or acc.get("code", "")).strip()
+            if existing == str(code).strip():
+                return code  # account already exists
+        # Not found — create it so journals, reports and the GL trail resolve it
+        db.save("chart_of_accounts", {
+            "business_id": biz_id,
+            "account_code": str(code),
+            "account_name": default_name,
+            "account_type": default_type,
+            "category": default_category,
+            "is_active": True,
+            "source": "auto_created",
+        })
+        logger.info(f"[GL] Auto-created account {code} ({default_name}) for biz {biz_id[:8]}")
+        # Invalidate the cached GL map so the new account is picked up
+        try:
+            _gl_map_cache.pop(biz_id, None)
+        except Exception:
+            pass
+    except Exception as e:
+        logger.error(f"[GL] ensure_gl_account failed for {role}/{code}: {e}")
+    return code
 
 
 def get_or_create_accounts(biz_id: str) -> list:
@@ -63315,7 +63355,8 @@ try:
             JARVIS_HUD_CSS, THEME_REACTOR_SKINS,
             BANKING_KNOWLEDGE_LOADED,
             get_relevant_banking_knowledge if BANKING_KNOWLEDGE_LOADED else None,
-            format_banking_knowledge if BANKING_KNOWLEDGE_LOADED else None
+            format_banking_knowledge if BANKING_KNOWLEDGE_LOADED else None,
+            ensure_gl_account
         )
         logger.info("[BANKING] Routes registered ✓")
 except Exception as e:

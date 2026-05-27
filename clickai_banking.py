@@ -28,7 +28,8 @@ def register_banking_routes(app, db, login_required, Auth, render_page,
                             BankLearning, IndustryKnowledge, InvoiceMatch, RecordFactory,
                             JARVIS_HUD_CSS, THEME_REACTOR_SKINS,
                             BANKING_KNOWLEDGE_LOADED,
-                            get_relevant_banking_knowledge, format_banking_knowledge):
+                            get_relevant_banking_knowledge, format_banking_knowledge,
+                            ensure_gl_account=None):
     """Register all Banking routes with the Flask app."""
 
     @app.route("/banking")
@@ -505,7 +506,7 @@ def register_banking_routes(app, db, login_required, Auth, render_page,
             event.target.closest('.recon-tab')?.classList.add('active');
         }}
         
-        async function categorizeTransaction(id, category, description, entityId, entityName, invoiceIds, invoiceNums) {{
+        async function categorizeTransaction(id, category, description, entityId, entityName, invoiceIds, invoiceNums, discountAllowed) {{
             if (!category) return;
             
             // If Customer Payment or Supplier Payment and no entity chosen, prompt to pick one
@@ -529,6 +530,7 @@ def register_banking_routes(app, db, login_required, Auth, render_page,
                 const payload = {{id, category, description}};
                 if (entityId && entityId !== '__skip__') {{ payload.entity_id = entityId; payload.entity_name = entityName || ''; }}
                 if (invoiceIds && invoiceIds.length > 0) {{ payload.invoice_ids = invoiceIds; payload.invoice_nums = invoiceNums || []; }}
+                if (discountAllowed) {{ payload.discount_allowed = true; }}
                 
                 const response = await fetch('/api/banking/categorize', {{
                     method: 'POST',
@@ -674,15 +676,60 @@ def register_banking_routes(app, db, login_required, Auth, render_page,
                     const rowStyle = isComboInv 
                         ? 'background:rgba(34,211,238,0.10);border:1px solid rgba(34,211,238,0.35);'
                         : 'background:rgba(255,255,255,0.03);';
+                    // Outstanding = total minus any partial payment already recorded
+                    const outstanding = Math.round((inv.total - (inv.paid_amount || 0)) * 100) / 100;
+                    // Age note — shown so the user can decide; never enforced.
+                    let ageNote = '';
+                    if (inv.days_old !== null && inv.days_old !== undefined) {{
+                        if (inv.days_old <= 30) {{
+                            ageNote = `<span style="color:var(--green);font-size:10px;">${{inv.days_old}}d · within terms</span>`;
+                        }} else {{
+                            ageNote = `<span style="color:var(--orange);font-size:10px;">${{inv.days_old}}d · over 30 days</span>`;
+                        }}
+                    }}
                     html += `<label style="display:flex;align-items:center;gap:8px;padding:5px 8px;border-radius:6px;cursor:pointer;font-size:12px;${{rowStyle}}margin-bottom:3px;">
-                        <input type="checkbox" class="invCheck_${{txnId}}" value="${{inv.id}}" data-num="${{inv.number}}" data-amount="${{inv.total}}" style="accent-color:var(--green);"${{checked}}>
-                        <span style="flex:1;">${{inv.number}} <span style="color:var(--text-muted);">(${{inv.date}})</span></span>
-                        <span style="font-weight:700;">R${{inv.total.toLocaleString('en-ZA', {{minimumFractionDigits:2}})}}</span>
+                        <input type="checkbox" class="invCheck_${{txnId}}" value="${{inv.id}}" data-num="${{inv.number}}" data-amount="${{outstanding}}" onchange="srUpdateShortfall('${{txnId}}')" style="accent-color:var(--green);"${{checked}}>
+                        <span style="flex:1;">${{inv.number}} <span style="color:var(--text-muted);">(${{inv.date}})</span> ${{ageNote}}</span>
+                        <span style="font-weight:700;">R${{outstanding.toLocaleString('en-ZA', {{minimumFractionDigits:2}})}}</span>
                     </label>`;
                 }}
+                // Live shortfall panel — appears when ticked invoices exceed the payment.
+                html += `<div id="shortfallBox_${{txnId}}" style="display:none;margin-top:6px;padding:8px 10px;border-radius:6px;background:rgba(245,158,11,0.10);border:1px solid rgba(245,158,11,0.4);font-size:11px;">
+                    <div id="shortfallText_${{txnId}}" style="color:var(--orange);font-weight:600;margin-bottom:5px;"></div>
+                    <label style="display:flex;align-items:center;gap:6px;cursor:pointer;color:var(--text);">
+                        <input type="checkbox" id="discAllowed_${{txnId}}" style="accent-color:var(--orange);">
+                        <span>Treat shortfall as Discount Allowed (writes it off, closes the invoice)</span>
+                    </label>
+                </div>`;
                 container.innerHTML = html;
+                srUpdateShortfall(txnId);
             }} catch (err) {{
                 container.innerHTML = '<div style="color:var(--red);font-size:12px;padding:6px;">Failed to load invoices</div>';
+            }}
+        }}
+        
+        // Recompute the shortfall whenever invoice ticks change. The shortfall
+        // is the payment amount minus the outstanding total of ticked invoices.
+        // Only shown when the payment is SHORT (paid less than invoiced).
+        function srUpdateShortfall(txnId) {{
+            const box = document.getElementById('shortfallBox_' + txnId);
+            if (!box) return;
+            const row = document.querySelector(`tr[data-id="${{txnId}}"]`);
+            const payAmount = row ? parseFloat(row.getAttribute('data-credit') || '0') : 0;
+            const checks = document.querySelectorAll('.invCheck_' + txnId + ':checked');
+            let invTotal = 0;
+            checks.forEach(c => {{ invTotal += parseFloat(c.getAttribute('data-amount') || '0'); }});
+            const shortfall = Math.round((invTotal - payAmount) * 100) / 100;
+            // Show only for a genuine shortfall (1c..50% of invoice total) — a
+            // larger gap is probably a wrong invoice selection, not a discount.
+            if (checks.length > 0 && shortfall > 0.01 && shortfall <= invTotal * 0.5) {{
+                document.getElementById('shortfallText_' + txnId).textContent =
+                    'Payment is R' + shortfall.toFixed(2) + ' short of the selected invoice total (R' + invTotal.toFixed(2) + ').';
+                box.style.display = 'block';
+            }} else {{
+                const da = document.getElementById('discAllowed_' + txnId);
+                if (da) da.checked = false;
+                box.style.display = 'none';
             }}
         }}
         
@@ -700,8 +747,12 @@ def register_banking_routes(app, db, login_required, Auth, render_page,
             const checks = document.querySelectorAll('.invCheck_' + txnId + ':checked');
             const invoiceIds = Array.from(checks).map(c => c.value);
             const invoiceNums = Array.from(checks).map(c => c.getAttribute('data-num'));
+            // Discount Allowed — only when the shortfall box is visible and ticked
+            const daBox = document.getElementById('shortfallBox_' + txnId);
+            const daCheck = document.getElementById('discAllowed_' + txnId);
+            const discountAllowed = !!(daBox && daBox.style.display !== 'none' && daCheck && daCheck.checked);
             
-            categorizeTransaction(txnId, category, description, entityId, entityName, invoiceIds, invoiceNums);
+            categorizeTransaction(txnId, category, description, entityId, entityName, invoiceIds, invoiceNums, discountAllowed);
         }}
         
         // ═══════════════════════════════════════════════════════════
@@ -2800,6 +2851,7 @@ Return ONLY the JSON array. No markdown, no explanation."""
             _picked_entity_name = data.get("entity_name", "") or ""
             _picked_invoice_ids = data.get("invoice_ids", []) or []
             _picked_invoice_nums = data.get("invoice_nums", []) or []
+            _discount_allowed = bool(data.get("discount_allowed", False))
             
             if not txn_id or not category:
                 return jsonify({"success": False, "error": "Missing data"})
@@ -3074,6 +3126,7 @@ Return ONLY the JSON array. No markdown, no explanation."""
                     # Try to mark invoice as paid — in its own try/except so receipt ALWAYS runs
                     matched_invoice = None
                     matched_customer = None
+                    _total_discount_allowed = 0.0  # sum of shortfalls written off as Discount Allowed
                     try:
                         # Priority 0: User explicitly picked invoices from the picker
                         # Allocate payment amount across invoices in order — only mark paid if fully covered
@@ -3083,7 +3136,8 @@ Return ONLY the JSON array. No markdown, no explanation."""
                                 _picked_inv = db.get_one("invoices", _inv_id)
                                 if _picked_inv and _picked_inv.get("status") not in ("paid", "credited"):
                                     _inv_total = float(_picked_inv.get("total", 0))
-                                    if _remaining_pay >= _inv_total - 0.01:
+                                    _inv_outstanding = round(_inv_total - float(_picked_inv.get("paid_amount", 0) or 0), 2)
+                                    if _remaining_pay >= _inv_outstanding - 0.01:
                                         # Fully paid
                                         _picked_inv["status"] = "paid"
                                         _picked_inv["paid_date"] = txn_date
@@ -3091,8 +3145,22 @@ Return ONLY the JSON array. No markdown, no explanation."""
                                         _picked_inv["paid_via"] = "banking_recon"
                                         _picked_inv["payment_reference"] = ref
                                         db.save("invoices", _picked_inv)
-                                        _remaining_pay -= _inv_total
+                                        _remaining_pay -= _inv_outstanding
                                         logger.info(f"[BANK] Marked {_picked_inv.get('invoice_number','?')} as PAID (R{_inv_total})")
+                                    elif _discount_allowed and (_inv_outstanding - _remaining_pay) <= _inv_outstanding * 0.5:
+                                        # Shortfall written off as Discount Allowed — invoice CLOSED.
+                                        # The remaining payment covers part; the gap becomes discount.
+                                        _shortfall = round(_inv_outstanding - _remaining_pay, 2)
+                                        _picked_inv["status"] = "paid"
+                                        _picked_inv["paid_date"] = txn_date
+                                        _picked_inv["paid_amount"] = _inv_total
+                                        _picked_inv["paid_via"] = "banking_recon"
+                                        _picked_inv["payment_reference"] = ref
+                                        _picked_inv["discount_allowed"] = _shortfall
+                                        db.save("invoices", _picked_inv)
+                                        _total_discount_allowed = round(_total_discount_allowed + _shortfall, 2)
+                                        _remaining_pay = 0
+                                        logger.info(f"[BANK] {_picked_inv.get('invoice_number','?')} CLOSED with Discount Allowed R{_shortfall:.2f}")
                                     else:
                                         # Partial — record partial payment but keep outstanding
                                         _picked_inv["paid_amount"] = round(float(_picked_inv.get("paid_amount", 0)) + _remaining_pay, 2)
@@ -3107,6 +3175,31 @@ Return ONLY the JSON array. No markdown, no explanation."""
                                         matched_customer = db.get_one("customers", _picked_inv["customer_id"])
                                     if _remaining_pay <= 0.01:
                                         break
+                        
+                        # Discount Allowed journal — post the written-off shortfall.
+                        # The VAT portion is split out automatically (the original
+                        # invoice charged VAT on the full amount, so a proportional
+                        # part of the discount is VAT recoverable):
+                        #   DR Discount Allowed (net)  DR VAT Output (vat)  CR Debtors (total)
+                        if _total_discount_allowed > 0.01:
+                            _da_vat = round(_total_discount_allowed * 15 / 115, 2)
+                            _da_net = round(_total_discount_allowed - _da_vat, 2)
+                            # Ensure the Discount Allowed account exists for this
+                            # business (auto-creates it if missing — platform-wide,
+                            # no manual SQL needed). Falls back to gl() if the
+                            # helper wasn't supplied.
+                            if ensure_gl_account:
+                                _da_code = ensure_gl_account(biz_id, "discount_allowed", "Discount Allowed", "expense", "Expenses")
+                            else:
+                                _da_code = gl(biz_id, "discount_allowed")
+                            _da_lines = [
+                                {"account_code": _da_code, "debit": _da_net, "credit": 0},
+                            ]
+                            if _da_vat > 0:
+                                _da_lines.append({"account_code": gl(biz_id, "vat_output"), "debit": _da_vat, "credit": 0})
+                            _da_lines.append({"account_code": gl(biz_id, "debtors"), "debit": 0, "credit": _total_discount_allowed})
+                            create_journal_entry(biz_id, txn_date, f"Discount Allowed: {desc_short}", ref, _da_lines)
+                            logger.info(f"[BANK] Discount Allowed journal posted: net R{_da_net} vat R{_da_vat} total R{_total_discount_allowed}")
                         
                         # Priority 1: User explicitly picked a customer
                         if _picked_entity_id and not matched_customer:
@@ -4038,15 +4131,26 @@ Return ONLY the JSON array. No markdown, no explanation."""
             
             result = []
             if entity_type == "customer":
+                from datetime import datetime as _dt
+                _today = _dt.now()
                 invoices = db.get("invoices", {"business_id": biz_id, "customer_id": entity_id}) or []
                 for inv in invoices:
                     if inv.get("status") in ("paid", "credited"):
                         continue
+                    _inv_date_str = str(inv.get("date", ""))[:10]
+                    _days_old = None
+                    try:
+                        if _inv_date_str:
+                            _days_old = (_today - _dt.strptime(_inv_date_str, "%Y-%m-%d")).days
+                    except Exception:
+                        _days_old = None
                     result.append({
                         "id": inv.get("id", ""),
                         "number": inv.get("invoice_number", "-"),
-                        "date": str(inv.get("date", ""))[:10],
+                        "date": _inv_date_str,
                         "total": round(float(inv.get("total", 0)), 2),
+                        "paid_amount": round(float(inv.get("paid_amount", 0) or 0), 2),
+                        "days_old": _days_old,
                         "status": inv.get("status", "outstanding")
                     })
             else:
