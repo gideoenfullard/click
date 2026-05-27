@@ -58153,9 +58153,11 @@ def api_scan_save_supplier_invoice():
                 journal_lines.append({"account_code": gl(biz_id, "cogs"), "debit": round(cos_dr, 2), "credit": 0})    # Cost of Sales
         if vat_amount > 0:
             journal_lines.append({"account_code": gl(biz_id, "vat_input"), "debit": round(vat_amount, 2), "credit": 0})
-        # Discount Received — credit the discount to 4300 (Sage behaviour)
+        # Discount Received — credit the discount to 4300 (Sage behaviour).
+        # ensure_gl_account auto-creates the account if the business lacks it.
         if supplier_discount_amount > 0:
-            journal_lines.append({"account_code": gl(biz_id, "discount_received"), "debit": 0, "credit": round(supplier_discount_amount, 2)})
+            _scan_disc_code = ensure_gl_account(biz_id, "discount_received", "Discount Received", "income", "Other Income")
+            journal_lines.append({"account_code": _scan_disc_code, "debit": 0, "credit": round(supplier_discount_amount, 2)})
         # Credit side: bank if paid, creditors if on account
         if is_paid:
             journal_lines.append({"account_code": gl(biz_id, "bank"), "debit": 0, "credit": round(total_amount, 2)})

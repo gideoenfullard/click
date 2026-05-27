@@ -5097,6 +5097,15 @@ Nothing else."""
             
             # Create GL journal entries
             try:
+                # Ensure the Discount Received account exists for this business
+                # (auto-creates it if missing — platform-wide, no manual SQL).
+                _disc_recv_code = None
+                if discount_amount > 0:
+                    try:
+                        import clickai as _main
+                        _disc_recv_code = _main.ensure_gl_account(biz_id, "discount_received", "Discount Received", "income", "Other Income")
+                    except Exception:
+                        _disc_recv_code = gl(biz_id, "discount_received")
                 if is_paid:
                     # Already paid: Debit Expense (full net) + VAT Input, Credit Discount Received + Bank
                     journal_entries = [
@@ -5105,7 +5114,7 @@ Nothing else."""
                     if vat_amount > 0:
                         journal_entries.append({"account_code": gl(biz_id, "vat_input"), "debit": vat_amount, "credit": 0})
                     if discount_amount > 0:
-                        journal_entries.append({"account_code": gl(biz_id, "discount_received"), "debit": 0, "credit": discount_amount})
+                        journal_entries.append({"account_code": _disc_recv_code, "debit": 0, "credit": discount_amount})
                     journal_entries.append({"account_code": gl(biz_id, "bank"), "debit": 0, "credit": total_amount})
                 else:
                     # On account: Debit Expense (full net) + VAT Input, Credit Discount Received + Creditors
@@ -5115,7 +5124,7 @@ Nothing else."""
                     if vat_amount > 0:
                         journal_entries.append({"account_code": gl(biz_id, "vat_input"), "debit": vat_amount, "credit": 0})
                     if discount_amount > 0:
-                        journal_entries.append({"account_code": gl(biz_id, "discount_received"), "debit": 0, "credit": discount_amount})
+                        journal_entries.append({"account_code": _disc_recv_code, "debit": 0, "credit": discount_amount})
                     journal_entries.append({"account_code": gl(biz_id, "creditors"), "debit": 0, "credit": total_amount})
                 
                 create_journal_entry(biz_id, inv_date, f"{description or supplier_name} - {invoice_number}", invoice_number, journal_entries)
@@ -6175,7 +6184,13 @@ Nothing else."""
             if free_credit > 0:
                 cn_journal_lines.append({"account_code": gl(biz_id, "cogs"), "debit": 0, "credit": round(free_credit, 2)})
             if discount_credit > 0:
-                cn_journal_lines.append({"account_code": gl(biz_id, "discount_received"), "debit": 0, "credit": round(discount_credit, 2)})
+                # Ensure the Discount Received account exists (auto-creates if missing)
+                try:
+                    import clickai as _main
+                    _disc_recv_code = _main.ensure_gl_account(biz_id, "discount_received", "Discount Received", "income", "Other Income")
+                except Exception:
+                    _disc_recv_code = gl(biz_id, "discount_received")
+                cn_journal_lines.append({"account_code": _disc_recv_code, "debit": 0, "credit": round(discount_credit, 2)})
             if vat > 0:
                 cn_journal_lines.append({"account_code": gl(biz_id, "vat_input"), "debit": 0, "credit": vat})
             cn_journal_lines.append({"account_code": gl(biz_id, "creditors"), "debit": total, "credit": 0})
