@@ -53528,6 +53528,7 @@ IMPORTANT: Read ALL numbers exactly as printed on the document. Do NOT calculate
                 if _matched_supplier:
                     extracted["_matched_supplier_id"] = _matched_supplier.get("id")
                     extracted["_matched_supplier_name"] = _matched_supplier.get("name")
+                    extracted["_matched_supplier_discount_pct"] = float(_matched_supplier.get("discount_percentage", 0) or 0)
                 if _supplier_pos:
                     # Send compact list for the dropdown (newest first)
                     _po_list_for_ui = sorted(
@@ -55389,6 +55390,11 @@ def scan_inbox_page():
                     <label>Total</label>
                     <input type="number" step="0.01" id="m_total" value="${{data.total || (data.extracted && data.extracted.total_amount) || 0}}" style="font-size:20px;font-weight:bold;background:rgba(34,197,94,0.1);border-color:#22c55e;">
                 </div>
+                <div class="modal-field">
+                    <label>Supplier Discount % (Discount Received)</label>
+                    <input type="number" step="0.01" min="0" id="m_discount_pct" value="${{(data.extracted && data.extracted._matched_supplier_discount_pct) || 0}}" onchange="recalcModalDiscount()" oninput="recalcModalDiscount()">
+                    <div id="m_discount_note" style="display:none;font-size:12px;color:var(--green);margin-top:4px;"></div>
+                </div>
                 <div class="modal-row">
                     <div class="modal-field">
                         <label>Supplier Phone</label>
@@ -55865,11 +55871,50 @@ def scan_inbox_page():
     }}
     
     function recalcModalTotal() {{
+        const discEl = document.getElementById('m_discount_pct');
+        const discPct = discEl ? (parseFloat(discEl.value) || 0) : 0;
+        if (discPct > 0) {{
+            // Discount active — discounted recalculation handles VAT and total.
+            recalcModalDiscount();
+            return;
+        }}
         const sub = parseFloat(document.getElementById('m_subtotal')?.value || 0);
         const vat = parseFloat(document.getElementById('m_vat')?.value || 0);
         const totalField = document.getElementById('m_total');
         if (totalField) {{
             totalField.value = (sub + vat).toFixed(2);
+        }}
+    }}
+    
+    function recalcModalDiscount() {{
+        // Supplier discount applies to the TOTAL invoice via the net amount.
+        // The subtotal field holds the gross (pre-discount) net read off the paper.
+        // Discount is taken on the net, then VAT (15%) is recalculated on the
+        // discounted net, and the total is the discounted net + new VAT.
+        const grossNet = parseFloat(document.getElementById('m_subtotal')?.value || 0);
+        const discPct = parseFloat(document.getElementById('m_discount_pct')?.value || 0);
+        const vatField = document.getElementById('m_vat');
+        const totalField = document.getElementById('m_total');
+        const noteEl = document.getElementById('m_discount_note');
+        if (discPct <= 0 || grossNet <= 0) {{
+            if (noteEl) noteEl.style.display = 'none';
+            // No discount — plain total = subtotal + vat
+            if (vatField && totalField) {{
+                const vat = parseFloat(vatField.value || 0);
+                totalField.value = (grossNet + vat).toFixed(2);
+            }}
+            return;
+        }}
+        const discAmt = Math.round(grossNet * discPct / 100 * 100) / 100;
+        const discountedNet = Math.round((grossNet - discAmt) * 100) / 100;
+        const vatAmt = Math.round(discountedNet * 0.15 * 100) / 100;
+        const total = Math.round((discountedNet + vatAmt) * 100) / 100;
+        if (vatField) vatField.value = vatAmt.toFixed(2);
+        if (totalField) totalField.value = total.toFixed(2);
+        if (noteEl) {{
+            noteEl.style.display = 'block';
+            noteEl.textContent = 'Discount Received ' + discPct + '%: -R' + discAmt.toFixed(2)
+                + '  (Net R' + discountedNet.toFixed(2) + ' + VAT R' + vatAmt.toFixed(2) + ')';
         }}
     }}
     
@@ -55891,8 +55936,15 @@ def scan_inbox_page():
             const vatField = document.getElementById('m_vat');
             const totalField = document.getElementById('m_total');
             if (subField) subField.value = itemsTotal.toFixed(2);
-            if (vatField) vatField.value = (itemsTotal * 0.15).toFixed(2);
-            if (totalField) totalField.value = (itemsTotal * 1.15).toFixed(2);
+            const discEl = document.getElementById('m_discount_pct');
+            const discPct = discEl ? (parseFloat(discEl.value) || 0) : 0;
+            if (discPct > 0) {{
+                // Discount active — let the discounted recalculation set VAT and total.
+                recalcModalDiscount();
+            }} else {{
+                if (vatField) vatField.value = (itemsTotal * 0.15).toFixed(2);
+                if (totalField) totalField.value = (itemsTotal * 1.15).toFixed(2);
+            }}
         }}
     }}
     
@@ -56412,6 +56464,7 @@ def scan_inbox_page():
                 subtotal: parseFloat(document.getElementById('m_subtotal')?.value || 0),
                 vat: parseFloat(document.getElementById('m_vat')?.value || 0),
                 total: parseFloat(document.getElementById('m_total')?.value || 0),
+                discount_percentage: parseFloat(document.getElementById('m_discount_pct')?.value || 0),
                 items: editedItems.length > 0 ? editedItems : (currentItemData.items || []),
                 paid: saveType === 'expense',  // expenses paid now; supplier invoices = on credit (unpaid)
                 payment_method: payMethod,
@@ -57878,15 +57931,43 @@ def api_scan_save_supplier_invoice():
                         logger.info(f"[SCAN] Created stock: {final_code} = {desc}")
         
         # Create supplier invoice
+        # ── SUPPLIER DISCOUNT (Discount Received) ──
+        # The scan review screen sends discount_percentage (pre-filled from the
+        # supplier's setup, editable by the user). The scanned subtotal is the
+        # GROSS net (paper rarely shows a discount). Apply discount on the net,
+        # recalculate VAT on the discounted net, recompute the total — so the
+        # stored record is internally consistent. The discount applies to the
+        # invoice TOTAL only; line items / stock costs are left untouched.
+        _scan_gross_net = float(data.get("subtotal", 0) or 0)
+        try:
+            supplier_discount_pct = float(data.get("discount_percentage", 0) or 0)
+        except (TypeError, ValueError):
+            supplier_discount_pct = 0.0
+        if supplier_discount_pct < 0:
+            supplier_discount_pct = 0.0
+        
+        if supplier_discount_pct > 0 and _scan_gross_net > 0:
+            supplier_discount_amount = round(_scan_gross_net * supplier_discount_pct / 100, 2)
+            _inv_subtotal = round(_scan_gross_net - supplier_discount_amount, 2)
+            _inv_vat = round(_inv_subtotal * 0.15, 2)
+            _inv_total = round(_inv_subtotal + _inv_vat, 2)
+        else:
+            supplier_discount_amount = 0.0
+            _inv_subtotal = round(_scan_gross_net, 2)
+            _inv_vat = float(data.get("vat", 0) or 0)
+            _inv_total = float(data.get("total", 0) or 0)
+        
         invoice = RecordFactory.supplier_invoice(
             business_id=biz_id,
             supplier_id=supplier["id"],
             supplier_name=supplier_name,
             invoice_number=data.get("invoice_number", f"SCAN-{generate_id()[:6]}"),
             date=data.get("date", today()),
-            subtotal=float(data.get("subtotal", 0)),
-            vat=float(data.get("vat", 0)),
-            total=float(data.get("total", 0)),
+            subtotal=_inv_subtotal,
+            vat=_inv_vat,
+            total=_inv_total,
+            discount_percentage=supplier_discount_pct,
+            discount_amount=supplier_discount_amount,
             items=json.dumps(items),
             status="paid" if is_paid else "unpaid",
             scanned=True
@@ -57963,9 +58044,16 @@ def api_scan_save_supplier_invoice():
             db.save("scanned_documents", scanned_doc)
             logger.info(f"[SCAN] Saved document image for supplier {supplier_name}")        
         # Create journal entries for GL
-        total_amount = float(data.get("total", 0))
-        vat_amount = float(data.get("vat", 0))
-        net_amount = total_amount - vat_amount
+        # When a supplier discount applies, the debit side (stock/COS/expense)
+        # reflects the GROSS net (full purchase value), the discount is a
+        # separate credit to Discount Received (4300), and VAT + the credit
+        # side (creditors/bank) use the discounted figures.
+        total_amount = _inv_total
+        vat_amount = _inv_vat
+        if supplier_discount_amount > 0:
+            net_amount = round(_scan_gross_net, 2)
+        else:
+            net_amount = total_amount - vat_amount
         
         # ══════════════════════════════════════════════════════════════════
         # GL ALLOCATION — driven by user choice on scan-review screen
@@ -58025,6 +58113,9 @@ def api_scan_save_supplier_invoice():
                 journal_lines.append({"account_code": gl(biz_id, "cogs"), "debit": round(cos_dr, 2), "credit": 0})    # Cost of Sales
         if vat_amount > 0:
             journal_lines.append({"account_code": gl(biz_id, "vat_input"), "debit": round(vat_amount, 2), "credit": 0})
+        # Discount Received — credit the discount to 4300 (Sage behaviour)
+        if supplier_discount_amount > 0:
+            journal_lines.append({"account_code": gl(biz_id, "discount_received"), "debit": 0, "credit": round(supplier_discount_amount, 2)})
         # Credit side: bank if paid, creditors if on account
         if is_paid:
             journal_lines.append({"account_code": gl(biz_id, "bank"), "debit": 0, "credit": round(total_amount, 2)})
@@ -58032,7 +58123,7 @@ def api_scan_save_supplier_invoice():
             journal_lines.append({"account_code": gl(biz_id, "creditors"), "debit": 0, "credit": round(total_amount, 2)})
         
         create_journal_entry(biz_id, data.get("date", today()), f"Purchase - {supplier_name}", f"INV-{inv_id[:8]}", journal_lines)
-        logger.info(f"[SCAN SAVE] Journal posted: intent={_alloc_intent} stock_dr=R{stock_dr:.2f} cos_dr=R{cos_dr:.2f} vat=R{vat_amount:.2f} total=R{total_amount:.2f}")
+        logger.info(f"[SCAN SAVE] Journal posted: intent={_alloc_intent} stock_dr=R{stock_dr:.2f} cos_dr=R{cos_dr:.2f} disc=R{supplier_discount_amount:.2f} vat=R{vat_amount:.2f} total=R{total_amount:.2f}")
         
         # Supplier balance is now calculated dynamically — no manual update needed
         
