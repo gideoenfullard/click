@@ -5718,6 +5718,64 @@ Nothing else."""
             for si in open_sinvoices
         ])
         
+        # ── Return Lines card pieces — differ between the full Supplier
+        # Return screen and the simpler Discount Credit screen (mode=discount).
+        # Discount mode: just Description / Amount / Total — no Type selector,
+        # no stock column, no qty. Every row carries a hidden sr-type=discount
+        # and a fixed sr-qty=1 so the shared endpoint is unchanged.
+        if is_discount_mode:
+            _sr_lines_title = "Discount Lines"
+            _sr_lines_header = (
+                '<div class="sr-item-hdr sr-disc">'
+                '<span>Description</span><span>Amount (excl)</span>'
+                '<span style="text-align:right;">Total</span><span></span></div>'
+            )
+            _sr_row_inner = (
+                '<input type="hidden" class="sr-type" value="discount">'
+                '<input type="hidden" class="sr-stock-id" value="">'
+                '<input type="number" class="sr-qty" value="1" style="display:none;">'
+                '<input type="text" class="sr-desc" placeholder="e.g. Settlement discount" '
+                'style="border:1px solid var(--border);border-radius:6px;background:var(--bg);color:var(--text);">'
+                '<input type="number" class="sr-price" placeholder="0.00" step="0.01" onchange="srCalcTotals()" '
+                'style="border:1px solid var(--border);border-radius:6px;background:var(--bg);color:var(--text);">'
+                '<span class="sr-line-total" style="text-align:right;font-weight:600;">R0.00</span>'
+                '<button type="button" class="sr-rm" onclick="this.closest(\'.sr-item-row\').remove(); srCalcTotals();">&times;</button>'
+            )
+            _sr_first_row = f'<div class="sr-item-row sr-disc">{_sr_row_inner}</div>'
+            _sr_add_label = "+ Add Discount Line"
+            _sr_lines_help = "Each line credits the supplier and posts to Discount Received. No stock effect."
+        else:
+            _sr_lines_title = "Return Lines"
+            _sr_lines_header = (
+                '<div class="sr-item-hdr">'
+                '<span>Type</span><span>Stock Item</span><span>Description</span><span>Qty</span>'
+                '<span>Price (excl)</span><span style="text-align:right;">Total</span><span></span></div>'
+            )
+            _stk_sel = ' selected' if _sr_default_type == 'stock' else ''
+            _dsc_sel = ' selected' if _sr_default_type == 'discount' else ''
+            _sr_first_row = (
+                '<div class="sr-item-row">'
+                '<select class="sr-type" onchange="srTypeChanged(this)" style="border:1px solid var(--border);border-radius:6px;background:var(--bg);color:var(--text);font-size:12px;padding:8px 6px;">'
+                '<option value="stock"' + _stk_sel + '>Stock Return</option>'
+                '<option value="discount"' + _dsc_sel + '>Discount</option>'
+                '</select>'
+                '<div class="sr-stock-td">'
+                '<input type="text" class="sr-stock-search" placeholder="Search stock (or leave blank for free line)..." autocomplete="off" oninput="srStockSearch(this)" onfocus="srStockSearch(this)" style="width:100%;border:1px solid var(--border);border-radius:6px;background:var(--bg);color:var(--text);">'
+                '<input type="hidden" class="sr-stock-id" value="">'
+                '<div class="ssp-dropdown sr-stock-dd"></div>'
+                '</div>'
+                '<input type="text" class="sr-desc" placeholder="Description" style="border:1px solid var(--border);border-radius:6px;background:var(--bg);color:var(--text);">'
+                '<input type="number" class="sr-qty" value="1" min="0" step="any" onchange="srCalcTotals()" style="border:1px solid var(--border);border-radius:6px;background:var(--bg);color:var(--text);">'
+                '<input type="number" class="sr-price" placeholder="0.00" step="0.01" onchange="srCalcTotals()" style="border:1px solid var(--border);border-radius:6px;background:var(--bg);color:var(--text);">'
+                '<span class="sr-line-total" style="text-align:right;font-weight:600;">R0.00</span>'
+                '<button type="button" class="sr-rm" onclick="this.closest(\'.sr-item-row\').remove(); srCalcTotals();">&#10005;</button>'
+                '</div>'
+            )
+            _sr_add_label = "+ Add Line"
+            _sr_lines_help = ("Stock Return lines reduce stock on save and credit the supplier. "
+                              "Discount lines credit the supplier and post to Discount Received — "
+                              "no stock effect. Both can be mixed on one return.")
+        
         content = f'''
         <style>
         .sr-form-grid {{ display: grid; grid-template-columns: 1fr 280px; gap: 20px; }}
@@ -5727,6 +5785,8 @@ Nothing else."""
         .sr-item-row {{ display: grid; grid-template-columns: 110px 3fr 2fr 70px 110px 100px 30px; gap: 8px; align-items: center; padding: 8px 0; border-bottom: 1px solid rgba(255,255,255,0.05); }}
         .sr-item-row input {{ font-size: 13px; padding: 8px 10px; }}
         .sr-item-hdr {{ display: grid; grid-template-columns: 110px 3fr 2fr 70px 110px 100px 30px; gap: 8px; padding: 6px 0; font-size: 11px; color: var(--text-muted); font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px; border-bottom: 2px solid var(--border); }}
+        .sr-item-row.sr-disc {{ grid-template-columns: 1fr 140px 110px 30px; }}
+        .sr-item-hdr.sr-disc {{ grid-template-columns: 1fr 140px 110px 30px; }}
         .sr-stock-td {{ position: relative; }}
         .sr-stock-td .ssp-dropdown.sr-stock-dd {{ position: fixed !important; left: auto !important; right: auto !important; z-index: 9999 !important; max-height: 60vh; min-width: 600px; overflow-y: auto; background: var(--card, #1e1e2e); border: 1px solid var(--border, #333); border-radius: 6px; box-shadow: 0 8px 24px rgba(0,0,0,0.4); }}
         .sr-rm {{ background: var(--red); color: #fff; border: none; border-radius: 4px; width: 24px; height: 24px; cursor: pointer; }}
@@ -5775,30 +5835,13 @@ Nothing else."""
                 </div>
                 
                 <div class="card" style="padding:20px;">
-                    <h3 style="margin:0 0 12px 0;">Return Lines</h3>
-                    <div class="sr-item-hdr">
-                        <span>Type</span><span>Stock Item</span><span>Description</span><span>Qty</span><span>Price (excl)</span><span style="text-align:right;">Total</span><span></span>
-                    </div>
+                    <h3 style="margin:0 0 12px 0;">{_sr_lines_title}</h3>
+                    {_sr_lines_header}
                     <div id="srItemsBody">
-                        <div class="sr-item-row">
-                            <select class="sr-type" onchange="srTypeChanged(this)" style="border:1px solid var(--border);border-radius:6px;background:var(--bg);color:var(--text);font-size:12px;padding:8px 6px;">
-                                <option value="stock"{' selected' if _sr_default_type == 'stock' else ''}>Stock Return</option>
-                                <option value="discount"{' selected' if _sr_default_type == 'discount' else ''}>Discount</option>
-                            </select>
-                            <div class="sr-stock-td">
-                                <input type="text" class="sr-stock-search" placeholder="Search stock (or leave blank for free line)..." autocomplete="off" oninput="srStockSearch(this)" onfocus="srStockSearch(this)" style="width:100%;border:1px solid var(--border);border-radius:6px;background:var(--bg);color:var(--text);">
-                                <input type="hidden" class="sr-stock-id" value="">
-                                <div class="ssp-dropdown sr-stock-dd"></div>
-                            </div>
-                            <input type="text" class="sr-desc" placeholder="Description" style="border:1px solid var(--border);border-radius:6px;background:var(--bg);color:var(--text);">
-                            <input type="number" class="sr-qty" value="1" min="0" step="any" onchange="srCalcTotals()" style="border:1px solid var(--border);border-radius:6px;background:var(--bg);color:var(--text);">
-                            <input type="number" class="sr-price" placeholder="0.00" step="0.01" onchange="srCalcTotals()" style="border:1px solid var(--border);border-radius:6px;background:var(--bg);color:var(--text);">
-                            <span class="sr-line-total" style="text-align:right;font-weight:600;">R0.00</span>
-                            <button type="button" class="sr-rm" onclick="this.closest('.sr-item-row').remove(); srCalcTotals();">✕</button>
-                        </div>
+                        {_sr_first_row}
                     </div>
-                    <button type="button" class="sr-add-btn" onclick="srAddRow()" style="margin-top:10px;">+ Add Line</button>
-                    <p style="color:var(--text-muted);font-size:11px;margin-top:8px;">Stock Return lines reduce stock on save and credit the supplier. Discount lines credit the supplier and post to Discount Received — no stock effect. Both can be mixed on one return.</p>
+                    <button type="button" class="sr-add-btn" onclick="srAddRow()" style="margin-top:10px;">{_sr_add_label}</button>
+                    <p style="color:var(--text-muted);font-size:11px;margin-top:8px;">{_sr_lines_help}</p>
                 </div>
             </div>
             
@@ -5886,9 +5929,26 @@ Nothing else."""
             }}
         }});
         
+        const srDiscountMode = {'true' if is_discount_mode else 'false'};
+        
         function srAddRow() {{
             const body = document.getElementById('srItemsBody');
             const row = document.createElement('div');
+            if (srDiscountMode) {{
+                row.className = 'sr-item-row sr-disc';
+                row.innerHTML = `
+                    <input type="hidden" class="sr-type" value="discount">
+                    <input type="hidden" class="sr-stock-id" value="">
+                    <input type="number" class="sr-qty" value="1" style="display:none;">
+                    <input type="text" class="sr-desc" placeholder="e.g. Settlement discount" style="border:1px solid var(--border);border-radius:6px;background:var(--bg);color:var(--text);">
+                    <input type="number" class="sr-price" placeholder="0.00" step="0.01" onchange="srCalcTotals()" style="border:1px solid var(--border);border-radius:6px;background:var(--bg);color:var(--text);">
+                    <span class="sr-line-total" style="text-align:right;font-weight:600;">R0.00</span>
+                    <button type="button" class="sr-rm" onclick="this.closest('.sr-item-row').remove(); srCalcTotals();">&times;</button>
+                `;
+                body.appendChild(row);
+                row.querySelector('.sr-desc').focus();
+                return;
+            }}
             row.className = 'sr-item-row';
             row.innerHTML = `
                 <select class="sr-type" onchange="srTypeChanged(this)" style="border:1px solid var(--border);border-radius:6px;background:var(--bg);color:var(--text);font-size:12px;padding:8px 6px;">
@@ -5951,9 +6011,10 @@ Nothing else."""
             srCalcTotals();
         }}
         
-        // On load, if the screen opened in discount mode the first row's type
-        // is pre-set to "Discount" — apply the same lock srTypeChanged would.
-        document.querySelectorAll('.sr-item-row .sr-type').forEach(function(sel) {{
+        // On load, if a full-mode row's Type selector is pre-set to "Discount"
+        // apply the same lock srTypeChanged would. Skipped in discount mode,
+        // where sr-type is a hidden input and the row is already simplified.
+        document.querySelectorAll('.sr-item-row select.sr-type').forEach(function(sel) {{
             if (sel.value === 'discount') srTypeChanged(sel);
         }});
         
