@@ -1096,11 +1096,17 @@ def register_purchases_routes(app, db, login_required, Auth, render_page,
                     </div>
                     <div>
                         <label style="display:block;margin-bottom:4px;font-weight:600;font-size:13px;">Amount (VAT Inclusive)</label>
-                        <input type="number" id="capInvAmount" placeholder="0.00" step="0.01" min="0.01" style="width:100%;padding:10px;border:1px solid var(--border);border-radius:6px;background:var(--bg);color:var(--text);font-size:18px;font-weight:700;">
+                        <input type="number" id="capInvAmount" placeholder="0.00" step="0.01" min="0.01" oninput="updateCapInvDiscount()" style="width:100%;padding:10px;border:1px solid var(--border);border-radius:6px;background:var(--bg);color:var(--text);font-size:18px;font-weight:700;">
                     </div>
                     <div style="display:flex;align-items:center;gap:8px;">
-                        <input type="checkbox" id="capInvVat" checked>
+                        <input type="checkbox" id="capInvVat" checked onchange="updateCapInvDiscount()">
                         <label for="capInvVat" style="font-size:13px;">VAT Inclusive (15%)</label>
+                    </div>
+                    <div id="capInvDiscountBox" style="display:none;padding:10px 12px;border-radius:6px;background:rgba(34,197,94,0.08);border:1px solid rgba(34,197,94,0.3);font-size:13px;">
+                        <div style="display:flex;justify-content:space-between;"><span>Net (excl VAT)</span><span id="capInvNet">R0.00</span></div>
+                        <div style="display:flex;justify-content:space-between;color:var(--green);font-weight:600;"><span id="capInvDiscLabel">Discount Received</span><span id="capInvDiscAmt">-R0.00</span></div>
+                        <div style="display:flex;justify-content:space-between;"><span>VAT (15%)</span><span id="capInvVatAmt">R0.00</span></div>
+                        <div style="display:flex;justify-content:space-between;font-weight:700;border-top:1px solid rgba(34,197,94,0.3);margin-top:4px;padding-top:4px;"><span>Invoice Total</span><span id="capInvTotal">R0.00</span></div>
                     </div>
                     <div style="display:flex;align-items:center;gap:8px;">
                         <input type="checkbox" id="capInvPaid">
@@ -1119,6 +1125,35 @@ def register_purchases_routes(app, db, login_required, Auth, render_page,
         <script>
         document.getElementById('capInvDate').value = new Date().toISOString().split('T')[0];
         
+        const _capInvDiscountPct = {float(supplier.get("discount_percentage", 0) or 0)};
+        
+        function updateCapInvDiscount() {{
+            const box = document.getElementById('capInvDiscountBox');
+            const amount = parseFloat(document.getElementById('capInvAmount').value) || 0;
+            if (amount <= 0 || _capInvDiscountPct <= 0) {{
+                box.style.display = 'none';
+                return;
+            }}
+            const vatInclusive = document.getElementById('capInvVat').checked;
+            let net;
+            if (vatInclusive) {{
+                net = Math.round((amount - amount * 15 / 115) * 100) / 100;
+            }} else {{
+                net = Math.round(amount * 100) / 100;
+            }}
+            const discAmt = Math.round(net * _capInvDiscountPct / 100 * 100) / 100;
+            const discountedNet = Math.round((net - discAmt) * 100) / 100;
+            const vatAmt = Math.round(discountedNet * 0.15 * 100) / 100;
+            const total = Math.round((discountedNet + vatAmt) * 100) / 100;
+            
+            document.getElementById('capInvNet').textContent = 'R' + net.toFixed(2);
+            document.getElementById('capInvDiscLabel').textContent = 'Discount Received ' + _capInvDiscountPct + '%';
+            document.getElementById('capInvDiscAmt').textContent = '-R' + discAmt.toFixed(2);
+            document.getElementById('capInvVatAmt').textContent = 'R' + vatAmt.toFixed(2);
+            document.getElementById('capInvTotal').textContent = 'R' + total.toFixed(2);
+            box.style.display = 'block';
+        }}
+        
         function openCaptureInvoice() {{
             // Reset all fields and messages
             document.getElementById('capInvNumber').value = '';
@@ -1130,6 +1165,7 @@ def register_purchases_routes(app, db, login_required, Auth, render_page,
             document.getElementById('capInvPaid').checked = false;
             document.getElementById('capInvMsg').style.display = 'none';
             document.getElementById('zaneSuggestMsg').style.display = 'none';
+            document.getElementById('capInvDiscountBox').style.display = 'none';
             document.getElementById('capInvBtn').disabled = false;
             document.getElementById('capInvBtn').textContent = 'Save Invoice';
             filterGLDropdown(''); // Reset dropdown to show all
@@ -5006,15 +5042,26 @@ Nothing else."""
             if amount <= 0:
                 return jsonify({"success": False, "error": "Amount must be greater than zero"})
             
-            # Calculate VAT
+            # Read supplier discount % from the database (not trusting client)
+            discount_pct = 0.0
+            if supplier_id:
+                try:
+                    _sup = db.get_one("suppliers", supplier_id)
+                    if _sup:
+                        discount_pct = float(_sup.get("discount_percentage", 0) or 0)
+                except Exception:
+                    discount_pct = 0.0
+            
+            # Calculate net, discount (on net, before VAT), then VAT on discounted net
             if vat_inclusive:
-                vat_amount = round(amount * 15 / 115, 2)
-                net_amount = round(amount - vat_amount, 2)
-                total_amount = round(amount, 2)
+                gross_net = round(amount - round(amount * 15 / 115, 2), 2)
             else:
-                net_amount = round(amount, 2)
-                vat_amount = round(amount * 0.15, 2)
-                total_amount = round(net_amount + vat_amount, 2)
+                gross_net = round(amount, 2)
+            
+            discount_amount = round(gross_net * discount_pct / 100, 2) if discount_pct > 0 else 0.0
+            net_amount = round(gross_net - discount_amount, 2)
+            vat_amount = round(net_amount * 0.15, 2)
+            total_amount = round(net_amount + vat_amount, 2)
             
             # Generate invoice number if not provided
             if not invoice_number:
@@ -5031,6 +5078,8 @@ Nothing else."""
                 subtotal=net_amount,
                 vat=vat_amount,
                 total=total_amount,
+                discount_percentage=discount_pct,
+                discount_amount=discount_amount,
                 status="paid" if is_paid else "outstanding",
                 notes=description
             )
@@ -5048,24 +5097,28 @@ Nothing else."""
             # Create GL journal entries
             try:
                 if is_paid:
-                    # Already paid: Debit Expense + VAT Input, Credit Bank
+                    # Already paid: Debit Expense (full net) + VAT Input, Credit Discount Received + Bank
                     journal_entries = [
-                        {"account_code": gl_code, "debit": net_amount, "credit": 0},
+                        {"account_code": gl_code, "debit": gross_net, "credit": 0},
                     ]
                     if vat_amount > 0:
                         journal_entries.append({"account_code": gl(biz_id, "vat_input"), "debit": vat_amount, "credit": 0})
+                    if discount_amount > 0:
+                        journal_entries.append({"account_code": gl(biz_id, "discount_received"), "debit": 0, "credit": discount_amount})
                     journal_entries.append({"account_code": gl(biz_id, "bank"), "debit": 0, "credit": total_amount})
                 else:
-                    # On account: Debit Expense + VAT Input, Credit Creditors
+                    # On account: Debit Expense (full net) + VAT Input, Credit Discount Received + Creditors
                     journal_entries = [
-                        {"account_code": gl_code, "debit": net_amount, "credit": 0},
+                        {"account_code": gl_code, "debit": gross_net, "credit": 0},
                     ]
                     if vat_amount > 0:
                         journal_entries.append({"account_code": gl(biz_id, "vat_input"), "debit": vat_amount, "credit": 0})
+                    if discount_amount > 0:
+                        journal_entries.append({"account_code": gl(biz_id, "discount_received"), "debit": 0, "credit": discount_amount})
                     journal_entries.append({"account_code": gl(biz_id, "creditors"), "debit": 0, "credit": total_amount})
                 
                 create_journal_entry(biz_id, inv_date, f"{description or supplier_name} - {invoice_number}", invoice_number, journal_entries)
-                logger.info(f"[CAPTURE INV] GL entries created: {gl_code} DR:{net_amount} for {supplier_name}")
+                logger.info(f"[CAPTURE INV] GL entries created: {gl_code} DR:{gross_net} disc:{discount_amount} for {supplier_name}")
             except Exception as e:
                 logger.error(f"[CAPTURE INV] GL entry error (invoice still saved): {e}")
             
