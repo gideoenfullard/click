@@ -794,6 +794,7 @@ def register_purchases_routes(app, db, login_required, Auth, render_page,
                 <a href="/supplier/{supplier_id}/edit" class="btn btn-secondary">✏️ Edit</a>
                 <a href="/purchase/new?supplier_id={supplier_id}" class="btn btn-secondary">New PO</a>
                 <a href="/ledger?q={safe_string(supplier.get('name', ''))}" class="btn btn-secondary" style="font-size:12px;">GL Trail</a>
+                <a href="/supplier-return/new?supplier_id={supplier_id}&mode=discount" class="btn btn-secondary">↩️ Discount Credit</a>
                 <button class="btn btn-primary" onclick="openCaptureInvoice()">📄 Capture Invoice</button>
                 {payment_button}
             </div>
@@ -5687,6 +5688,13 @@ Nothing else."""
                           if (si.get("status") or "").lower() not in ("credited", "cancelled")]
         
         prefill_supplier = request.args.get("supplier_id", "")
+        # mode=discount opens the screen pre-set for a discount/adjustment
+        # credit (first line type = Discount). Same screen, same endpoint —
+        # just a different starting state so it feels like its own tool.
+        is_discount_mode = (request.args.get("mode", "") or "").strip().lower() == "discount"
+        _sr_page_title = "New Discount Credit" if is_discount_mode else "New Supplier Return"
+        _sr_heading = "↩️ New Discount Credit" if is_discount_mode else "↩️ New Supplier Return"
+        _sr_default_type = "discount" if is_discount_mode else "stock"
         
         supplier_options = '<option value="">-- Select Supplier --</option>'
         for s in suppliers:
@@ -5716,9 +5724,9 @@ Nothing else."""
         .sr-main {{ display: flex; flex-direction: column; gap: 15px; min-width: 0; }}
         .sr-sidebar {{ position: sticky; top: 80px; display: flex; flex-direction: column; gap: 12px; align-self: start; }}
         .sr-sidebar .card {{ padding: 16px; margin: 0; }}
-        .sr-item-row {{ display: grid; grid-template-columns: 3fr 2fr 70px 110px 100px 30px; gap: 8px; align-items: center; padding: 8px 0; border-bottom: 1px solid rgba(255,255,255,0.05); }}
+        .sr-item-row {{ display: grid; grid-template-columns: 110px 3fr 2fr 70px 110px 100px 30px; gap: 8px; align-items: center; padding: 8px 0; border-bottom: 1px solid rgba(255,255,255,0.05); }}
         .sr-item-row input {{ font-size: 13px; padding: 8px 10px; }}
-        .sr-item-hdr {{ display: grid; grid-template-columns: 3fr 2fr 70px 110px 100px 30px; gap: 8px; padding: 6px 0; font-size: 11px; color: var(--text-muted); font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px; border-bottom: 2px solid var(--border); }}
+        .sr-item-hdr {{ display: grid; grid-template-columns: 110px 3fr 2fr 70px 110px 100px 30px; gap: 8px; padding: 6px 0; font-size: 11px; color: var(--text-muted); font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px; border-bottom: 2px solid var(--border); }}
         .sr-stock-td {{ position: relative; }}
         .sr-stock-td .ssp-dropdown.sr-stock-dd {{ position: fixed !important; left: auto !important; right: auto !important; z-index: 9999 !important; max-height: 60vh; min-width: 600px; overflow-y: auto; background: var(--card, #1e1e2e); border: 1px solid var(--border, #333); border-radius: 6px; box-shadow: 0 8px 24px rgba(0,0,0,0.4); }}
         .sr-rm {{ background: var(--red); color: #fff; border: none; border-radius: 4px; width: 24px; height: 24px; cursor: pointer; }}
@@ -5729,7 +5737,7 @@ Nothing else."""
         </style>
         
         <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:15px;">
-            <h2 style="margin:0;">↩️ New Supplier Return</h2>
+            <h2 style="margin:0;">{_sr_heading}</h2>
             <a href="/suppliers" style="color:var(--text-muted);">← Back to Suppliers</a>
         </div>
         
@@ -5769,10 +5777,14 @@ Nothing else."""
                 <div class="card" style="padding:20px;">
                     <h3 style="margin:0 0 12px 0;">Return Lines</h3>
                     <div class="sr-item-hdr">
-                        <span>Stock Item</span><span>Description</span><span>Qty</span><span>Price (excl)</span><span style="text-align:right;">Total</span><span></span>
+                        <span>Type</span><span>Stock Item</span><span>Description</span><span>Qty</span><span>Price (excl)</span><span style="text-align:right;">Total</span><span></span>
                     </div>
                     <div id="srItemsBody">
                         <div class="sr-item-row">
+                            <select class="sr-type" onchange="srTypeChanged(this)" style="border:1px solid var(--border);border-radius:6px;background:var(--bg);color:var(--text);font-size:12px;padding:8px 6px;">
+                                <option value="stock"{' selected' if _sr_default_type == 'stock' else ''}>Stock Return</option>
+                                <option value="discount"{' selected' if _sr_default_type == 'discount' else ''}>Discount</option>
+                            </select>
                             <div class="sr-stock-td">
                                 <input type="text" class="sr-stock-search" placeholder="Search stock (or leave blank for free line)..." autocomplete="off" oninput="srStockSearch(this)" onfocus="srStockSearch(this)" style="width:100%;border:1px solid var(--border);border-radius:6px;background:var(--bg);color:var(--text);">
                                 <input type="hidden" class="sr-stock-id" value="">
@@ -5786,7 +5798,7 @@ Nothing else."""
                         </div>
                     </div>
                     <button type="button" class="sr-add-btn" onclick="srAddRow()" style="margin-top:10px;">+ Add Line</button>
-                    <p style="color:var(--text-muted);font-size:11px;margin-top:8px;">Lines linked to a stock item reduce stock on save. Free lines (no stock item) only credit the supplier — no stock effect.</p>
+                    <p style="color:var(--text-muted);font-size:11px;margin-top:8px;">Stock Return lines reduce stock on save and credit the supplier. Discount lines credit the supplier and post to Discount Received — no stock effect. Both can be mixed on one return.</p>
                 </div>
             </div>
             
@@ -5879,6 +5891,10 @@ Nothing else."""
             const row = document.createElement('div');
             row.className = 'sr-item-row';
             row.innerHTML = `
+                <select class="sr-type" onchange="srTypeChanged(this)" style="border:1px solid var(--border);border-radius:6px;background:var(--bg);color:var(--text);font-size:12px;padding:8px 6px;">
+                    <option value="stock">Stock Return</option>
+                    <option value="discount">Discount</option>
+                </select>
                 <div class="sr-stock-td">
                     <input type="text" class="sr-stock-search" placeholder="Search stock (or leave blank for free line)..." autocomplete="off" oninput="srStockSearch(this)" onfocus="srStockSearch(this)" style="width:100%;border:1px solid var(--border);border-radius:6px;background:var(--bg);color:var(--text);">
                     <input type="hidden" class="sr-stock-id" value="">
@@ -5911,16 +5927,47 @@ Nothing else."""
         }}
         srCalcTotals();
         
+        function srTypeChanged(sel) {{
+            const row = sel.closest('.sr-item-row');
+            const isDiscount = sel.value === 'discount';
+            const stockSearch = row.querySelector('.sr-stock-search');
+            const stockId = row.querySelector('.sr-stock-id');
+            const qtyEl = row.querySelector('.sr-qty');
+            const descEl = row.querySelector('.sr-desc');
+            if (isDiscount) {{
+                // A discount line is not a stock item — clear and lock the stock field.
+                stockSearch.value = '';
+                stockSearch.disabled = true;
+                stockSearch.placeholder = 'Not applicable for discount';
+                stockId.value = '';
+                qtyEl.value = 1;
+                qtyEl.disabled = true;
+                if (!descEl.value.trim()) descEl.placeholder = 'e.g. Settlement discount';
+            }} else {{
+                stockSearch.disabled = false;
+                stockSearch.placeholder = 'Search stock (or leave blank for free line)...';
+                qtyEl.disabled = false;
+            }}
+            srCalcTotals();
+        }}
+        
+        // On load, if the screen opened in discount mode the first row's type
+        // is pre-set to "Discount" — apply the same lock srTypeChanged would.
+        document.querySelectorAll('.sr-item-row .sr-type').forEach(function(sel) {{
+            if (sel.value === 'discount') srTypeChanged(sel);
+        }});
+        
         // Collect the lines into a clean array
         function srCollectLines() {{
             const lines = [];
             document.querySelectorAll('.sr-item-row').forEach(row => {{
+                const lineType = row.querySelector('.sr-type')?.value || 'stock';
                 const qty = parseFloat(row.querySelector('.sr-qty')?.value) || 0;
                 const price = parseFloat(row.querySelector('.sr-price')?.value) || 0;
                 const desc = (row.querySelector('.sr-desc')?.value || '').trim();
                 const stockId = row.querySelector('.sr-stock-id')?.value || '';
                 if (qty > 0 && price > 0 && (desc || stockId)) {{
-                    lines.push({{ stock_id: stockId, description: desc, quantity: qty, price: price }});
+                    lines.push({{ line_type: lineType, stock_id: stockId, description: desc, quantity: qty, price: price }});
                 }}
             }});
             return lines;
@@ -5970,7 +6017,7 @@ Nothing else."""
         }}
         </script>
         '''
-        return render_page("New Supplier Return", content, user, "suppliers")
+        return render_page(_sr_page_title, content, user, "suppliers")
 
     @app.route("/api/supplier-return/save", methods=["POST"])
     @login_required
@@ -6009,6 +6056,7 @@ Nothing else."""
             subtotal = 0.0
             stock_credit = 0.0   # net of stock-linked lines  -> CR Stock
             free_credit = 0.0    # net of free lines          -> CR COS/Purchases
+            discount_credit = 0.0  # net of discount lines    -> CR Discount Received (4300)
             for ln in lines:
                 try:
                     qty = round(float(ln.get("quantity", 0) or 0), 4)
@@ -6017,17 +6065,26 @@ Nothing else."""
                     continue
                 if qty <= 0 or price <= 0:
                     continue
+                line_type = (ln.get("line_type") or "stock").strip().lower()
+                if line_type not in ("stock", "discount"):
+                    line_type = "stock"
                 stock_id = (ln.get("stock_id") or "").strip()
                 desc = (ln.get("description") or "").strip()
+                # A discount line is never a stock item — drop any stock link.
+                if line_type == "discount":
+                    stock_id = ""
                 if not desc and not stock_id:
                     continue
                 line_total = round(qty * price, 2)
                 subtotal += line_total
-                if stock_id:
+                if line_type == "discount":
+                    discount_credit += line_total
+                elif stock_id:
                     stock_credit += line_total
                 else:
                     free_credit += line_total
                 clean_lines.append({
+                    "line_type": line_type,
                     "stock_id": stock_id,
                     "description": desc,
                     "quantity": qty,
@@ -6049,12 +6106,15 @@ Nothing else."""
             cn_ref = f"SCR-{cn_id[:8]}"
             
             # ── GL journal: DR Creditors, CR Stock (stock lines),
-            #    CR COS/Purchases (free lines), CR VAT Input ──
+            #    CR COS/Purchases (free lines), CR Discount Received (discount
+            #    lines), CR VAT Input ──
             cn_journal_lines = []
             if stock_credit > 0:
                 cn_journal_lines.append({"account_code": gl(biz_id, "stock"), "debit": 0, "credit": round(stock_credit, 2)})
             if free_credit > 0:
                 cn_journal_lines.append({"account_code": gl(biz_id, "cogs"), "debit": 0, "credit": round(free_credit, 2)})
+            if discount_credit > 0:
+                cn_journal_lines.append({"account_code": gl(biz_id, "discount_received"), "debit": 0, "credit": round(discount_credit, 2)})
             if vat > 0:
                 cn_journal_lines.append({"account_code": gl(biz_id, "vat_input"), "debit": 0, "credit": vat})
             cn_journal_lines.append({"account_code": gl(biz_id, "creditors"), "debit": total, "credit": 0})
