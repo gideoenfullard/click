@@ -27254,7 +27254,8 @@ def customers_page():
 @login_required
 def customer_view(customer_id):
     """Customer detail with full history"""
-    
+    _t("cv_start")
+
     user = Auth.get_current_user()
     business = Auth.get_current_business()
     biz_id = business.get("id") if business else None
@@ -27306,7 +27307,7 @@ def customer_view(customer_id):
                          and r.get("id") not in _receipts_by_id_set]
     receipts = sorted(_receipts_by_id + _receipts_by_name, key=lambda x: x.get("date", ""), reverse=True)
     sales = sorted(fut_sales.result(), key=lambda x: x.get("date", ""), reverse=True)
-    
+    _t("cv_db_done")
     # ── DERIVE refund / reversal sets from allocation_log ──
     # Two sets: sale_ids that were refunded, invoice_ids that were reversed.
     # Built from extra.action == "pos_refund" / "invoice_reverse" entries.
@@ -27617,7 +27618,8 @@ def customer_view(customer_id):
     except Exception as _ra_err:
         logger.warning(f"[CUSTOMER VIEW] payment_allocations load failed: {_ra_err}")
         _real_alloc = {}
-    
+    _t("cv_calc_done")
+
     invoices_html = ""
     for inv in invoices[:200]:
         status = inv.get("status", "outstanding")
@@ -28471,6 +28473,7 @@ def customer_view(customer_id):
     
     '''
     
+    _t("cv_html_done")
     return render_page(customer.get("name", "Customer"), content, user, "customers")
 
 
