@@ -21490,6 +21490,7 @@ def render_page(title: str, content: str, user: dict = None, active: str = "") -
             ("banking", "/banking", "Banking"),
             ("reports", "/reports", "Reports"),
             ("ledger", "/ledger", "Ledger"),
+            ("journals", "/journals", "Journals"),
             ("inbox", "/scan-inbox", "Inbox"),
         ]
     else:
@@ -21512,6 +21513,7 @@ def render_page(title: str, content: str, user: dict = None, active: str = "") -
             ("hr", "/hr", "HR"),
             ("reports", "/reports", "Reports"),
             ("ledger", "/ledger", "Ledger"),
+            ("journals", "/journals", "Journals"),
             ("intelligence", "/intelligence", "AI"),
             ("tools", "/tools", "Tools"),
             ("import", "/sage-drop", "Import"),
