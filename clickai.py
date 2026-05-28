@@ -33643,6 +33643,81 @@ def create_journal_entry(biz_id: str, date: str, description: str, reference: st
 # JOURNALS - Manual entries
 # 
 
+@app.route("/api/journals/create", methods=["POST"])
+@login_required
+def api_journals_create():
+    """Create a manual journal entry from the journals form.
+    Body: {date, description, reference, lines: [{account_code, debit, credit}, ...]}
+    Uses the existing create_journal_entry engine (same as all other journals).
+    """
+    user = Auth.get_current_user()
+    business = Auth.get_current_business()
+    biz_id = business.get("id") if business else None
+
+    if not biz_id:
+        return jsonify({"success": False, "error": "No business selected"})
+
+    try:
+        data = request.get_json() or {}
+        jnl_date = (data.get("date") or "").strip() or today()
+        description = (data.get("description") or "").strip() or "Manual journal entry"
+        reference = (data.get("reference") or "").strip()
+        raw_lines = data.get("lines", [])
+
+        # Build clean entries, skipping fully-blank lines
+        entries = []
+        for ln in raw_lines:
+            acc = str(ln.get("account_code", "") or "").strip()
+            try:
+                debit = round(float(ln.get("debit", 0) or 0), 2)
+            except (TypeError, ValueError):
+                debit = 0.0
+            try:
+                credit = round(float(ln.get("credit", 0) or 0), 2)
+            except (TypeError, ValueError):
+                credit = 0.0
+            if not acc and debit == 0 and credit == 0:
+                continue  # blank line — ignore
+            if not acc:
+                return jsonify({"success": False, "error": "Every line with an amount must have an account selected"})
+            if debit > 0 and credit > 0:
+                return jsonify({"success": False, "error": f"Line for account {acc} cannot have both a debit and a credit"})
+            entries.append({"account_code": acc, "debit": debit, "credit": credit})
+
+        if len(entries) < 2:
+            return jsonify({"success": False, "error": "A journal needs at least two lines (one debit, one credit)"})
+
+        total_debit = round(sum(e["debit"] for e in entries), 2)
+        total_credit = round(sum(e["credit"] for e in entries), 2)
+        if abs(total_debit - total_credit) > 0.01:
+            return jsonify({"success": False, "error": f"Debits ({money(total_debit)}) must equal Credits ({money(total_credit)})"})
+        if total_debit <= 0:
+            return jsonify({"success": False, "error": "Journal total must be greater than zero"})
+
+        _jnl_ref = reference or ("JNL-" + generate_id()[:8])
+        create_journal_entry(biz_id, jnl_date, description, _jnl_ref, entries)
+
+        # Audit trail — mirror the AI handler's allocation log
+        try:
+            if log_allocation:
+                _uid, _uname = get_acting_user()
+                log_allocation(
+                    business_id=biz_id, allocation_type="journal_entry",
+                    source_table="journals", source_id=_jnl_ref,
+                    description=f"Journal: {description[:200]}",
+                    amount=float(total_debit), gl_entries=entries,
+                    reference=_jnl_ref, transaction_date=jnl_date,
+                    created_by=_uid, created_by_name=_uname
+                )
+        except Exception:
+            pass
+
+        return jsonify({"success": True, "message": f"Journal {_jnl_ref} posted - {money(total_debit)}", "reference": _jnl_ref})
+    except Exception as e:
+        logger.error(f"[JOURNALS] Create failed: {e}")
+        return jsonify({"success": False, "error": "Could not save journal entry"})
+
+
 @app.route("/journals")
 @login_required
 def journals_page():
@@ -33654,7 +33729,23 @@ def journals_page():
     
     journals = db.get("journals", {"business_id": biz_id}) if biz_id else []
     journals = sorted(journals, key=lambda x: x.get("date", ""), reverse=True)
-    
+
+    # Chart of accounts for the line dropdowns (exclude system accounts)
+    _coa = db.get("chart_of_accounts", {"business_id": biz_id}) if biz_id else []
+    _coa_opts = []
+    for _acc in _coa:
+        if (_acc.get("source", "") == "System Account"):
+            continue
+        _ac = str(_acc.get("account_code", "") or _acc.get("code", "")).strip()
+        _an = (_acc.get("account_name", "") or _acc.get("name", "")).strip()
+        if _ac and _an:
+            _coa_opts.append((_ac, _an))
+    _coa_opts.sort(key=lambda x: x[0])
+    _acc_options_html = '<option value="">Select account...</option>' + "".join(
+        f'<option value="{safe_string(_c)}">{safe_string(_c)} - {safe_string(_n)}</option>' for _c, _n in _coa_opts
+    )
+    _today_str = today()
+
     rows = ""
     for j in journals[:500]:
         debit = float(j.get("debit", 0))
@@ -33671,16 +33762,61 @@ def journals_page():
         '''
     
     content = f'''
+    <div class="card" style="margin-bottom:20px;">
+        <h3 class="card-title" style="margin:0 0 15px 0;">New Journal Entry</h3>
+        <div style="display:grid;grid-template-columns:160px 1fr 160px;gap:12px;margin-bottom:15px;">
+            <div>
+                <label style="font-size:11px;color:var(--text-muted);display:block;margin-bottom:4px;">Date</label>
+                <input type="date" id="jnlDate" value="{_today_str}" style="width:100%;padding:8px;border:1px solid var(--border);border-radius:6px;background:var(--bg);color:var(--text);">
+            </div>
+            <div>
+                <label style="font-size:11px;color:var(--text-muted);display:block;margin-bottom:4px;">Description</label>
+                <input type="text" id="jnlDesc" placeholder="e.g. Staff salaries recharged to the pub" style="width:100%;padding:8px;border:1px solid var(--border);border-radius:6px;background:var(--bg);color:var(--text);">
+            </div>
+            <div>
+                <label style="font-size:11px;color:var(--text-muted);display:block;margin-bottom:4px;">Reference (optional)</label>
+                <input type="text" id="jnlRef" placeholder="Auto" style="width:100%;padding:8px;border:1px solid var(--border);border-radius:6px;background:var(--bg);color:var(--text);">
+            </div>
+        </div>
+
+        <table class="table" style="margin-bottom:10px;">
+            <thead>
+                <tr>
+                    <th style="width:50%;">Account</th>
+                    <th style="text-align:right;width:20%;">Debit</th>
+                    <th style="text-align:right;width:20%;">Credit</th>
+                    <th style="width:40px;"></th>
+                </tr>
+            </thead>
+            <tbody id="jnlLines"></tbody>
+            <tfoot>
+                <tr style="font-weight:bold;border-top:2px solid var(--border);">
+                    <td style="text-align:right;">Totals</td>
+                    <td style="text-align:right;color:var(--green);" id="jnlTotDebit">R0.00</td>
+                    <td style="text-align:right;color:var(--red);" id="jnlTotCredit">R0.00</td>
+                    <td></td>
+                </tr>
+            </tfoot>
+        </table>
+
+        <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px;">
+            <button class="btn btn-secondary" onclick="jnlAddLine()">+ Add Line</button>
+            <div style="display:flex;align-items:center;gap:15px;">
+                <span id="jnlBalanceMsg" style="font-size:13px;font-weight:600;"></span>
+                <button class="btn btn-primary" id="jnlSaveBtn" onclick="jnlSave()" disabled>Save Journal</button>
+            </div>
+        </div>
+    </div>
+
     <div class="card">
         <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:15px;">
-            <h3 class="card-title" style="margin:0;"> Journal Entries</h3>
-            <button class="btn btn-primary" onclick="document.getElementById('aiInput').value='Create journal entry ';document.getElementById('aiInput').focus();">+ New Entry</button>
+            <h3 class="card-title" style="margin:0;">Journal Entries</h3>
         </div>
-        
-        <p style="color:var(--text-muted);margin-bottom:15px;">
-             Say "Journal: Debit Bank R1000, Credit Sales R1000 for cash sale"
+
+        <p style="color:var(--text-muted);margin-bottom:15px;font-size:12px;">
+            Tip: you can also ask the assistant - "Journal: Debit Bank R1000, Credit Sales R1000 for cash sale"
         </p>
-        
+
         <table class="table">
             <thead>
                 <tr><th>Date</th><th>Account</th><th>Description</th><th>Ref</th><th style="text-align:right;">Debit</th><th style="text-align:right;">Credit</th></tr>
@@ -33690,6 +33826,93 @@ def journals_page():
             </tbody>
         </table>
     </div>
+
+    <script>
+        var JNL_ACC_OPTIONS = {json.dumps(_acc_options_html)};
+
+        function jnlAddLine() {{
+            var tbody = document.getElementById('jnlLines');
+            var tr = document.createElement('tr');
+            tr.innerHTML =
+                '<td><select class="jnlAcc" style="width:100%;padding:7px;border:1px solid var(--border);border-radius:6px;background:var(--bg);color:var(--text);">' + JNL_ACC_OPTIONS + '</select></td>' +
+                '<td><input type="number" step="0.01" min="0" class="jnlDebit" oninput="jnlOnDebit(this)" style="width:100%;padding:7px;text-align:right;border:1px solid var(--border);border-radius:6px;background:var(--bg);color:var(--text);"></td>' +
+                '<td><input type="number" step="0.01" min="0" class="jnlCredit" oninput="jnlOnCredit(this)" style="width:100%;padding:7px;text-align:right;border:1px solid var(--border);border-radius:6px;background:var(--bg);color:var(--text);"></td>' +
+                '<td style="text-align:center;"><button class="btn btn-secondary" style="padding:4px 8px;" onclick="this.closest(\\'tr\\').remove();jnlRecalc();">x</button></td>';
+            tbody.appendChild(tr);
+        }}
+
+        // A line is either a debit OR a credit - clear the other side as you type.
+        function jnlOnDebit(el) {{
+            var tr = el.closest('tr');
+            if (parseFloat(el.value) > 0) {{ tr.querySelector('.jnlCredit').value = ''; }}
+            jnlRecalc();
+        }}
+        function jnlOnCredit(el) {{
+            var tr = el.closest('tr');
+            if (parseFloat(el.value) > 0) {{ tr.querySelector('.jnlDebit').value = ''; }}
+            jnlRecalc();
+        }}
+
+        function jnlRecalc() {{
+            var debits = document.querySelectorAll('.jnlDebit');
+            var credits = document.querySelectorAll('.jnlCredit');
+            var td = 0, tc = 0;
+            debits.forEach(function(d) {{ td += parseFloat(d.value) || 0; }});
+            credits.forEach(function(c) {{ tc += parseFloat(c.value) || 0; }});
+            td = Math.round(td * 100) / 100;
+            tc = Math.round(tc * 100) / 100;
+            document.getElementById('jnlTotDebit').textContent = 'R' + td.toFixed(2);
+            document.getElementById('jnlTotCredit').textContent = 'R' + tc.toFixed(2);
+            var msg = document.getElementById('jnlBalanceMsg');
+            var btn = document.getElementById('jnlSaveBtn');
+            var balanced = (td > 0 && Math.abs(td - tc) < 0.01);
+            if (td === 0 && tc === 0) {{
+                msg.textContent = '';
+            }} else if (balanced) {{
+                msg.textContent = 'Balanced';
+                msg.style.color = 'var(--green)';
+            }} else {{
+                msg.textContent = 'Out by R' + Math.abs(td - tc).toFixed(2);
+                msg.style.color = 'var(--red)';
+            }}
+            btn.disabled = !balanced;
+        }}
+
+        function jnlSave() {{
+            var lines = [];
+            var rows = document.querySelectorAll('#jnlLines tr');
+            rows.forEach(function(tr) {{
+                var acc = tr.querySelector('.jnlAcc').value;
+                var debit = parseFloat(tr.querySelector('.jnlDebit').value) || 0;
+                var credit = parseFloat(tr.querySelector('.jnlCredit').value) || 0;
+                if (acc || debit || credit) {{
+                    lines.push({{account_code: acc, debit: debit, credit: credit}});
+                }}
+            }});
+            var btn = document.getElementById('jnlSaveBtn');
+            btn.disabled = true;
+            fetch('/api/journals/create', {{
+                method: 'POST',
+                headers: {{'Content-Type': 'application/json'}},
+                body: JSON.stringify({{
+                    date: document.getElementById('jnlDate').value,
+                    description: document.getElementById('jnlDesc').value,
+                    reference: document.getElementById('jnlRef').value,
+                    lines: lines
+                }})
+            }})
+            .then(function(r) {{ return r.json(); }})
+            .then(function(res) {{
+                if (res.success) {{ window.location.reload(); }}
+                else {{ alert(res.error || 'Could not save journal'); btn.disabled = false; }}
+            }})
+            .catch(function() {{ alert('Could not save journal'); btn.disabled = false; }});
+        }}
+
+        // Start with two blank lines
+        jnlAddLine();
+        jnlAddLine();
+    </script>
     '''
     
     return render_page("Journals", content, user, "journals")
