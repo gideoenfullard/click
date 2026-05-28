@@ -2178,23 +2178,23 @@ def calc_supplier_balance(biz_id: str, supplier_id: str) -> float:
         return 0.0
 
 
-def calc_all_customer_balances(biz_id: str) -> dict:
+def calc_all_customer_balances(biz_id: str, customers=None) -> dict:
     """Calculate balances for ALL customers in one batch. Returns {customer_id: balance}.
     Much more efficient than calling calc_customer_balance() per customer.
     Excludes reversed invoices and refunded sales (derived from allocation_log).
     """
     try:
-        all_invoices = db.get("invoices", {"business_id": biz_id}) or []
-        all_sales = db.get("sales", {"business_id": biz_id}) or []
-        all_receipts = db.get("receipts", {"business_id": biz_id}) or []
-        all_credit_notes = db.get("credit_notes", {"business_id": biz_id}) or []
-        all_customers = db.get("customers", {"business_id": biz_id}) or []
+        all_invoices = db.get("invoices", {"business_id": biz_id}, select="id,customer_id,status,total") or []
+        all_sales = db.get("sales", {"business_id": biz_id}, select="id,customer_id,payment_method,status,total") or []
+        all_receipts = db.get("receipts", {"business_id": biz_id}, select="customer_id,customer_name,amount") or []
+        all_credit_notes = db.get("credit_notes", {"business_id": biz_id}, select="customer_id,total") or []
+        all_customers = customers if customers is not None else (db.get("customers", {"business_id": biz_id}) or [])
 
         # ── Derive reversed invoice IDs and refunded sale IDs from allocation_log ──
         _reversed_invoice_ids = set()
         _refunded_sale_ids = set()
         try:
-            _alloc_log = db.get("allocation_log", {"business_id": biz_id}) or []
+            _alloc_log = db.get("allocation_log", {"business_id": biz_id}, select="source_id,source_table,extra") or []
             for _al in _alloc_log:
                 _src_id = _al.get("source_id", "")
                 if not _src_id:
@@ -3921,10 +3921,10 @@ class DB:
             "Prefer": "return=representation"
         }
     
-    def get(self, table: str, filters: dict = None, limit: int = 10000) -> List[dict]:
+    def get(self, table: str, filters: dict = None, limit: int = 10000, select: str = "*") -> List[dict]:
         """Get records from table"""
         try:
-            endpoint = f"{self.url}/rest/v1/{table}?select=*&limit={limit}"
+            endpoint = f"{self.url}/rest/v1/{table}?select={select}&limit={limit}"
             if filters:
                 for k, v in filters.items():
                     endpoint += f"&{k}=eq.{v}"
@@ -26977,7 +26977,7 @@ def customers_page():
     can_see_balances = role in ("owner", "admin", "manager", "bookkeeper", "accountant")
     
     # Calculate all customer balances from source documents (batch)
-    _all_balances = calc_all_customer_balances(biz_id) if can_see_balances else {}
+    _all_balances = calc_all_customer_balances(biz_id, customers=customers) if can_see_balances else {}
     
     total_customers = len(customers)
     debtors = [c for c in customers if _all_balances.get(c.get("id"), 0) > 0]
