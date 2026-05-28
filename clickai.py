@@ -27802,7 +27802,7 @@ def customer_view(customer_id):
         _inv_total = round(float(_inv.get("total", 0) or 0), 2)
         if _inv_total <= 0:
             continue
-        _already = invoice_allocated_total(biz_id, _inv.get("id", ""))
+        _already = float(_real_alloc.get(_inv.get("id", ""), 0) or 0)
         _outstanding = round(_inv_total - _already, 2)
         if _outstanding <= 0:
             continue
