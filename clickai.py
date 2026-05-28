@@ -27596,8 +27596,8 @@ def customer_view(customer_id):
         for _i in _invs_oldest_first:
             if _to_apply <= 0:
                 break
-            _t = float(_i.get("total", 0) or 0)
-            _take = min(_t, _to_apply)
+            _t_tot = float(_i.get("total", 0) or 0)
+            _take = min(_t_tot, _to_apply)
             if _take > 0:
                 _alloc_paid[_i.get("id")] = _take
                 _to_apply -= _take
