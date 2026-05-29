@@ -1371,6 +1371,221 @@ def register_payroll_routes(app, db, login_required, Auth, render_page,
         return redirect(f"/payslip/{payslip_id}")
     
     
+    @app.route("/payroll/post-batch/<batch_id>", methods=["POST"])
+    @login_required
+    def payroll_post_batch(batch_id):
+        """Post payslips for a reviewed timesheet batch using the pay-conditions
+        engine (base +/- overtime, late, early, Sunday premium). Posts the whole
+        batch (post_all) or a single employee (only=<emp_id>)."""
+        user = Auth.get_current_user()
+        business = Auth.get_current_business()
+        biz_id = business.get("id") if business else None
+        if not biz_id:
+            flash("Please select a business first", "error")
+            return redirect("/payroll")
+
+        try:
+            from clickai_pay_conditions import calculate_pay_from_timesheet, build_entries_from_days
+        except Exception as e:
+            logger.error(f"[POST BATCH] pay conditions module not available: {e}")
+            flash("Pay conditions module not loaded — use Approve & Save instead", "error")
+            return redirect(f"/timesheets/review/{batch_id}")
+
+        batch = db.get_one("timesheet_batches", batch_id)
+        if not batch:
+            flash("Timesheet batch not found", "error")
+            return redirect("/payroll")
+
+        raw_data = batch.get("data", "{}")
+        parsed = json.loads(raw_data) if isinstance(raw_data, str) else raw_data
+        employees_data = parsed if isinstance(parsed, list) else parsed.get("employees", [])
+
+        pay_month = request.form.get("pay_month", "") or today()[:7]
+        if len(pay_month) < 7:
+            pay_month = today()[:7]
+        pay_month = pay_month[:7]
+
+        # Pay date = last day of the pay month (keeps the payslip in the right tax month)
+        try:
+            _yr, _mo = int(pay_month[:4]), int(pay_month[5:7])
+            _first_next = datetime(_yr + 1, 1, 1) if _mo == 12 else datetime(_yr, _mo + 1, 1)
+            pay_date = (_first_next - timedelta(days=1)).strftime("%Y-%m-%d")
+        except Exception:
+            pay_date = today()
+
+        only = request.form.get("only", "").strip()
+        count = int(request.form.get("count", 0) or 0)
+
+        # SDL only if this business's total annual payroll exceeds R500k
+        _all_emps = db.get("employees", {"business_id": biz_id}) if biz_id else []
+        _total_annual_payroll = sum(safe_float(e.get("basic_salary", 0)) * 12 for e in _all_emps)
+        _sdl_applies = _total_annual_payroll > 500000
+
+        posted = 0
+        skipped = 0
+        errors = []
+
+        for i in range(count):
+            emp_id = request.form.get(f"emp_{i}", "").strip()
+            if not emp_id:
+                continue
+            if only and emp_id != only:
+                continue
+
+            emp = db.get_one("employees", emp_id)
+            if not emp:
+                continue
+
+            # Duplicate guard — one payslip per employee per pay date
+            existing = db.get("payslips", {"business_id": biz_id, "employee_id": emp_id, "date": pay_date}) if biz_id else []
+            if existing:
+                skipped += 1
+                continue
+
+            days = employees_data[i].get("days", []) if i < len(employees_data) else []
+            entries = build_entries_from_days(days, pay_month)
+            result = calculate_pay_from_timesheet(emp, entries, pay_month)
+            gross = safe_float(result.get("gross", 0))
+            if gross <= 0:
+                skipped += 1
+                continue
+
+            # Deductions on the engine gross (same rules as payroll_run / payslip_create)
+            medical = safe_float(emp.get("medical_aid", 0))
+            union_fees = safe_float(emp.get("union_fees", 0))
+            pension = safe_float(emp.get("pension", 0))
+            loan = safe_float(emp.get("loan_deduction", 0))
+            other_ded = safe_float(emp.get("other_deduction", 0))
+            pension_employer = safe_float(emp.get("pension_employer", 0))
+            provident = safe_float(emp.get("provident_fund_amount", 0))
+
+            _emp_age = safe_float(emp.get("age", 0))
+            _medical_members = safe_float(emp.get("medical_members", 0))
+            paye = calc_monthly_paye(gross, _emp_age, pension, provident, _medical_members)
+
+            uif = min(gross * 0.01, 177.12)
+            uif_employer = uif
+            sdl = gross * 0.01 if _sdl_applies else 0
+            coida = gross * 0.01
+
+            total_ded = paye + uif + medical + union_fees + pension + provident + loan + other_ded
+            net = gross - total_ded
+            total_employer = uif_employer + sdl + coida + pension_employer
+            total_cost = gross + total_employer
+
+            payslip_id = generate_id()
+            payslip = {
+                "id": payslip_id,
+                "business_id": biz_id,
+                "employee_id": emp.get("id"),
+                "employee_name": emp.get("name"),
+                "date": pay_date,
+                "basic": round(gross, 2),
+                "gross": round(gross, 2),
+                "paye": round(paye, 2),
+                "uif": round(uif, 2),
+                "uif_employee": round(uif, 2),
+                "uif_employer": round(uif_employer, 2),
+                "medical_aid": round(medical, 2),
+                "union_fees": round(union_fees, 2),
+                "pension": round(pension, 2),
+                "pension_employee": round(pension, 2),
+                "pension_employer": round(pension_employer, 2),
+                "provident_fund": round(provident, 2),
+                "loan_deduction": round(loan, 2),
+                "other_deduction": round(other_ded, 2),
+                "sdl": round(sdl, 2),
+                "coida": round(coida, 2),
+                "total_deductions": round(total_ded, 2),
+                "total_employer": round(total_employer, 2),
+                "total_cost": round(total_cost, 2),
+                "net": round(net, 2)
+            }
+
+            try:
+                url = f"{db.url}/rest/v1/payslips"
+                response = requests.post(
+                    url,
+                    headers={**db.headers, "Prefer": "return=representation"},
+                    json=payslip,
+                    timeout=30
+                )
+                if response.status_code not in (200, 201):
+                    logger.error(f"[POST BATCH] Payslip save failed for {emp.get('name')}: {response.text[:200]}")
+                    errors.append(emp.get("name", emp_id))
+                    continue
+            except Exception as e:
+                logger.error(f"[POST BATCH] Payslip error for {emp.get('name')}: {e}")
+                errors.append(emp.get("name", emp_id))
+                continue
+
+            # Loan balance
+            if loan > 0 and emp.get("loan_balance"):
+                new_balance = max(0, safe_float(emp.get("loan_balance", 0)) - loan)
+                try:
+                    db.update("employees", emp["id"], {"loan_balance": round(new_balance, 2)})
+                except Exception:
+                    pass
+
+            # GL journal — same balanced pattern as payroll_run / payslip_create
+            payroll_entries = [
+                {"account_code": gl(biz_id, "salaries"), "debit": round(gross, 2), "credit": 0},
+            ]
+            employer_uif_amount = round(uif_employer, 2) if uif_employer > 0 else 0
+            employer_sdl_amount = round(sdl, 2) if sdl > 0 else 0
+            total_employer_expense = employer_uif_amount + employer_sdl_amount
+            if total_employer_expense > 0:
+                payroll_entries.append({"account_code": "6210", "debit": round(total_employer_expense, 2), "credit": 0})
+            if paye > 0:
+                payroll_entries.append({"account_code": gl(biz_id, "paye"), "debit": 0, "credit": round(paye, 2)})
+            if uif > 0 or employer_uif_amount > 0:
+                payroll_entries.append({"account_code": "2210", "debit": 0, "credit": round(uif + employer_uif_amount, 2)})
+            if employer_sdl_amount > 0:
+                payroll_entries.append({"account_code": "2220", "debit": 0, "credit": round(employer_sdl_amount, 2)})
+            other_deduction_total = round(medical + union_fees + pension + provident + loan + other_ded, 2)
+            if other_deduction_total > 0:
+                payroll_entries.append({"account_code": gl(biz_id, "loan"), "debit": 0, "credit": other_deduction_total})
+            payroll_entries.append({"account_code": gl(biz_id, "bank"), "debit": 0, "credit": round(net, 2)})
+
+            try:
+                create_journal_entry(biz_id, pay_date, f"Salary - {emp.get('name')}", f"PAY-{payslip_id[:8]}", payroll_entries)
+            except Exception as e:
+                logger.error(f"[POST BATCH] Journal entry failed for {emp.get('name')}: {e}")
+
+            posted += 1
+
+        # Single-employee post: stay on review so the rest can still be posted
+        if only:
+            if posted:
+                msg = "Posted payslip for 1 employee"
+                if skipped:
+                    msg += f" ({skipped} already had a payslip for {pay_date})"
+                if errors:
+                    msg += f" — errors: {', '.join(errors)}"
+                flash(msg, "success")
+            else:
+                msg = "Nothing posted"
+                if skipped:
+                    msg += f" — a payslip for {pay_date} already exists"
+                if errors:
+                    msg += f" — errors: {', '.join(errors)}"
+                flash(msg, "error")
+            return redirect(f"/timesheets/review/{batch_id}")
+
+        # Whole batch: mark processed and return to payroll
+        try:
+            db.save("timesheet_batches", {"id": batch_id, "status": "processed"})
+        except Exception:
+            pass
+        msg = f"Posted {posted} payslip(s) for {pay_month}"
+        if skipped:
+            msg += f", skipped {skipped} (already existed)"
+        if errors:
+            msg += f" — errors: {', '.join(errors)}"
+        flash(msg, "success" if posted else "error")
+        return redirect("/payroll")
+    
+    
     @app.route("/employee/<emp_id>")
     @login_required
     def employee_view(emp_id):

@@ -55979,7 +55979,7 @@ def scan_inbox_page():
                     </div>
                 `;
                 saveHtml = `
-                    <button class="btn" onclick="processAs('timesheet')" style="width:100%;padding:16px;background:#f59e0b;color:white;font-size:16px;">Save Timesheet</button>
+                    <div style="padding:14px;background:rgba(245,158,11,0.1);border:1px solid #f59e0b;border-radius:8px;color:var(--text);font-size:13px;">This timesheet could not be read in the standard multi-employee format. Please rescan it as a timesheet so it can be sent to Payroll.</div>
                 `;
             }}
         }} else if (type === 'bank_statement') {{
@@ -56782,15 +56782,6 @@ def scan_inbox_page():
             }};
             endpoint = '/api/scan/save-payslip';
             redirect = '/payroll';
-        }} else if (saveType === 'timesheet') {{
-            payload = {{
-                employee_name: document.getElementById('m_employee')?.value || 'Unknown',
-                date: document.getElementById('m_date')?.value || '',
-                hours: parseFloat(document.getElementById('m_hours')?.value || 0),
-                description: document.getElementById('m_description')?.value || ''
-            }};
-            endpoint = '/api/scan/save-timesheet';
-            redirect = '/timesheets';
         }} else if (saveType === 'timesheet_batch') {{
             // Save full timesheet with all employees
             payload = {{
@@ -58974,69 +58965,12 @@ def api_scan_save_expense():
         return jsonify({"success": False, "error": str(e)})
 
 
-@app.route("/api/scan/save-timesheet", methods=["POST"])
-@login_required
-def api_scan_save_timesheet():
-    """Save scanned data as timesheet entry - extracts hours from invoice total as proxy"""
-    
-    try:
-        data = request.get_json()
-        business = Auth.get_current_business()
-        biz_id = business.get("id") if business else None
-        
-        if not biz_id:
-            return jsonify({"success": False, "error": "No business selected"})
-        
-        # Try to extract timesheet info from scan
-        # Use supplier name as employee name hint
-        # Use total as hours (user can edit later)
-        
-        supplier_name = data.get("supplier_name", "Unknown")
-        invoice_date = data.get("date", today())
-        description = data.get("description", "") or data.get("invoice_number", "")
-        
-        # Try to find hours in the data - check if total looks like hours (< 24)
-        total = float(data.get("total", 0))
-        hours = total if total <= 24 else 8  # Default to 8 hours if total doesn't look like hours
-        
-        # Look for items that might be labor/hours
-        items = data.get("items", [])
-        for item in items:
-            item_desc = str(item.get("description", "")).lower()
-            if any(x in item_desc for x in ["hour", "labor", "labour", "work", "time"]):
-                hours = float(item.get("qty", 8))
-                description = item.get("description", description)
-                break
-        
-        entry_id = generate_id()
-        entry = {
-            "id": entry_id,
-            "business_id": biz_id,
-            "date": invoice_date,
-            "employee_name": supplier_name,
-            "hours": hours,
-            "description": description or f"Scanned from {supplier_name}",
-            "created_at": now()
-        }
-        
-        success, result = db.save("timesheet_entries", entry)
-        
-        if not success:
-            logger.error(f"[SCAN TIMESHEET] Failed to save: {result}")
-            return jsonify({"success": False, "error": f"Database error: {result}"})
-        
-        logger.info(f"[SCAN TIMESHEET] Entry saved: {entry_id} for business {biz_id}")
-        return jsonify({"success": True, "id": entry_id, "hours": hours})
-        
-    except Exception as e:
-        logger.error(f"[SCAN TIMESHEET] Error: {e}")
-        return jsonify({"success": False, "error": str(e)})
-
-
 @app.route("/api/scan/save-timesheet-batch", methods=["POST"])
 @login_required
 def api_scan_save_timesheet_batch():
-    """Save full timesheet batch with all employees to payroll"""
+    """Save a scanned timesheet to payroll staging (timesheet_batches),
+    exactly like the phone path. The batch then goes through the same
+    review -> pay-conditions pipeline and appears in Payroll staging."""
     
     try:
         data = request.get_json()
@@ -59047,53 +58981,42 @@ def api_scan_save_timesheet_batch():
             return jsonify({"success": False, "error": "No business selected"})
         
         employees = data.get("employees", [])
-        period = data.get("period", "")
+        period = data.get("period", "") or today()[:7]
         
         if not employees:
             return jsonify({"success": False, "error": "No employees in timesheet"})
         
-        # Get existing employees for matching
-        db_employees = db.get("employees", {"business_id": biz_id}) or []
-        emp_map = {e.get("name", "").lower(): e for e in db_employees}
+        # Store the full scanned timesheet as a PENDING batch so it lands in
+        # Payroll staging and is reviewed before any payslip is posted.
+        batch_id = generate_id()
+        batch_item = {
+            "id": batch_id,
+            "business_id": biz_id,
+            "period": period,
+            "data": json.dumps({"period": period, "employees": employees}),
+            "status": "pending",
+            "created_at": now()
+        }
         
-        saved = 0
-        for emp in employees:
-            name = emp.get("name", "Unknown")
-            total_hours = float(emp.get("total_hours", 0))
-            total_ot = float(emp.get("total_overtime", 0))
-            total_sunday = float(emp.get("total_sunday", 0))
-            days = emp.get("days", [])
-            
-            # Try to match to existing employee
-            matched_emp = None
-            name_lower = name.lower()
-            for db_name, db_emp in emp_map.items():
-                if name_lower in db_name or db_name in name_lower:
-                    matched_emp = db_emp
-                    break
-            
-            # Save timesheet entry
-            entry = {
-                "id": generate_id(),
-                "business_id": biz_id,
-                "employee_id": matched_emp.get("id") if matched_emp else None,
-                "employee_name": matched_emp.get("name") if matched_emp else name,
-                "date": today(),
-                "period": period,
-                "hours": total_hours,
-                "overtime": total_ot,
-                "sunday_hours": total_sunday,
-                "days": json.dumps(days),
-                "description": f"Scanned timesheet - {len(days)} days",
-                "created_at": now()
-            }
-            
-            success, _ = db.save("timesheet_entries", entry)
-            if success:
-                saved += 1
-        
-        logger.info(f"[SCAN TIMESHEET BATCH] Saved {saved}/{len(employees)} employees for business {biz_id}")
-        return jsonify({"success": True, "saved": saved, "total": len(employees)})
+        try:
+            url = f"{db.url}/rest/v1/timesheet_batches"
+            response = requests.post(
+                url,
+                headers={**db.headers, "Prefer": "return=representation"},
+                json=batch_item,
+                timeout=30
+            )
+            if response.status_code in (200, 201):
+                logger.info(f"[SCAN TIMESHEET BATCH] Saved to payroll staging: {batch_id}")
+                return jsonify({"success": True, "id": batch_id, "type": "timesheet", "redirect": f"/timesheets/review/{batch_id}"})
+            else:
+                logger.error(f"[SCAN TIMESHEET BATCH] Failed: {response.text[:200]}")
+                if "relation" in response.text and "does not exist" in response.text:
+                    return jsonify({"success": False, "error": "Table 'timesheet_batches' not found. Please run the SQL setup."})
+                return jsonify({"success": False, "error": f"Failed to save timesheet: {response.text[:100]}"})
+        except Exception as e:
+            logger.error(f"[SCAN TIMESHEET BATCH] Error: {e}")
+            return jsonify({"success": False, "error": str(e)})
         
     except Exception as e:
         logger.error(f"[SCAN TIMESHEET BATCH] Error: {e}")

@@ -18,6 +18,31 @@ from flask import request, jsonify, session, redirect, flash
 logger = logging.getLogger(__name__)
 
 
+def _guess_pay_month(period_text, today_str):
+    """Best-effort YYYY-MM from a free-text scanned period (e.g.
+    'Week of 6-12 Jan 2026'). Falls back to the current month."""
+    import re as _re
+    s = str(period_text or "")
+    ym = _re.search(r"(20\d{2})[-/](\d{1,2})", s)
+    if ym:
+        return f"{int(ym.group(1)):04d}-{int(ym.group(2)):02d}"
+    months = {
+        "jan": 1, "feb": 2, "mar": 3, "apr": 4, "may": 5, "jun": 6,
+        "jul": 7, "aug": 8, "sep": 9, "oct": 10, "nov": 11, "dec": 12,
+        "mrt": 3, "mei": 5, "okt": 10, "des": 12,
+    }
+    yr = _re.search(r"(20\d{2})", s)
+    low = s.lower()
+    mo = None
+    for k, v in months.items():
+        if k in low:
+            mo = v
+            break
+    if yr and mo:
+        return f"{int(yr.group(1)):04d}-{mo:02d}"
+    return str(today_str)[:7]
+
+
 def register_timesheet_routes(app, db, login_required, Auth, render_page,
                               generate_id, money, safe_string, now, today,
                               _anthropic_client):
@@ -650,6 +675,7 @@ def register_timesheet_routes(app, db, login_required, Auth, render_page,
         else:
             ai_badge = '<span style="background:#6366f1;color:white;padding:4px 10px;border-radius:4px;font-size:12px;margin-left:10px;">AI</span>'
         
+        _pay_month_default = _guess_pay_month(period, today())
         content = f'''
         <div style="margin-bottom:20px;">
             <a href="/timesheets" style="color:var(--text-muted);">← Timesheets</a>
@@ -664,6 +690,12 @@ def register_timesheet_routes(app, db, login_required, Auth, render_page,
         
         <form method="POST" action="/timesheets/process/{batch_id}">
             {cards_html}
+            
+            <div style="background:var(--card);border:1px solid var(--border);border-radius:8px;padding:12px 16px;margin-top:20px;">
+                <label style="display:block;font-weight:600;margin-bottom:6px;">Pay month</label>
+                <input type="month" name="pay_month" value="{_pay_month_default}" style="padding:10px;border-radius:6px;border:1px solid var(--border);background:var(--bg);color:var(--text);">
+                <div style="color:var(--text-muted);font-size:12px;margin-top:6px;">The month this timesheet is paid for. Used to work out overtime and late-coming against each employee's schedule.</div>
+            </div>
             
             <div style="display:flex;flex-wrap:wrap;gap:10px;margin-top:20px;padding-bottom:30px;">
                 <button type="submit" formaction="/timesheets/payslip-preview/{batch_id}" class="btn btn-primary" style="padding:14px 24px;flex:1;min-width:200px;">📄 Approve &amp; Build Payslips</button>
@@ -695,7 +727,7 @@ def register_timesheet_routes(app, db, login_required, Auth, render_page,
 
         # Pay-conditions engine (try/except so a missing module never crashes payroll)
         try:
-            from clickai_pay_conditions import calculate_pay_from_timesheet
+            from clickai_pay_conditions import calculate_pay_from_timesheet, build_entries_from_days
         except Exception as e:
             logger.error(f"[TIMESHEET PREVIEW] pay conditions module not available: {e}")
             flash("Pay conditions module not loaded — using Approve & Save instead", "error")
@@ -705,15 +737,17 @@ def register_timesheet_routes(app, db, login_required, Auth, render_page,
         parsed = json.loads(raw_data) if isinstance(raw_data, str) else raw_data
         if isinstance(parsed, list):
             employees_data = parsed
-            period = batch.get("period", "") or today()[:7]
         else:
             employees_data = parsed.get("employees", [])
-            period = parsed.get("period", "") or batch.get("period", "") or today()[:7]
-        # period must be YYYY-MM
-        period = str(period)[:7] if len(str(period)) >= 7 else today()[:7]
+        # Pay month (YYYY-MM) comes from the review screen; fall back to today.
+        period = request.form.get("pay_month", "") or today()[:7]
+        if len(period) < 7:
+            period = today()[:7]
+        period = period[:7]
 
         count = int(request.form.get("count", 0))
         cards = ""
+        hidden_emps = ""
 
         for i in range(count):
             emp_id = request.form.get(f"emp_{i}", "")
@@ -723,17 +757,11 @@ def register_timesheet_routes(app, db, login_required, Auth, render_page,
             if not emp:
                 continue
 
-            # Build timesheet entries (date + clock times) from the scanned days
+            hidden_emps += f'<input type="hidden" name="emp_{i}" value="{emp_id}">'
+
+            # Rebuild engine entries with real calendar dates for the pay month
             days = employees_data[i].get("days", []) if i < len(employees_data) else []
-            entries = []
-            for d in days:
-                d_date = str(d.get("date", "")).strip()
-                # normalise to YYYY-MM-DD where possible
-                if len(d_date) >= 10 and d_date[4] == "-":
-                    iso = d_date[:10]
-                else:
-                    iso = d_date
-                entries.append({"date": iso, "in": d.get("in"), "out": d.get("out")})
+            entries = build_entries_from_days(days, period)
 
             result = calculate_pay_from_timesheet(emp, entries, period)
 
@@ -783,7 +811,7 @@ def register_timesheet_routes(app, db, login_required, Auth, render_page,
                     <tbody>{lines_html}</tbody>
                 </table>
                 <div style="margin-top:12px;">
-                    <a href="/payroll/payslip-preview/{emp_id}" class="btn btn-secondary" style="padding:8px 16px;font-size:13px;">Open payslip preview →</a>
+                    <button type="submit" name="only" value="{emp_id}" class="btn btn-secondary" style="padding:8px 16px;font-size:13px;">Post this payslip</button>
                 </div>
             </div>'''
 
@@ -794,13 +822,18 @@ def register_timesheet_routes(app, db, login_required, Auth, render_page,
         content = f'''
         <div class="card">
             <h2 style="margin-bottom:5px;">Payslip Preview — {period}</h2>
-            <p style="color:var(--text-muted);margin-bottom:10px;">Hours approved. Each adjustment is shown against the employee's agreed schedule. Check the figures, then create the payslips.</p>
+            <p style="color:var(--text-muted);margin-bottom:10px;">Each adjustment is shown against the employee's agreed schedule. Check the figures, then post the payslips. Posting creates each payslip and its GL journal.</p>
         </div>
-        {cards}
-        <div class="card">
-            <p style="color:var(--text-muted);font-size:13px;">To post a payslip, open its preview above and use <strong>Create &amp; Post Payslip</strong>. This keeps every payslip a deliberate, checked action.</p>
-            <a href="/timesheets/review/{batch_id}" class="btn btn-secondary" style="padding:10px 18px;">← Back to review</a>
-        </div>
+        <form method="POST" action="/payroll/post-batch/{batch_id}">
+            <input type="hidden" name="count" value="{count}">
+            <input type="hidden" name="pay_month" value="{period}">
+            {hidden_emps}
+            {cards}
+            <div class="card" style="display:flex;flex-wrap:wrap;gap:10px;align-items:center;">
+                <button type="submit" name="post_all" value="1" class="btn btn-primary" style="padding:12px 24px;">Create &amp; Post All Payslips</button>
+                <a href="/timesheets/review/{batch_id}" class="btn btn-secondary" style="padding:12px 20px;">← Back to review</a>
+            </div>
+        </form>
         '''
         return render_page("Payslip Preview", content, user, "timesheets")
     

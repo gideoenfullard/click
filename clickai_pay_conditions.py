@@ -15,6 +15,7 @@
 # ==============================================================================
 
 import json
+import re
 import logging
 import calendar as _calendar
 from datetime import datetime, timedelta
@@ -293,6 +294,41 @@ def calculate_pay_from_timesheet(emp, entries, period, public_holidays=None):
         "lines": lines,
         "gross": round(gross, 2),
     }
+
+
+def build_entries_from_days(days, pay_month):
+    """Turn scanned day rows into engine entries with real calendar dates.
+
+    The scanner returns each day as a label like 'Mon 6' / 'Wed 8' plus the
+    clock 'in'/'out' times. The engine needs an ISO date (YYYY-MM-DD) per day
+    so it can find the weekday and apply the employee's schedule. This rebuilds
+    the date from the day-of-month number in the label and the pay month.
+
+    days      : [{'date': 'Mon 6', 'in': '07:00', 'out': '16:00'}, ...]
+    pay_month : 'YYYY-MM'.
+    Returns   : [{'date': 'YYYY-MM-DD'|original, 'in': .., 'out': ..}, ...].
+                Days whose number cannot be resolved keep their original label
+                (the engine then leaves that day's base unchanged).
+    """
+    try:
+        yr = int(str(pay_month)[:4])
+        mo = int(str(pay_month)[5:7])
+        dim = _calendar.monthrange(yr, mo)[1]
+    except Exception:
+        yr = mo = dim = None
+
+    out = []
+    for d in (days or []):
+        label = str(d.get("date", "")).strip()
+        iso = label
+        if yr and mo:
+            m = re.search(r"(\d{1,2})", label)
+            if m:
+                dom = int(m.group(1))
+                if 1 <= dom <= dim:
+                    iso = f"{yr:04d}-{mo:02d}-{dom:02d}"
+        out.append({"date": iso, "in": d.get("in"), "out": d.get("out")})
+    return out
 
 
 # ----------------------------------------------------------- routes / page --
