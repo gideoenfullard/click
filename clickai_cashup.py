@@ -1209,8 +1209,7 @@ function updateDeclaredTotal() {{
     const cash = getCashCounted();
     const card = parseFloat(document.getElementById('blindCard').value) || 0;
     const account = parseFloat(document.getElementById('blindAccount').value) || 0;
-    const floatAmt = parseFloat(document.getElementById('blindFloat').value) || 0;
-    const total = (cash - floatAmt) + card + account;
+    const total = cash + card + account;
     document.getElementById('declaredTotal').textContent = 'R' + total.toFixed(2);
 }}
 
@@ -1286,7 +1285,7 @@ async function submitBlindCashUp() {{
     const cardDeclared = parseFloat(document.getElementById('blindCard').value) || 0;
     const accountDeclared = parseFloat(document.getElementById('blindAccount').value) || 0;
 
-    const cashSalesDeclared = cashCounted - floatAmt;
+    const cashSalesDeclared = cashCounted;
     const declaredTotal = cashSalesDeclared + cardDeclared + accountDeclared;
 
     // Validation: prevent empty cashup submission
@@ -1365,7 +1364,7 @@ async function submitBlindCashUp() {{
                 <span class="rv" style="color:var(--green)">R${{sysCash.toFixed(2)}}</span>
             </div>
             <div class="result-row">
-                <span class="rl">Your Cash Count (minus float)</span>
+                <span class="rl">Your Cash Count</span>
                 <span class="rv">R${{cashSalesDeclared.toFixed(2)}}</span>
             </div>
             <div class="result-row ${{discClass(cashDisc)}}">
