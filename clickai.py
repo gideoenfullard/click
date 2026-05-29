@@ -1521,9 +1521,10 @@ supplier_invoice:
 • Invoice issued TO a customer (not FROM supplier)
 
 [TIME] timesheet:
-• Table format with dates and hours
-• Employee name visible
-• Time entries per day/week
+• A grid/table of EMPLOYEE NAMES with clock-in / clock-out times (or hours) per day
+• Has day columns or rows (Mon, Tue, ... or dates) — NOT line items with prices
+• Often handwritten on a clock-card or attendance sheet
+• If the page is mainly names + daily times/hours and has NO prices or VAT, classify it as timesheet (NOT an invoice or receipt), even if a company name appears at the top
 
 delivery_note:
 • Says "DELIVERY NOTE", "WAYBILL", "AFLEWERINGSBRIEF"
@@ -1662,6 +1663,52 @@ TAKE YOUR TIME. ACCURACY > SPEED. Read every number, every word carefully!"""
                 items_count = len(extracted.get("items", []))
                 total = extracted.get("total_amount", 0)
                 logger.info(f"[EMAIL] Sonnet: {result['classification']} | {items_count} items | R{total} | {result['confidence']:.0%} confidence")
+
+                # ── TIMESHEET: the classification pass returns invoice-shaped JSON
+                # with no employee/day/clock data. Do a dedicated second read with
+                # the timesheet prompt so the inbox gets employees[]/days[] with
+                # in/out times — the shape the review + payroll pipeline needs.
+                if result["classification"] == "timesheet":
+                    try:
+                        ts_prompt = (
+                            "Read this timesheet. Extract ONLY what is written - DO NOT calculate hours.\n\n"
+                            "For EACH employee, get their name and for each day: date, clock in time, clock out time.\n\n"
+                            "Return ONLY JSON:\n"
+                            "{\n"
+                            '  "period": "Week of 6-12 Jan 2026",\n'
+                            '  "employees": [\n'
+                            "    {\n"
+                            '      "name": "John Smith",\n'
+                            '      "days": [\n'
+                            '        {"date": "Mon 6", "in": "07:00", "out": "16:00"},\n'
+                            '        {"date": "Tue 7", "in": "07:00", "out": "17:30"}\n'
+                            "      ]\n"
+                            "    }\n"
+                            "  ]\n"
+                            "}\n\n"
+                            "ONLY read times - DO NOT calculate hours. Extract ALL employees."
+                        )
+                        ts_msg = client.messages.create(
+                            model="claude-sonnet-4-6",
+                            max_tokens=4000,
+                            messages=[{
+                                "role": "user",
+                                "content": [
+                                    ({"type": "document", "source": {"type": "base64", "media_type": mime_type, "data": b64_data}} if mime_type == "application/pdf" else {"type": "image", "source": {"type": "base64", "media_type": mime_type, "data": b64_data}}),
+                                    {"type": "text", "text": ts_prompt}
+                                ]
+                            }]
+                        )
+                        _track_ai_usage(ts_msg, _biz_id, "email_scan_timesheet", metadata={"filename": filename[:80]})
+                        ts_data = extract_json_from_text(ts_msg.content[0].text)
+                        if ts_data and ts_data.get("employees"):
+                            ts_data["ai_source"] = "Claude Sonnet (timesheet)"
+                            result["extracted_data"] = ts_data
+                            logger.info(f"[EMAIL] Timesheet second read: {len(ts_data.get('employees', []))} employees")
+                        else:
+                            logger.warning("[EMAIL] Timesheet second read returned no employees")
+                    except Exception as _ts_err:
+                        logger.error(f"[EMAIL] Timesheet second read failed: {_ts_err}")
             else:
                 logger.error(f"[EMAIL] Failed to parse JSON from Claude response: {ai_response[:200]}")
             
@@ -55899,8 +55946,8 @@ def scan_inbox_page():
             `;
         }} else if (type === 'timesheet') {{
             // Check if we have full breakdown or simple format
-            const employees = data.employees || [];
-            const period = data.period || '';
+            const employees = data.employees || (data.extracted && data.extracted.employees) || [];
+            const period = data.period || (data.extracted && data.extracted.period) || '';
             
             if (employees.length > 0) {{
                 // Full breakdown - show summary with daily details
@@ -56785,8 +56832,8 @@ def scan_inbox_page():
         }} else if (saveType === 'timesheet_batch') {{
             // Save full timesheet with all employees
             payload = {{
-                period: currentItemData.period || '',
-                employees: currentItemData.employees || []
+                period: currentItemData.period || (currentItemData.extracted && currentItemData.extracted.period) || '',
+                employees: currentItemData.employees || (currentItemData.extracted && currentItemData.extracted.employees) || []
             }};
             endpoint = '/api/scan/save-timesheet-batch';
             redirect = '/payroll';
