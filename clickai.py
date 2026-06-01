@@ -32603,12 +32603,24 @@ def customer_statement(customer_id):
         _email_options_html += f'<option value="{_e}">{_e}</option>'
     _email_options_html += '<option value="__custom__">+ Enter different email…</option>'
     
+    # Outstanding invoices for the Pass Credit modal (skip paid / credited)
+    _open_inv_options = ""
+    for _oi in cust_invoices:
+        _oi_st = (_oi.get("status") or "").lower()
+        if _oi_st in ("credited", "paid", "partial_credit"):
+            continue
+        _oi_no = safe_string(_oi.get("invoice_number", "") or "")
+        if not _oi_no:
+            continue
+        _open_inv_options += f'<option value="{_oi_no}">{_oi_no} — {money(float(_oi.get("total", 0) or 0))}</option>'
+    
     content = f'''
     <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:20px;">
         <a href="/customer/{customer_id}" style="color:var(--text-muted);">← Back to Customer</a>
         <div style="display:flex;gap:10px;">
             <button class="btn btn-primary" onclick="showEmailModal()" style="background:#3b82f6;">Email Statement</button>
             <button class="btn btn-secondary" onclick="window.open('/statement/{customer_id}/print', '_blank')">🖨️ Print</button>
+            <button class="btn btn-secondary" onclick="openCreditModal()" style="background:#8b5cf6;color:white;">Pass Credit</button>
         </div>
     </div>
     
@@ -32634,6 +32646,39 @@ def customer_statement(customer_id):
             <div style="display:flex;gap:10px;justify-content:flex-end;">
                 <button onclick="closeEmailModal()" class="btn btn-secondary">Cancel</button>
                 <button onclick="sendStatementEmail()" class="btn btn-primary" style="background:#10b981;">Send Email</button>
+            </div>
+        </div>
+    </div>
+    
+    <!-- PASS CREDIT MODAL -->
+    <div id="creditModal" style="display:none;position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.7);z-index:9999;align-items:center;justify-content:center;">
+        <div style="background:var(--card);padding:30px;border-radius:12px;width:90%;max-width:500px;">
+            <h3 style="margin-top:0;">Pass Credit</h3>
+            <p style="color:var(--text-muted);margin-bottom:15px;">Credit <strong>{safe_string(customer.get("name", ""))}</strong>'s account.</p>
+            
+            <label style="display:block;font-size:12px;color:var(--text-muted);margin-bottom:4px;text-transform:uppercase;letter-spacing:0.5px;">Type</label>
+            <select id="creditKind" style="width:100%;padding:10px;border-radius:8px;border:1px solid var(--border);background:var(--bg);color:var(--text);font-size:15px;margin-bottom:12px;">
+                <option value="credit_note">Credit Note (reduces Sales)</option>
+                <option value="discount_allowed">Discount Allowed (expense write-off)</option>
+            </select>
+            
+            <label style="display:block;font-size:12px;color:var(--text-muted);margin-bottom:4px;text-transform:uppercase;letter-spacing:0.5px;">Apply To</label>
+            <select id="creditTarget" style="width:100%;padding:10px;border-radius:8px;border:1px solid var(--border);background:var(--bg);color:var(--text);font-size:15px;margin-bottom:12px;">
+                <option value="">Whole account (no specific invoice)</option>
+                {_open_inv_options}
+            </select>
+            
+            <label style="display:block;font-size:12px;color:var(--text-muted);margin-bottom:4px;text-transform:uppercase;letter-spacing:0.5px;">Amount (incl. VAT)</label>
+            <input type="number" id="creditAmount" step="0.01" min="0.01" placeholder="0.00"
+                   style="width:100%;padding:10px;border-radius:8px;border:1px solid var(--border);background:var(--bg);color:var(--text);font-size:15px;margin-bottom:12px;">
+            
+            <label style="display:block;font-size:12px;color:var(--text-muted);margin-bottom:4px;text-transform:uppercase;letter-spacing:0.5px;">Reason</label>
+            <input type="text" id="creditReason" placeholder="e.g. Settlement discount / goodwill / pricing error"
+                   style="width:100%;padding:10px;border-radius:8px;border:1px solid var(--border);background:var(--bg);color:var(--text);font-size:14px;margin-bottom:18px;">
+            
+            <div style="display:flex;gap:10px;justify-content:flex-end;">
+                <button onclick="closeCreditModal()" class="btn btn-secondary">Cancel</button>
+                <button onclick="submitCustomerCredit()" class="btn btn-primary" style="background:#10b981;">Post Credit</button>
             </div>
         </div>
     </div>
@@ -32703,6 +32748,37 @@ def customer_statement(customer_id):
     </div>
     
     <script>
+    function openCreditModal() {{
+        document.getElementById('creditModal').style.display = 'flex';
+    }}
+    function closeCreditModal() {{
+        document.getElementById('creditModal').style.display = 'none';
+    }}
+    async function submitCustomerCredit() {{
+        var kind = document.getElementById('creditKind').value;
+        var target = document.getElementById('creditTarget').value;
+        var amount = parseFloat(document.getElementById('creditAmount').value) || 0;
+        var reason = document.getElementById('creditReason').value || '';
+        if (amount <= 0) {{ alert('Enter an amount greater than zero.'); return; }}
+        var label = (kind === 'discount_allowed') ? 'Discount Allowed' : 'Credit Note';
+        if (!confirm('Post ' + label + ' of R' + amount.toFixed(2) + ' (incl. VAT) to this account?')) {{ return; }}
+        try {{
+            var resp = await fetch('/api/customer/{customer_id}/credit', {{
+                method: 'POST',
+                headers: {{ 'Content-Type': 'application/json' }},
+                body: JSON.stringify({{ kind: kind, invoice_number: target, amount: amount, reason: reason }})
+            }});
+            var data = await resp.json();
+            if (data.success) {{
+                alert(label + ' posted: ' + (data.number || ''));
+                location.reload();
+            }} else {{
+                alert('Failed: ' + (data.error || 'Unknown error'));
+            }}
+        }} catch (e) {{
+            alert('Error — check your connection and try again.');
+        }}
+    }}
     function showEmailModal() {{
         document.getElementById('emailModal').style.display = 'flex';
         document.getElementById('emailToSelect').focus();
@@ -32772,6 +32848,109 @@ def customer_statement(customer_id):
     '''
     
     return render_page("Statement", content, user, "customers")
+
+
+@app.route("/api/customer/<customer_id>/credit", methods=["POST"])
+@login_required
+def api_customer_credit(customer_id):
+    """Pass a customer credit from the statement page.
+    kind='credit_note'      -> DR Sales, DR VAT Output, CR Debtors (reduces revenue)
+    kind='discount_allowed' -> DR Discount Allowed, DR VAT Output, CR Debtors (expense write-off)
+    Both create a balance-reducing credit_notes record so the customer balance and
+    the GL stay in sync. Amount is VAT-INCLUSIVE; the VAT-excl split is derived.
+    Optionally linked to a specific invoice_number, otherwise applied to the account."""
+    user = Auth.get_current_user()
+    business = Auth.get_current_business()
+    biz_id = business.get("id") if business else None
+    if not biz_id:
+        return jsonify({"success": False, "error": "No business"})
+
+    customer = db.get_one("customers", customer_id)
+    if not customer:
+        return jsonify({"success": False, "error": "Customer not found"})
+
+    try:
+        data = request.get_json(silent=True) or {}
+        kind = (data.get("kind") or "credit_note").strip()
+        invoice_number = (data.get("invoice_number") or "").strip()
+        reason = (data.get("reason") or "").strip()
+        amount = round(float(data.get("amount", 0) or 0), 2)
+    except Exception:
+        return jsonify({"success": False, "error": "Invalid data"})
+
+    if amount <= 0:
+        return jsonify({"success": False, "error": "Amount must be greater than zero"})
+    if kind not in ("credit_note", "discount_allowed"):
+        kind = "credit_note"
+
+    # Amount entered is VAT-INCLUSIVE — split out the VAT-excl portion
+    subtotal = round(amount / (1 + float(VAT_RATE)), 2)
+    vat = round(amount - subtotal, 2)
+
+    is_discount = (kind == "discount_allowed")
+    prefix = "DA-" if is_discount else "CN-"
+    label = "Discount Allowed" if is_discount else "Credit Note"
+
+    # Per-prefix numbering so CN- and DA- each keep their own sequence
+    existing = db.get("credit_notes", {"business_id": biz_id}) or []
+    existing_same = [c for c in existing if str(c.get("credit_note_number", "")).startswith(prefix)]
+    cn_num = next_document_number(prefix, existing_same, "credit_note_number")
+    cn_id = generate_id()
+
+    desc = f"{label} {cn_num} - {customer.get('name', '')}" + (f" - {invoice_number}" if invoice_number else " - account")
+
+    # GL journal — only the debit account differs between the two types
+    if is_discount:
+        dr_code = ensure_gl_account(biz_id, "discount_allowed", "Discount Allowed", "expense", "Expenses")
+    else:
+        dr_code = gl(biz_id, "sales")
+    gl_entries = [
+        {"account_code": dr_code, "debit": subtotal, "credit": 0},
+        {"account_code": gl(biz_id, "vat_output"), "debit": vat, "credit": 0},
+        {"account_code": gl(biz_id, "debtors"), "debit": 0, "credit": amount},
+    ]
+
+    credit_note = {
+        "id": cn_id,
+        "business_id": biz_id,
+        "credit_note_number": cn_num,
+        "date": today(),
+        "invoice_number": invoice_number,
+        "customer_id": customer_id,
+        "customer_name": customer.get("name", ""),
+        "reason": reason,
+        "items": json.dumps([{"description": (reason or label), "quantity": 1, "price": subtotal, "total": subtotal}]),
+        "subtotal": subtotal,
+        "vat": vat,
+        "total": amount,
+        "kind": kind,
+        "credit_type": "discount_allowed" if is_discount else "manual",
+        "created_by": user.get("id") if user else None,
+        "created_at": now()
+    }
+    _ok, _res = db.save("credit_notes", credit_note)
+    if not _ok:
+        return jsonify({"success": False, "error": "Could not save credit"})
+
+    create_journal_entry(biz_id, today(), desc, cn_num, gl_entries)
+
+    try:
+        if log_allocation:
+            log_allocation(
+                business_id=biz_id, allocation_type=("discount_allowed" if is_discount else "credit_note"),
+                source_table="credit_notes", source_id=cn_id,
+                description=desc, amount=amount,
+                gl_entries=gl_entries,
+                customer_name=customer.get("name", ""), reference=cn_num,
+                transaction_date=today(),
+                created_by=user.get("id") if user else "", created_by_name=user.get("name", "") if user else "",
+                extra={"reason": reason, "kind": kind, "invoice_number": invoice_number}
+            )
+    except Exception:
+        pass
+
+    logger.info(f"[CUSTOMER CREDIT] {label} {cn_num} R{amount:.2f} biz={biz_id[:8]} cust={customer_id[:8]} inv={invoice_number or '-'}")
+    return jsonify({"success": True, "number": cn_num})
 
 
 @app.route("/statement/<customer_id>/print")
