@@ -698,7 +698,7 @@ def register_banking_routes(app, db, login_required, Auth, render_page,
                     <div id="shortfallText_${{txnId}}" style="color:var(--orange);font-weight:600;margin-bottom:5px;"></div>
                     <label style="display:flex;align-items:center;gap:6px;cursor:pointer;color:var(--text);">
                         <input type="checkbox" id="discAllowed_${{txnId}}" style="accent-color:var(--orange);">
-                        <span>Treat shortfall as Discount Allowed (writes it off, closes the invoice)</span>
+                        <span>Credit the shortfall as Discount Allowed (customer will be credited, closes the invoice)</span>
                     </label>
                 </div>`;
                 container.innerHTML = html;
@@ -3173,6 +3173,40 @@ Return ONLY the JSON array. No markdown, no explanation."""
                                         _total_discount_allowed = round(_total_discount_allowed + _shortfall, 2)
                                         _remaining_pay = 0
                                         logger.info(f"[BANK] {_picked_inv.get('invoice_number','?')} CLOSED with Discount Allowed R{_shortfall:.2f}")
+                                        # Create a Discount Allowed credit-note record (DA-) so the
+                                        # shortfall shows as a CREDIT on the customer statement and
+                                        # reduces the calculated balance. The GL journal is posted
+                                        # below; this record only affects the customer sub-ledger
+                                        # (no double-posting). Number generated inline (next_document_number
+                                        # is not available in this module).
+                                        try:
+                                            _da_sub = round(_shortfall / 1.15, 2)
+                                            _da_v = round(_shortfall - _da_sub, 2)
+                                            _da_existing = db.get("credit_notes", {"business_id": biz_id}) or []
+                                            _da_max = 0
+                                            for _dc in _da_existing:
+                                                _dn = str(_dc.get("credit_note_number", "") or "")
+                                                if _dn.startswith("DA-"):
+                                                    _digits = "".join(ch for ch in _dn[3:] if ch.isdigit())
+                                                    if _digits:
+                                                        _da_max = max(_da_max, int(_digits))
+                                            _da_num = f"DA-{_da_max + 1:05d}"
+                                            db.save("credit_notes", {
+                                                "id": generate_id(), "business_id": biz_id,
+                                                "credit_note_number": _da_num, "date": txn_date,
+                                                "invoice_id": _picked_inv.get("id", ""),
+                                                "invoice_number": _picked_inv.get("invoice_number", ""),
+                                                "customer_id": _picked_inv.get("customer_id", ""),
+                                                "customer_name": _picked_inv.get("customer_name", ""),
+                                                "reason": "Settlement discount on payment",
+                                                "items": json.dumps([{"description": "Discount Allowed", "quantity": 1, "price": _da_sub, "total": _da_sub}]),
+                                                "subtotal": _da_sub, "vat": _da_v, "total": _shortfall,
+                                                "kind": "discount_allowed", "credit_type": "discount_allowed",
+                                                "created_by": None, "created_at": now()
+                                            })
+                                            logger.info(f"[BANK] Discount Allowed credit-note {_da_num} created (R{_shortfall:.2f})")
+                                        except Exception as _da_cn_err:
+                                            logger.error(f"[BANK] DA credit-note record failed: {_da_cn_err}")
                                     else:
                                         # Partial — record partial payment but keep outstanding
                                         _picked_inv["paid_amount"] = round(float(_picked_inv.get("paid_amount", 0)) + _remaining_pay, 2)
