@@ -2805,12 +2805,16 @@ Thank you for your business!
         return Email.send(email, subject, body_html, body_text, business=business)
     
     @staticmethod
-    def send_statement(customer: dict, invoices: list, business: dict, to_email: str = None, cc=None) -> bool:
+    def send_statement(customer: dict, invoices: list, business: dict, to_email: str = None, cc=None, asat: str = None) -> bool:
         """Send statement to customer.
         
         to_email: optional override for recipient (defaults to customer.email)
         cc: optional CC list/string (carbon copy)
+        asat: statement closing date 'YYYY-MM-DD' (defaults to the previous month-end)
         """
+        # Statement closes on the last day of the selected month (default: previous month)
+        if not asat:
+            asat = _statement_asat("")[1]
         
         # Allow caller to override the recipient; fall back to customer record
         email = to_email or customer.get("email")
@@ -2928,6 +2932,8 @@ Thank you for your business!
         
         # Sort chronologically
         transactions.sort(key=lambda x: (x.get("date") or "", x.get("type") or ""))
+        # Close the statement at the selected month-end — exclude anything later
+        transactions = [t for t in transactions if (t.get("date") or "")[:10] <= asat]
         
         # Calculate running balance and build ledger rows
         running_balance = 0.0
@@ -2956,10 +2962,15 @@ Thank you for your business!
         # AGING BUCKETS (current / 30 / 60 / 90 / 120+ days) — Sage benchmark
         # ════════════════════════════════════════════════════════════════
         from datetime import datetime as _dt, date as _date
-        _today_obj = _date.today()
+        try:
+            _today_obj = _dt.strptime(asat, "%Y-%m-%d").date()
+        except Exception:
+            _today_obj = _date.today()
         aging = {"current": 0.0, "30": 0.0, "60": 0.0, "90": 0.0, "120": 0.0}
         for inv in invoices:
             if (inv.get("status") or "").lower() in ("reversed", "credited", "paid"):
+                continue
+            if (inv.get("date") or "")[:10] > asat:
                 continue
             try:
                 inv_total = float(inv.get("total", 0) or 0)
@@ -3073,7 +3084,7 @@ Thank you for your business!
                 
                 <p style="color:#1f2937;font-size:14px;margin:0 0 10px 0;">Dear {name},</p>
                 <p style="color:#374151;font-size:14px;line-height:1.5;margin:0 0 14px 0;">
-                    Please find attached your statement of account as at <strong>{today()}</strong>.
+                    Please find attached your statement of account as at <strong>{asat}</strong>.
                     The PDF contains a full breakdown of all invoices, payments, credit notes and your aging summary.
                 </p>
                 
@@ -3116,10 +3127,11 @@ Thank you for your business!
                 transactions=transactions,
                 aging=aging,
                 final_balance=final_balance,
+                stmt_date=asat,
             )
             # Build a friendly filename: Statement_<CustomerName>_<YYYY-MM-DD>.pdf
             _safe_cust = "".join(c if c.isalnum() or c in "_- " else "_" for c in (customer.get("name") or "Customer")).strip().replace(" ", "_")[:50]
-            pdf_filename = f"Statement_{_safe_cust}_{today()}.pdf"
+            pdf_filename = f"Statement_{_safe_cust}_{asat}.pdf"
             pdf_attachments.append({
                 "filename": pdf_filename,
                 "content": pdf_bytes,
@@ -3693,7 +3705,7 @@ def render_document_pdf(doc_type: str, doc: dict, business: dict, party: dict = 
 
 
 def render_statement_pdf(customer: dict, business: dict, transactions: list,
-                          aging: dict, final_balance: float) -> bytes:
+                          aging: dict, final_balance: float, stmt_date: str = None) -> bytes:
     """
     Render a professional PDF customer statement of account.
     
@@ -3778,7 +3790,7 @@ def render_statement_pdf(customer: dict, business: dict, transactions: list,
     
     cust_code = safe_string(customer.get("code", "") or customer.get("account_code", ""))
     stmt_block = [Paragraph("STATEMENT", s_stmt_title),
-                  Paragraph(f"Date: <b>{today()}</b>", s_stmt_meta)]
+                  Paragraph(f"Date: <b>{stmt_date or today()}</b>", s_stmt_meta)]
     if cust_code:
         stmt_block.append(Paragraph(f"Account: <b>{cust_code}</b>", s_stmt_meta))
     
@@ -32404,6 +32416,46 @@ def api_bulk_statements_schedule():
 
 # 
 
+def _statement_asat(month_param: str = ""):
+    """Resolve a statement month to (month_str 'YYYY-MM', asat 'YYYY-MM-DD').
+    The statement closes on the LAST day of that month. Defaults to the
+    previous full month when month_param is blank or invalid."""
+    import datetime as _dtm
+    _t = _dtm.date.today()
+    m = (month_param or "").strip()
+    yy = mm = None
+    if len(m) == 7 and m[4] == "-":
+        try:
+            yy, mm = int(m[:4]), int(m[5:7])
+            if not (1 <= mm <= 12):
+                yy = mm = None
+        except Exception:
+            yy = mm = None
+    if yy is None:
+        if _t.month == 1:
+            yy, mm = _t.year - 1, 12
+        else:
+            yy, mm = _t.year, _t.month - 1
+    month_str = f"{yy:04d}-{mm:02d}"
+    nxt = _dtm.date(yy + 1, 1, 1) if mm == 12 else _dtm.date(yy, mm + 1, 1)
+    asat = (nxt - _dtm.timedelta(days=1)).isoformat()
+    return month_str, asat
+
+
+def _statement_month_options(selected_month: str, count: int = 18) -> str:
+    """Build <option> tags for the statement month picker (most recent first)."""
+    import datetime as _dtm
+    _t = _dtm.date.today()
+    cur = _dtm.date(_t.year, _t.month, 1)
+    out = ""
+    for _ in range(count):
+        mval = f"{cur.year:04d}-{cur.month:02d}"
+        sel = " selected" if mval == selected_month else ""
+        out += f'<option value="{mval}"{sel}>{cur.strftime("%B %Y")}</option>'
+        cur = _dtm.date(cur.year - 1, 12, 1) if cur.month == 1 else _dtm.date(cur.year, cur.month - 1, 1)
+    return out
+
+
 @app.route("/statement/<customer_id>")
 @login_required
 def customer_statement(customer_id):
@@ -32416,6 +32468,9 @@ def customer_statement(customer_id):
     customer = db.get_one("customers", customer_id)
     if not customer:
         return redirect("/customers")
+    
+    # Statement closes on the last day of the selected month (default: previous month)
+    _stmt_month, _asat = _statement_asat(request.args.get("month"))
     
     # Get all transactions
     invoices = db.get("invoices", {"business_id": biz_id}) if biz_id else []
@@ -32558,6 +32613,8 @@ def customer_statement(customer_id):
         })
     
     transactions = sorted(transactions, key=lambda x: x.get("date", ""))
+    # Close the statement at the selected month-end — exclude anything later
+    transactions = [t for t in transactions if (t.get("date") or "")[:10] <= _asat]
     
     # Calculate running balance
     running_balance = 0
@@ -32614,12 +32671,22 @@ def customer_statement(customer_id):
             continue
         _open_inv_options += f'<option value="{_oi_no}">{_oi_no} — {money(float(_oi.get("total", 0) or 0))}</option>'
     
+    _month_options = _statement_month_options(_stmt_month)
+    
     content = f'''
-    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:20px;">
-        <a href="/customer/{customer_id}" style="color:var(--text-muted);">← Back to Customer</a>
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:20px;flex-wrap:wrap;gap:10px;">
+        <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap;">
+            <a href="/customer/{customer_id}" style="color:var(--text-muted);">← Back to Customer</a>
+            <label style="font-size:13px;color:var(--text-muted);">Statement month:
+                <select onchange="location.href='/statement/{customer_id}?month='+this.value" style="margin-left:6px;padding:6px 8px;border-radius:6px;border:1px solid var(--border);background:var(--bg);color:var(--text);font-size:13px;">
+                    {_month_options}
+                </select>
+            </label>
+            <span style="font-size:12px;color:var(--text-muted);">Closing: <strong>{_asat}</strong></span>
+        </div>
         <div style="display:flex;gap:10px;">
             <button class="btn btn-primary" onclick="showEmailModal()" style="background:#3b82f6;">Email Statement</button>
-            <button class="btn btn-secondary" onclick="window.open('/statement/{customer_id}/print', '_blank')">🖨️ Print</button>
+            <button class="btn btn-secondary" onclick="window.open('/statement/{customer_id}/print?month={_stmt_month}', '_blank')">🖨️ Print</button>
             <button class="btn btn-secondary" onclick="openCreditModal()" style="background:#8b5cf6;color:white;">Pass Credit</button>
         </div>
     </div>
@@ -32819,7 +32886,7 @@ def customer_statement(customer_id):
             const response = await fetch('/api/statement/{customer_id}/email', {{
                 method: 'POST',
                 headers: {{'Content-Type': 'application/json'}},
-                body: JSON.stringify({{to_email: email, cc: cc}})
+                body: JSON.stringify({{to_email: email, cc: cc, month: '{_stmt_month}'}})
             }});
             const result = await response.json();
             if (result.success) {{
@@ -32967,6 +33034,9 @@ def customer_statement_print(customer_id):
     if not customer:
         return "Customer not found", 404
     
+    # Statement closes on the last day of the selected month (default: previous month)
+    _stmt_month, _asat = _statement_asat(request.args.get("month"))
+    
     # ── Build transactions (same logic as customer_statement view) ─────────
     invoices = db.get("invoices", {"business_id": biz_id}) if biz_id else []
     cust_invoices = [inv for inv in invoices if inv.get("customer_id") == customer_id]
@@ -33091,6 +33161,8 @@ def customer_statement_print(customer_id):
     
     # Sort by date
     transactions.sort(key=lambda x: (x.get("date") or "", x.get("type") or ""))
+    # Close the statement at the selected month-end — exclude anything later
+    transactions = [t for t in transactions if (t.get("date") or "")[:10] <= _asat]
     
     # Calculate running balance and build rows
     running_balance = 0
@@ -33118,13 +33190,18 @@ def customer_statement_print(customer_id):
     # ── AGING BUCKETS (Sage/Xero benchmark) ───────────────────────────────
     # Calculate current/30/60/90+ based on invoice age vs today
     from datetime import datetime as _dt, date as _date
-    _today_obj = _date.today()
+    try:
+        _today_obj = _dt.strptime(_asat, "%Y-%m-%d").date()
+    except Exception:
+        _today_obj = _date.today()
     aging = {"current": 0.0, "30": 0.0, "60": 0.0, "90": 0.0, "120": 0.0}
     
     # Build per-invoice outstanding amounts (invoice total minus payments allocated to it minus credit notes against it)
     for inv in cust_invoices:
         if (inv.get("status") or "").lower() in ("reversed", "credited", "paid"):
             continue
+        if (inv.get("date") or "")[:10] > _asat:
+            continue  # invoice dated after the statement month-end
         try:
             inv_total = float(inv.get("total", 0) or 0)
             inv_paid = float(inv.get("amount_paid", 0) or 0)
@@ -33437,7 +33514,7 @@ def customer_statement_print(customer_id):
         <div class="stmt-title">
             <h2>STATEMENT</h2>
             <div class="stmt-meta">
-                Statement Date: <strong>{today()}</strong>
+                Statement Date: <strong>{_asat}</strong>
             </div>
             {f'<div class="stmt-meta">Account: <strong>{cust_code}</strong></div>' if cust_code else ''}
         </div>
@@ -33531,6 +33608,7 @@ def api_statement_email(customer_id):
                 business,
                 to_email=to_email,
                 cc=cc if cc else None,
+                asat=_statement_asat(data.get("month"))[1],
             )
             
             if success:
@@ -34895,6 +34973,9 @@ def api_bulk_statements():
     business = Auth.get_current_business()
     biz_id = business.get("id") if business else None
     
+    # Bulk statements close at the selected month-end (default: previous month)
+    _bulk_month, _bulk_asat = _statement_asat((request.get_json(silent=True) or {}).get("month"))
+    
     try:
         # Get all customers with balance > 0 (calculated dynamically)
         customers = db.get("customers", {"business_id": biz_id}) if biz_id else []
@@ -34927,7 +35008,7 @@ def api_bulk_statements():
             
             # Send statement using accounts email (override default customer.email)
             try:
-                success = Email.send_statement(customer, cust_invoices, business, to_email=email)
+                success = Email.send_statement(customer, cust_invoices, business, to_email=email, asat=_bulk_asat)
                 if success:
                     sent_count += 1
                     logger.info(f"[BULK STMT] Sent to {customer.get('name')} -> {email} ({'accounts' if email == accounts_email else 'primary'})")
