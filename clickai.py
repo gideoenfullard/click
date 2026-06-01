@@ -51305,7 +51305,69 @@ def create_credit_note(invoice_id):
             logger.error(f"[FRAUD GUARD] Check failed (allowing): {_fg_err}")
         
         reason = request.form.get("reason", "")
-        credit_type = request.form.get("credit_type", "full")  # full or partial
+        credit_type = request.form.get("credit_type", "full")  # full or partial or amount
+        
+        # ── PARTIAL BY AMOUNT ──
+        # Credit a specific Rand value (VAT-inclusive), independent of line items.
+        # Needed for opening balances / lineless invoices where qty-based partial
+        # cannot reduce the amount. Works on its own — does not touch the line logic.
+        if credit_type == "amount":
+            try:
+                _amt_incl = round(float(request.form.get("credit_amount", 0) or 0), 2)
+            except Exception:
+                _amt_incl = 0.0
+            _inv_total_cap = float(invoice.get("total", 0) or 0)
+            if _amt_incl <= 0:
+                return redirect(f"/invoice/{invoice_id}/credit-note?error=Enter+an+amount+greater+than+zero")
+            if _inv_total_cap > 0 and _amt_incl > _inv_total_cap + 0.01:
+                return redirect(f"/invoice/{invoice_id}/credit-note?error=Amount+exceeds+invoice+total")
+            _amt_subtotal = round(_amt_incl / (1 + float(VAT_RATE)), 2)
+            _amt_vat = round(_amt_incl - _amt_subtotal, 2)
+            _amt_existing = db.get("credit_notes", {"business_id": biz_id}) if biz_id else []
+            _amt_cn_num = next_document_number("CN-", _amt_existing, "credit_note_number")
+            _amt_cn_id = generate_id()
+            _amt_record = {
+                "id": _amt_cn_id, "business_id": biz_id, "credit_note_number": _amt_cn_num,
+                "date": today(), "invoice_id": invoice_id, "invoice_number": invoice.get("invoice_number"),
+                "customer_id": invoice.get("customer_id"), "customer_name": invoice.get("customer_name"),
+                "reason": reason,
+                "items": json.dumps([{"description": (reason or "Partial credit (amount)"), "quantity": 1, "price": _amt_subtotal, "total": _amt_subtotal}]),
+                "subtotal": _amt_subtotal, "vat": _amt_vat, "total": _amt_incl,
+                "credit_type": "amount",
+                "created_by": user.get("id") if user else None, "created_at": now()
+            }
+            db.save("credit_notes", _amt_record)
+            _amt_gl = [
+                {"account_code": gl(biz_id, "sales"), "debit": _amt_subtotal, "credit": 0},
+                {"account_code": gl(biz_id, "vat_output"), "debit": _amt_vat, "credit": 0},
+                {"account_code": gl(biz_id, "debtors"), "debit": 0, "credit": _amt_incl},
+            ]
+            create_journal_entry(biz_id, today(), f"Credit Note {_amt_cn_num} - partial amount - reversing {invoice.get('invoice_number', '')} - {invoice.get('customer_name', '')}", _amt_cn_num, _amt_gl)
+            # Full amount → mark credited; otherwise partial_credit (invoice stays open)
+            _amt_full = (_inv_total_cap > 0 and abs(_amt_incl - _inv_total_cap) < 0.01)
+            db.update("invoices", invoice_id, {"status": "credited" if _amt_full else "partial_credit"})
+            try:
+                if FraudGuard:
+                    FraudGuard.log_sensitive_action(
+                        db, "INVOICE_CREDIT", invoice, user, biz_id,
+                        reason=reason or "No reason",
+                        details=f"CN {_amt_cn_num} for R{_amt_incl:.2f} (amount)"
+                    )
+            except Exception:
+                pass
+            try:
+                if log_allocation:
+                    log_allocation(
+                        business_id=biz_id, allocation_type="credit_note", source_table="credit_notes", source_id=_amt_cn_id,
+                        description=f"Credit Note {_amt_cn_num} - amount - reversing {invoice.get('invoice_number', '')} - {invoice.get('customer_name', '')}",
+                        amount=_amt_incl, gl_entries=_amt_gl,
+                        customer_name=invoice.get("customer_name", ""), reference=_amt_cn_num, transaction_date=today(),
+                        created_by=user.get("id") if user else "", created_by_name=user.get("name", "") if user else "",
+                        extra={"reason": reason, "credit_type": "amount", "original_invoice": invoice.get("invoice_number", "")}
+                    )
+            except Exception:
+                pass
+            return redirect(f"/credit-note/{_amt_cn_id}")
         
         # Build credited items list
         credited_items = []
@@ -51576,6 +51638,9 @@ def create_credit_note(invoice_id):
                     <label style="display:flex;align-items:center;gap:6px;padding:10px 20px;border:2px solid var(--border);border-radius:8px;cursor:pointer;" id="partialLabel">
                         <input type="radio" name="credit_type" value="partial" onchange="toggleCreditType()"> Partial Credit (select lines)
                     </label>
+                    <label style="display:flex;align-items:center;gap:6px;padding:10px 20px;border:2px solid var(--border);border-radius:8px;cursor:pointer;" id="amountLabel">
+                        <input type="radio" name="credit_type" value="amount" onchange="toggleCreditType()"> By amount (R)
+                    </label>
                 </div>
             </div>
             
@@ -51600,6 +51665,14 @@ def create_credit_note(invoice_id):
                 </table>
             </div>
             
+            <!-- Amount entry (shown for 'by amount') -->
+            <div id="amountSelection" style="display:none;margin-bottom:20px;">
+                <label style="display:block;margin-bottom:8px;font-weight:bold;">Credit Amount (incl. VAT)</label>
+                <input type="number" name="credit_amount" id="creditAmountField" step="0.01" min="0.01" placeholder="0.00" oninput="updateCNTotal()"
+                       style="width:220px;padding:10px;border:1px solid var(--border);border-radius:8px;background:var(--bg);color:var(--text);font-size:16px;">
+                <div style="font-size:12px;color:var(--text-muted);margin-top:6px;">Invoice total: {money(float(invoice.get("total", 0) or 0))} — enter any amount up to this.</div>
+            </div>
+            
             <!-- Credit Total Display -->
             <div style="text-align:right;margin-bottom:20px;padding:15px;background:rgba(239,68,68,0.05);border-radius:8px;border:1px solid rgba(239,68,68,0.2);">
                 <div style="margin-bottom:5px;">Subtotal: <strong id="cnSubtotal">{money(_cn_form_subtotal_excl)}</strong></div>
@@ -51621,12 +51694,17 @@ def create_credit_note(invoice_id):
     
     <script>
     function toggleCreditType() {{
-        const isPartial = document.querySelector('input[name="credit_type"][value="partial"]').checked;
+        const mode = document.querySelector('input[name="credit_type"]:checked').value;
+        const isPartial = (mode === 'partial');
+        const isAmount = (mode === 'amount');
         document.getElementById('lineSelection').style.display = isPartial ? 'block' : 'none';
-        document.getElementById('fullLabel').style.borderColor = isPartial ? 'var(--border)' : 'var(--primary)';
-        document.getElementById('fullLabel').style.background = isPartial ? 'transparent' : 'rgba(99,102,241,0.1)';
+        document.getElementById('amountSelection').style.display = isAmount ? 'block' : 'none';
+        document.getElementById('fullLabel').style.borderColor = (mode === 'full') ? 'var(--primary)' : 'var(--border)';
+        document.getElementById('fullLabel').style.background = (mode === 'full') ? 'rgba(99,102,241,0.1)' : 'transparent';
         document.getElementById('partialLabel').style.borderColor = isPartial ? 'var(--primary)' : 'var(--border)';
         document.getElementById('partialLabel').style.background = isPartial ? 'rgba(99,102,241,0.1)' : 'transparent';
+        document.getElementById('amountLabel').style.borderColor = isAmount ? 'var(--primary)' : 'var(--border)';
+        document.getElementById('amountLabel').style.background = isAmount ? 'rgba(99,102,241,0.1)' : 'transparent';
         updateCNTotal();
     }}
     
@@ -51636,7 +51714,16 @@ def create_credit_note(invoice_id):
     }}
     
     function updateCNTotal() {{
-        const isPartial = document.querySelector('input[name="credit_type"][value="partial"]').checked;
+        const _mode = document.querySelector('input[name="credit_type"]:checked').value;
+        if (_mode === 'amount') {{
+            const amtIncl = parseFloat(document.getElementById('creditAmountField').value) || 0;
+            const sub = amtIncl / 1.15;
+            document.getElementById('cnSubtotal').textContent = 'R' + sub.toFixed(2);
+            document.getElementById('cnVat').textContent = 'R' + (amtIncl - sub).toFixed(2);
+            document.getElementById('cnTotal').textContent = 'R' + amtIncl.toFixed(2);
+            return;
+        }}
+        const isPartial = (_mode === 'partial');
         let subtotal = 0;
         
         if (isPartial) {{

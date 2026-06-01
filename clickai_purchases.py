@@ -3983,10 +3983,13 @@ def register_purchases_routes(app, db, login_required, Auth, render_page,
                 <button onclick="document.getElementById('cnModal').style.display='none'" style="position:absolute;top:10px;right:10px;background:var(--red);color:white;border:none;border-radius:50%;width:30px;height:30px;cursor:pointer;font-size:18px;">×</button>
                 <h2 style="margin:0 0 15px 0;color:#f59e0b;">↩️ Create Credit Note</h2>
                 <p style="font-size:13px;color:var(--text-muted);margin-bottom:15px;">
-                    This will create a credit note for <strong>{money(invoice.get("total", 0))}</strong>, reverse the stock and GL effects, and mark this invoice as credited.
+                    Leave the amount blank to fully credit <strong>{money(invoice.get("total", 0))}</strong> (reverses stock + GL and marks the invoice credited), or enter a partial amount to credit value only.
                 </p>
                 <label style="font-size:12px;color:var(--text-muted);display:block;margin-bottom:5px;">Reason (optional)</label>
                 <textarea id="cn_reason" rows="3" placeholder="e.g. Data entry error, Goods returned, Price adjustment" style="width:100%;padding:8px;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text);resize:vertical;"></textarea>
+                <label style="font-size:12px;color:var(--text-muted);display:block;margin:12px 0 5px 0;">Partial amount, incl. VAT (optional — blank = full credit)</label>
+                <input id="cn_amount" type="number" step="0.01" min="0" placeholder="Blank = full {money(invoice.get('total', 0))}" style="width:100%;padding:8px;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text);">
+                <div style="font-size:11px;color:var(--text-muted);margin-top:4px;">A partial amount credits value only (VAT reversed) and does NOT return stock.</div>
                 <div style="display:flex;gap:10px;margin-top:15px;justify-content:flex-end;">
                     <button onclick="document.getElementById('cnModal').style.display='none'" style="padding:10px 20px;background:var(--card);border:1px solid var(--border);border-radius:6px;color:var(--text);cursor:pointer;">Cancel</button>
                     <button onclick="confirmCreditNote()" id="cn_save_btn" style="padding:10px 20px;background:#f59e0b;color:white;border:none;border-radius:6px;cursor:pointer;font-weight:600;">Create Credit Note</button>
@@ -4155,11 +4158,13 @@ def register_purchases_routes(app, db, login_required, Auth, render_page,
             btn.disabled = true;
             btn.textContent = 'Creating...';
             const reason = document.getElementById('cn_reason').value.trim();
+            const _amtEl = document.getElementById('cn_amount');
+            const amount = _amtEl ? (parseFloat(_amtEl.value) || 0) : 0;
             try {
                 const resp = await fetch('/api/supplier-invoice/' + _invId + '/credit-note', {
                     method: 'POST',
                     headers: {'Content-Type': 'application/json'},
-                    body: JSON.stringify({reason: reason})
+                    body: JSON.stringify({reason: reason, amount: amount})
                 });
                 const data = await resp.json();
                 if (data.success) {
@@ -4583,6 +4588,62 @@ def register_purchases_routes(app, db, login_required, Auth, render_page,
             inv_total = float(invoice.get("total", 0) or 0)
             inv_subtotal = float(invoice.get("subtotal", 0) or 0)
             inv_vat = float(invoice.get("vat", 0) or 0)
+            
+            # ── PARTIAL BY AMOUNT (value adjustment — NO goods returned) ──
+            # Credits a specific Rand value (VAT-inclusive). Reverses only the value
+            # and VAT, NOT stock quantities (we don't know which items/qty). For a
+            # goods-return use the full credit. Falls through to FULL when no/!partial amount.
+            try:
+                _p_amt = round(float(data.get("amount", 0) or 0), 2)
+            except Exception:
+                _p_amt = 0.0
+            if _p_amt > 0 and _p_amt < (inv_total - 0.01):
+                _p_net = round(_p_amt / 1.15, 2) if inv_vat > 0 else _p_amt
+                _p_vat = round(_p_amt - _p_net, 2) if inv_vat > 0 else 0.0
+                _p_existing = db.get("supplier_credit_notes", {"business_id": biz_id}) if biz_id else []
+                _p_cn_num = next_document_number("SCR-", _p_existing, field="cn_number")
+                _p_cn_id = generate_id()
+                _p_ref = f"SCR-{_p_cn_id[:8]}"
+                _p_intent = (invoice.get("allocation_intent") or "stock").lower()
+                _p_value_acc = gl(biz_id, "cogs") if _p_intent == "cos" else gl(biz_id, "stock")
+                _p_lines = [{"account_code": _p_value_acc, "debit": 0, "credit": _p_net}]
+                if _p_vat > 0:
+                    _p_lines.append({"account_code": gl(biz_id, "vat_input"), "debit": 0, "credit": _p_vat})
+                _p_lines.append({"account_code": gl(biz_id, "creditors"), "debit": _p_amt, "credit": 0})
+                create_journal_entry(biz_id, today(), f"Credit Note (partial) - {supplier_name}", _p_ref, _p_lines)
+                _p_record = {
+                    "id": _p_cn_id, "business_id": biz_id, "supplier_id": supplier_id, "supplier_name": supplier_name,
+                    "cn_number": _p_cn_num, "original_invoice_id": invoice_id, "date": today(),
+                    "subtotal": _p_net, "vat": _p_vat, "total": _p_amt, "reason": reason,
+                    "items": "[]", "status": "active", "stock_snapshots": "[]",
+                    "credit_type": "amount",
+                    "created_by": user.get("id") if user else None, "created_at": now()
+                }
+                _ps, _pr = db.save("supplier_credit_notes", _p_record)
+                if not _ps:
+                    logger.error(f"[CREDIT NOTE] Partial save failed: {_pr}")
+                    return jsonify({"success": False, "error": f"Database error: {_pr}"})
+                # Partial value credit → invoice stays open
+                db.save("supplier_invoices", {"id": invoice_id, "status": "partial_credit", "updated_at": now()})
+                try:
+                    _log_pulse_event(biz_id, user, "supplier_credit_note_created",
+                        f"Partial credit note {_p_cn_num} for {supplier_name}",
+                        f"Partial value credit on invoice {invoice.get('invoice_number','?')} — R{_p_amt:.2f}. Reason: {reason}")
+                except Exception:
+                    pass
+                try:
+                    if log_allocation:
+                        log_allocation(
+                            business_id=biz_id, allocation_type="supplier_credit_note", source_table="supplier_credit_notes", source_id=_p_cn_id,
+                            description=f"Supplier Credit Note {_p_cn_num} (partial amount) - {supplier_name}",
+                            amount=_p_amt, gl_entries=_p_lines,
+                            supplier_name=supplier_name, reference=_p_cn_num, transaction_date=today(),
+                            created_by=user.get("id") if user else "", created_by_name=user.get("name", "") if user else "",
+                            extra={"reason": reason, "credit_type": "amount", "original_invoice": invoice.get("invoice_number", "")}
+                        )
+                except Exception:
+                    pass
+                return jsonify({"success": True, "cn_number": _p_cn_num})
             
             # STEP 1: Reverse stock (snapshot if available, else legacy best-effort)
             snapshots = invoice.get("stock_snapshots")
