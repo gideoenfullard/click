@@ -7776,6 +7776,7 @@ def register_pos_routes(app, db, login_required, Auth, render_page,
             }
             
             db.save("businesses", updates)
+            Auth.clear_cache()
             flash("POS settings saved", "success")
             
             return redirect("/settings")
