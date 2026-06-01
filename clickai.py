@@ -2151,6 +2151,28 @@ def money(amount) -> str:
         return "R0.00"
 
 
+def _reversed_customer_payment_refs(biz_id: str) -> set:
+    """References whose ledger allocation was reversed with NO surviving active
+    allocation. The /ledger reverse marks the allocation_log row status='reversed'
+    but does NOT touch the receipt; the receipt shares its 'BNK-...' reference with
+    that allocation, so we exclude it from balances/statements. A reference counts as
+    reversed only when every allocation carrying it is reversed — so if a duplicate on
+    the SAME reference is kept active, the surviving payment is preserved."""
+    reversed_refs, active_refs = set(), set()
+    try:
+        for _a in (db.get("allocation_log", {"business_id": biz_id}, select="reference,status") or []):
+            _r = (_a.get("reference") or "").strip()
+            if not _r:
+                continue
+            if (_a.get("status") or "") == "reversed":
+                reversed_refs.add(_r)
+            else:
+                active_refs.add(_r)
+    except Exception as _e:
+        logger.warning(f"[REVERSED PAYMENTS] derive failed: {_e}")
+    return reversed_refs - active_refs
+
+
 def calc_customer_balance(biz_id: str, customer_id: str) -> float:
     """Calculate customer balance from source documents (invoices, credit notes, receipts, account sales).
     Positive = customer owes us.  Negative = customer in credit (overpaid).
@@ -2177,6 +2199,9 @@ def calc_customer_balance(biz_id: str, customer_id: str) -> float:
                             and (r.get("customer_name") or "").upper().strip() == _cust_name_upper
                             and r.get("id") not in _by_id_set]
         all_cust_receipts = receipts_by_id + receipts_by_name
+        # Exclude payments whose ledger allocation was reversed
+        _rev_pay_refs = _reversed_customer_payment_refs(biz_id)
+        all_cust_receipts = [r for r in all_cust_receipts if (r.get("reference") or "").strip() not in _rev_pay_refs]
         rec_total = sum(float(r.get("amount", 0)) for r in all_cust_receipts)
 
         credit_notes = db.get("credit_notes", {"business_id": biz_id, "customer_id": customer_id}) or []
@@ -2233,7 +2258,7 @@ def calc_all_customer_balances(biz_id: str, customers=None) -> dict:
     try:
         all_invoices = db.get("invoices", {"business_id": biz_id}, select="id,customer_id,status,total") or []
         all_sales = db.get("sales", {"business_id": biz_id}, select="id,customer_id,payment_method,status,total") or []
-        all_receipts = db.get("receipts", {"business_id": biz_id}, select="customer_id,customer_name,amount") or []
+        all_receipts = db.get("receipts", {"business_id": biz_id}, select="customer_id,customer_name,amount,reference") or []
         all_credit_notes = db.get("credit_notes", {"business_id": biz_id}, select="customer_id,total") or []
         all_customers = customers if customers is not None else (db.get("customers", {"business_id": biz_id}) or [])
 
@@ -2286,8 +2311,11 @@ def calc_all_customer_balances(biz_id: str, customers=None) -> dict:
                 if cid:
                     balances[cid] = balances.get(cid, 0) + float(s.get("total", 0))
 
-        # Credits: receipts
+        # Credits: receipts (skip payments whose ledger allocation was reversed)
+        _rev_pay_refs = _reversed_customer_payment_refs(biz_id)
         for r in all_receipts:
+            if (r.get("reference") or "").strip() in _rev_pay_refs:
+                continue
             cid = r.get("customer_id", "")
             if not cid:
                 # Try name match
@@ -2902,7 +2930,10 @@ Thank you for your business!
                 "debit": float(inv.get("total", 0) or 0),
                 "credit": 0,
             })
+        _rev_pay_refs = _reversed_customer_payment_refs(biz_id)
         for r in cust_receipts:
+            if (r.get("reference") or "").strip() in _rev_pay_refs:
+                continue  # payment whose ledger allocation was reversed
             transactions.append({
                 "date": r.get("date"),
                 "type": "Payment",
@@ -27367,6 +27398,9 @@ def customer_view(customer_id):
                          and (r.get("customer_name") or "").upper().strip() == _cust_name_upper
                          and r.get("id") not in _receipts_by_id_set]
     receipts = sorted(_receipts_by_id + _receipts_by_name, key=lambda x: x.get("date", ""), reverse=True)
+    # Exclude payments whose ledger allocation was reversed
+    _rev_pay_refs = _reversed_customer_payment_refs(biz_id)
+    receipts = [r for r in receipts if (r.get("reference") or "").strip() not in _rev_pay_refs]
     sales = sorted(fut_sales.result(), key=lambda x: x.get("date", ""), reverse=True)
     _t("cv_db_done")
     # ── DERIVE refund / reversal sets from allocation_log ──
@@ -32592,7 +32626,10 @@ def customer_statement(customer_id):
             "link": f"/sale/{s.get('id', '')}"
         })
     
+    _rev_pay_refs = _reversed_customer_payment_refs(biz_id)
     for r in cust_receipts:
+        if (r.get("reference") or "").strip() in _rev_pay_refs:
+            continue  # payment whose ledger allocation was reversed
         transactions.append({
             "date": r.get("date"),
             "type": "Payment",
@@ -33121,7 +33158,10 @@ def customer_statement_print(customer_id):
             "credit": 0,
         })
     
+    _rev_pay_refs = _reversed_customer_payment_refs(biz_id)
     for r in cust_receipts:
+        if (r.get("reference") or "").strip() in _rev_pay_refs:
+            continue  # payment whose ledger allocation was reversed
         transactions.append({
             "date": r.get("date"),
             "type": "Payment",
