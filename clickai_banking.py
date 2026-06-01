@@ -2907,6 +2907,18 @@ Return ONLY the JSON array. No markdown, no explanation."""
             txn_date = txn.get("date", today())
             ref = f"BNK-{txn_id[:8]}"
             desc_short = description[:50]
+
+            # Capture the actual GL journal lines posted during this categorization
+            # so the ledger can show where the transaction was allocated in the GL.
+            _alloc_gl_lines = []
+            _orig_create_journal_entry = create_journal_entry
+            def _cje(_b, _d, _ds, _r, _lines):
+                try:
+                    if _lines:
+                        _alloc_gl_lines.extend(_lines)
+                except Exception:
+                    pass
+                return _orig_create_journal_entry(_b, _d, _ds, _r, _lines)
             
             # Determine if money out (expense) or money in (income/payment)
             if debit > 0 or amount < 0:
@@ -2916,30 +2928,30 @@ Return ONLY the JSON array. No markdown, no explanation."""
                 if category in special_categories:
                     # --- SPECIAL MONEY OUT HANDLING ---
                     if category == "Owner Drawings":
-                        create_journal_entry(biz_id, txn_date, desc_short, ref, [
+                        _cje(biz_id, txn_date, desc_short, ref, [
                             {"account_code": gl(biz_id, "drawings"), "debit": expense_rounded, "credit": 0},  # Drawings
                             {"account_code": gl(biz_id, "bank"), "debit": 0, "credit": expense_rounded},   # Bank
                         ])
                     elif category == "Loan Repayment":
-                        create_journal_entry(biz_id, txn_date, desc_short, ref, [
+                        _cje(biz_id, txn_date, desc_short, ref, [
                             {"account_code": gl(biz_id, "uif"), "debit": expense_rounded, "credit": 0},  # Loan liability down
                             {"account_code": gl(biz_id, "bank"), "debit": 0, "credit": expense_rounded},   # Bank
                         ])
                     elif category == "Loan":
                         # Money OUT as Loan = repaying loan principal
-                        create_journal_entry(biz_id, txn_date, desc_short, ref, [
+                        _cje(biz_id, txn_date, desc_short, ref, [
                             {"account_code": gl(biz_id, "uif"), "debit": expense_rounded, "credit": 0},  # Loan liability down
                             {"account_code": gl(biz_id, "bank"), "debit": 0, "credit": expense_rounded},   # Bank
                         ])
                     elif category == "Customer Payment":
                         # Money OUT to customer = refund from bank
-                        create_journal_entry(biz_id, txn_date, f"Customer refund: {desc_short}", ref, [
+                        _cje(biz_id, txn_date, f"Customer refund: {desc_short}", ref, [
                             {"account_code": gl(biz_id, "sales"), "debit": expense_rounded, "credit": 0},   # Sales reversed
                             {"account_code": gl(biz_id, "bank"), "debit": 0, "credit": expense_rounded},    # Bank out
                         ])
                     elif category == "Supplier Payment":
                         logger.info(f"[BANK] === Supplier Payment R{expense_amount} — starting processing ===")
-                        create_journal_entry(biz_id, txn_date, desc_short, ref, [
+                        _cje(biz_id, txn_date, desc_short, ref, [
                             {"account_code": gl(biz_id, "creditors"), "debit": expense_rounded, "credit": 0},
                             {"account_code": gl(biz_id, "bank"), "debit": 0, "credit": expense_rounded},
                         ])
@@ -3045,7 +3057,7 @@ Return ONLY the JSON array. No markdown, no explanation."""
                             logger.error(f"[BANK] Supplier payment CRASHED: {e}")
                     elif category == "VAT Payment to SARS":
                         # Paying VAT liability - NOT an expense!
-                        create_journal_entry(biz_id, txn_date, desc_short, ref, [
+                        _cje(biz_id, txn_date, desc_short, ref, [
                             {"account_code": gl(biz_id, "vat_output"), "debit": expense_rounded, "credit": 0},  # VAT Output liability down
                             {"account_code": gl(biz_id, "bank"), "debit": 0, "credit": expense_rounded},   # Bank
                         ])
@@ -3108,7 +3120,7 @@ Return ONLY the JSON array. No markdown, no explanation."""
                         journal_entries.append({"account_code": gl(biz_id, "vat_input"), "debit": vat_amount, "credit": 0})
                     journal_entries.append({"account_code": gl(biz_id, "bank"), "debit": 0, "credit": round(expense_amount, 2)})
                     
-                    create_journal_entry(biz_id, txn_date, desc_short, ref, journal_entries)
+                    _cje(biz_id, txn_date, desc_short, ref, journal_entries)
                     logger.info(f"[BANK] Created expense: {category} GL={gl_code} R{expense_amount}")
             
             elif credit > 0 or amount > 0:
@@ -3118,7 +3130,7 @@ Return ONLY the JSON array. No markdown, no explanation."""
                 if category == "Customer Payment":
                     logger.info(f"[BANK] === Customer Payment R{income_amount} — starting processing ===")
                     # Customer paying their account - reduce debtors
-                    create_journal_entry(biz_id, txn_date, desc_short, ref, [
+                    _cje(biz_id, txn_date, desc_short, ref, [
                         {"account_code": gl(biz_id, "bank"), "debit": income_rounded, "credit": 0},   # Bank up
                         {"account_code": gl(biz_id, "debtors"), "debit": 0, "credit": income_rounded},    # Debtors down
                     ])
@@ -3198,7 +3210,7 @@ Return ONLY the JSON array. No markdown, no explanation."""
                             if _da_vat > 0:
                                 _da_lines.append({"account_code": gl(biz_id, "vat_output"), "debit": _da_vat, "credit": 0})
                             _da_lines.append({"account_code": gl(biz_id, "debtors"), "debit": 0, "credit": _total_discount_allowed})
-                            create_journal_entry(biz_id, txn_date, f"Discount Allowed: {desc_short}", ref, _da_lines)
+                            _cje(biz_id, txn_date, f"Discount Allowed: {desc_short}", ref, _da_lines)
                             logger.info(f"[BANK] Discount Allowed journal posted: net R{_da_net} vat R{_da_vat} total R{_total_discount_allowed}")
                         
                         # Priority 1: User explicitly picked a customer
@@ -3316,27 +3328,27 @@ Return ONLY the JSON array. No markdown, no explanation."""
                                 
                 elif category == "POS Deposit":
                     # POS cash deposited into bank
-                    create_journal_entry(biz_id, txn_date, desc_short, ref, [
+                    _cje(biz_id, txn_date, desc_short, ref, [
                         {"account_code": gl(biz_id, "bank"), "debit": income_rounded, "credit": 0},   # Bank up
                         {"account_code": gl(biz_id, "cash"), "debit": 0, "credit": income_rounded},    # Cash On Hand down
                     ])
                     
                 elif category == "Owner Capital Introduced":
-                    create_journal_entry(biz_id, txn_date, desc_short, ref, [
+                    _cje(biz_id, txn_date, desc_short, ref, [
                         {"account_code": gl(biz_id, "bank"), "debit": income_rounded, "credit": 0},   # Bank up
                         {"account_code": gl(biz_id, "capital"), "debit": 0, "credit": income_rounded},    # Capital up
                     ])
                     
                 elif category == "Loan":
                     # Receiving loan funds
-                    create_journal_entry(biz_id, txn_date, desc_short, ref, [
+                    _cje(biz_id, txn_date, desc_short, ref, [
                         {"account_code": gl(biz_id, "bank"), "debit": income_rounded, "credit": 0},   # Bank up
                         {"account_code": gl(biz_id, "uif"), "debit": 0, "credit": income_rounded},    # Loan liability up
                     ])
                     
                 elif category == "Refund":
                     # Refund received - credit original expense
-                    create_journal_entry(biz_id, txn_date, desc_short, ref, [
+                    _cje(biz_id, txn_date, desc_short, ref, [
                         {"account_code": gl(biz_id, "bank"), "debit": income_rounded, "credit": 0},   # Bank up
                         {"account_code": "7900", "debit": 0, "credit": income_rounded},    # Sundry expenses reversed
                     ])
@@ -3346,7 +3358,7 @@ Return ONLY the JSON array. No markdown, no explanation."""
                     
                 else:
                     # Regular income
-                    create_journal_entry(biz_id, txn_date, desc_short, ref, [
+                    _cje(biz_id, txn_date, desc_short, ref, [
                         {"account_code": gl(biz_id, "bank"), "debit": income_rounded, "credit": 0},
                         {"account_code": gl_code, "debit": 0, "credit": income_rounded},
                     ])
@@ -3367,6 +3379,7 @@ Return ONLY the JSON array. No markdown, no explanation."""
                         ai_worker="BankLearning" if txn.get("auto_categorized") else "",
                         supplier_name=txn.get("supplier_name", "") or description.split()[0][:30] if description else "",
                         payment_method="eft", reference=f"BNK-{txn_id[:8]}",
+                        gl_entries=(_alloc_gl_lines or None),
                         transaction_date=txn_date,
                         created_by=session.get("user_id", ""), created_by_name=(Auth.get_current_user() or {}).get("name", "")
                     )
