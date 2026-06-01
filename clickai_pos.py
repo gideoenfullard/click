@@ -4034,6 +4034,20 @@ def register_pos_routes(app, db, login_required, Auth, render_page,
                 return;
             }
             
+            // Print 2 copies (customer + store) in one print job when enabled:
+            // duplicate the slip body with a page break so a single print() yields 2 copies.
+            if (posSettings && posSettings.print_duplicates) {
+                var _bOpen = fullHtml.indexOf('<body>');
+                var _bClose = fullHtml.lastIndexOf('</body>');
+                if (_bOpen !== -1 && _bClose !== -1 && _bClose > _bOpen) {
+                    var _headPart = fullHtml.substring(0, _bOpen + 6);
+                    var _bodyInner = fullHtml.substring(_bOpen + 6, _bClose);
+                    var _tailPart = fullHtml.substring(_bClose);
+                    var _pgBreak = '<div style="page-break-before:always;break-before:page;"></div>';
+                    fullHtml = _headPart + _bodyInner + _pgBreak + _bodyInner + _tailPart;
+                }
+            }
+            
             // Cache for reprint
             _lastPrintHtml = fullHtml;
             
