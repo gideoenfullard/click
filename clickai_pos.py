@@ -7767,15 +7767,20 @@ def register_pos_routes(app, db, login_required, Auth, render_page,
                 flash("No business found", "error")
                 return redirect("/settings")
             
-            updates = {
-                "id": business.get("id"),
-                "pos_auto_print": bool(request.form.get("pos_auto_print")),
-                "pos_print_duplicates": bool(request.form.get("pos_print_duplicates")),
-                "pos_print_format": request.form.get("pos_print_format", "ask"),
-                "pos_slip_footer": request.form.get("pos_slip_footer", "Thank you for your purchase!"),
-            }
+            # Start from the FULL existing record so NOT NULL columns (e.g. business_name)
+            # are preserved. A partial upsert attempts an INSERT, which fails the
+            # business_name NOT NULL constraint (Postgres error 23502) and saves nothing.
+            save_data = {k: v for k, v in business.items() if v is not None}
+            save_data["id"] = business.get("id")
+            _biz_name = business.get("name") or business.get("business_name") or "Business"
+            save_data["name"] = _biz_name
+            save_data["business_name"] = _biz_name
+            save_data["pos_auto_print"] = bool(request.form.get("pos_auto_print"))
+            save_data["pos_print_duplicates"] = bool(request.form.get("pos_print_duplicates"))
+            save_data["pos_print_format"] = request.form.get("pos_print_format", "ask")
+            save_data["pos_slip_footer"] = request.form.get("pos_slip_footer", "Thank you for your purchase!")
             
-            db.save("businesses", updates)
+            db.save("businesses", save_data)
             Auth.clear_cache()
             flash("POS settings saved", "success")
             
