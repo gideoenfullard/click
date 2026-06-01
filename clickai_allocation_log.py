@@ -728,6 +728,92 @@ def register_ledger_routes(app, db, login_required, Auth, generate_id, now_fn, t
         return render_page("Duplicate Allocations", content, Auth.get_current_user(), "ledger")
     
     
+    @app.route("/bank-transactions/<txn_id>")
+    @login_required
+    def bank_transaction_detail(txn_id):
+        """Read-only source-document view for a single bank transaction.
+        Reached from the ledger 'View Source Document' link on bank entries
+        (source_table = bank_transactions)."""
+        import clickai as _ck
+        render_page = _ck.render_page
+        safe_string = _ck.safe_string
+        money = _ck.money
+
+        business = Auth.get_current_business()
+        biz_id = business.get("id") if business else None
+        if not biz_id:
+            return render_page("Bank Transaction", '<div class="card">Select a business first.</div>', Auth.get_current_user(), "ledger")
+
+        # Scope to this business so a transaction id from another tenant cannot be opened
+        rows = db.get("bank_transactions", {"business_id": biz_id, "id": txn_id}) or []
+        txn = rows[0] if rows else None
+
+        if not txn:
+            content = f'''
+            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:15px;">
+                <a href="/ledger" style="color:var(--text-muted);">← Back to Ledger</a>
+            </div>
+            <h2 style="margin-bottom:15px;">Bank Transaction</h2>
+            <div class="card" style="text-align:center;padding:40px;">
+                <p style="color:var(--text-muted);">Bank transaction not found.</p>
+            </div>'''
+            return render_page("Bank Transaction", content, Auth.get_current_user(), "ledger")
+
+        date_str = safe_string(txn.get("date", "") or "-")
+        desc = safe_string(txn.get("description", "") or "-")
+        debit = float(txn.get("debit", 0) or 0)
+        credit = float(txn.get("credit", 0) or 0)
+        bal = txn.get("balance", None)
+        cat = safe_string(txn.get("category", "") or txn.get("suggested_category", "") or "")
+        ref = safe_string(txn.get("match_reference", "") or "")
+        matched = txn.get("matched")
+        matched_name = safe_string(txn.get("matched_name", "") or "")
+        matched_inv = safe_string(txn.get("matched_invoice_number", "") or "")
+        matched_at = safe_string(txn.get("matched_at", "") or "")
+        created = safe_string(txn.get("created_at", "") or "")
+
+        def _cell(lbl, val):
+            return f'''<div>
+                <div style="font-size:10px;color:var(--text-muted);text-transform:uppercase;letter-spacing:1px;margin-bottom:2px;">{lbl}</div>
+                <div style="font-weight:600;font-size:13px;">{val}</div>
+            </div>'''
+
+        cells = ""
+        cells += _cell("Date", date_str)
+        cells += _cell("Description", desc)
+        if credit > 0:
+            cells += _cell("Money In (Credit)", f'<span style="color:#10b981;font-family:monospace;">{money(credit)}</span>')
+        if debit > 0:
+            cells += _cell("Money Out (Debit)", f'<span style="color:#ef4444;font-family:monospace;">{money(debit)}</span>')
+        if bal is not None:
+            cells += _cell("Statement Balance", f'<span style="font-family:monospace;">{money(bal)}</span>')
+        if cat:
+            cells += _cell("Category", cat)
+        if ref:
+            cells += _cell("Reference", ref)
+        cells += _cell("Status", "Matched / Categorized" if matched else "Not yet matched")
+        if matched_name:
+            cells += _cell("Matched To", matched_name + (f" · Inv {matched_inv}" if matched_inv else ""))
+        if matched_at:
+            cells += _cell("Matched At", matched_at)
+        if created:
+            cells += _cell("Imported At", created)
+
+        content = f'''
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:15px;">
+            <a href="/ledger" style="color:var(--text-muted);">← Back to Ledger</a>
+            <a href="/banking" style="color:var(--text-muted);">Open Bank Reconciliation →</a>
+        </div>
+        <h2 style="margin-bottom:5px;">Bank Transaction</h2>
+        <p style="color:var(--text-muted);margin-bottom:15px;font-size:12px;">Source document for this ledger entry.</p>
+        <div class="card">
+            <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:14px;">
+                {cells}
+            </div>
+        </div>'''
+        return render_page("Bank Transaction", content, Auth.get_current_user(), "ledger")
+    
+    
     @app.route("/ledger/reverse/<alloc_id>", methods=["POST"])
     @login_required
     def ledger_reverse(alloc_id):
