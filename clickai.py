@@ -50326,7 +50326,10 @@ def fulltech_price_adjust():
         if not isinstance(cp, dict):
             cp = {}
         cp["adjust_pct"] = adjust
-        ok, msg = db.save("businesses", {"id": biz_id, "custom_prices": cp})
+        # PATCH the existing business row (UPDATE, not upsert) so we don't trip
+        # NOT NULL columns by accidentally inserting a blank row.
+        user_id = user.get("id") if user else None
+        ok, msg = db.update_business(biz_id, user_id, {"custom_prices": cp})
         Auth.clear_cache()
         if ok:
             return redirect("/tools/price-adjust?saved=1")
@@ -51964,7 +51967,11 @@ def price_editor():
             merged = merge_prices(existing_type_prices, new_prices)
             custom_prices[price_type] = merged
             
-            db.save("businesses", {"id": biz_id, "custom_prices": custom_prices})
+            # PATCH (UPDATE) the business row — avoids the NOT NULL insert error
+            # that an upsert hits when only id + custom_prices are supplied.
+            _pe_user = Auth.get_current_user()
+            _pe_uid = _pe_user.get("id") if _pe_user else None
+            db.update_business(biz_id, _pe_uid, {"custom_prices": custom_prices})
             
             return jsonify({"success": True, "message": f"{price_type} prices updated"})
         except Exception as e:
