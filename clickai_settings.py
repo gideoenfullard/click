@@ -1357,11 +1357,54 @@ def register_settings_routes(app, db, login_required, Auth, render_page,
                             <input type="checkbox" name="show_logo" {"checked" if show_logo else ""} style="margin-right: 8px;">
                             Show Logo
                         </label>
-                        <input type="text" name="logo_url" class="form-input" value="{safe_string(logo_url)}" 
+                        <div style="display:flex; align-items:center; gap:10px; margin-bottom:8px;">
+                            <img id="logoPreview" src="{safe_string(logo_url)}" alt=""
+                                 style="height:48px; max-width:160px; object-fit:contain; border:1px solid var(--border); border-radius:6px; padding:4px; background:#fff; {'' if logo_url else 'display:none;'}">
+                            <div>
+                                <input type="file" id="logoFile" accept="image/png,image/jpeg" onchange="handleLogoUpload(this)" style="display:none;">
+                                <button type="button" class="btn btn-secondary" onclick="document.getElementById('logoFile').click();">Choose Logo File</button>
+                                <button type="button" class="btn btn-secondary" id="logoClearBtn" onclick="clearLogo()" style="{'' if logo_url else 'display:none;'}">Remove</button>
+                            </div>
+                        </div>
+                        <input type="text" name="logo_url" id="logoUrl" class="form-input" value="{safe_string(logo_url)}" 
                                placeholder="https://yourdomain.com/logo.png">
-                        <small style="color: var(--text-muted);">Enter URL to your logo image</small>
+                        <small style="color: var(--text-muted);">Choose a PNG or JPG from your device, or paste an image URL.</small>
                     </div>
                 </div>
+                <script>
+                function handleLogoUpload(input) {{
+                    var file = input.files && input.files[0];
+                    if (!file) return;
+                    if (file.type !== 'image/png' && file.type !== 'image/jpeg' && file.type !== 'image/jpg') {{
+                        alert('Please choose a PNG or JPG image.');
+                        input.value = '';
+                        return;
+                    }}
+                    if (file.size > 500 * 1024) {{
+                        alert('That image is ' + Math.round(file.size/1024) + 'KB. Please use a logo under 500KB so documents stay fast.');
+                        input.value = '';
+                        return;
+                    }}
+                    var reader = new FileReader();
+                    reader.onload = function(e) {{
+                        var dataUrl = e.target.result;
+                        document.getElementById('logoUrl').value = dataUrl;
+                        var img = document.getElementById('logoPreview');
+                        img.src = dataUrl;
+                        img.style.display = '';
+                        document.getElementById('logoClearBtn').style.display = '';
+                    }};
+                    reader.readAsDataURL(file);
+                }}
+                function clearLogo() {{
+                    document.getElementById('logoUrl').value = '';
+                    document.getElementById('logoFile').value = '';
+                    var img = document.getElementById('logoPreview');
+                    img.src = '';
+                    img.style.display = 'none';
+                    document.getElementById('logoClearBtn').style.display = 'none';
+                }}
+                </script>
             </div>
             
             <div class="card" style="margin-bottom: 20px;">
