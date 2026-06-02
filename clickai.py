@@ -50252,6 +50252,145 @@ def api_team_reset_password():
 
 
 # 
+# FULLTECH TOOLS - Per-product price adjustment (% uplift over the built-in price list)
+# 
+
+def _ft_price_adjust(business):
+    """Saved Fulltech per-product price adjustment as {group: percent}."""
+    raw = business.get("fulltech_price_adjust") if business else None
+    if isinstance(raw, str):
+        try:
+            raw = json.loads(raw) if raw else {}
+        except Exception:
+            raw = {}
+    if not isinstance(raw, dict):
+        raw = {}
+    return raw
+
+
+def _ft_factor(business, group):
+    """Price multiplier for a product group: 1 + percent/100 (1.0 if unset)."""
+    try:
+        pct = float(_ft_price_adjust(business).get(group, 0) or 0)
+    except Exception:
+        pct = 0.0
+    return 1.0 + (pct / 100.0)
+
+
+@app.route("/tools/price-adjust", methods=["GET", "POST"])
+@login_required
+def fulltech_price_adjust():
+    """Fulltech only — raise each product group's calculator prices by a % over the built-in list."""
+    user = Auth.get_current_user()
+    business = Auth.get_current_business()
+    biz_id = business.get("id") if business else None
+
+    biz_name = (business.get("name", "") if business else "").lower()
+    if "fulltech" not in biz_name:
+        return redirect("/tools")
+
+    groups = [
+        ("round", "Round Tube"),
+        ("square", "Square Tube"),
+        ("flat", "Flat Bar"),
+        ("angle", "Angle Iron"),
+        ("pipe", "Schedule Pipe"),
+        ("finishing", "Sheet / Coil Finishing"),
+    ]
+
+    if request.method == "POST":
+        user_id = user.get("id") if user else None
+        adjust = {}
+        for key, _label in groups:
+            try:
+                pct = float((request.form.get(f"adj_{key}", "0") or "0").replace(",", ".").strip() or 0)
+            except Exception:
+                pct = 0.0
+            adjust[key] = round(pct, 2)
+        ok, msg = db.update_business(biz_id, user_id, {"fulltech_price_adjust": json.dumps(adjust)})
+        Auth.clear_cache()
+        if ok:
+            return redirect("/tools/price-adjust?saved=1")
+        return redirect(f"/tools/price-adjust?error={str(msg)[:80]}")
+
+    current = _ft_price_adjust(business)
+
+    # Representative sample base price per group (from the built-in list) for live preview
+    samples = {
+        "round": ("25mm Round 180#", fulltech_addon.get_round(25, "180")),
+        "square": ("25x25 Square 180#", fulltech_addon.get_square("25x25", "180")),
+        "flat": ("40mm Flat (cold, one side)", fulltech_addon.get_flat(40, "cold", "one", "180")),
+        "angle": ("40x40 Angle (hot, both)", fulltech_addon.get_angle("40x40", "hot", "both")),
+        "pipe": ('1" Pipe SCH10', fulltech_addon.get_pipe("1", "SCH10")),
+        "finishing": ("N4 + PVC per m2", fulltech_addon.FINISH_COLD.get("N4 + PVC", 34.08)),
+    }
+
+    saved_banner = ""
+    if request.args.get("saved"):
+        saved_banner = '<div class="card" style="background:rgba(16,185,129,0.12);border:1px solid rgba(16,185,129,0.4);color:var(--green);margin-bottom:15px;">Price adjustments saved.</div>'
+    elif request.args.get("error"):
+        saved_banner = f'<div class="card" style="background:rgba(239,68,68,0.1);color:var(--red);margin-bottom:15px;">Error: {safe_string(request.args.get("error"))}</div>'
+
+    rows = ""
+    for key, label in groups:
+        try:
+            pct = float(current.get(key, 0) or 0)
+        except Exception:
+            pct = 0.0
+        sample_label, base = samples.get(key, ("", 0))
+        base = float(base or 0)
+        rows += f'''
+        <div class="card" style="margin-bottom:12px;display:grid;grid-template-columns:1fr 160px 1fr;gap:15px;align-items:center;">
+            <div>
+                <div style="font-weight:600;font-size:15px;">{label}</div>
+                <div style="color:var(--text-muted);font-size:12px;">Sample: {sample_label}</div>
+            </div>
+            <div>
+                <label style="display:block;font-size:11px;color:var(--text-muted);margin-bottom:4px;">Increase vs price list (%)</label>
+                <input type="number" name="adj_{key}" id="adj_{key}" value="{pct:g}" step="0.5"
+                       oninput="updatePreview('{key}', {base})"
+                       style="width:100%;padding:8px;border-radius:6px;border:1px solid var(--border);background:var(--card);color:var(--text);">
+            </div>
+            <div style="text-align:right;">
+                <div style="color:var(--text-muted);font-size:11px;">Sample price</div>
+                <div style="font-size:14px;">R{base:.2f} <span style="color:var(--text-muted);">&rarr;</span> <strong id="prev_{key}" style="color:var(--green);">R{base * (1 + pct/100):.2f}</strong></div>
+            </div>
+        </div>
+        '''
+
+    content = f'''
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:20px;">
+        <div>
+            <h2 style="margin:0;">Adjust Calculator Prices</h2>
+            <p style="color:var(--text-muted);margin:5px 0 0 0;">Raise each product group by a percentage over the built-in price list. Set to 0 to use the original list.</p>
+        </div>
+        <a href="/tools/tube-prices" class="btn btn-secondary">Back to Price Lookup</a>
+    </div>
+    {saved_banner}
+    <form method="POST">
+        {rows}
+        <div style="display:flex;gap:10px;margin-top:15px;">
+            <button type="submit" class="btn btn-primary">Save Adjustments</button>
+            <button type="button" class="btn btn-secondary" onclick="resetAll()">Reset All to 0%</button>
+        </div>
+    </form>
+    <script>
+    function updatePreview(key, base) {{
+        var el = document.getElementById('adj_' + key);
+        var prev = document.getElementById('prev_' + key);
+        var pct = parseFloat((el.value || '0').toString().replace(',', '.')) || 0;
+        prev.textContent = 'R' + (base * (1 + pct/100)).toFixed(2);
+    }}
+    function resetAll() {{
+        var inputs = document.querySelectorAll('input[name^="adj_"]');
+        inputs.forEach(function(i) {{ i.value = 0; i.dispatchEvent(new Event('input')); }});
+    }}
+    </script>
+    '''
+    return render_page("Adjust Prices", content, user, "tools")
+
+
+# 
 # FULLTECH TOOLS - Coil Calculator & Price Lookup
 # 
 
@@ -50296,6 +50435,19 @@ def coil_calculator():
                 laser_pvc = fulltech_addon.calc_finish(result["sqm"], "LASER PVC", thickness, is_coil)
                 plain_pvc = fulltech_addon.calc_finish(result["sqm"], "PLAIN PVC", thickness, is_coil)
                 n4_only = fulltech_addon.calc_finish(result["sqm"], "N4 ONLY", thickness, is_coil)
+                
+                # Apply the Finishing group's saved % adjustment to the per-sqm rate.
+                # The minimum charge is a fixed floor and must NOT scale with the %.
+                _fin_factor = _ft_factor(business, "finishing")
+                if _fin_factor != 1.0:
+                    _fin_min = fulltech_addon.MIN_CHARGE_JOB if is_coil else fulltech_addon.MIN_CHARGE_PIECE
+                    for _fd in (n4_pvc, laser_pvc, plain_pvc, n4_only):
+                        _adj_sqm = _fd["price_sqm"] * _fin_factor
+                        _adj_sub = result["sqm"] * _adj_sqm
+                        _fd["price_sqm"] = round(_adj_sqm, 2)
+                        _fd["subtotal"] = round(_adj_sub, 2)
+                        _fd["total"] = round(max(_adj_sub, _fin_min), 2)
+                        _fd["min_applied"] = _adj_sub < _fin_min
                 
                 # Price per kg = price per sqm * kg per sqm
                 kg_sqm = result["kg_per_sqm"]
@@ -50396,7 +50548,10 @@ def coil_calculator():
     
     content = f'''
     <div class="card">
-        <h2 style="margin-bottom:20px;">🔄 Coil Calculator</h2>
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:20px;">
+            <h2 style="margin:0;">🔄 Coil Calculator</h2>
+            <a href="/tools/price-adjust" class="btn btn-secondary">Adjust Prices</a>
+        </div>
         
         <form method="POST">
             <div style="margin-bottom:20px;">
@@ -50509,6 +50664,10 @@ def tube_prices():
                 price_per_m = 0
                 size_display = size
             
+            # Apply this product group's saved % price adjustment (if any).
+            # The minimum charge (R145) below is a fixed floor and does not scale.
+            price_per_m = round(price_per_m * _ft_factor(business, tube_type), 2)
+            
             total_meters = meters * qty
             subtotal = price_per_m * total_meters
             min_applied = subtotal < 145
@@ -50554,7 +50713,10 @@ def tube_prices():
     
     content = f'''
     <div class="card">
-        <h2 style="margin-bottom:20px;">[FORM] Tube Price Lookup</h2>
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:20px;">
+            <h2 style="margin:0;">[FORM] Tube Price Lookup</h2>
+            <a href="/tools/price-adjust" class="btn btn-secondary">Adjust Prices</a>
+        </div>
         
         <form method="POST">
             <div style="margin-bottom:15px;">
