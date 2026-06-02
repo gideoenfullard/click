@@ -32197,6 +32197,10 @@ def bulk_statements_page():
     
     total_debtors_balance = sum(v for v in _all_bals.values() if v > 0)
     
+    # Print counts (balance-only, no email requirement — printing needs no email)
+    print_debtors_count = len([c for c in customers if _all_bals.get(c.get("id"), 0) > 0])
+    print_zero_count = len([c for c in customers if _all_bals.get(c.get("id"), 0) == 0])
+    
     # Get scheduled statement settings
     settings = business.get("statement_settings", {}) if business else {}
     if isinstance(settings, str):
@@ -32342,6 +32346,29 @@ def bulk_statements_page():
                     <strong>Status:</strong> {"✅ Active" if (schedule_1st or schedule_15th) else "⏸️ Not scheduled"}
                 </div>
             </form>
+        </div>
+    </div>
+    
+    <!-- PRINT STATEMENTS -->
+    <div class="card" style="margin-top:20px;">
+        <h3 style="margin-top:0;margin-bottom:8px;">🖨️ Print Statements</h3>
+        <p style="color:var(--text-muted);margin:0 0 15px 0;">Open all statements in one document, each on its own A4 page, ready to print. No email address needed.</p>
+        <div style="display:grid;grid-template-columns:repeat(auto-fit, minmax(150px, 1fr));gap:15px;">
+            <button onclick="window.open('/bulk-statements/print?mode=debtors', '_blank')" class="btn" style="padding:18px;text-align:left;background:var(--orange);color:white;">
+                <strong style="font-size:15px;">Debtors Only</strong><br>
+                <small style="opacity:0.8;">Customers who owe money</small><br>
+                <span style="font-size:22px;font-weight:bold;">{print_debtors_count}</span>
+            </button>
+            <button onclick="window.open('/bulk-statements/print?mode=all', '_blank')" class="btn btn-secondary" style="padding:18px;text-align:left;">
+                <strong style="font-size:15px;">All Customers</strong><br>
+                <small style="color:var(--text-muted);">Every customer</small><br>
+                <span style="font-size:22px;font-weight:bold;color:var(--text);">{total_customers}</span>
+            </button>
+            <button onclick="window.open('/bulk-statements/print?mode=zero', '_blank')" class="btn btn-secondary" style="padding:18px;text-align:left;">
+                <strong style="font-size:15px;">Zero Balance</strong><br>
+                <small style="color:var(--text-muted);">No outstanding balance</small><br>
+                <span style="font-size:22px;font-weight:bold;color:var(--text);">{print_zero_count}</span>
+            </button>
         </div>
     </div>
     
@@ -33614,6 +33641,576 @@ def customer_statement_print(customer_id):
 </body>
 </html>'''
     
+    return html
+
+
+def _build_statement_body_for_print(customer, business, biz_id, _asat):
+    """Build the inner statement body HTML for ONE customer (header through footer).
+    Used by the bulk-statements print page. Mirrors the transaction/aging logic of
+    customer_statement_print exactly, but returns only the inner .doc content so many
+    customers can be concatenated into a single printable document."""
+
+    customer_id = customer.get("id")
+
+    # ── Build transactions (same logic as customer_statement_print) ─────────
+    invoices = db.get("invoices", {"business_id": biz_id}) if biz_id else []
+    cust_invoices = [inv for inv in invoices if inv.get("customer_id") == customer_id]
+
+    receipts = db.get("receipts", {"business_id": biz_id}) if biz_id else []
+    cust_receipts = [r for r in receipts if r.get("customer_id") == customer_id]
+    _cust_name_upper = (customer.get("name") or "").upper().strip()
+    _by_id_set = {r.get("id") for r in cust_receipts}
+    cust_receipts += [r for r in receipts
+                      if not r.get("customer_id") and _cust_name_upper
+                      and (r.get("customer_name") or "").upper().strip() == _cust_name_upper
+                      and r.get("id") not in _by_id_set]
+
+    credit_notes = db.get("credit_notes", {"business_id": biz_id, "customer_id": customer_id}) if biz_id else []
+    sales = db.get("sales", {"business_id": biz_id, "customer_id": customer_id}) if biz_id else []
+
+    # Derive refund/reversal sets from allocation_log
+    _refunded_sale_ids = set()
+    _reversed_invoice_ids = set()
+    _refund_metadata = {}
+    _reversal_metadata = {}
+    try:
+        _alloc_log = db.get("allocation_log", {"business_id": biz_id}) if biz_id else []
+        for _al in _alloc_log or []:
+            _src_id = _al.get("source_id", "")
+            if not _src_id:
+                continue
+            _extra_raw = _al.get("extra", "{}")
+            if isinstance(_extra_raw, str):
+                try:
+                    _extra = json.loads(_extra_raw) if _extra_raw else {}
+                except Exception:
+                    _extra = {}
+            elif isinstance(_extra_raw, dict):
+                _extra = _extra_raw
+            else:
+                _extra = {}
+            _action = _extra.get("action", "")
+            if _action == "pos_refund" and _al.get("source_table") == "sales":
+                _refunded_sale_ids.add(_src_id)
+                _refund_metadata[_src_id] = {
+                    "date": (_al.get("created_at") or "")[:10],
+                    "ref": _al.get("reference", ""),
+                    "reason": _extra.get("reason", ""),
+                }
+            elif _action == "invoice_reverse" and _al.get("source_table") == "invoices":
+                _reversed_invoice_ids.add(_src_id)
+                _reversal_metadata[_src_id] = {
+                    "date": (_al.get("created_at") or "")[:10],
+                    "ref": _al.get("reference", ""),
+                    "reason": _extra.get("reason", ""),
+                }
+    except Exception:
+        pass
+
+    # Stamp status in-memory
+    for _inv in cust_invoices:
+        if _inv.get("id") in _reversed_invoice_ids and (_inv.get("status") or "").lower() not in ("credited", "reversed"):
+            _inv["status"] = "reversed"
+    for _s in sales:
+        if _s.get("id") in _refunded_sale_ids and (_s.get("status") or "").lower() not in ("refunded", "reversed"):
+            _s["status"] = "refunded"
+
+    # Build transaction list
+    transactions = []
+    for inv in cust_invoices:
+        if (inv.get("status") or "").lower() in ("reversed",):
+            _meta = _reversal_metadata.get(inv.get("id"), {})
+            transactions.append({
+                "date": _meta.get("date") or inv.get("date"),
+                "type": "Invoice REVERSED",
+                "reference": _meta.get("ref") or f"REV-{inv.get('invoice_number', '')}",
+                "debit": 0, "credit": 0, "void": True,
+                "note": _meta.get("reason", ""),
+            })
+            continue
+        transactions.append({
+            "date": inv.get("date"),
+            "type": "Invoice",
+            "reference": inv.get("invoice_number", ""),
+            "debit": float(inv.get("total", 0) or 0),
+            "credit": 0,
+        })
+
+    _rev_pay_refs = _reversed_customer_payment_refs(biz_id)
+    for r in cust_receipts:
+        if (r.get("reference") or "").strip() in _rev_pay_refs:
+            continue  # payment whose ledger allocation was reversed
+        transactions.append({
+            "date": r.get("date"),
+            "type": "Payment",
+            "reference": r.get("receipt_number") or r.get("reference") or "",
+            "debit": 0,
+            "credit": float(r.get("amount", 0) or 0),
+        })
+
+    for cn in credit_notes:
+        transactions.append({
+            "date": cn.get("date"),
+            "type": "Credit Note",
+            "reference": cn.get("credit_note_number") or cn.get("number", ""),
+            "debit": 0,
+            "credit": float(cn.get("total", 0) or 0),
+        })
+
+    for s in sales:
+        if (s.get("status") or "").lower() in ("refunded", "reversed"):
+            _meta = _refund_metadata.get(s.get("id"), {})
+            transactions.append({
+                "date": _meta.get("date") or s.get("date"),
+                "type": "Sale REFUNDED",
+                "reference": _meta.get("ref") or f"REF-{s.get('sale_number', s.get('id', ''))[:10]}",
+                "debit": 0, "credit": 0, "void": True,
+                "note": _meta.get("reason", ""),
+            })
+            continue
+        if (s.get("payment_method") or "").lower() in ("account", "credit"):
+            transactions.append({
+                "date": s.get("date"),
+                "type": "POS Sale",
+                "reference": s.get("sale_number") or s.get("id", "")[:10],
+                "debit": float(s.get("total", 0) or 0),
+                "credit": 0,
+            })
+
+    # Sort by date
+    transactions.sort(key=lambda x: (x.get("date") or "", x.get("type") or ""))
+    # Close the statement at the selected month-end — exclude anything later
+    transactions = [t for t in transactions if (t.get("date") or "")[:10] <= _asat]
+
+    # Calculate running balance and build rows
+    running_balance = 0
+    rows_html = ""
+    for t in transactions:
+        running_balance += t["debit"] - t["credit"]
+        _style = ' style="color:#9ca3af;"' if t.get("void") else ''
+        _note = f' <span style="font-size:9px;color:#9ca3af;">({safe_string(t.get("note",""))})</span>' if t.get("note") else ""
+        rows_html += f'''
+        <tr{_style}>
+            <td class="date-cell">{t["date"] or "-"}</td>
+            <td class="type-cell">{t["type"]}{_note}</td>
+            <td class="ref-cell">{safe_string(t.get("reference") or "-")}</td>
+            <td class="amt-cell">{money(t["debit"]) if t["debit"] else "-"}</td>
+            <td class="amt-cell credit-amt">{money(t["credit"]) if t["credit"] else "-"}</td>
+            <td class="amt-cell bal-cell">{money(running_balance)}</td>
+        </tr>
+        '''
+
+    if not rows_html:
+        rows_html = '<tr><td colspan="6" style="text-align:center;padding:18px;color:#888;">No transactions</td></tr>'
+
+    final_balance = running_balance
+
+    # ── AGING BUCKETS ──────────────────────────────────────────────────────
+    from datetime import datetime as _dt, date as _date
+    try:
+        _today_obj = _dt.strptime(_asat, "%Y-%m-%d").date()
+    except Exception:
+        _today_obj = _date.today()
+    aging = {"current": 0.0, "30": 0.0, "60": 0.0, "90": 0.0, "120": 0.0}
+
+    for inv in cust_invoices:
+        if (inv.get("status") or "").lower() in ("reversed", "credited", "paid"):
+            continue
+        if (inv.get("date") or "")[:10] > _asat:
+            continue
+        try:
+            inv_total = float(inv.get("total", 0) or 0)
+            inv_paid = float(inv.get("amount_paid", 0) or 0)
+            outstanding = inv_total - inv_paid
+            if outstanding <= 0.01:
+                continue
+            _date_str = inv.get("date") or ""
+            try:
+                inv_date = _dt.strptime(_date_str[:10], "%Y-%m-%d").date()
+            except Exception:
+                continue
+            days_old = (_today_obj - inv_date).days
+            if days_old <= 30:
+                aging["current"] += outstanding
+            elif days_old <= 60:
+                aging["30"] += outstanding
+            elif days_old <= 90:
+                aging["60"] += outstanding
+            elif days_old <= 120:
+                aging["90"] += outstanding
+            else:
+                aging["120"] += outstanding
+        except Exception:
+            continue
+
+    # ── Business and customer info ─────────────────────────────────────────
+    biz_name = safe_string(business.get("name", "Business")) if business else "Business"
+    biz_address = safe_string(business.get("address", "")).replace("\n", "<br>") if business else ""
+    biz_phone = business.get("phone", "") if business else ""
+    biz_email = business.get("email", "") if business else ""
+    biz_vat = business.get("vat_number", "") if business else ""
+    biz_logo = business.get("logo_url", "") if business else ""
+    bank_name = business.get("bank_name", "") if business else ""
+    bank_account = business.get("bank_account", "") if business else ""
+    bank_branch = business.get("bank_branch", "") if business else ""
+
+    cust_name = safe_string(customer.get("name", "-"))
+    cust_address = safe_string(customer.get("address", "")).replace("\n", "<br>")
+    cust_email = safe_string(customer.get("email", ""))
+    cust_phone = safe_string(customer.get("phone", ""))
+    cust_code = safe_string(customer.get("code", "") or customer.get("account_code", ""))
+    cust_vat = safe_string(customer.get("vat_number", ""))
+
+    logo_html = f'<img src="{biz_logo}" style="height:50px;object-fit:contain;" alt="Logo">' if biz_logo else ""
+
+    bank_html = ""
+    if bank_name and bank_account:
+        bank_html = f'''
+        <div class="bank-block">
+            <div class="bank-title">Banking Details for Payment</div>
+            <table class="bank-table">
+                <tr><td class="bank-label">Bank:</td><td><strong>{safe_string(bank_name)}</strong></td></tr>
+                <tr><td class="bank-label">Account:</td><td><strong>{safe_string(bank_account)}</strong></td></tr>
+                {f'<tr><td class="bank-label">Branch:</td><td>{safe_string(bank_branch)}</td></tr>' if bank_branch else ''}
+                <tr><td class="bank-label">Reference:</td><td><strong>{cust_code or cust_name[:15]}</strong></td></tr>
+            </table>
+        </div>
+        '''
+
+    aging_html = f'''
+    <table class="aging-table">
+        <thead>
+            <tr>
+                <th>Current</th>
+                <th>30 Days</th>
+                <th>60 Days</th>
+                <th>90 Days</th>
+                <th>120+ Days</th>
+                <th class="total-col">Total Due</th>
+            </tr>
+        </thead>
+        <tbody>
+            <tr>
+                <td>{money(aging["current"])}</td>
+                <td>{money(aging["30"])}</td>
+                <td>{money(aging["60"])}</td>
+                <td>{money(aging["90"])}</td>
+                <td>{money(aging["120"])}</td>
+                <td class="total-col"><strong>{money(final_balance)}</strong></td>
+            </tr>
+        </tbody>
+    </table>
+    '''
+
+    body = f'''
+    <!-- Header -->
+    <div class="header">
+        <div class="biz-info">
+            {logo_html}
+            <h1>{biz_name}</h1>
+            {f'<p>{biz_address}</p>' if biz_address else ''}
+            {f'<p>Tel: {safe_string(biz_phone)}</p>' if biz_phone else ''}
+            {f'<p>Email: {safe_string(biz_email)}</p>' if biz_email else ''}
+            {f'<p>VAT No: {safe_string(biz_vat)}</p>' if biz_vat else ''}
+        </div>
+        <div class="stmt-title">
+            <h2>STATEMENT</h2>
+            <div class="stmt-meta">
+                Statement Date: <strong>{_asat}</strong>
+            </div>
+            {f'<div class="stmt-meta">Account: <strong>{cust_code}</strong></div>' if cust_code else ''}
+        </div>
+    </div>
+
+    <!-- Customer details -->
+    <div class="cust-block">
+        <div>
+            <div class="label">Statement To</div>
+            <div class="name">{cust_name}</div>
+            {f'<div class="line">{cust_address}</div>' if cust_address else ''}
+            {f'<div class="line">{cust_phone}</div>' if cust_phone else ''}
+            {f'<div class="line">{cust_email}</div>' if cust_email else ''}
+            {f'<div class="line">VAT: {cust_vat}</div>' if cust_vat else ''}
+        </div>
+        <div style="text-align:right;">
+            <div class="label">Balance Due</div>
+            <div style="font-size:24px;font-weight:700;color:{'#dc2626' if final_balance > 0 else '#16a34a'};">{money(final_balance)}</div>
+        </div>
+    </div>
+
+    <!-- Ledger -->
+    <table class="ledger">
+        <thead>
+            <tr>
+                <th>Date</th>
+                <th>Type</th>
+                <th>Reference</th>
+                <th class="amt-head">Debit</th>
+                <th class="amt-head">Credit</th>
+                <th class="amt-head">Balance</th>
+            </tr>
+        </thead>
+        <tbody>
+            {rows_html}
+        </tbody>
+    </table>
+
+    <!-- Aging summary -->
+    {aging_html}
+
+    <!-- Bank details -->
+    {bank_html}
+
+    <!-- Footer -->
+    <div class="footer-note">
+        Generated by {biz_name} • {today()}
+    </div>
+    '''
+    return body, final_balance
+
+
+@app.route("/bulk-statements/print")
+@login_required
+def bulk_statements_print():
+    """Printable bulk statements — all matching customers in ONE document,
+    each on its own A4 page. Mirrors the Sage-style single-statement layout.
+    mode: debtors (balance > 0, default) | all | zero (balance == 0)."""
+
+    business = Auth.get_current_business()
+    biz_id = business.get("id") if business else None
+
+    mode = (request.args.get("mode") or "debtors").lower()
+    _stmt_month, _asat = _statement_asat(request.args.get("month"))
+
+    customers = db.get("customers", {"business_id": biz_id}) if biz_id else []
+    _all_bals = calc_all_customer_balances(biz_id)
+
+    if mode == "all":
+        selected = list(customers)
+    elif mode == "zero":
+        selected = [c for c in customers if _all_bals.get(c.get("id"), 0) == 0]
+    else:  # debtors
+        selected = [c for c in customers if _all_bals.get(c.get("id"), 0) > 0]
+
+    # Sort alphabetically by name
+    selected.sort(key=lambda c: (c.get("name") or "").upper())
+
+    # Build each customer's statement, wrapped in its own page
+    docs_html = ""
+    count = 0
+    for customer in selected:
+        try:
+            body, _bal = _build_statement_body_for_print(customer, business, biz_id, _asat)
+        except Exception as e:
+            logger.error(f"[BULK STMT PRINT] Failed for {customer.get('name')}: {e}")
+            continue
+        docs_html += f'<div class="doc">{body}</div>'
+        count += 1
+
+    if count == 0:
+        docs_html = '<div class="doc"><p style="text-align:center;padding:40px;color:#888;">No statements to print for this selection.</p></div>'
+
+    html = f'''<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Bulk Statements ({count})</title>
+<style>
+    * {{ box-sizing: border-box; }}
+    html, body {{
+        margin: 0;
+        padding: 0;
+        background: white;
+        color: #1f2937;
+        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Arial, sans-serif;
+        font-size: 11px;
+        line-height: 1.35;
+    }}
+    .doc {{
+        max-width: 210mm;
+        margin: 0 auto;
+        padding: 14mm 14mm;
+        page-break-after: always;
+    }}
+    .doc:last-child {{
+        page-break-after: auto;
+    }}
+    .header {{
+        display: flex;
+        justify-content: space-between;
+        align-items: flex-start;
+        padding-bottom: 12px;
+        border-bottom: 2px solid #1f2937;
+        margin-bottom: 14px;
+    }}
+    .header .biz-info {{ flex: 1; }}
+    .header .biz-info h1 {{
+        margin: 0 0 4px 0;
+        font-size: 18px;
+        font-weight: 700;
+        color: #1f2937;
+    }}
+    .header .biz-info p {{
+        margin: 1px 0;
+        font-size: 10px;
+        color: #6b7280;
+    }}
+    .header .stmt-title {{ text-align: right; }}
+    .header .stmt-title h2 {{
+        margin: 0 0 4px 0;
+        font-size: 22px;
+        font-weight: 700;
+        letter-spacing: 2px;
+        color: #1f2937;
+    }}
+    .header .stmt-title .stmt-meta {{
+        font-size: 10px;
+        color: #6b7280;
+    }}
+    .header .stmt-title .stmt-meta strong {{ color: #1f2937; }}
+    .cust-block {{
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 14px;
+        margin-bottom: 14px;
+    }}
+    .cust-block .label {{
+        font-size: 9px;
+        color: #6b7280;
+        text-transform: uppercase;
+        letter-spacing: 0.5px;
+        margin-bottom: 3px;
+        font-weight: 600;
+    }}
+    .cust-block .name {{
+        font-size: 13px;
+        font-weight: 700;
+        color: #1f2937;
+        margin-bottom: 2px;
+    }}
+    .cust-block .line {{
+        font-size: 10px;
+        color: #4b5563;
+        margin: 1px 0;
+    }}
+    table.ledger {{
+        width: 100%;
+        border-collapse: collapse;
+        margin-bottom: 12px;
+    }}
+    table.ledger thead {{ display: table-header-group; }}
+    table.ledger thead tr {{
+        background: #1f2937;
+        color: white;
+    }}
+    table.ledger thead th {{
+        padding: 6px 8px;
+        text-align: left;
+        font-size: 9px;
+        font-weight: 600;
+        text-transform: uppercase;
+        letter-spacing: 0.5px;
+    }}
+    table.ledger thead th.amt-head {{
+        text-align: right;
+        width: 75px;
+    }}
+    table.ledger tbody tr {{
+        border-bottom: 1px solid #e5e7eb;
+        page-break-inside: avoid;
+    }}
+    table.ledger td {{
+        padding: 4px 8px;
+        font-size: 10px;
+    }}
+    .date-cell {{ width: 75px; white-space: nowrap; }}
+    .type-cell {{ width: 110px; }}
+    .ref-cell {{ font-weight: 600; }}
+    .amt-cell {{ text-align: right; white-space: nowrap; }}
+    .credit-amt {{ color: #16a34a; }}
+    .bal-cell {{ font-weight: 600; }}
+    table.aging-table {{
+        width: 100%;
+        border-collapse: collapse;
+        margin: 14px 0 10px 0;
+        page-break-inside: avoid;
+    }}
+    table.aging-table thead tr {{ background: #f3f4f6; }}
+    table.aging-table th {{
+        padding: 5px 8px;
+        text-align: right;
+        font-size: 9px;
+        font-weight: 600;
+        text-transform: uppercase;
+        color: #4b5563;
+        border: 1px solid #e5e7eb;
+    }}
+    table.aging-table td {{
+        padding: 6px 8px;
+        text-align: right;
+        font-size: 11px;
+        border: 1px solid #e5e7eb;
+    }}
+    table.aging-table th.total-col,
+    table.aging-table td.total-col {{
+        background: #fef2f2;
+        color: #991b1b;
+    }}
+    .bank-block {{
+        background: #f0fdf4;
+        padding: 8px 12px;
+        border-radius: 4px;
+        margin: 10px 0;
+        page-break-inside: avoid;
+    }}
+    .bank-title {{
+        font-size: 10px;
+        font-weight: 700;
+        color: #166534;
+        margin-bottom: 4px;
+        text-transform: uppercase;
+        letter-spacing: 0.5px;
+    }}
+    .bank-table {{ font-size: 10px; }}
+    .bank-table td {{ padding: 1px 0; }}
+    .bank-label {{
+        color: #6b7280;
+        padding-right: 14px !important;
+    }}
+    .footer-note {{
+        margin-top: 14px;
+        padding-top: 8px;
+        border-top: 1px solid #e5e7eb;
+        font-size: 9px;
+        color: #9ca3af;
+        text-align: center;
+    }}
+    @page {{
+        size: A4 portrait;
+        margin: 10mm 0;
+    }}
+    @media print {{
+        html, body {{
+            margin: 0;
+            padding: 0;
+        }}
+        .doc {{
+            max-width: 100%;
+            padding: 0 12mm;
+        }}
+    }}
+</style>
+</head>
+<body>
+{docs_html}
+<script>
+    window.addEventListener('load', function() {{
+        setTimeout(function() {{ window.print(); }}, 400);
+    }});
+</script>
+</body>
+</html>'''
+
     return html
 
 
