@@ -50255,23 +50255,31 @@ def api_team_reset_password():
 # FULLTECH TOOLS - Per-product price adjustment (% uplift over the built-in price list)
 # 
 
-def _ft_price_adjust(business):
-    """Saved Fulltech per-product price adjustment as {group: percent}."""
-    raw = business.get("fulltech_price_adjust") if business else None
-    if isinstance(raw, str):
-        try:
-            raw = json.loads(raw) if raw else {}
-        except Exception:
-            raw = {}
-    if not isinstance(raw, dict):
-        raw = {}
-    return raw
+def _ft_adjust_map(biz_id):
+    """Per-group % price adjustment, read FRESH from the DB (never the cache).
+
+    Stored under businesses.custom_prices['adjust_pct'] — the same column the
+    sheet-piece price editor already uses, so no new database column is needed."""
+    if not biz_id:
+        return {}
+    try:
+        rows = db.get_columns("businesses", ["custom_prices"], {"id": biz_id}, limit=1)
+        cp = (rows[0].get("custom_prices") if rows else {}) or {}
+        if isinstance(cp, str):
+            try:
+                cp = json.loads(cp) if cp else {}
+            except Exception:
+                cp = {}
+        adj = cp.get("adjust_pct", {}) if isinstance(cp, dict) else {}
+        return adj if isinstance(adj, dict) else {}
+    except Exception:
+        return {}
 
 
-def _ft_factor(business, group):
+def _ft_factor(biz_id, group):
     """Price multiplier for a product group: 1 + percent/100 (1.0 if unset)."""
     try:
-        pct = float(_ft_price_adjust(business).get(group, 0) or 0)
+        pct = float(_ft_adjust_map(biz_id).get(group, 0) or 0)
     except Exception:
         pct = 0.0
     return 1.0 + (pct / 100.0)
@@ -50295,11 +50303,11 @@ def fulltech_price_adjust():
         ("flat", "Flat Bar"),
         ("angle", "Angle Iron"),
         ("pipe", "Schedule Pipe"),
-        ("finishing", "Sheet / Coil Finishing"),
+        ("finishing", "Coil Finishing"),
+        ("pieces", "Sheet / Plate Pieces"),
     ]
 
     if request.method == "POST":
-        user_id = user.get("id") if user else None
         adjust = {}
         for key, _label in groups:
             try:
@@ -50307,13 +50315,24 @@ def fulltech_price_adjust():
             except Exception:
                 pct = 0.0
             adjust[key] = round(pct, 2)
-        ok, msg = db.update_business(biz_id, user_id, {"fulltech_price_adjust": json.dumps(adjust)})
+        # MERGE into the existing custom_prices so sheet-piece overrides are preserved.
+        existing = db.get_one("businesses", biz_id) or {}
+        cp = existing.get("custom_prices", {}) or {}
+        if isinstance(cp, str):
+            try:
+                cp = json.loads(cp) if cp else {}
+            except Exception:
+                cp = {}
+        if not isinstance(cp, dict):
+            cp = {}
+        cp["adjust_pct"] = adjust
+        ok, msg = db.save("businesses", {"id": biz_id, "custom_prices": cp})
         Auth.clear_cache()
         if ok:
             return redirect("/tools/price-adjust?saved=1")
         return redirect(f"/tools/price-adjust?error={str(msg)[:80]}")
 
-    current = _ft_price_adjust(business)
+    current = _ft_adjust_map(biz_id)
 
     # Representative sample base price per group (from the built-in list) for live preview
     samples = {
@@ -50322,8 +50341,73 @@ def fulltech_price_adjust():
         "flat": ("40mm Flat (cold, one side)", fulltech_addon.get_flat(40, "cold", "one", "180")),
         "angle": ("40x40 Angle (hot, both)", fulltech_addon.get_angle("40x40", "hot", "both")),
         "pipe": ('1" Pipe SCH10', fulltech_addon.get_pipe("1", "SCH10")),
-        "finishing": ("N4 + PVC per m2", fulltech_addon.FINISH_COLD.get("N4 + PVC", 34.08)),
+        "finishing": ("N4 + PVC coil finish per m2", fulltech_addon.FINISH_COLD.get("N4 + PVC", 34.08)),
+        "pieces": ("N4 + PVC sheet rate per m2", fulltech_addon.SHEET_COLD.get("N4 + PVC", 34.08)),
     }
+
+    saved_banner = ""
+    if request.args.get("saved"):
+        saved_banner = '<div class="card" style="background:rgba(16,185,129,0.12);border:1px solid rgba(16,185,129,0.4);color:var(--green);margin-bottom:15px;">Price adjustments saved.</div>'
+    elif request.args.get("error"):
+        saved_banner = f'<div class="card" style="background:rgba(239,68,68,0.1);color:var(--red);margin-bottom:15px;">Error: {safe_string(request.args.get("error"))}</div>'
+
+    rows = ""
+    for key, label in groups:
+        try:
+            pct = float(current.get(key, 0) or 0)
+        except Exception:
+            pct = 0.0
+        sample_label, base = samples.get(key, ("", 0))
+        base = float(base or 0)
+        rows += f'''
+        <div class="card" style="margin-bottom:12px;display:grid;grid-template-columns:1fr 160px 1fr;gap:15px;align-items:center;">
+            <div>
+                <div style="font-weight:600;font-size:15px;">{label}</div>
+                <div style="color:var(--text-muted);font-size:12px;">Sample: {sample_label}</div>
+            </div>
+            <div>
+                <label style="display:block;font-size:11px;color:var(--text-muted);margin-bottom:4px;">Increase vs price list (%)</label>
+                <input type="number" name="adj_{key}" id="adj_{key}" value="{pct:g}" step="0.5"
+                       oninput="updatePreview('{key}', {base})"
+                       style="width:100%;padding:8px;border-radius:6px;border:1px solid var(--border);background:var(--card);color:var(--text);">
+            </div>
+            <div style="text-align:right;">
+                <div style="color:var(--text-muted);font-size:11px;">Sample price</div>
+                <div style="font-size:14px;">R{base:.2f} <span style="color:var(--text-muted);">&rarr;</span> <strong id="prev_{key}" style="color:var(--green);">R{base * (1 + pct/100):.2f}</strong></div>
+            </div>
+        </div>
+        '''
+
+    content = f'''
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:20px;">
+        <div>
+            <h2 style="margin:0;">Adjust Calculator Prices</h2>
+            <p style="color:var(--text-muted);margin:5px 0 0 0;">Raise each product group by a percentage over the built-in price list. Set to 0 to use the original list.</p>
+        </div>
+        <a href="/tools/tube-prices" class="btn btn-secondary">Back to Price Lookup</a>
+    </div>
+    {saved_banner}
+    <form method="POST">
+        {rows}
+        <div style="display:flex;gap:10px;margin-top:15px;">
+            <button type="submit" class="btn btn-primary">Save Adjustments</button>
+            <button type="button" class="btn btn-secondary" onclick="resetAll()">Reset All to 0%</button>
+        </div>
+    </form>
+    <script>
+    function updatePreview(key, base) {{
+        var el = document.getElementById('adj_' + key);
+        var prev = document.getElementById('prev_' + key);
+        var pct = parseFloat((el.value || '0').toString().replace(',', '.')) || 0;
+        prev.textContent = 'R' + (base * (1 + pct/100)).toFixed(2);
+    }}
+    function resetAll() {{
+        var inputs = document.querySelectorAll('input[name^="adj_"]');
+        inputs.forEach(function(i) {{ i.value = 0; i.dispatchEvent(new Event('input')); }});
+    }}
+    </script>
+    '''
+    return render_page("Adjust Prices", content, user, "tools")
 
     saved_banner = ""
     if request.args.get("saved"):
@@ -50438,7 +50522,7 @@ def coil_calculator():
                 
                 # Apply the Finishing group's saved % adjustment to the per-sqm rate.
                 # The minimum charge is a fixed floor and must NOT scale with the %.
-                _fin_factor = _ft_factor(business, "finishing")
+                _fin_factor = _ft_factor(business.get("id") if business else None, "finishing")
                 if _fin_factor != 1.0:
                     _fin_min = fulltech_addon.MIN_CHARGE_JOB if is_coil else fulltech_addon.MIN_CHARGE_PIECE
                     for _fd in (n4_pvc, laser_pvc, plain_pvc, n4_only):
@@ -50666,7 +50750,7 @@ def tube_prices():
             
             # Apply this product group's saved % price adjustment (if any).
             # The minimum charge (R145) below is a fixed floor and does not scale.
-            price_per_m = round(price_per_m * _ft_factor(business, tube_type), 2)
+            price_per_m = round(price_per_m * _ft_factor(business.get("id") if business else None, tube_type), 2)
             
             total_meters = meters * qty
             subtotal = price_per_m * total_meters
@@ -50906,6 +50990,18 @@ def sheet_pieces():
             # Pass custom prices to calculator
             result = fulltech_addon.calc_sheet_piece(length, width, thickness, finish, custom_prices)
             
+            # Apply the Sheet/Plate Pieces group's saved % adjustment to the rate.
+            # The minimum charge (R222.52) is a fixed floor and must NOT scale with the %.
+            _pc_factor = _ft_factor(biz_id, "pieces")
+            if _pc_factor != 1.0:
+                _pc_fps = float(result.get("final_price_sqm", 0) or 0) * _pc_factor
+                _pc_sub = float(result.get("sqm", 0) or 0) * _pc_fps
+                _pc_min = fulltech_addon.MIN_CHARGE_PIECE
+                result["final_price_sqm"] = round(_pc_fps, 2)
+                result["subtotal"] = round(_pc_sub, 2)
+                result["total"] = round(max(_pc_sub, _pc_min), 2)
+                result["min_applied"] = _pc_sub < _pc_min
+            
             total_with_qty = result["total"] * qty
             
             result_html = f'''
@@ -50970,7 +51066,10 @@ def sheet_pieces():
     
     content = f'''
     <div class="card">
-        <h2 style="margin-bottom:20px;">📐 Sheet/Plate Pieces</h2>
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:20px;">
+            <h2 style="margin:0;">📐 Sheet/Plate Pieces</h2>
+            <a href="/tools/price-adjust" class="btn btn-secondary">Adjust Prices</a>
+        </div>
         <p style="color:var(--text-muted);margin-bottom:20px;">
             Standard sheet: 2500 x 1250mm<br>
             Pieces ≥ 1m²: +40% | Pieces < 1m²: +60%
@@ -51064,6 +51163,7 @@ def smart_quote():
     if request.method == "POST" and request.headers.get("X-Requested-With") == "XMLHttpRequest":
         data = request.get_json()
         item_type = data.get("type", "")
+        _q_biz_id = business.get("id") if business else None
         
         try:
             if item_type == "coil":
@@ -51077,6 +51177,14 @@ def smart_quote():
                 )
                 finish = data.get("finish", "N4 + PVC")
                 finish_result = fulltech_addon.calc_finish(result["sqm"], finish, float(data.get("thickness") or 0), True)
+                
+                # Apply Coil Finishing % adjustment to the rate (min charge stays fixed)
+                _q_fin = _ft_factor(_q_biz_id, "finishing")
+                if _q_fin != 1.0:
+                    _q_ps = finish_result["price_sqm"] * _q_fin
+                    _q_sub = result["sqm"] * _q_ps
+                    finish_result["price_sqm"] = round(_q_ps, 2)
+                    finish_result["total"] = round(max(_q_sub, fulltech_addon.MIN_CHARGE_JOB), 2)
                 
                 # Calculate price per kg
                 kg_sqm = result.get("kg_per_sqm", 0)
@@ -51120,6 +51228,9 @@ def smart_quote():
                     price_per_m = 0
                     desc = "Unknown"
                 
+                # Apply this product group's % adjustment (min charge stays fixed)
+                price_per_m = round(price_per_m * _ft_factor(_q_biz_id, tube_type), 2)
+                
                 total_m = meters * qty
                 subtotal = price_per_m * total_m
                 total = max(subtotal, 145)
@@ -51141,6 +51252,14 @@ def smart_quote():
                     data.get("finish", "N4 + PVC")
                 )
                 qty = int(data.get("qty") or 1)
+                
+                # Apply Sheet/Plate Pieces % adjustment to the rate (min charge stays fixed)
+                _q_pc = _ft_factor(_q_biz_id, "pieces")
+                if _q_pc != 1.0:
+                    _q_fps = float(result.get("final_price_sqm", 0) or 0) * _q_pc
+                    _q_sub = float(result.get("sqm", 0) or 0) * _q_fps
+                    result["final_price_sqm"] = round(_q_fps, 2)
+                    result["total"] = round(max(_q_sub, fulltech_addon.MIN_CHARGE_PIECE), 2)
                 
                 return json.dumps({
                     "success": True,
