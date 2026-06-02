@@ -96,6 +96,36 @@ _MARKUP_TABLE = [
 ]
 
 
+def _parse_price(raw):
+    """Parse a price/number string robustly and never raise.
+
+    Accepts the common ways prices get typed, including SA and US formats:
+      1500.00, 1500,00, 1 500.00, 1 500,00, 1,500.00, R 150,00
+    Returns a float (0.0 if the value cannot be parsed)."""
+    s = re.sub(r"[^0-9.,\-]", "", str(raw if raw is not None else ""))
+    if not s or s in ("-", ".", ","):
+        return 0.0
+    has_dot = "." in s
+    has_comma = "," in s
+    if has_dot and has_comma:
+        # The right-most separator is the decimal point; the other is a thousands separator.
+        if s.rfind(",") > s.rfind("."):
+            s = s.replace(".", "").replace(",", ".")
+        else:
+            s = s.replace(",", "")
+    elif has_comma:
+        # Only commas present. A single comma with 1-2 trailing digits is a decimal
+        # comma (SA style); otherwise treat commas as thousands separators.
+        if s.count(",") == 1 and len(s.split(",")[-1]) in (1, 2):
+            s = s.replace(",", ".")
+        else:
+            s = s.replace(",", "")
+    try:
+        return round(float(s), 2)
+    except Exception:
+        return 0.0
+
+
 def _detect_markup_from_description(description):
     """Return (markup_decimal, label) for a stock description or (None, None) if no rule matches.
     Note: returns the BASE markup. Admin fee is added by _detect_markup() at the top level."""
@@ -1421,16 +1451,9 @@ def register_stock_routes(app, db, login_required, Auth, render_page,
             code = request.form.get("code", "").strip()
             description = request.form.get("description", "").strip()
             category = request.form.get("category", "").strip()
-            cost_price = request.form.get("cost_price", "0")
-            selling_price = request.form.get("selling_price", "0")
-            quantity = request.form.get("quantity", "0")
-            
-            try:
-                cost_price = float(cost_price.replace(",", "").replace("R", "").strip() or 0)
-                selling_price = float(selling_price.replace(",", "").replace("R", "").strip() or 0)
-                quantity = float(quantity.replace(",", "").strip() or 0)
-            except:
-                cost_price, selling_price, quantity = 0, 0, 0
+            cost_price = _parse_price(request.form.get("cost_price", "0"))
+            selling_price = _parse_price(request.form.get("selling_price", "0"))
+            quantity = _parse_price(request.form.get("quantity", "0"))
             
             # Server-side fallback: if selling price is blank/zero, auto-fill from
             # cost × (1 + markup) using the category-first lookup.
