@@ -164,6 +164,10 @@ def register_banking_routes(app, db, login_required, Auth, render_page,
                     <button onclick="approveMatch('{txn_id}', '{suggested_cat}')" class="btn" style="padding:5px 10px;font-size:11px;background:var(--green);border:none;color:white;border-radius:6px;">GOOD: {suggested_cat}</button>
                     <button onclick="askZaneBank('{txn_id}', '{safe_desc}', {debit}, {credit}, '{txn_date}')" class="btn" style="padding:5px 10px;font-size:11px;background:var(--primary);border:none;color:white;border-radius:6px;">Ask Zane</button>
                     <button onclick="openSplitModal('{txn_id}', '{safe_desc}', {debit}, {credit}, '{txn_date}')" class="btn" style="padding:5px 10px;font-size:11px;background:rgba(245,158,11,0.2);border:1px solid #f59e0b;color:#f59e0b;border-radius:6px;" title="Split into multiple categories">Split</button>
+                    <select class="form-input" style="width:120px;padding:4px;font-size:11px;" onchange="categorizeTransaction('{txn_id}', this.value, '{safe_desc}')">
+                        <option value="">Manual...</option>
+                        {category_options}
+                    </select>
                 </div>
                 '''
             else:
