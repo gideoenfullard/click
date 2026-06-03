@@ -57644,8 +57644,12 @@ def scan_inbox_page():
         const newNum = newField ? newField.value.trim() : '';
         
         if (!selectedId && !newNum) {{
-            alert('Pick an existing PO or enter a new PO number.');
-            return;
+            if (sel) {{
+                // Existing POs are listed — the user must pick one or type a number.
+                alert('Pick an existing PO or enter a new PO number.');
+                return;
+            }}
+            // No outstanding POs for this supplier — let the backend auto-pick the next PO number.
         }}
         
         const ext = currentItemData.extracted || currentItemData;
@@ -58968,6 +58972,11 @@ def api_scan_link_po():
         items = data.get("items", []) or []
         
         target_po = None
+        
+        # No PO chosen and no number typed → Zane auto-picks the next sequential PO number.
+        if not po_id and not new_po_num:
+            _all_pos = db.get("purchase_orders", {"business_id": biz_id}) or []
+            new_po_num = next_document_number("PO-", _all_pos, field="po_number")
         
         if po_id:
             target_po = db.get_one("purchase_orders", po_id)
