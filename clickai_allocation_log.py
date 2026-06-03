@@ -899,6 +899,69 @@ def register_ledger_routes(app, db, login_required, Auth, generate_id, now_fn, t
         except Exception as e:
             logger.error(f"[ALLOC REVERSE] Status update warning: {e}")
 
+        # 4. If this allocation is a CUSTOMER PAYMENT, remove ONE matching receipt so
+        #    the customer's Account Statement and calculated balance drop the duplicate
+        #    too. The GL is already reversed above; the allocation_log row (reversed) and
+        #    the REV- journal preserve the audit trail. Matching on customer + reference +
+        #    amount handles duplicates that share the same reference (only ONE is removed).
+        try:
+            if (alloc.get("source_table") == "receipts" or alloc.get("allocation_type") == "payment") and alloc.get("customer_name"):
+                _ref = (alloc.get("reference") or "").strip()
+                _cust_name = (alloc.get("customer_name") or "").strip().upper()
+                _custs = db.get("customers", {"business_id": biz_id, "name": alloc.get("customer_name")}) or []
+                _cid = _custs[0].get("id") if _custs else None
+                for _r in (db.get("receipts", {"business_id": biz_id}) or []):
+                    _r_cid = _r.get("customer_id")
+                    _r_name = (_r.get("customer_name") or "").strip().upper()
+                    # Must belong to this customer (by id or by name)
+                    if not ((_cid and _r_cid == _cid) or (_cust_name and _r_name == _cust_name)):
+                        continue
+                    if _ref and (_r.get("reference") or "").strip() != _ref:
+                        continue
+                    if abs(round(float(_r.get("amount", 0) or 0), 2) - amt) > 0.01:
+                        continue
+                    db.delete("receipts", _r.get("id"), biz_id)
+                    logger.info(f"[ALLOC REVERSE] Removed matching receipt {_r.get('id')} for {alloc.get('customer_name')} (ref={_ref}, R{amt:.2f})")
+                    break
+        except Exception as e:
+            logger.error(f"[ALLOC REVERSE] Receipt removal warning: {e}")
+
+        # 5. If this allocation is a SUPPLIER PAYMENT, remove the matching supplier_payment
+        #    so the supplier's statement and calculated balance drop the duplicate too.
+        #    The allocation_log source_id holds the payment's own id, so the exact record is
+        #    removed; we fall back to matching (supplier + reference + amount) if it no
+        #    longer resolves. Only ONE record is removed, so same-reference duplicates are
+        #    handled correctly. GL is already reversed; allocation_log + REV- keep the audit.
+        try:
+            if (alloc.get("source_table") == "supplier_payments" or alloc.get("allocation_type") == "supplier_payment") and alloc.get("supplier_name"):
+                _sid = (alloc.get("source_id") or "").strip()
+                _removed = False
+                if _sid:
+                    _sp = db.get_one("supplier_payments", _sid)
+                    if _sp and _sp.get("business_id") == biz_id:
+                        db.delete("supplier_payments", _sid, biz_id)
+                        _removed = True
+                        logger.info(f"[ALLOC REVERSE] Removed supplier payment {_sid} for {alloc.get('supplier_name')} (R{amt:.2f})")
+                if not _removed:
+                    _ref = (alloc.get("reference") or "").strip()
+                    _sup_name = (alloc.get("supplier_name") or "").strip().upper()
+                    _sups = db.get("suppliers", {"business_id": biz_id, "name": alloc.get("supplier_name")}) or []
+                    _spid = _sups[0].get("id") if _sups else None
+                    for _p in (db.get("supplier_payments", {"business_id": biz_id}) or []):
+                        _p_sid = _p.get("supplier_id")
+                        _p_name = (_p.get("supplier_name") or "").strip().upper()
+                        if not ((_spid and _p_sid == _spid) or (_sup_name and _p_name == _sup_name)):
+                            continue
+                        if _ref and (_p.get("reference") or "").strip() != _ref:
+                            continue
+                        if abs(round(float(_p.get("amount", 0) or 0), 2) - amt) > 0.01:
+                            continue
+                        db.delete("supplier_payments", _p.get("id"), biz_id)
+                        logger.info(f"[ALLOC REVERSE] Removed matching supplier payment {_p.get('id')} for {alloc.get('supplier_name')} (ref={_ref}, R{amt:.2f})")
+                        break
+        except Exception as e:
+            logger.error(f"[ALLOC REVERSE] Supplier payment removal warning: {e}")
+
         logger.info(f"[ALLOC REVERSE] {alloc_id} reversed by {user.get('name','') if user else ''}")
         flash(f"Allocation reversed — opposite GL journal REV-{ref} posted", "success")
         return redirect("/ledger/duplicates")
