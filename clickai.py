@@ -57592,6 +57592,14 @@ def scan_inbox_page():
         // Show / hide per-item allocation column
         const splitCols = document.querySelectorAll('.alloc-col');
         splitCols.forEach(c => {{ c.style.display = (intent === 'split') ? '' : 'none'; }});
+        // COS = pure expense → never received into stock. Switch GRV off so they can't conflict.
+        if (intent === 'cos') {{
+            const _grvCb = document.getElementById('grvToggle');
+            if (_grvCb && _grvCb.checked) {{
+                _grvCb.checked = false;
+                onGrvToggleChange();
+            }}
+        }}
     }}
     
     function toggleSplitMode() {{
@@ -57834,6 +57842,11 @@ def scan_inbox_page():
         var list = document.getElementById('grvLineList');
         if (!cb || !list) return;
         if (cb.checked) {{
+            // Receiving into stock contradicts a pure-COS (expense) allocation → switch to Stock.
+            const _alloc = document.getElementById('selectedAllocIntent');
+            if (_alloc && _alloc.value === 'cos') {{
+                selectAllocIntent('stock');
+            }}
             list.style.display = 'block';
             populateGrvLineList();
         }} else {{
@@ -59002,7 +59015,33 @@ def api_scan_link_po():
                             supplier_id = _s.get("id", "")
                             break
                 
-                # Create new draft PO
+                # Build proper PO line items from the scanned invoice items so the
+                # auto-created PO is a real PO (not empty) and the invoice lines match it.
+                _po_items = []
+                _po_subtotal = 0.0
+                for _ii in items:
+                    _desc = (_ii.get("description") or "").strip()
+                    if not _desc:
+                        continue
+                    _qty = float(_ii.get("quantity", _ii.get("qty", 1)) or 1)
+                    _price = float(_ii.get("unit_price", _ii.get("price", 0)) or 0)
+                    _stated = float(_ii.get("line_total", 0) or 0)
+                    _ltot = round(_stated if _stated > 0 else _qty * _price, 2)
+                    _po_items.append({
+                        "description": _desc,
+                        "code": (_ii.get("code") or _ii.get("stock_code") or "").strip(),
+                        "qty": _qty,
+                        "price": _price,
+                        "total": _ltot,
+                        "stock_id": _ii.get("stock_id") or "",
+                        "qty_received": 0
+                    })
+                    _po_subtotal += _ltot
+                _po_subtotal = round(_po_subtotal, 2)
+                _po_vat = round(_po_subtotal * 0.15, 2)
+                _po_total = round(_po_subtotal + _po_vat, 2)
+                
+                # Create new draft PO (populated from the invoice)
                 new_po = {
                     "id": generate_id(),
                     "business_id": biz_id,
@@ -59010,10 +59049,10 @@ def api_scan_link_po():
                     "supplier_id": supplier_id or "",
                     "supplier_name": supplier_name or "Unknown",
                     "date": today(),
-                    "items": json.dumps([]),  # empty — items come from the invoice
-                    "subtotal": 0,
-                    "vat": 0,
-                    "total": 0,
+                    "items": json.dumps(_po_items),
+                    "subtotal": _po_subtotal,
+                    "vat": _po_vat,
+                    "total": _po_total,
                     "status": "sent",
                     "notes": "Auto-created from scanned invoice",
                     "created_by": user.get("id") if user else None,
