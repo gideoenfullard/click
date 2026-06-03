@@ -56689,7 +56689,7 @@ def scan_inbox_page():
                 // Supplier known, no PO at all
                 poBannerHtml = `
                 <div style="margin:10px 0;padding:10px;background:rgba(251,191,36,0.08);border:1px solid rgba(251,191,36,0.3);border-radius:8px;font-size:12px;color:var(--text-muted);">
-                    📭 No outstanding POs for ${{_matchedSupplierName}}. Type a new PO number below to create one, or leave blank for a cash purchase.
+                    📭 No outstanding POs for ${{_matchedSupplierName}}. Click Create & link to auto-assign the next PO number, or type your own first. To record a cash purchase instead, just process the invoice without linking a PO.
                     <div style="display:flex;gap:8px;margin-top:8px;">
                         <input id="po_picker_new" type="text" placeholder="New PO #" style="flex:1;padding:6px;background:var(--bg);border:1px solid var(--border);border-radius:4px;color:var(--text);font-size:12px;" />
                         <button onclick="applyPoPicker()" style="padding:6px 12px;background:var(--primary);color:white;border:none;border-radius:4px;cursor:pointer;font-size:12px;">Create & link</button>
