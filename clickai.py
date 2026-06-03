@@ -57048,16 +57048,13 @@ def scan_inbox_page():
                 <div style="display:grid;grid-template-columns:1fr 1fr;gap:15px;">
                     <!-- LEFT: Book as Expense (paid now) -->
                     <div style="padding:12px;background:rgba(249,115,22,0.08);border:1px solid rgba(249,115,22,0.3);border-radius:8px;">
-                        <div style="font-size:13px;font-weight:600;color:var(--orange);margin-bottom:8px;">Paid Now / On Account (Expense)</div>
-                        <div style="font-size:11px;color:var(--text-muted);margin-bottom:8px;">How was it paid?</div>
+                        <div style="font-size:13px;font-weight:600;color:var(--orange);margin-bottom:8px;">Paid Now (Expense)</div>
+                        <div style="font-size:11px;color:var(--text-muted);margin-bottom:8px;">How was it paid? For credit purchases, use Supplier Invoice on the right.</div>
                         <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px;margin-bottom:6px;" id="payMethodBtns">
                             <button type="button" class="btn" onclick="selectPayMethod('cash')" id="pmCash" style="padding:8px;font-size:12px;background:#10b981;color:white;border:2px solid #10b981;">💵 Cash</button>
                             <button type="button" class="btn" onclick="selectPayMethod('petty')" id="pmPetty" style="padding:8px;font-size:12px;background:var(--card);color:var(--text);border:2px solid var(--border);">🪙 Petty</button>
                             <button type="button" class="btn" onclick="selectPayMethod('card')" id="pmCard" style="padding:8px;font-size:12px;background:var(--card);color:var(--text);border:2px solid var(--border);">💳 Card</button>
                             <button type="button" class="btn" onclick="selectPayMethod('eft')" id="pmEft" style="padding:8px;font-size:12px;background:var(--card);color:var(--text);border:2px solid var(--border);">🏦 EFT</button>
-                        </div>
-                        <div style="margin-bottom:10px;">
-                            <button type="button" class="btn" onclick="selectPayMethod('account')" id="pmAccount" style="width:100%;padding:8px;font-size:12px;background:var(--card);color:var(--text);border:2px solid var(--border);">🏦 On Account (pay later)</button>
                         </div>
                         <input type="hidden" id="selectedPayMethod" value="cash">
                         <button class="btn" onclick="processAs('expense')" style="width:100%;padding:12px;background:var(--orange);color:white;font-weight:600;">📋 Book as Expense</button>
