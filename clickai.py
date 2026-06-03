@@ -27939,6 +27939,7 @@ def customer_view(customer_id):
             <a href="/invoice/new?customer_id={customer_id}&mode=freetext" class="btn btn-secondary">➕ Free Text Invoice</a>
             <a href="/invoice/new?customer_id={customer_id}" class="btn btn-primary">➕ New Invoice</a>
             {f'<button onclick="document.getElementById(' + chr(39) + 'paymentModal' + chr(39) + ').style.display=' + chr(39) + 'flex' + chr(39) + '" class="btn btn-primary" style="background:#16a34a;">💰 Record Payment</button>' if can_see_balances else ''}
+            {f'<a href="/customer/{customer_id}/opening-balance" class="btn btn-secondary">Add Opening Balance</a>' if can_see_balances else ''}
         </div>
     </div>
     
@@ -28570,6 +28571,138 @@ def customer_view(customer_id):
     
     _t("cv_html_done")
     return render_page(customer.get("name", "Customer"), content, user, "customers")
+
+
+@app.route("/customer/<customer_id>/opening-balance", methods=["GET", "POST"])
+@login_required
+def customer_opening_balance(customer_id):
+    """Capture a migration opening balance for a single customer.
+
+    Some balances may not carry over from a previous system (e.g. Sage). This
+    lets a bookkeeper enter the missing amount manually. It mirrors exactly how
+    the Sage import records a customer opening balance:
+      • positive (customer owes you)  -> ONE invoice, reference OPENING-*,
+        NO VAT and NO sales income (it is a migration balance, not a new sale).
+      • negative (customer in credit) -> ONE opening receipt (reference OPENING:).
+    calc_customer_balance picks these up, so the balance shows on the customer's
+    account, statement and aging — identical to balances that imported correctly.
+    Platform-wide: works for any business, no Fulltech-specific logic, no SQL.
+    """
+    user = Auth.get_current_user()
+    business = Auth.get_current_business()
+    biz_id = business.get("id") if business else None
+    if not biz_id:
+        return redirect("/customers")
+
+    role = get_user_role()
+    if role not in ("owner", "admin", "manager", "bookkeeper", "accountant"):
+        flash("You don't have permission to capture opening balances.", "error")
+        return redirect(f"/customer/{customer_id}")
+
+    customer = db.get_one("customers", customer_id)
+    if not customer:
+        return redirect("/customers")
+
+    if request.method == "POST":
+        try:
+            amount = round(float(request.form.get("amount", 0) or 0), 2)
+        except (TypeError, ValueError):
+            amount = 0.0
+        ob_date = (request.form.get("date") or "").strip() or "2026-05-01"
+
+        if amount == 0:
+            flash("Enter an opening balance amount (positive = customer owes you).", "error")
+            return redirect(f"/customer/{customer_id}/opening-balance")
+
+        code = (customer.get("code") or customer_id[:8] or "CUST").strip()
+
+        if amount > 0:
+            # Customer owes us -> opening invoice (no VAT, no sales income)
+            inv_num = f"OPENING-{code}-OB"
+            existing = db.get("invoices", {"business_id": biz_id, "customer_id": customer_id}) or []
+            if any((i.get("invoice_number") or "") == inv_num for i in existing):
+                flash(f"An opening balance ({inv_num}) already exists for this customer. Edit or delete it first.", "error")
+                return redirect(f"/customer/{customer_id}")
+            invoice = {
+                "id": generate_id(),
+                "business_id": biz_id,
+                "invoice_number": inv_num,
+                "date": ob_date,
+                "customer_id": customer_id,
+                "customer_name": customer.get("name", ""),
+                "items": [],
+                "subtotal": amount,
+                "vat": 0,
+                "total": amount,
+                "status": "unpaid",
+                "reference": "Opening balance",
+                "notes": "OPENING_BALANCE_MANUAL",
+                "created_at": now(),
+                "created_by": user.get("id") if user else None,
+            }
+            ok, err = db.save("invoices", invoice)
+            if not ok:
+                flash(f"Could not save opening balance: {err}", "error")
+                return redirect(f"/customer/{customer_id}/opening-balance")
+            logger.info(f"[OPENING BALANCE] Customer {customer_id} ({customer.get('name','')}) invoice {inv_num} R{amount:.2f} dated {ob_date}")
+        else:
+            # Customer in credit -> opening receipt (mirror the import's payments path)
+            rec_ref = f"OPENING:{code}-OB"
+            existing_rec = db.get("receipts", {"business_id": biz_id, "customer_id": customer_id}) or []
+            if any((r.get("reference") or "") == rec_ref for r in existing_rec):
+                flash(f"An opening credit ({rec_ref}) already exists for this customer. Edit or delete it first.", "error")
+                return redirect(f"/customer/{customer_id}")
+            receipt = {
+                "id": generate_id(),
+                "business_id": biz_id,
+                "customer_id": customer_id,
+                "customer_name": customer.get("name", ""),
+                "amount": abs(amount),
+                "date": ob_date,
+                "reference": rec_ref,
+                "created_by": user.get("id") if user else None,
+                "created_at": now(),
+            }
+            ok, err = db.save("receipts", receipt)
+            if not ok:
+                flash(f"Could not save opening credit: {err}", "error")
+                return redirect(f"/customer/{customer_id}/opening-balance")
+            logger.info(f"[OPENING BALANCE] Customer {customer_id} ({customer.get('name','')}) credit {rec_ref} R{abs(amount):.2f} dated {ob_date}")
+
+        flash(f"Opening balance of {money(amount)} captured for {customer.get('name','')}.", "success")
+        return redirect(f"/customer/{customer_id}")
+
+    # GET — render the capture form
+    content = f'''
+    <div style="max-width:560px;margin:0 auto;">
+        <a href="/customer/{customer_id}" style="color:var(--text-muted);">← Back to {safe_string(customer.get("name", "Customer"))}</a>
+        <div class="card" style="margin-top:16px;">
+            <h2 style="margin:0 0 6px 0;">Add Opening Balance</h2>
+            <p style="color:var(--text-muted);font-size:13px;margin:0 0 20px 0;">
+                For <strong>{safe_string(customer.get("name", ""))}</strong>. Use this to capture a balance that did not carry over from your previous system.
+                It is recorded as a migration opening balance (no VAT, not treated as new sales) and shows on the customer's account, statement and aging.
+            </p>
+            <form method="POST" action="/customer/{customer_id}/opening-balance">
+                <div style="margin-bottom:14px;">
+                    <label style="display:block;margin-bottom:4px;font-weight:600;font-size:13px;">Opening Balance Amount</label>
+                    <input type="number" name="amount" placeholder="0.00" step="0.01" required
+                           style="width:100%;padding:12px;border:1px solid var(--border);border-radius:6px;background:var(--bg);color:var(--text);font-size:20px;font-weight:700;">
+                    <div style="font-size:11px;color:var(--text-muted);margin-top:4px;">Positive = the customer owes you. Use a negative amount only if the customer is in credit.</div>
+                </div>
+                <div style="margin-bottom:20px;">
+                    <label style="display:block;margin-bottom:4px;font-weight:600;font-size:13px;">Date</label>
+                    <input type="date" name="date" value="2026-05-01"
+                           style="width:100%;padding:10px;border:1px solid var(--border);border-radius:6px;background:var(--bg);color:var(--text);">
+                </div>
+                <div style="display:flex;gap:10px;">
+                    <button type="submit" class="btn btn-primary" style="flex:1;">Save Opening Balance</button>
+                    <a href="/customer/{customer_id}" class="btn btn-secondary">Cancel</a>
+                </div>
+            </form>
+        </div>
+    </div>
+    '''
+    return render_page("Add Opening Balance", content, user, "customers")
 
 
 # ── COMPREHENSIVE FORM HELPERS (for supplier + customer new/edit forms) ──
