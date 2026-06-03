@@ -3378,13 +3378,27 @@ def register_pos_routes(app, db, login_required, Auth, render_page,
                     <p style="color:rgba(255,255,255,0.5);font-size:12px;margin:0;">Adding custom items for existing supplier</p>
                 `;
             } else {
-                // New supplier - show full form
+                // New supplier OR pick an existing one from the dropdown
+                let qpSuppOpts = '<option value="">— Type a new supplier below —</option>';
+                (window.supplierList || []).forEach(s => {
+                    if (s.id && s.id !== 'NEW') {
+                        const nm = (s.name || '').replace(/"/g, '&quot;');
+                        qpSuppOpts += `<option value="${s.id}" data-name="${nm}">${s.name || ''}</option>`;
+                    }
+                });
                 document.getElementById('qpSupplierSection').innerHTML = `
                     <h3 style="margin:0 0 15px 0;color:#3b82f6;font-size:16px;">🏭 Supplier Details</h3>
+                    <div style="margin-bottom:15px;">
+                        <label style="display:block;margin-bottom:5px;color:white;font-size:13px;">Pick an existing supplier</label>
+                        <select id="qpSupplierSelect" onchange="qpOnSupplierSelect()"
+                            style="width:100%;padding:10px;border-radius:6px;border:1px solid rgba(255,255,255,0.2);background:#1a1a2e;color:white;font-size:14px;box-sizing:border-box;">
+                            ${qpSuppOpts}
+                        </select>
+                    </div>
                     <div style="display:grid;grid-template-columns:1fr 1fr;gap:15px;">
                         <div>
                             <label style="display:block;margin-bottom:5px;color:white;font-size:13px;">Supplier Name *</label>
-                            <input type="text" id="qpSupplierName" placeholder="Company name" 
+                            <input type="text" id="qpSupplierName" placeholder="Or type a new supplier name" 
                                 style="width:100%;padding:10px;border-radius:6px;border:1px solid rgba(255,255,255,0.2);background:#1a1a2e;color:white;font-size:14px;box-sizing:border-box;">
                         </div>
                         <div>
@@ -3425,6 +3439,32 @@ def register_pos_routes(app, db, login_required, Auth, render_page,
         
         function closeQuickPOModal() {
             document.getElementById('quickPOModal').style.display = 'none';
+        }
+        
+        // Quick PO supplier dropdown: pick an existing supplier, or leave blank to type a new one.
+        function qpOnSupplierSelect() {
+            const sel = document.getElementById('qpSupplierSelect');
+            if (!sel) return;
+            const opt = sel.options[sel.selectedIndex];
+            const nameEl = document.getElementById('qpSupplierName');
+            if (sel.value) {
+                // Existing supplier chosen — lock the name to it and remember the id
+                qpSelectedSupplierId = sel.value;
+                if (nameEl) {
+                    nameEl.value = (opt && opt.getAttribute('data-name')) || '';
+                    nameEl.readOnly = true;
+                    nameEl.style.opacity = '0.7';
+                }
+            } else {
+                // Blank — manual entry of a new supplier
+                qpSelectedSupplierId = null;
+                if (nameEl) {
+                    nameEl.value = '';
+                    nameEl.readOnly = false;
+                    nameEl.style.opacity = '1';
+                    nameEl.focus();
+                }
+            }
         }
         
         function qpAddLine() {
