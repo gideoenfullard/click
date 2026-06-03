@@ -2171,9 +2171,10 @@ def register_pos_routes(app, db, login_required, Auth, render_page,
             const grandTotal = Math.round((subtotal + vat) * 100) / 100;
             const itemCount = cart.reduce((sum, item) => sum + item.qty, 0);
             
-            // SA rounding to nearest 10c (1c/5c coins phased out)
-            // Applies to ALL payment methods — VAT calc creates fractional cents that must be rounded
-            const paymentTotal = Math.round(grandTotal * 10) / 10;
+            // SA cash rounding to nearest 10c (1c/5c coins phased out).
+            // Only physical CASH rounds — card and account sales stay exact to the cent
+            // so nothing rounded ever reaches the accounting / debtors side.
+            const paymentTotal = (method === 'cash') ? (Math.round(grandTotal * 10) / 10) : grandTotal;
             const roundingAdj = Math.round((paymentTotal - grandTotal) * 100) / 100;
             
             let cashReceived = 0;
