@@ -62187,7 +62187,8 @@ try:
             has_reactor_hud, jarvis_hud_header, jarvis_techline,
             AuditLog, Email, IndustryKnowledge,
             JARVIS_HUD_CSS, THEME_REACTOR_SKINS,
-            _anthropic_client
+            _anthropic_client,
+            calc_all_customer_balances, calc_all_supplier_balances
         )
         logger.info("[REPORTS] Routes registered ✓")
 except Exception as e:

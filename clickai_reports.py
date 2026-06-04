@@ -27,7 +27,8 @@ def register_report_routes(app, db, login_required, Auth, render_page,
                            has_reactor_hud, jarvis_hud_header, jarvis_techline,
                            AuditLog, Email, IndustryKnowledge,
                            JARVIS_HUD_CSS, THEME_REACTOR_SKINS,
-                           _anthropic_client):
+                           _anthropic_client,
+                           calc_all_customer_balances=None, calc_all_supplier_balances=None):
     """Register all Report routes with the Flask app."""
 
     # Alias for compatibility
@@ -388,7 +389,13 @@ def register_report_routes(app, db, login_required, Auth, render_page,
         biz_id = business.get("id") if business else None
         
         customers = db.get("customers", {"business_id": biz_id}) if biz_id else []
-        debtors = [c for c in customers if float(c.get("balance", 0)) > 0]
+        # Use CALCULATED balances (receipt/payment-aware) instead of the stored field, so the
+        # report reflects bank allocations and matches the customer page and Pulse.
+        if biz_id and calc_all_customer_balances:
+            _calc = calc_all_customer_balances(biz_id) or {}
+            for c in customers:
+                c["balance"] = round(float(_calc.get(c.get("id"), 0) or 0), 2)
+        debtors = [c for c in customers if float(c.get("balance", 0)) > 0.01]
         debtors = sorted(debtors, key=lambda x: float(x.get("balance", 0)), reverse=True)
         
         # Get all unpaid customer invoices
@@ -538,7 +545,13 @@ def register_report_routes(app, db, login_required, Auth, render_page,
         biz_id = business.get("id") if business else None
         
         suppliers = db.get("suppliers", {"business_id": biz_id}) if biz_id else []
-        creditors = [s for s in suppliers if float(s.get("balance", 0)) > 0]
+        # Use CALCULATED balances (payment-aware) instead of the stored field, so the
+        # report reflects bank allocations and matches the supplier page and Pulse.
+        if biz_id and calc_all_supplier_balances:
+            _calc = calc_all_supplier_balances(biz_id) or {}
+            for s in suppliers:
+                s["balance"] = round(float(_calc.get(s.get("id"), 0) or 0), 2)
+        creditors = [s for s in suppliers if float(s.get("balance", 0)) > 0.01]
         creditors = sorted(creditors, key=lambda x: float(x.get("balance", 0)), reverse=True)
         
         # Get all unpaid supplier invoices
