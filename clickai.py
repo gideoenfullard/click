@@ -29082,6 +29082,165 @@ def audit_reverse_receipt(receipt_id):
     return redirect("/audit")
 
 
+# ── ONE-TIME OPENING BALANCE TOOL (cutover from Sage, 01 May 2026) ──
+# Posts the agreed fresh-start opening balance. Balance-sheet accounts only — debtors
+# and creditors are excluded because they already live in the sub-ledger (the OPENING
+# invoices), so including them here would double-count. The preview shows everything;
+# nothing is posted until the user explicitly types POST. Posts to `journals` dated
+# 30 Apr 2026 so it sits just before the May activity. Does not touch any other data.
+OPENING_BALANCE_REF = "OPENING-BAL-2026"
+OPENING_BALANCE_DATE = "2026-04-30"
+OPENING_BALANCE_LINES = [
+    {"code": "1300", "label": "Inventory / Stock", "debit": 755578.94, "credit": 0.0},
+    {"code": "7400", "label": "Loan To / (From) Subsidiary Co's", "debit": 200000.00, "credit": 0.0},
+    {"code": "8100", "label": "POS Cash Control", "debit": 115466.44, "credit": 0.0},
+    {"code": "8410", "label": "Petty Cash", "debit": 5322.13, "credit": 0.0},
+    {"code": "1000", "label": "Bank - Standard Bank (overdraft)", "debit": 0.0, "credit": 722259.46},
+    {"code": "5600", "label": "Instalment Sale Creditors", "debit": 0.0, "credit": 177808.03},
+    {"code": "9500", "label": "VAT / Tax Control (net payable)", "debit": 0.0, "credit": 24644.43},
+    {"code": "9100", "label": "GRN Accrual Account", "debit": 0.0, "credit": 260.02},
+    {"code": "9300", "label": "Taxation Payable", "debit": 0.0, "credit": 10.00},
+    {"code": "5200", "label": "Retained Income (balancing figure)", "debit": 0.0, "credit": 151385.57},
+]
+
+
+@app.route("/opening-balance")
+@login_required
+def opening_balance_tool():
+    user = Auth.get_current_user()
+    business = Auth.get_current_business()
+    biz_id = business.get("id") if business else None
+    if not biz_id:
+        return redirect("/")
+    if get_user_role() not in ("owner", "admin"):
+        return redirect("/")
+
+    already = bool(db.get("journals", {"business_id": biz_id, "reference": OPENING_BALANCE_REF}) or [])
+
+    def _gl_bal(code):
+        t = 0.0
+        for _tbl in ("journals", "journal_entries"):
+            try:
+                for r in (db.get(_tbl, {"business_id": biz_id, "account_code": code}) or []):
+                    t += float(r.get("debit", 0) or 0) - float(r.get("credit", 0) or 0)
+            except Exception:
+                pass
+        return round(t, 2)
+
+    bank_now = _gl_bal("1000")
+    bank_after = round(bank_now - 722259.46, 2)
+    total_dr = round(sum(l["debit"] for l in OPENING_BALANCE_LINES), 2)
+    total_cr = round(sum(l["credit"] for l in OPENING_BALANCE_LINES), 2)
+    balanced = abs(total_dr - total_cr) < 0.01
+
+    rows = ""
+    for l in OPENING_BALANCE_LINES:
+        rows += f'''<tr style="border-bottom:1px solid var(--border);">
+            <td style="padding:7px 10px;font-family:monospace;">{l["code"]}</td>
+            <td style="padding:7px 10px;">{l["label"]}</td>
+            <td style="padding:7px 10px;text-align:right;">{money(l["debit"]) if l["debit"] else ""}</td>
+            <td style="padding:7px 10px;text-align:right;">{money(l["credit"]) if l["credit"] else ""}</td>
+        </tr>'''
+
+    if already:
+        action_block = '''<div style="background:rgba(16,185,129,0.10);border:1px solid #10b981;border-radius:8px;padding:14px;color:#10b981;font-weight:600;">
+            This opening balance has already been posted. Nothing further to do here. Check the Audit page to review the result.</div>'''
+    else:
+        action_block = f'''
+        <div style="background:rgba(239,68,68,0.08);border:1px solid #ef4444;border-radius:10px;padding:16px;margin-top:8px;">
+            <div style="font-weight:700;color:#ef4444;margin-bottom:8px;">Before you post — make sure your CSV backups are saved.</div>
+            <p style="font-size:13px;color:var(--text-muted);margin:0 0 12px 0;">
+                This posts the journal above to your General Ledger, dated 30 April 2026. It does not touch your invoices, payments, POS, or banking. It cannot be undone from here — only restored from your backup. Verify each account code against your chart of accounts first.
+            </p>
+            <form method="POST" action="/opening-balance/post" onsubmit="return confirm('Post the opening balance journal? Make sure your backups are saved. This cannot be undone from the app.');">
+                <label style="font-size:13px;display:block;margin-bottom:6px;">Type <strong>POST</strong> to confirm:</label>
+                <input type="text" name="confirm" autocomplete="off" style="padding:8px 10px;border:1px solid var(--border);border-radius:6px;background:var(--card);color:var(--text);font-size:14px;width:140px;margin-right:8px;">
+                <button type="submit" class="btn" style="background:#ef4444;color:#fff;padding:9px 18px;font-weight:700;">Post Opening Balance</button>
+            </form>
+        </div>'''
+
+    content = f'''
+    <div style="max-width:900px;margin:0 auto;">
+        <h1 style="margin:0 0 4px 0;">Opening Balance (cutover from Sage)</h1>
+        <p style="color:var(--text-muted);font-size:13px;margin:0 0 16px 0;">
+            One-time fresh-start opening balance for {safe_string(business.get("name", "this business"))}, dated 30 April 2026.
+            Balance-sheet accounts only. Debtors and creditors are intentionally excluded — they already live in the sub-ledger (your OPENING invoices), so posting them here would double-count.
+        </p>
+
+        <div class="card" style="margin-bottom:16px;">
+            <h2 style="margin:0 0 12px 0;font-size:16px;">Proposed opening journal</h2>
+            <table style="width:100%;border-collapse:collapse;font-size:13px;">
+                <tr style="border-bottom:2px solid var(--border);text-align:left;color:var(--text-muted);font-size:11px;">
+                    <th style="padding:8px 10px;">Code</th>
+                    <th style="padding:8px 10px;">Account</th>
+                    <th style="padding:8px 10px;text-align:right;">Debit</th>
+                    <th style="padding:8px 10px;text-align:right;">Credit</th>
+                </tr>
+                {rows}
+                <tr style="border-top:2px solid var(--border);font-weight:700;">
+                    <td style="padding:9px 10px;" colspan="2">TOTAL</td>
+                    <td style="padding:9px 10px;text-align:right;">{money(total_dr)}</td>
+                    <td style="padding:9px 10px;text-align:right;">{money(total_cr)}</td>
+                </tr>
+            </table>
+            <p style="font-size:12px;margin:10px 0 0 0;color:{'#10b981' if balanced else '#ef4444'};font-weight:600;">
+                {"Balanced — debits equal credits." if balanced else "NOT balanced — do not post; tell the developer."}
+            </p>
+        </div>
+
+        <div class="card" style="margin-bottom:16px;">
+            <h2 style="margin:0 0 12px 0;font-size:16px;">Effect on the Bank GL</h2>
+            <table style="width:100%;border-collapse:collapse;font-size:13px;">
+                <tr style="border-bottom:1px solid var(--border);"><td style="padding:8px 10px;">Bank GL (1000) now</td><td style="padding:8px 10px;text-align:right;font-weight:600;">{money(bank_now)}</td></tr>
+                <tr style="border-bottom:1px solid var(--border);"><td style="padding:8px 10px;">Opening balance posted</td><td style="padding:8px 10px;text-align:right;color:#ef4444;">{money(-722259.46)}</td></tr>
+                <tr><td style="padding:8px 10px;font-weight:700;">Bank GL after posting</td><td style="padding:8px 10px;text-align:right;font-weight:700;">{money(bank_after)}</td></tr>
+            </table>
+            <p style="font-size:12px;color:var(--text-muted);margin:10px 0 0 0;">
+                After posting, the Bank GL should be close to your real bank balance. Any small remaining gap is the unallocated bank lines and the POS card double-booking, which are handled separately.
+            </p>
+        </div>
+
+        {action_block}
+    </div>
+    '''
+    return render_page("Opening Balance", content, user, "")
+
+
+@app.route("/opening-balance/post", methods=["POST"])
+@login_required
+def opening_balance_post():
+    business = Auth.get_current_business()
+    biz_id = business.get("id") if business else None
+    if not biz_id:
+        return redirect("/")
+    if get_user_role() not in ("owner", "admin"):
+        flash("Permission denied.", "error")
+        return redirect("/opening-balance")
+    if (request.form.get("confirm") or "").strip().upper() != "POST":
+        flash("Type POST to confirm before posting.", "error")
+        return redirect("/opening-balance")
+    if db.get("journals", {"business_id": biz_id, "reference": OPENING_BALANCE_REF}) or []:
+        flash("Opening balance was already posted — nothing to do.", "error")
+        return redirect("/opening-balance")
+
+    entries = [{"account_code": l["code"], "debit": l["debit"], "credit": l["credit"]} for l in OPENING_BALANCE_LINES]
+    create_journal_entry(biz_id, OPENING_BALANCE_DATE,
+                         "Opening Balance @ cutover (01 May 2026)", OPENING_BALANCE_REF, entries)
+    try:
+        if log_allocation:
+            _uid, _uname = get_acting_user()
+            log_allocation(business_id=biz_id, allocation_type="opening_balance", source_table="journals",
+                           source_id=OPENING_BALANCE_REF, description="Opening balance journal posted (cutover 01 May 2026)",
+                           amount=round(sum(l["debit"] for l in OPENING_BALANCE_LINES), 2), gl_entries=[],
+                           reference=OPENING_BALANCE_REF, transaction_date=OPENING_BALANCE_DATE,
+                           created_by=_uid, created_by_name=_uname)
+    except Exception:
+        pass
+    logger.info(f"[OPENING BAL] Posted opening balance journal for {biz_id}")
+    flash("Opening balance posted. Open the Audit page — the Bank should now reflect the cutover position.", "success")
+    return redirect("/audit")
+
+
 # ── COMPREHENSIVE FORM HELPERS (for supplier + customer new/edit forms) ──
 
 FORM_CSS = '''
