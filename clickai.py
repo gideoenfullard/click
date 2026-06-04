@@ -21616,7 +21616,15 @@ def render_page(title: str, content: str, user: dict = None, active: str = "") -
     nav_html = ""
     for key, url, label in nav_items:
         active_class = "active" if key == active else ""
-        nav_html += f'<a href="{url}" class="{active_class}">{label}</a>'
+        _nav_badge = ""
+        if key == "audit" and biz_id:
+            try:
+                _ac = audit_badge_count(biz_id)
+                if _ac > 0:
+                    _nav_badge = f'<span style="display:inline-block;min-width:15px;height:15px;line-height:15px;background:#ef4444;color:#fff;border-radius:8px;font-size:9px;text-align:center;margin-left:5px;padding:0 4px;font-weight:700;vertical-align:middle;">{_ac}</span>'
+            except Exception:
+                pass
+        nav_html += f'<a href="{url}" class="{active_class}">{label}{_nav_badge}</a>'
     
     # Business selector dropdown (hide for POS-only)
     biz_options = ""
@@ -28707,24 +28715,15 @@ def customer_opening_balance(customer_id):
     return render_page("Add Opening Balance", content, user, "customers")
 
 
-@app.route("/audit")
-@login_required
-def system_audit():
-    """Read-only System Health / Audit. Reconciles the GL control accounts against
-    the sub-ledgers, shows the opening-balance suspense and any unmapped opening
-    entries, and lists POS sales that may have been double-recorded as receipts
-    (each with a safe Reverse action). Reporting only — nothing changes until you
-    explicitly click Reverse. Platform-wide; no business-specific logic."""
-    user = Auth.get_current_user()
-    business = Auth.get_current_business()
-    biz_id = business.get("id") if business else None
-    if not biz_id:
-        return redirect("/")
-    role = get_user_role()
-    if role not in ("owner", "admin", "manager", "bookkeeper", "accountant"):
-        return redirect("/")
+_audit_health_cache = {}
 
-    # GL balance (debit - credit) for an account code across BOTH journal tables
+
+def compute_audit_health(biz_id: str) -> dict:
+    """Compute the System Audit reconciliations for a business: GL control accounts
+    vs sub-ledgers, bank, opening-balance suspense, unmapped opening entries, and
+    counter-sale receipts that may duplicate POS sales. Returns the values plus an
+    'issues' list and 'review_count'. Used by BOTH the /audit page and the nav badge
+    so they always agree. Reporting only — never writes."""
     def _gl_balance(code):
         if not code:
             return 0.0
@@ -28741,24 +28740,20 @@ def system_audit():
     debtors_code = gl(biz_id, "debtors")
     creditors_code = gl(biz_id, "creditors")
 
-    # 1. Debtors: GL vs sub-ledger
     gl_debtors = _gl_balance(debtors_code)
     sub_debtors = round(sum(float(v or 0) for v in (calc_all_customer_balances(biz_id) or {}).values()), 2)
     debtors_diff = round(gl_debtors - sub_debtors, 2)
 
-    # 2. Creditors: GL vs sub-ledger (GL liability is a credit balance, so GL + sub ≈ 0)
     gl_creditors = _gl_balance(creditors_code)
     sub_creditors = round(sum(float(v or 0) for v in (calc_all_supplier_balances(biz_id) or {}).values()), 2)
     creditors_diff = round(gl_creditors + sub_creditors, 2)
 
-    # 3. Bank: GL balance vs the imported bank statement movement
     gl_bank = _gl_balance(bank_code)
     bank_txns = db.get("bank_transactions", {"business_id": biz_id}) or []
     bank_in = round(sum(float(b.get("amount", 0) or 0) for b in bank_txns if float(b.get("amount", 0) or 0) > 0), 2)
     bank_out = round(sum(float(b.get("amount", 0) or 0) for b in bank_txns if float(b.get("amount", 0) or 0) < 0), 2)
     bank_net = round(bank_in + bank_out, 2)
 
-    # 4. Suspense (9999 + anything tagged 'suspense') and 5. unmapped opening entries
     susp_total = 0.0
     blank_code_n = 0
     blank_code_net = 0.0
@@ -28776,13 +28771,93 @@ def system_audit():
     susp_total = round(susp_total, 2)
     blank_code_net = round(blank_code_net, 2)
 
-    # 6. POS sales possibly double-recorded as counter-sale receipts
     cs_receipts = [r for r in (db.get("receipts", {"business_id": biz_id}) or [])
                    if (r.get("customer_name") or "").upper().replace(" ", "") == "COUNTERSALE"
                    and not (r.get("reference") or "").upper().startswith("OPENING")]
     cs_receipts.sort(key=lambda x: (x.get("date") or ""))
     cs_n = len(cs_receipts)
     cs_total = round(sum(float(r.get("amount", 0) or 0) for r in cs_receipts), 2)
+
+    issues = []
+    if abs(debtors_diff) >= 1.0:
+        issues.append("Debtors Control does not match the customer sub-ledger")
+    if abs(creditors_diff) >= 1.0:
+        issues.append("Creditors Control does not match the supplier sub-ledger")
+    if abs(susp_total) >= 1.0:
+        issues.append("Opening Balance Suspense (9999) is not zero")
+    if blank_code_n > 0:
+        issues.append(f"{blank_code_n} opening entries have no GL account code")
+    if cs_n > 0:
+        issues.append(f"{cs_n} counter-sale receipts may duplicate POS sales")
+
+    return {
+        "bank_code": bank_code, "debtors_code": debtors_code, "creditors_code": creditors_code,
+        "gl_debtors": gl_debtors, "sub_debtors": sub_debtors, "debtors_diff": debtors_diff,
+        "gl_creditors": gl_creditors, "sub_creditors": sub_creditors, "creditors_diff": creditors_diff,
+        "gl_bank": gl_bank, "bank_in": bank_in, "bank_out": bank_out, "bank_net": bank_net, "bank_n": len(bank_txns),
+        "susp_total": susp_total, "blank_code_n": blank_code_n, "blank_code_net": blank_code_net,
+        "cs_receipts": cs_receipts, "cs_n": cs_n, "cs_total": cs_total,
+        "issues": issues, "review_count": len(issues),
+    }
+
+
+def audit_badge_count(biz_id: str) -> int:
+    """Cached review-count for the nav badge. Refreshed at most every few minutes,
+    and immediately whenever the /audit page is opened (the page overwrites the cache)."""
+    if not biz_id:
+        return 0
+    try:
+        import time as _time
+        _c = _audit_health_cache.get(biz_id)
+        if _c and (_time.time() - _c[0] < 300):
+            return _c[1]
+    except Exception:
+        pass
+    try:
+        n = compute_audit_health(biz_id).get("review_count", 0)
+    except Exception as _e:
+        logger.warning(f"[AUDIT BADGE] {_e}")
+        n = 0
+    try:
+        import time as _time
+        _audit_health_cache[biz_id] = (_time.time(), n)
+    except Exception:
+        pass
+    return n
+
+
+@app.route("/audit")
+@login_required
+def system_audit():
+    """Read-only System Health / Audit. Reconciles the GL control accounts against
+    the sub-ledgers, shows the opening-balance suspense and any unmapped opening
+    entries, and lists POS sales that may have been double-recorded as receipts
+    (each with a safe Reverse action). Reporting only — nothing changes until you
+    explicitly click Reverse. Platform-wide; no business-specific logic."""
+    user = Auth.get_current_user()
+    business = Auth.get_current_business()
+    biz_id = business.get("id") if business else None
+    if not biz_id:
+        return redirect("/")
+    role = get_user_role()
+    if role not in ("owner", "admin", "manager", "bookkeeper", "accountant"):
+        return redirect("/")
+
+    h = compute_audit_health(biz_id)
+    bank_code = h["bank_code"]; debtors_code = h["debtors_code"]; creditors_code = h["creditors_code"]
+    gl_debtors = h["gl_debtors"]; sub_debtors = h["sub_debtors"]; debtors_diff = h["debtors_diff"]
+    gl_creditors = h["gl_creditors"]; sub_creditors = h["sub_creditors"]; creditors_diff = h["creditors_diff"]
+    gl_bank = h["gl_bank"]; bank_in = h["bank_in"]; bank_out = h["bank_out"]; bank_net = h["bank_net"]; bank_n = h["bank_n"]
+    susp_total = h["susp_total"]; blank_code_n = h["blank_code_n"]; blank_code_net = h["blank_code_net"]
+    cs_receipts = h["cs_receipts"]; cs_n = h["cs_n"]; cs_total = h["cs_total"]
+    review_count = h["review_count"]
+
+    # Refresh the nav-badge cache so it reflects the latest state immediately
+    try:
+        import time as _time
+        _audit_health_cache[biz_id] = (_time.time(), review_count)
+    except Exception:
+        pass
 
     def _badge(ok):
         return ('<span style="background:#10b981;color:#fff;padding:3px 10px;border-radius:5px;font-size:11px;font-weight:600;">BALANCED</span>'
@@ -28840,13 +28915,19 @@ def system_audit():
             {cs_detail_rows}
         </table>'''
 
+    if review_count > 0:
+        _summary_strip = f'<div style="background:rgba(239,68,68,0.10);border:1px solid #ef4444;border-radius:8px;padding:10px 14px;margin:0 0 14px 0;color:#ef4444;font-weight:600;font-size:13px;">{review_count} {"check needs" if review_count == 1 else "checks need"} review — see the cards below.</div>'
+    else:
+        _summary_strip = '<div style="background:rgba(16,185,129,0.10);border:1px solid #10b981;border-radius:8px;padding:10px 14px;margin:0 0 14px 0;color:#10b981;font-weight:600;font-size:13px;">All checks balanced.</div>'
+
     content = f'''
     <div style="max-width:1000px;margin:0 auto;">
-        <h1 style="margin:0 0 4px 0;">System Health / Audit</h1>
+        <h1 style="margin:0 0 4px 0;color:{'#ef4444' if review_count > 0 else 'var(--text)'};">System Health / Audit</h1>
         <p style="color:var(--text-muted);font-size:13px;margin:0 0 8px 0;">
             Checks for {safe_string(business.get("name", "this business"))}. The reconciliation cards below are read-only.
             The only action on this page is the per-receipt Reverse button at the bottom. Differences need a bookkeeper's review against source documents.
         </p>
+        {_summary_strip}
 
         <div class="card" style="margin-bottom:16px;">
             <h2 style="margin:0 0 12px 0;font-size:16px;">Control accounts: GL vs sub-ledger</h2>
@@ -28874,7 +28955,7 @@ def system_audit():
                 <tr><td style="padding:10px;font-weight:600;">Bank statement — net movement</td><td style="padding:10px;text-align:right;font-weight:700;">{money(bank_net)}</td></tr>
             </table>
             <p style="color:var(--text-muted);font-size:11px;margin:10px 0 0 0;">
-                Statement movement is from {len(bank_txns)} imported bank lines. Compare the GL bank balance to your actual bank closing balance; a large gap usually means money was booked twice.
+                Statement movement is from {bank_n} imported bank lines. Compare the GL bank balance to your actual bank closing balance; a large gap usually means money was booked twice.
             </p>
         </div>
 

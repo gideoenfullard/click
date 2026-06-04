@@ -530,6 +530,16 @@ def register_banking_routes(app, db, login_required, Auth, render_page,
                 return;
             }}
             
+            // Counter-sale guard: POS books every counter sale automatically, so recording
+            // a bank payment against a "Counter Sale" customer doubles the money (it inflates
+            // the bank and creates a credit on Debtors Control). Soft warning — still allowed.
+            if (category === 'Customer Payment' && entityName
+                && entityName.toUpperCase().split(' ').join('') === 'COUNTERSALE') {{
+                if (!confirm('POS already books counter sales automatically. Recording this as a Counter Sale customer payment will double the money — it inflates the bank and creates a credit on Debtors Control. Continue anyway?')) {{
+                    return;
+                }}
+            }}
+            
             try {{
                 const payload = {{id, category, description}};
                 if (entityId && entityId !== '__skip__') {{ payload.entity_id = entityId; payload.entity_name = entityName || ''; }}
