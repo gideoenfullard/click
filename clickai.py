@@ -21581,6 +21581,7 @@ def render_page(title: str, content: str, user: dict = None, active: str = "") -
             ("reports", "/reports", "Reports"),
             ("ledger", "/ledger", "Ledger"),
             ("journals", "/journals", "Journals"),
+            ("audit", "/audit", "Audit"),
             ("inbox", "/scan-inbox", "Inbox"),
         ]
     else:
@@ -21604,6 +21605,7 @@ def render_page(title: str, content: str, user: dict = None, active: str = "") -
             ("reports", "/reports", "Reports"),
             ("ledger", "/ledger", "Ledger"),
             ("journals", "/journals", "Journals"),
+            ("audit", "/audit", "Audit"),
             ("intelligence", "/intelligence", "AI"),
             ("tools", "/tools", "Tools"),
             ("import", "/sage-drop", "Import"),
@@ -28703,6 +28705,300 @@ def customer_opening_balance(customer_id):
     </div>
     '''
     return render_page("Add Opening Balance", content, user, "customers")
+
+
+@app.route("/audit")
+@login_required
+def system_audit():
+    """Read-only System Health / Audit. Reconciles the GL control accounts against
+    the sub-ledgers, shows the opening-balance suspense and any unmapped opening
+    entries, and lists POS sales that may have been double-recorded as receipts
+    (each with a safe Reverse action). Reporting only — nothing changes until you
+    explicitly click Reverse. Platform-wide; no business-specific logic."""
+    user = Auth.get_current_user()
+    business = Auth.get_current_business()
+    biz_id = business.get("id") if business else None
+    if not biz_id:
+        return redirect("/")
+    role = get_user_role()
+    if role not in ("owner", "admin", "manager", "bookkeeper", "accountant"):
+        return redirect("/")
+
+    # GL balance (debit - credit) for an account code across BOTH journal tables
+    def _gl_balance(code):
+        if not code:
+            return 0.0
+        tot = 0.0
+        for _tbl in ("journals", "journal_entries"):
+            try:
+                for r in (db.get(_tbl, {"business_id": biz_id, "account_code": code}) or []):
+                    tot += float(r.get("debit", 0) or 0) - float(r.get("credit", 0) or 0)
+            except Exception as _e:
+                logger.warning(f"[AUDIT] {_tbl} read failed for {code}: {_e}")
+        return round(tot, 2)
+
+    bank_code = gl(biz_id, "bank")
+    debtors_code = gl(biz_id, "debtors")
+    creditors_code = gl(biz_id, "creditors")
+
+    # 1. Debtors: GL vs sub-ledger
+    gl_debtors = _gl_balance(debtors_code)
+    sub_debtors = round(sum(float(v or 0) for v in (calc_all_customer_balances(biz_id) or {}).values()), 2)
+    debtors_diff = round(gl_debtors - sub_debtors, 2)
+
+    # 2. Creditors: GL vs sub-ledger (GL liability is a credit balance, so GL + sub ≈ 0)
+    gl_creditors = _gl_balance(creditors_code)
+    sub_creditors = round(sum(float(v or 0) for v in (calc_all_supplier_balances(biz_id) or {}).values()), 2)
+    creditors_diff = round(gl_creditors + sub_creditors, 2)
+
+    # 3. Bank: GL balance vs the imported bank statement movement
+    gl_bank = _gl_balance(bank_code)
+    bank_txns = db.get("bank_transactions", {"business_id": biz_id}) or []
+    bank_in = round(sum(float(b.get("amount", 0) or 0) for b in bank_txns if float(b.get("amount", 0) or 0) > 0), 2)
+    bank_out = round(sum(float(b.get("amount", 0) or 0) for b in bank_txns if float(b.get("amount", 0) or 0) < 0), 2)
+    bank_net = round(bank_in + bank_out, 2)
+
+    # 4. Suspense (9999 + anything tagged 'suspense') and 5. unmapped opening entries
+    susp_total = 0.0
+    blank_code_n = 0
+    blank_code_net = 0.0
+    for je in (db.get("journal_entries", {"business_id": biz_id}, limit=50000) or []):
+        _code = (je.get("account_code") or "").strip()
+        _desc = (je.get("description") or "").lower()
+        _acct = (je.get("account") or "").lower()
+        _d = float(je.get("debit", 0) or 0)
+        _c = float(je.get("credit", 0) or 0)
+        if _code == "9999" or "suspense" in _desc or "suspense" in _acct:
+            susp_total += _d - _c
+        if not _code:
+            blank_code_n += 1
+            blank_code_net += _d - _c
+    susp_total = round(susp_total, 2)
+    blank_code_net = round(blank_code_net, 2)
+
+    # 6. POS sales possibly double-recorded as counter-sale receipts
+    cs_receipts = [r for r in (db.get("receipts", {"business_id": biz_id}) or [])
+                   if (r.get("customer_name") or "").upper().replace(" ", "") == "COUNTERSALE"
+                   and not (r.get("reference") or "").upper().startswith("OPENING")]
+    cs_receipts.sort(key=lambda x: (x.get("date") or ""))
+    cs_n = len(cs_receipts)
+    cs_total = round(sum(float(r.get("amount", 0) or 0) for r in cs_receipts), 2)
+
+    def _badge(ok):
+        return ('<span style="background:#10b981;color:#fff;padding:3px 10px;border-radius:5px;font-size:11px;font-weight:600;">BALANCED</span>'
+                if ok else
+                '<span style="background:#ef4444;color:#fff;padding:3px 10px;border-radius:5px;font-size:11px;font-weight:600;">REVIEW</span>')
+
+    def _row(label, gl_val, sub_label, sub_val, diff, ok):
+        return f'''
+        <tr style="border-bottom:1px solid var(--border);">
+            <td style="padding:12px 10px;font-weight:600;">{label}</td>
+            <td style="padding:12px 10px;text-align:right;">{money(gl_val)}</td>
+            <td style="padding:12px 10px;text-align:right;color:var(--text-muted);">{sub_label}: {money(sub_val)}</td>
+            <td style="padding:12px 10px;text-align:right;font-weight:700;color:{'#10b981' if ok else '#ef4444'};">{money(diff)}</td>
+            <td style="padding:12px 10px;text-align:center;">{_badge(ok)}</td>
+        </tr>'''
+
+    recon_rows = ""
+    recon_rows += _row(f"Debtors Control ({debtors_code})", gl_debtors, "Customer sub-ledger", sub_debtors, debtors_diff, abs(debtors_diff) < 1.0)
+    recon_rows += _row(f"Creditors Control ({creditors_code})", gl_creditors, "Supplier sub-ledger", sub_creditors, creditors_diff, abs(creditors_diff) < 1.0)
+
+    susp_ok = abs(susp_total) < 1.0
+    blank_ok = blank_code_n == 0
+    cs_ok = cs_n == 0
+
+    # Detailed counter-sale list with a safe per-receipt Reverse button
+    if cs_n == 0:
+        cs_block = '<p style="color:var(--text-muted);font-size:13px;margin:0;">No counter-sale receipts found — nothing to review.</p>'
+    else:
+        cs_detail_rows = ""
+        for r in cs_receipts:
+            _rid = r.get("id", "")
+            _amt = float(r.get("amount", 0) or 0)
+            cs_detail_rows += f'''
+            <tr style="border-bottom:1px solid var(--border);">
+                <td style="padding:8px 10px;">{safe_string(r.get("date","") or "-")}</td>
+                <td style="padding:8px 10px;">{safe_string(r.get("method","") or "-")}</td>
+                <td style="padding:8px 10px;font-size:11px;color:var(--text-muted);">{safe_string(r.get("reference","") or "-")}</td>
+                <td style="padding:8px 10px;text-align:right;font-weight:600;">{money(_amt)}</td>
+                <td style="padding:8px 10px;text-align:center;">
+                    <form method="POST" action="/audit/reverse-receipt/{_rid}" style="display:inline;" onsubmit="return confirm('Reverse this counter-sale receipt of {money(_amt)}? This posts an opposite GL journal and removes the receipt. Make sure your backups are done.');">
+                        <button type="submit" class="btn" style="background:var(--red);color:#fff;padding:5px 12px;font-size:11px;">Reverse</button>
+                    </form>
+                </td>
+            </tr>'''
+        cs_block = f'''
+        <p style="font-size:13px;margin:0 0 10px 0;"><strong>{cs_n} counter-sale receipts</strong> totalling <strong>{money(cs_total)}</strong>. POS books every counter sale automatically, so these manual receipts usually duplicate that money (inflating cash/bank and creating a credit on Debtors Control). Reverse the ones that are duplicates — each reversal posts the exact opposite of that receipt's own journal and removes the receipt.</p>
+        <table style="width:100%;border-collapse:collapse;font-size:13px;">
+            <tr style="border-bottom:2px solid var(--border);text-align:left;color:var(--text-muted);font-size:11px;">
+                <th style="padding:8px 10px;">Date</th>
+                <th style="padding:8px 10px;">Method</th>
+                <th style="padding:8px 10px;">Reference</th>
+                <th style="padding:8px 10px;text-align:right;">Amount</th>
+                <th style="padding:8px 10px;text-align:center;">Action</th>
+            </tr>
+            {cs_detail_rows}
+        </table>'''
+
+    content = f'''
+    <div style="max-width:1000px;margin:0 auto;">
+        <h1 style="margin:0 0 4px 0;">System Health / Audit</h1>
+        <p style="color:var(--text-muted);font-size:13px;margin:0 0 8px 0;">
+            Checks for {safe_string(business.get("name", "this business"))}. The reconciliation cards below are read-only.
+            The only action on this page is the per-receipt Reverse button at the bottom. Differences need a bookkeeper's review against source documents.
+        </p>
+
+        <div class="card" style="margin-bottom:16px;">
+            <h2 style="margin:0 0 12px 0;font-size:16px;">Control accounts: GL vs sub-ledger</h2>
+            <table style="width:100%;border-collapse:collapse;font-size:13px;">
+                <tr style="border-bottom:2px solid var(--border);text-align:left;color:var(--text-muted);font-size:11px;">
+                    <th style="padding:8px 10px;">Account</th>
+                    <th style="padding:8px 10px;text-align:right;">GL balance</th>
+                    <th style="padding:8px 10px;text-align:right;">Sub-ledger</th>
+                    <th style="padding:8px 10px;text-align:right;">Difference</th>
+                    <th style="padding:8px 10px;text-align:center;">Status</th>
+                </tr>
+                {recon_rows}
+            </table>
+            <p style="color:var(--text-muted);font-size:11px;margin:10px 0 0 0;">
+                For Debtors, GL should equal the customer sub-ledger. For Creditors, GL (a credit balance) plus the supplier sub-ledger should net to zero.
+            </p>
+        </div>
+
+        <div class="card" style="margin-bottom:16px;">
+            <h2 style="margin:0 0 12px 0;font-size:16px;">Bank</h2>
+            <table style="width:100%;border-collapse:collapse;font-size:13px;">
+                <tr style="border-bottom:1px solid var(--border);"><td style="padding:10px;font-weight:600;">GL bank balance ({bank_code})</td><td style="padding:10px;text-align:right;font-weight:700;">{money(gl_bank)}</td></tr>
+                <tr style="border-bottom:1px solid var(--border);"><td style="padding:10px;">Bank statement — money in</td><td style="padding:10px;text-align:right;color:#10b981;">{money(bank_in)}</td></tr>
+                <tr style="border-bottom:1px solid var(--border);"><td style="padding:10px;">Bank statement — money out</td><td style="padding:10px;text-align:right;color:#ef4444;">{money(bank_out)}</td></tr>
+                <tr><td style="padding:10px;font-weight:600;">Bank statement — net movement</td><td style="padding:10px;text-align:right;font-weight:700;">{money(bank_net)}</td></tr>
+            </table>
+            <p style="color:var(--text-muted);font-size:11px;margin:10px 0 0 0;">
+                Statement movement is from {len(bank_txns)} imported bank lines. Compare the GL bank balance to your actual bank closing balance; a large gap usually means money was booked twice.
+            </p>
+        </div>
+
+        <div class="card" style="margin-bottom:16px;">
+            <h2 style="margin:0 0 12px 0;font-size:16px;">Opening balances &amp; suspense</h2>
+            <table style="width:100%;border-collapse:collapse;font-size:13px;">
+                <tr style="border-bottom:1px solid var(--border);">
+                    <td style="padding:10px;font-weight:600;">Opening Balance Suspense (9999)</td>
+                    <td style="padding:10px;text-align:right;font-weight:700;color:{'#10b981' if susp_ok else '#ef4444'};">{money(susp_total)}</td>
+                    <td style="padding:10px;text-align:center;">{_badge(susp_ok)}</td>
+                </tr>
+                <tr>
+                    <td style="padding:10px;font-weight:600;">Opening entries with no GL account code</td>
+                    <td style="padding:10px;text-align:right;font-weight:700;color:{'#10b981' if blank_ok else '#ef4444'};">{blank_code_n} entries ({money(blank_code_net)})</td>
+                    <td style="padding:10px;text-align:center;">{_badge(blank_ok)}</td>
+                </tr>
+            </table>
+            <p style="color:var(--text-muted);font-size:11px;margin:10px 0 0 0;">
+                Suspense should be zero once the migration is reviewed. Opening entries without an account code were not mapped to a real GL account during import.
+            </p>
+        </div>
+
+        <div class="card" style="margin-bottom:16px;">
+            <h2 style="margin:0 0 12px 0;font-size:16px;">POS sales possibly recorded twice {_badge(cs_ok)}</h2>
+            {cs_block}
+        </div>
+    </div>
+    '''
+    return render_page("System Audit", content, user, "audit")
+
+
+@app.route("/audit/reverse-receipt/<receipt_id>", methods=["POST"])
+@login_required
+def audit_reverse_receipt(receipt_id):
+    """Safely reverse ONE counter-sale receipt that duplicates a POS sale. Posts the
+    EXACT opposite of the receipt's own GL journal (so cash vs bank is reversed exactly
+    as it was booked — no guessing), removes the receipt, and logs to allocation_log for
+    the audit trail. Refuses to act on anything that is not a counter-sale receipt."""
+    business = Auth.get_current_business()
+    biz_id = business.get("id") if business else None
+    if not biz_id:
+        return redirect("/")
+    role = get_user_role()
+    if role not in ("owner", "admin", "manager", "bookkeeper", "accountant"):
+        flash("You don't have permission for this.", "error")
+        return redirect("/audit")
+
+    r = db.get_one("receipts", receipt_id)
+    if not r or r.get("business_id") != biz_id:
+        flash("Receipt not found.", "error")
+        return redirect("/audit")
+
+    # Safety: only counter-sale receipts — never touch a real customer receipt
+    _cn = (r.get("customer_name") or "").upper().replace(" ", "")
+    _ref = (r.get("reference") or "").strip()
+    if _cn != "COUNTERSALE" or _ref.upper().startswith("OPENING"):
+        flash("This tool only reverses counter-sale receipts.", "error")
+        return redirect("/audit")
+
+    amount = round(float(r.get("amount", 0) or 0), 2)
+    rdate = r.get("date", "")
+
+    # Find the receipt's own journal lines (same reference + date + amount) to learn
+    # which asset account (cash 1050 or bank 1000) it actually debited.
+    asset_code = None
+    dr_account = None
+    try:
+        for j in (db.get("journals", {"business_id": biz_id, "reference": _ref}) or []):
+            if (j.get("date") or "") != rdate:
+                continue
+            jd = round(float(j.get("debit", 0) or 0), 2)
+            jc = round(float(j.get("credit", 0) or 0), 2)
+            if asset_code is None and abs(jd - amount) < 0.01 and jc == 0:
+                asset_code = (j.get("account_code") or "").strip()
+            elif dr_account is None and abs(jc - amount) < 0.01 and jd == 0:
+                dr_account = (j.get("account_code") or "").strip()
+    except Exception as e:
+        logger.error(f"[AUDIT REVERSE] journal lookup failed: {e}")
+
+    # Fall back to the debtors control if the credit side wasn't matched
+    if dr_account is None:
+        dr_account = gl(biz_id, "debtors")
+
+    # Post the exact opposite journal — only when we found the real asset side
+    posted = False
+    if asset_code and dr_account:
+        try:
+            create_journal_entry(
+                biz_id, today(),
+                f"Reverse duplicate counter-sale receipt ({_ref})",
+                f"REV-{_ref}-{receipt_id[:6]}",
+                [
+                    {"account_code": dr_account, "debit": amount, "credit": 0},
+                    {"account_code": asset_code, "debit": 0, "credit": amount},
+                ]
+            )
+            posted = True
+        except Exception as e:
+            logger.error(f"[AUDIT REVERSE] reverse journal failed: {e}")
+            flash(f"Could not post the reversing journal: {e}", "error")
+            return redirect("/audit")
+
+    # Audit log
+    try:
+        if log_allocation:
+            _uid, _uname = get_acting_user()
+            log_allocation(
+                business_id=biz_id, allocation_type="reversal", source_table="receipts",
+                source_id=receipt_id,
+                description=f"Reversed duplicate counter-sale receipt - {money(amount)}",
+                amount=amount, gl_entries=[],
+                customer_name=r.get("customer_name", ""), reference=f"REV-{_ref}",
+                transaction_date=today(), created_by=_uid, created_by_name=_uname
+            )
+    except Exception:
+        pass
+
+    db.delete("receipts", receipt_id, biz_id)
+    logger.info(f"[AUDIT REVERSE] Reversed counter-sale receipt {receipt_id} ({_ref}, {money(amount)}); asset={asset_code} dr={dr_account} posted={posted}")
+    if posted:
+        flash(f"Reversed counter-sale receipt of {money(amount)} (DR {dr_account} / CR {asset_code}).", "success")
+    else:
+        flash(f"Removed orphan counter-sale receipt of {money(amount)} (no GL journal found to reverse).", "success")
+    return redirect("/audit")
 
 
 # ── COMPREHENSIVE FORM HELPERS (for supplier + customer new/edit forms) ──
