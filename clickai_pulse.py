@@ -852,8 +852,8 @@ def register_pulse_routes(app, db, login_required, Auth, generate_id, now, today
             outstanding_invoices = [inv for inv in invoices if inv.get("status") != "paid"]
             # Use CALCULATED balances (receipt/payment-aware) so Pulse matches the reports and
             # the customer/supplier pages, and updates after bank allocations.
-            if biz_id and calc_all_customer_balances:
-                _cust_bals = calc_all_customer_balances(biz_id) or {}
+            _cust_bals = (calc_all_customer_balances(biz_id) or {}) if (biz_id and calc_all_customer_balances) else {}
+            if _cust_bals:
                 total_owed_to_us = round(sum(float(v or 0) for v in _cust_bals.values() if float(v or 0) > 0), 2)
             else:
                 total_owed_to_us = sum(float(inv.get("total", 0) or 0) for inv in outstanding_invoices)
@@ -867,20 +867,47 @@ def register_pulse_routes(app, db, login_required, Auth, generate_id, now, today
                 return f"R{amount:,.2f}"
 
             # ── AGING ANALYSIS (per-customer grouping) ──
-            customer_aging = {}
+            # Net each customer's outstanding invoices by their payments (FIFO oldest-first),
+            # using the CALCULATED balance, so aging matches reality and drops paid / opening /
+            # counter-sale amounts. Invoices with nothing left owing are excluded.
+            from collections import defaultdict as _dd
+            _by_cust = _dd(list)
             for inv in outstanding_invoices:
-                cust_name = inv.get("customer_name", "Unknown")
-                amount = float(inv.get("total", 0) or 0)
-                try:
-                    inv_date = datetime.strptime(str(inv.get("date", ""))[:10], "%Y-%m-%d").date()
-                    days = (today_date - inv_date).days
-                except Exception:
-                    days = 0
+                _by_cust[inv.get("customer_id")].append(inv)
 
-                if cust_name not in customer_aging:
-                    customer_aging[cust_name] = {"name": cust_name, "total": 0, "oldest_days": 0}
-                customer_aging[cust_name]["total"] += amount
-                customer_aging[cust_name]["oldest_days"] = max(customer_aging[cust_name]["oldest_days"], days)
+            _inv_net = {}  # invoice_id -> amount still owing after FIFO payment allocation
+            customer_aging = {}
+            for _cid, _invs in _by_cust.items():
+                _invs_sorted = sorted(_invs, key=lambda x: str(x.get("date", ""))[:10])
+                _invoiced = sum(float(i.get("total", 0) or 0) for i in _invs_sorted)
+                if _cust_bals:
+                    _owed = float(_cust_bals.get(_cid, 0) or 0)
+                    if _owed <= 0.01:
+                        continue  # nothing actually owed (paid / credit / counter-sale netted)
+                    _pay = max(0.0, _invoiced - _owed)  # payments applied to oldest invoices first
+                else:
+                    _pay = 0.0
+                for inv in _invs_sorted:
+                    _t = float(inv.get("total", 0) or 0)
+                    if _pay >= _t:
+                        _pay -= _t
+                        _net = 0.0
+                    else:
+                        _net = round(_t - _pay, 2)
+                        _pay = 0.0
+                    _inv_net[inv.get("id")] = _net
+                    if _net <= 0.01:
+                        continue
+                    cust_name = inv.get("customer_name", "Unknown")
+                    try:
+                        inv_date = datetime.strptime(str(inv.get("date", ""))[:10], "%Y-%m-%d").date()
+                        days = (today_date - inv_date).days
+                    except Exception:
+                        days = 0
+                    if cust_name not in customer_aging:
+                        customer_aging[cust_name] = {"name": cust_name, "total": 0, "oldest_days": 0}
+                    customer_aging[cust_name]["total"] += _net
+                    customer_aging[cust_name]["oldest_days"] = max(customer_aging[cust_name]["oldest_days"], days)
 
             danger_zone = sorted([c for c in customer_aging.values() if c["oldest_days"] >= 90], key=lambda x: x["total"], reverse=True)
             warning_zone = sorted([c for c in customer_aging.values() if 60 <= c["oldest_days"] < 90], key=lambda x: x["total"], reverse=True)
@@ -916,6 +943,9 @@ def register_pulse_routes(app, db, login_required, Auth, generate_id, now, today
             # ── OVERDUE INVOICES — PER-INVOICE DETAIL (NEW) ──
             overdue_invoices = []
             for inv in outstanding_invoices:
+                _net = _inv_net.get(inv.get("id"), float(inv.get("total", 0) or 0))
+                if _net <= 0.01:
+                    continue
                 try:
                     inv_date = datetime.strptime(str(inv.get("date", ""))[:10], "%Y-%m-%d").date()
                     days = (today_date - inv_date).days
@@ -925,7 +955,7 @@ def register_pulse_routes(app, db, login_required, Auth, generate_id, now, today
                     overdue_invoices.append({
                         "invoice_number": inv.get("invoice_number", "?"),
                         "customer_name": inv.get("customer_name", "Unknown"),
-                        "total": float(inv.get("total", 0) or 0),
+                        "total": _net,
                         "date": str(inv.get("date", ""))[:10],
                         "days": days,
                         "created_by": inv.get("created_by", ""),
