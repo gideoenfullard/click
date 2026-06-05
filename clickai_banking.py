@@ -247,7 +247,7 @@ def register_banking_routes(app, db, login_required, Auth, render_page,
                 for sc in split_cats[:4]:
                     sc_cat = sc.get("category", "")[:20]
                     sc_amt = sc.get("amount", 0)
-                    cat_html += f'<span style="background:rgba(99,102,241,0.2);color:var(--text);padding:3px 6px;border-radius:4px;font-size:10px;">{sc_cat} R{sc_amt:,.0f}</span>'
+                    cat_html += f'<span style="background:rgba(99,102,241,0.2);color:var(--text);padding:3px 6px;border-radius:4px;font-size:10px;">{sc_cat} R{sc_amt:,.2f}</span>'
                 cat_html += '</div>'
             else:
                 cat_html = f'<span style="background:var(--green);color:white;padding:4px 10px;border-radius:4px;font-size:12px;">{cat}</span>'
@@ -1607,7 +1607,7 @@ def register_banking_routes(app, db, login_required, Auth, render_page,
                         const lastCell = cells[cells.length - 1];
                         let badges = '<span style="background:#f59e0b;color:black;padding:3px 8px;border-radius:4px;font-size:11px;font-weight:700;">SPLIT</span> ';
                         lines.forEach(l => {{
-                            badges += `<span style="background:rgba(99,102,241,0.2);color:var(--text);padding:3px 6px;border-radius:4px;font-size:10px;margin:2px;">${{l.category.substring(0,20)}} R${{l.amount.toFixed(0)}}</span> `;
+                            badges += `<span style="background:rgba(99,102,241,0.2);color:var(--text);padding:3px 6px;border-radius:4px;font-size:10px;margin:2px;">${{l.category.substring(0,20)}} R${{l.amount.toFixed(2)}}</span> `;
                         }});
                         lastCell.innerHTML = badges;
                         row.style.background = 'rgba(16,185,129,0.15)';

@@ -831,7 +831,7 @@ select.form-input {{
             </div>
             <div>
                 <label style="font-size:11px; color:var(--text-muted); display:block; margin-bottom:4px; text-transform:uppercase; letter-spacing:0.5px;">Will move to Petty Cash</label>
-                <input type="text" id="c2pMoveAmount" value="R{(total_cash - 500) if total_cash > 500 else 0:,.2f}" readonly
+                <input type="text" id="c2pMoveAmount" value="R{total_cash:,.2f}" readonly
                        style="width:100%; padding:10px; border-radius:8px; border:1px solid var(--border); background:var(--bg); color:var(--green); font-size:15px; font-weight:700;">
             </div>
         </div>
@@ -1592,7 +1592,7 @@ function _c2pParseR(str) {{
 function c2pRecalc() {{
     var todayCash = _c2pParseR(document.getElementById('c2pTodayCash').value);
     var floatKept = parseFloat(document.getElementById('c2pFloat').value) || 0;
-    var move = todayCash - floatKept;
+    var move = todayCash;  // move the FULL day's cash sales; the float stays in the drawer (not deducted)
     if (move < 0) move = 0;
     document.getElementById('c2pMoveAmount').value = 'R' + move.toLocaleString('en-ZA', {{minimumFractionDigits: 2, maximumFractionDigits: 2}});
 }}
@@ -1600,7 +1600,7 @@ function c2pRecalc() {{
 async function c2pPostToPetty() {{
     var todayCash = _c2pParseR(document.getElementById('c2pTodayCash').value);
     var floatKept = parseFloat(document.getElementById('c2pFloat').value) || 0;
-    var moveAmount = todayCash - floatKept;
+    var moveAmount = todayCash;  // move the FULL day's cash sales; the float stays in the drawer (not deducted)
     var notes = document.getElementById('c2pNotes').value.trim();
     var btn = document.getElementById('c2pPostBtn');
     var status = document.getElementById('c2pStatus');
