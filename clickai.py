@@ -21723,8 +21723,6 @@ def render_page(title: str, content: str, user: dict = None, active: str = "") -
     
     {get_zane_chat()}
     
-    {get_page_help(active)}
-    
     {get_zane_proactive_tip(active)}
     
     <script>
