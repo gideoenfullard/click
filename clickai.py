@@ -65644,7 +65644,8 @@ try:
             app, db, login_required, Auth, generate_id, now, today,
             render_page, get_user_role, extract_time,
             has_reactor_hud, jarvis_hud_header, jarvis_techline,
-            JARVIS_HUD_CSS, THEME_REACTOR_SKINS, DailyBriefing
+            JARVIS_HUD_CSS, THEME_REACTOR_SKINS, DailyBriefing,
+            calc_all_customer_balances, calc_all_supplier_balances
         )
         logger.info("[PULSE] Routes registered ✓")
 except Exception as e:

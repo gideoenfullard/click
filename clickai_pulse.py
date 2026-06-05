@@ -46,7 +46,8 @@ def register_pulse_routes(app, db, login_required, Auth, generate_id, now, today
                           render_page, get_user_role, extract_time,
                           has_reactor_hud, jarvis_hud_header, jarvis_techline,
                           JARVIS_HUD_CSS, THEME_REACTOR_SKINS,
-                          DailyBriefing=None):
+                          DailyBriefing=None,
+                          calc_all_customer_balances=None, calc_all_supplier_balances=None):
     """Register all Pulse dashboard routes."""
 
     global _pulse_cache, _briefing_cache
@@ -849,8 +850,18 @@ def register_pulse_routes(app, db, login_required, Auth, generate_id, now, today
 
             # Cash position
             outstanding_invoices = [inv for inv in invoices if inv.get("status") != "paid"]
-            total_owed_to_us = sum(float(inv.get("total", 0) or 0) for inv in outstanding_invoices)
-            total_we_owe = sum(float(s.get("balance", 0) or 0) for s in suppliers)
+            # Use CALCULATED balances (receipt/payment-aware) so Pulse matches the reports and
+            # the customer/supplier pages, and updates after bank allocations.
+            if biz_id and calc_all_customer_balances:
+                _cust_bals = calc_all_customer_balances(biz_id) or {}
+                total_owed_to_us = round(sum(float(v or 0) for v in _cust_bals.values() if float(v or 0) > 0), 2)
+            else:
+                total_owed_to_us = sum(float(inv.get("total", 0) or 0) for inv in outstanding_invoices)
+            if biz_id and calc_all_supplier_balances:
+                _sup_bals = calc_all_supplier_balances(biz_id) or {}
+                total_we_owe = round(sum(float(v or 0) for v in _sup_bals.values() if float(v or 0) > 0), 2)
+            else:
+                total_we_owe = sum(float(s.get("balance", 0) or 0) for s in suppliers)
 
             def fmt(amount):
                 return f"R{amount:,.2f}"
