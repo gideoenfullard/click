@@ -247,15 +247,26 @@ _SOURCE_URL_MAP = {
     "sales": "sale",
     "invoices": "invoice",
     "supplier_invoices": "supplier-invoice",
+    "supplier_credit_notes": "supplier-credit-note",
     "credit_notes": "credit-note",
     "delivery_notes": "delivery-note",
+    "expenses": "expense",
+    "bank_transactions": "bank-transactions",
 }
 
 def _source_url(a):
-    """Build correct URL path from allocation record's source_table + source_id"""
+    """Build a URL path to the source document, or "" when there is nothing viewable.
+    Only source tables with a real detail-view route (the keys of _SOURCE_URL_MAP)
+    get a link. Reversals (whose source record is deleted) and tables without a view
+    route (receipts, journals, payments, supplier_payments, cash_ups, ...) return ""
+    so the ledger never shows a dead 'View Source Document' link."""
     table = a.get("source_table", "")
     sid = a.get("source_id", "")
-    prefix = _SOURCE_URL_MAP.get(table, table.replace("_", "-"))
+    if not sid or a.get("allocation_type") == "reversal":
+        return ""
+    prefix = _SOURCE_URL_MAP.get(table)
+    if not prefix:
+        return ""  # no detail-view route for this source type
     return f"{prefix}/{sid}"
 
 
@@ -419,12 +430,13 @@ def register_ledger_routes(app, db, login_required, Auth, generate_id, now_fn, t
         p_desc = safe_string_fn(partner.get("description", "")[:80])
         p_amt = abs(float(partner.get("amount", 0)))
         p_src_url = _source_url(partner)
+        p_src_link = (f'<a href="/{p_src_url}" style="font-size:11px;color:var(--primary);text-decoration:none;">View Document &rarr;</a>' if p_src_url else "")
         
         return f'''
         <div style="margin-top:10px;border:1px solid #10b98144;border-radius:8px;overflow:hidden;">
             <div style="background:rgba(16,185,129,0.08);padding:8px 12px;display:flex;justify-content:space-between;align-items:center;">
                 <span style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:1px;color:#10b981;">Linked Transaction</span>
-                <a href="/{p_src_url}" style="font-size:11px;color:var(--primary);text-decoration:none;">View Document &rarr;</a>
+                {p_src_link}
             </div>
             <div style="padding:10px 12px;display:flex;gap:20px;flex-wrap:wrap;align-items:center;">
                 <span style="background:{p_color}18;color:{p_color};padding:3px 10px;border-radius:6px;font-size:11px;font-weight:700;">{p_short} {p_label}</span>
@@ -507,6 +519,7 @@ def register_ledger_routes(app, db, login_required, Auth, generate_id, now_fn, t
         
         # Source URL
         src_url = _source_url(a)
+        src_link = (f'<a href="/{src_url}" style="font-size:11px;color:var(--primary);text-decoration:none;padding:4px 10px;border:1px solid var(--border);border-radius:6px;">View Source Document</a>' if src_url else "")
         
         # Extra data for PO links etc
         extra_data = {}
@@ -609,7 +622,7 @@ def register_ledger_routes(app, db, login_required, Auth, generate_id, now_fn, t
                     
                     <!-- Source Document Link -->
                     <div style="display:flex;gap:8px;margin-bottom:4px;flex-wrap:wrap;">
-                        <a href="/{src_url}" style="font-size:11px;color:var(--primary);text-decoration:none;padding:4px 10px;border:1px solid var(--border);border-radius:6px;">View Source Document</a>
+                        {src_link}
                         {po_link}
                     </div>
                     
