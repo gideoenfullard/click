@@ -614,6 +614,14 @@ def register_purchases_routes(app, db, login_required, Auth, render_page,
                 else:
                     _p_source_html = '<span style="font-size:12px;color:var(--text-muted);">Manual</span>'
                 
+                _p_id = p.get("id", "")
+                _p_amt_str = money(p.get("amount", 0))
+                _p_reverse = (
+                    f' &middot; <form method="POST" action="/supplier/{supplier_id}/reverse-payment/{_p_id}" '
+                    f'style="display:inline;" onsubmit="return confirm(\'Reverse this payment of {_p_amt_str}? '
+                    f'This removes the payment and posts an opposite journal. Use it only for a payment captured twice.\');">'
+                    f'<button type="submit" style="padding:1px 7px;font-size:10px;background:var(--red);color:#fff;border:none;border-radius:4px;cursor:pointer;">Reverse</button></form>'
+                ) if _p_id else ""
                 payments_html += f'''
                 <tr>
                     <td>{_p_ref}</td>
@@ -621,7 +629,7 @@ def register_purchases_routes(app, db, login_required, Auth, render_page,
                     <td style="color:var(--green);">{money(p.get("amount", 0))}</td>
                     <td>{p.get("method", "-")}</td>
                     <td>{_p_source_html}</td>
-                    <td><a href="/supplier-payment/{p.get("id", "")}/remittance" style="color:var(--primary);text-decoration:none;font-size:12px;">View</a></td>
+                    <td><a href="/supplier-payment/{p.get("id", "")}/remittance" style="color:var(--primary);text-decoration:none;font-size:12px;">View</a>{_p_reverse}</td>
                 </tr>
                 '''
         
@@ -1532,6 +1540,96 @@ def register_purchases_routes(app, db, login_required, Auth, render_page,
         '''
         
         return render_page(supplier.get("name", "Supplier"), content, user, "suppliers")
+    
+    
+    @app.route("/supplier/<supplier_id>/reverse-payment/<payment_id>", methods=["POST"])
+    @login_required
+    def reverse_supplier_payment(supplier_id, payment_id):
+        """Reverse ONE supplier payment — for fixing a payment captured twice (e.g. once
+        manually and once from a bank allocation). Posts the EXACT opposite of the payment's
+        own GL journal, removes the payment so the calculated balance corrects, and logs it."""
+        business = Auth.get_current_business()
+        biz_id = business.get("id") if business else None
+        if not biz_id:
+            return redirect("/")
+        if get_user_role() not in ("owner", "admin", "manager", "bookkeeper", "accountant"):
+            flash("You don't have permission for this.", "error")
+            return redirect(f"/supplier/{supplier_id}")
+
+        p = db.get_one("supplier_payments", payment_id)
+        if not p or p.get("business_id") != biz_id:
+            flash("Payment not found.", "error")
+            return redirect(f"/supplier/{supplier_id}")
+
+        amount = round(float(p.get("amount", 0) or 0), 2)
+        pdate = p.get("date", "")
+        _ref = (p.get("reference") or "").strip()
+        _bref = (p.get("bank_reference") or "").strip()
+
+        # Find the payment's own journal lines to learn the asset account it credited
+        # (bank/cash) and the creditors side it debited. Original: DR Creditors / CR Bank.
+        asset_code = None
+        cr_account = None
+        try:
+            for _try_ref in [x for x in (_ref, _bref) if x and x != "-"]:
+                for j in (db.get("journals", {"business_id": biz_id, "reference": _try_ref}) or []):
+                    if (j.get("date") or "") != pdate:
+                        continue
+                    jd = round(float(j.get("debit", 0) or 0), 2)
+                    jc = round(float(j.get("credit", 0) or 0), 2)
+                    if asset_code is None and abs(jc - amount) < 0.01 and jd == 0:
+                        asset_code = (j.get("account_code") or "").strip()
+                    elif cr_account is None and abs(jd - amount) < 0.01 and jc == 0:
+                        cr_account = (j.get("account_code") or "").strip()
+                if asset_code:
+                    break
+        except Exception as e:
+            logger.error(f"[REVERSE SUP PAYMENT] journal lookup failed: {e}")
+
+        if cr_account is None:
+            cr_account = gl(biz_id, "creditors")
+
+        _rev_ref = f"REV-{_ref or _bref or payment_id[:6]}-{payment_id[:6]}"
+        posted = False
+        if asset_code and cr_account:
+            try:
+                # Reverse the original DR Creditors / CR Bank: now DR Bank / CR Creditors
+                create_journal_entry(
+                    biz_id, today(),
+                    f"Reverse duplicate supplier payment ({_ref or _bref})",
+                    _rev_ref,
+                    [
+                        {"account_code": asset_code, "debit": amount, "credit": 0},
+                        {"account_code": cr_account, "debit": 0, "credit": amount},
+                    ]
+                )
+                posted = True
+            except Exception as e:
+                logger.error(f"[REVERSE SUP PAYMENT] reverse journal failed: {e}")
+                flash(f"Could not post the reversing journal: {e}", "error")
+                return redirect(f"/supplier/{supplier_id}")
+
+        try:
+            if log_allocation:
+                _u = Auth.get_current_user() or {}
+                log_allocation(
+                    business_id=biz_id, allocation_type="reversal", source_table="supplier_payments",
+                    source_id=payment_id,
+                    description=f"Reversed duplicate supplier payment - {money(amount)}",
+                    amount=amount, gl_entries=[],
+                    reference=_rev_ref, transaction_date=today(),
+                    created_by=_u.get("id", ""), created_by_name=_u.get("name", "")
+                )
+        except Exception:
+            pass
+
+        db.delete("supplier_payments", payment_id, biz_id)
+        logger.info(f"[REVERSE SUP PAYMENT] Reversed supplier payment {payment_id} ({_ref}, {money(amount)}); asset={asset_code} cr={cr_account} posted={posted}")
+        if posted:
+            flash(f"Reversed payment of {money(amount)} (DR {asset_code} / CR {cr_account}). The balance has been updated.", "success")
+        else:
+            flash(f"Removed payment of {money(amount)} (no matching GL journal found to reverse — please check the bank GL).", "success")
+        return redirect(f"/supplier/{supplier_id}")
     
     
     @app.route("/supplier/<supplier_id>/edit", methods=["GET", "POST"])

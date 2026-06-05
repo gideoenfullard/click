@@ -27883,6 +27883,16 @@ def customer_view(customer_id):
         else:
             _r_source_html = '<span style="font-size:12px;color:var(--text-muted);">Manual</span>'
         
+        _rcpt_id = r.get("id", "")
+        _rcpt_amt_str = money(r.get("amount", 0))
+        _reverse_btn = ""
+        if can_see_balances and _rcpt_id:
+            _reverse_btn = (
+                f'<form method="POST" action="/customer/{customer_id}/reverse-payment/{_rcpt_id}" '
+                f'style="display:inline;" onsubmit="return confirm(\'Reverse this payment of {_rcpt_amt_str}? '
+                f'This removes the payment and posts an opposite journal. Use it only for a payment captured twice.\');">'
+                f'<button type="submit" style="padding:2px 8px;font-size:10px;background:var(--red);color:#fff;border:none;border-radius:4px;cursor:pointer;">Reverse</button></form>'
+            )
         receipts_html += f'''
         <tr>
             <td>{r.get("receipt_number", "-")}</td>
@@ -27890,6 +27900,7 @@ def customer_view(customer_id):
             <td style="color:var(--green);">{money(r.get("amount", 0)) if can_see_balances else "---"}</td>
             <td>{r.get("method", "-")}</td>
             <td>{_r_source_html}</td>
+            <td>{_reverse_btn}</td>
         </tr>
         '''
     
@@ -28142,10 +28153,10 @@ def customer_view(customer_id):
         </div>
         <table class="table" id="receiptsTable">
             <thead>
-                <tr><th>Receipt</th><th>Date</th><th>Amount</th><th>Method</th><th>Source</th></tr>
+                <tr><th>Receipt</th><th>Date</th><th>Amount</th><th>Method</th><th>Source</th><th style="width:80px;">Actions</th></tr>
             </thead>
             <tbody>
-                {receipts_html or "<tr><td colspan='5' style='text-align:center;color:var(--text-muted)'>No payments recorded</td></tr>"}
+                {receipts_html or "<tr><td colspan='6' style='text-align:center;color:var(--text-muted)'>No payments recorded</td></tr>"}
             </tbody>
         </table>
     </div>
@@ -29080,6 +29091,96 @@ def audit_reverse_receipt(receipt_id):
     else:
         flash(f"Removed orphan counter-sale receipt of {money(amount)} (no GL journal found to reverse).", "success")
     return redirect("/audit")
+
+
+@app.route("/customer/<customer_id>/reverse-payment/<receipt_id>", methods=["POST"])
+@login_required
+def reverse_customer_payment(customer_id, receipt_id):
+    """Reverse ONE customer payment (receipt) — for fixing a payment captured twice
+    (e.g. once manually and once from a bank allocation). Posts the EXACT opposite of
+    the receipt's own GL journal (so bank vs cash is reversed exactly as it was booked),
+    then removes the receipt so the calculated balance corrects, and logs to allocation_log."""
+    business = Auth.get_current_business()
+    biz_id = business.get("id") if business else None
+    if not biz_id:
+        return redirect("/")
+    if get_user_role() not in ("owner", "admin", "manager", "bookkeeper", "accountant"):
+        flash("You don't have permission for this.", "error")
+        return redirect(f"/customer/{customer_id}")
+
+    r = db.get_one("receipts", receipt_id)
+    if not r or r.get("business_id") != biz_id:
+        flash("Payment not found.", "error")
+        return redirect(f"/customer/{customer_id}")
+
+    amount = round(float(r.get("amount", 0) or 0), 2)
+    rdate = r.get("date", "")
+    _ref = (r.get("reference") or "").strip()
+    _bref = (r.get("bank_reference") or "").strip()
+
+    # Find the receipt's own journal lines (by reference + date + amount) to learn which
+    # asset account (cash 1050 or bank 1000) it debited and the debtors side it credited.
+    asset_code = None
+    dr_account = None
+    try:
+        for _try_ref in [x for x in (_ref, _bref) if x]:
+            for j in (db.get("journals", {"business_id": biz_id, "reference": _try_ref}) or []):
+                if (j.get("date") or "") != rdate:
+                    continue
+                jd = round(float(j.get("debit", 0) or 0), 2)
+                jc = round(float(j.get("credit", 0) or 0), 2)
+                if asset_code is None and abs(jd - amount) < 0.01 and jc == 0:
+                    asset_code = (j.get("account_code") or "").strip()
+                elif dr_account is None and abs(jc - amount) < 0.01 and jd == 0:
+                    dr_account = (j.get("account_code") or "").strip()
+            if asset_code:
+                break
+    except Exception as e:
+        logger.error(f"[REVERSE PAYMENT] journal lookup failed: {e}")
+
+    if dr_account is None:
+        dr_account = gl(biz_id, "debtors")
+
+    _rev_ref = f"REV-{_ref or _bref or receipt_id[:6]}-{receipt_id[:6]}"
+    posted = False
+    if asset_code and dr_account:
+        try:
+            create_journal_entry(
+                biz_id, today(),
+                f"Reverse duplicate customer payment ({_ref or _bref})",
+                _rev_ref,
+                [
+                    {"account_code": dr_account, "debit": amount, "credit": 0},
+                    {"account_code": asset_code, "debit": 0, "credit": amount},
+                ]
+            )
+            posted = True
+        except Exception as e:
+            logger.error(f"[REVERSE PAYMENT] reverse journal failed: {e}")
+            flash(f"Could not post the reversing journal: {e}", "error")
+            return redirect(f"/customer/{customer_id}")
+
+    try:
+        if log_allocation:
+            _uid, _uname = get_acting_user()
+            log_allocation(
+                business_id=biz_id, allocation_type="reversal", source_table="receipts",
+                source_id=receipt_id,
+                description=f"Reversed duplicate customer payment - {money(amount)}",
+                amount=amount, gl_entries=[],
+                customer_name=r.get("customer_name", ""), reference=_rev_ref,
+                transaction_date=today(), created_by=_uid, created_by_name=_uname
+            )
+    except Exception:
+        pass
+
+    db.delete("receipts", receipt_id, biz_id)
+    logger.info(f"[REVERSE PAYMENT] Reversed customer receipt {receipt_id} ({_ref}, {money(amount)}); asset={asset_code} dr={dr_account} posted={posted}")
+    if posted:
+        flash(f"Reversed payment of {money(amount)} (DR {dr_account} / CR {asset_code}). The balance has been updated.", "success")
+    else:
+        flash(f"Removed payment of {money(amount)} (no matching GL journal found to reverse — please check the bank GL).", "success")
+    return redirect(f"/customer/{customer_id}")
 
 
 # ── ONE-TIME OPENING BALANCE TOOL (cutover from Sage, 01 May 2026) ──
