@@ -35431,6 +35431,145 @@ def api_journals_create():
         return jsonify({"success": False, "error": "Could not save journal entry"})
 
 
+@app.route("/journals/adjust-balance", methods=["POST"])
+@login_required
+def journals_adjust_balance():
+    """Adjust a customer or supplier balance by creating the matching sub-ledger record
+    (so the CALCULATED balance moves) plus the corresponding GL journal. Increase =>
+    invoice / supplier invoice; Decrease => credit note / supplier credit note. Use for
+    fixing capture errors such as a payment booked twice or an invoice reversed by mistake."""
+    business = Auth.get_current_business()
+    biz_id = business.get("id") if business else None
+    if not biz_id:
+        return redirect("/")
+    if get_user_role() not in ("owner", "admin", "manager", "bookkeeper", "accountant"):
+        flash("You don't have permission for this.", "error")
+        return redirect("/journals")
+
+    party = (request.form.get("party") or "").strip()
+    direction = (request.form.get("direction") or "increase").strip().lower()
+    reason = (request.form.get("reason") or "").strip() or "Balance adjustment"
+    adj_date = (request.form.get("date") or "").strip() or today()
+    vat_mode = (request.form.get("vat_mode") or "none").strip()
+    try:
+        amount = round(float(request.form.get("amount") or 0), 2)
+    except Exception:
+        amount = 0
+    if amount <= 0:
+        flash("Enter a valid amount greater than zero.", "error")
+        return redirect("/journals")
+    if ":" not in party:
+        flash("Select a customer or supplier.", "error")
+        return redirect("/journals")
+
+    ptype, pid = party.split(":", 1)
+    if vat_mode == "15":
+        net = round(amount / 1.15, 2)
+        vat = round(amount - net, 2)
+    else:
+        net = amount
+        vat = 0.0
+
+    _uid, _uname = get_acting_user()
+    _suffix = generate_id()[:6]
+    _src_table = ""
+    _src_id = ""
+    _pname = ""
+
+    if ptype == "customer":
+        cust = db.get_one("customers", pid)
+        if not cust or cust.get("business_id") != biz_id:
+            flash("Customer not found.", "error")
+            return redirect("/journals")
+        _pname = cust.get("name", "")
+        _code = (cust.get("code") or pid[:6])
+        if direction == "increase":
+            inv_num = f"ADJ-{_code}-{_suffix}"
+            db.save("invoices", {
+                "id": generate_id(), "business_id": biz_id, "invoice_number": inv_num,
+                "date": adj_date, "customer_id": pid, "customer_name": _pname,
+                "items": [], "subtotal": net, "vat": vat, "total": amount,
+                "status": "unpaid", "reference": "Balance adjustment",
+                "notes": f"BALANCE_ADJUSTMENT: {reason[:200]}",
+                "created_at": now(), "created_by": _uid,
+            })
+            entries = [{"account_code": gl(biz_id, "debtors"), "debit": amount, "credit": 0},
+                       {"account_code": gl(biz_id, "sales"), "debit": 0, "credit": net}]
+            if vat > 0:
+                entries.append({"account_code": gl(biz_id, "vat_output"), "debit": 0, "credit": vat})
+            create_journal_entry(biz_id, adj_date, f"Balance adjustment (increase) - {_pname}: {reason[:80]}", inv_num, entries)
+            _src_table, _src_id = "invoices", inv_num
+        else:
+            cn_num = f"ADJ-CN-{_code}-{_suffix}"
+            db.save("credit_notes", {
+                "id": generate_id(), "business_id": biz_id, "credit_note_number": cn_num,
+                "date": adj_date, "customer_id": pid, "customer_name": _pname,
+                "reason": reason[:200],
+                "items": json.dumps([{"description": reason or "Adjustment", "quantity": 1, "price": net, "total": net}]),
+                "subtotal": net, "vat": vat, "total": amount, "kind": "adjustment",
+                "credit_type": "manual", "created_by": _uid, "created_at": now(),
+            })
+            entries = [{"account_code": gl(biz_id, "sales"), "debit": net, "credit": 0}]
+            if vat > 0:
+                entries.append({"account_code": gl(biz_id, "vat_output"), "debit": vat, "credit": 0})
+            entries.append({"account_code": gl(biz_id, "debtors"), "debit": 0, "credit": amount})
+            create_journal_entry(biz_id, adj_date, f"Balance adjustment (decrease) - {_pname}: {reason[:80]}", cn_num, entries)
+            _src_table, _src_id = "credit_notes", cn_num
+
+    elif ptype == "supplier":
+        sup = db.get_one("suppliers", pid)
+        if not sup or sup.get("business_id") != biz_id:
+            flash("Supplier not found.", "error")
+            return redirect("/journals")
+        _pname = sup.get("name", "")
+        _code = (sup.get("code") or pid[:6])
+        if direction == "increase":
+            inv_num = f"ADJ-{_code}-{_suffix}"
+            db.save("supplier_invoices", {
+                "id": generate_id(), "business_id": biz_id, "invoice_number": inv_num,
+                "date": adj_date, "supplier_id": pid, "supplier_name": _pname,
+                "items": json.dumps([]), "subtotal": net, "vat": vat, "total": amount,
+                "status": "unpaid", "notes": f"BALANCE_ADJUSTMENT: {reason[:200]}",
+                "created_at": now(), "created_by": _uid,
+            })
+            entries = [{"account_code": gl(biz_id, "purchases"), "debit": net, "credit": 0}]
+            if vat > 0:
+                entries.append({"account_code": gl(biz_id, "vat_input"), "debit": vat, "credit": 0})
+            entries.append({"account_code": gl(biz_id, "creditors"), "debit": 0, "credit": amount})
+            create_journal_entry(biz_id, adj_date, f"Balance adjustment (increase) - {_pname}: {reason[:80]}", inv_num, entries)
+            _src_table, _src_id = "supplier_invoices", inv_num
+        else:
+            cn_num = f"ADJ-CN-{_code}-{_suffix}"
+            db.save("supplier_credit_notes", {
+                "id": generate_id(), "business_id": biz_id, "credit_note_number": cn_num,
+                "date": adj_date, "supplier_id": pid, "supplier_name": _pname,
+                "reason": reason[:200], "subtotal": net, "vat": vat, "total": amount,
+                "status": "active", "created_by": _uid, "created_at": now(),
+            })
+            entries = [{"account_code": gl(biz_id, "creditors"), "debit": amount, "credit": 0},
+                       {"account_code": gl(biz_id, "purchases"), "debit": 0, "credit": net}]
+            if vat > 0:
+                entries.append({"account_code": gl(biz_id, "vat_input"), "debit": 0, "credit": vat})
+            create_journal_entry(biz_id, adj_date, f"Balance adjustment (decrease) - {_pname}: {reason[:80]}", cn_num, entries)
+            _src_table, _src_id = "supplier_credit_notes", cn_num
+    else:
+        flash("Invalid selection.", "error")
+        return redirect("/journals")
+
+    try:
+        if log_allocation:
+            log_allocation(business_id=biz_id, allocation_type="adjustment", source_table=_src_table,
+                           source_id=_src_id, description=f"Balance adjustment ({direction}) {_pname}: {reason[:120]}",
+                           amount=amount, gl_entries=[], reference=_src_id, transaction_date=adj_date,
+                           created_by=_uid, created_by_name=_uname)
+    except Exception:
+        pass
+
+    logger.info(f"[BAL ADJ] {ptype} {pid} {direction} {money(amount)} (net={net} vat={vat}) ref={_src_id}")
+    flash(f"{_pname} balance {direction}d by {money(amount)}.", "success")
+    return redirect("/journals")
+
+
 @app.route("/journals")
 @login_required
 def journals_page():
@@ -35458,6 +35597,18 @@ def journals_page():
         f'<option value="{safe_string(_c)}">{safe_string(_c)} - {safe_string(_n)}</option>' for _c, _n in _coa_opts
     )
     _today_str = today()
+
+    # ── Customers + suppliers for the balance-adjustment dropdown ──
+    _adj_customers = db.get("customers", {"business_id": biz_id}) if biz_id else []
+    _adj_suppliers = db.get("suppliers", {"business_id": biz_id}) if biz_id else []
+    _adj_cust_opts = "".join(
+        f'<option value="customer:{c.get("id","")}">{safe_string(c.get("name","?"))} ({safe_string(c.get("code","") or "-")})</option>'
+        for c in sorted(_adj_customers, key=lambda x: (x.get("name") or "").lower())
+    )
+    _adj_sup_opts = "".join(
+        f'<option value="supplier:{s.get("id","")}">{safe_string(s.get("name","?"))} ({safe_string(s.get("code","") or "-")})</option>'
+        for s in sorted(_adj_suppliers, key=lambda x: (x.get("name") or "").lower())
+    )
 
     rows = ""
     for j in journals[:500]:
@@ -35519,6 +35670,57 @@ def journals_page():
                 <button class="btn btn-primary" id="jnlSaveBtn" onclick="jnlSave()" disabled>Save Journal</button>
             </div>
         </div>
+    </div>
+
+    <div class="card" style="margin-bottom:20px;">
+        <h3 class="card-title" style="margin:0 0 6px 0;">Adjust customer / supplier balance</h3>
+        <p style="color:var(--text-muted);margin:0 0 15px 0;font-size:12px;">
+            Fix a balance that is wrong — for example a payment captured twice, or an invoice reversed by mistake.
+            Increase or decrease the balance; the system posts the matching customer/supplier entry so the balance and the GL both update.
+        </p>
+        <form method="POST" action="/journals/adjust-balance" onsubmit="return confirm('Post this balance adjustment?');">
+            <div style="display:grid;grid-template-columns:1fr 170px 150px;gap:12px;margin-bottom:12px;">
+                <div>
+                    <label style="font-size:11px;color:var(--text-muted);display:block;margin-bottom:4px;">Customer / Supplier</label>
+                    <select name="party" required style="width:100%;padding:8px;border:1px solid var(--border);border-radius:6px;background:var(--bg);color:var(--text);">
+                        <option value="">Select...</option>
+                        <optgroup label="Customers">{_adj_cust_opts}</optgroup>
+                        <optgroup label="Suppliers">{_adj_sup_opts}</optgroup>
+                    </select>
+                </div>
+                <div>
+                    <label style="font-size:11px;color:var(--text-muted);display:block;margin-bottom:4px;">Direction</label>
+                    <select name="direction" style="width:100%;padding:8px;border:1px solid var(--border);border-radius:6px;background:var(--bg);color:var(--text);">
+                        <option value="increase">Increase balance</option>
+                        <option value="decrease">Decrease balance</option>
+                    </select>
+                </div>
+                <div>
+                    <label style="font-size:11px;color:var(--text-muted);display:block;margin-bottom:4px;">Amount</label>
+                    <input type="number" step="0.01" min="0.01" name="amount" required placeholder="0.00" style="width:100%;padding:8px;border:1px solid var(--border);border-radius:6px;background:var(--bg);color:var(--text);">
+                </div>
+            </div>
+            <div style="display:grid;grid-template-columns:170px 1fr 160px;gap:12px;margin-bottom:14px;">
+                <div>
+                    <label style="font-size:11px;color:var(--text-muted);display:block;margin-bottom:4px;">VAT</label>
+                    <select name="vat_mode" style="width:100%;padding:8px;border:1px solid var(--border);border-radius:6px;background:var(--bg);color:var(--text);">
+                        <option value="none">No VAT</option>
+                        <option value="15">Incl. VAT (15%)</option>
+                    </select>
+                </div>
+                <div>
+                    <label style="font-size:11px;color:var(--text-muted);display:block;margin-bottom:4px;">Reason</label>
+                    <input type="text" name="reason" required placeholder="e.g. Reversed wrong invoice INV-00123" style="width:100%;padding:8px;border:1px solid var(--border);border-radius:6px;background:var(--bg);color:var(--text);">
+                </div>
+                <div>
+                    <label style="font-size:11px;color:var(--text-muted);display:block;margin-bottom:4px;">Date</label>
+                    <input type="date" name="date" value="{_today_str}" style="width:100%;padding:8px;border:1px solid var(--border);border-radius:6px;background:var(--bg);color:var(--text);">
+                </div>
+            </div>
+            <div style="display:flex;justify-content:flex-end;">
+                <button type="submit" class="btn btn-primary">Post Adjustment</button>
+            </div>
+        </form>
     </div>
 
     <div class="card">
