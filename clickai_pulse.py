@@ -42,6 +42,27 @@ _pulse_cache = {}
 _briefing_cache = {}
 
 
+def _parse_terms_days(terms):
+    """Parse a customer/supplier payment-terms string into a number of days.
+    '30 Days' -> 30, '7 Days' -> 7, 'COD'/'Cash'/'Prepaid'/'Debit Order' -> 0,
+    'EOM' -> 30, blank/unknown -> 30 (the system default)."""
+    t = str(terms or "").strip().lower()
+    if not t:
+        return 30
+    if any(k in t for k in ("cod", "cash", "prepaid", "debit order", "c.o.d", "on delivery")):
+        return 0
+    import re as _re
+    m = _re.search(r"(\d+)", t)
+    if m:
+        try:
+            return int(m.group(1))
+        except Exception:
+            return 30
+    if "eom" in t:
+        return 30
+    return 30
+
+
 def register_pulse_routes(app, db, login_required, Auth, generate_id, now, today,
                           render_page, get_user_role, extract_time,
                           has_reactor_hud, jarvis_hud_header, jarvis_techline,
@@ -763,6 +784,7 @@ def register_pulse_routes(app, db, login_required, Auth, generate_id, now, today
                 f_payments = pool.submit(db.get, "payments", {"business_id": biz_id})
                 f_quotes = pool.submit(db.get, "quotes", {"business_id": biz_id})
                 f_suppliers = pool.submit(db.get, "suppliers", {"business_id": biz_id})
+                f_customers = pool.submit(db.get, "customers", {"business_id": biz_id})
                 f_stock = pool.submit(db.get_all_stock, biz_id)
                 f_users = pool.submit(db.get_business_users, biz_id)
                 f_credit_notes = pool.submit(db.get, "credit_notes", {"business_id": biz_id})
@@ -794,6 +816,7 @@ def register_pulse_routes(app, db, login_required, Auth, generate_id, now, today
                 payments = _safe(f_payments, "payments")
                 quotes = _safe(f_quotes, "quotes")
                 suppliers = _safe(f_suppliers, "suppliers")
+                customers = _safe(f_customers, "customers")
                 stock = _safe(f_stock, "stock")
                 credit_notes = _safe(f_credit_notes, "credit_notes")
                 delivery_notes = _safe(f_delivery_notes, "delivery_notes")
@@ -869,17 +892,23 @@ def register_pulse_routes(app, db, login_required, Auth, generate_id, now, today
             # ── AGING ANALYSIS (per-customer grouping) ──
             # Net each customer's outstanding invoices by their payments (FIFO oldest-first),
             # using the CALCULATED balance, so aging matches reality and drops paid / opening /
-            # counter-sale amounts. Invoices with nothing left owing are excluded.
+            # counter-sale amounts. "Overdue" is measured from the DUE date (invoice date +
+            # the customer's payment terms), so invoices still within terms are NOT arrears.
             from collections import defaultdict as _dd
+            _cust_terms = {}
+            for _c in customers:
+                _cust_terms[_c.get("id")] = _parse_terms_days(_c.get("payment_terms"))
             _by_cust = _dd(list)
             for inv in outstanding_invoices:
                 _by_cust[inv.get("customer_id")].append(inv)
 
-            _inv_net = {}  # invoice_id -> amount still owing after FIFO payment allocation
+            _inv_net = {}      # invoice_id -> amount still owing after FIFO payment allocation
+            _inv_overdue = {}  # invoice_id -> days past the due date (0 if still within terms)
             customer_aging = {}
             for _cid, _invs in _by_cust.items():
                 _invs_sorted = sorted(_invs, key=lambda x: str(x.get("date", ""))[:10])
                 _invoiced = sum(float(i.get("total", 0) or 0) for i in _invs_sorted)
+                _terms = _cust_terms.get(_cid, 30)
                 if _cust_bals:
                     _owed = float(_cust_bals.get(_cid, 0) or 0)
                     if _owed <= 0.01:
@@ -896,18 +925,20 @@ def register_pulse_routes(app, db, login_required, Auth, generate_id, now, today
                         _net = round(_t - _pay, 2)
                         _pay = 0.0
                     _inv_net[inv.get("id")] = _net
-                    if _net <= 0.01:
-                        continue
-                    cust_name = inv.get("customer_name", "Unknown")
                     try:
                         inv_date = datetime.strptime(str(inv.get("date", ""))[:10], "%Y-%m-%d").date()
                         days = (today_date - inv_date).days
                     except Exception:
                         days = 0
+                    days_overdue = days - _terms
+                    _inv_overdue[inv.get("id")] = days_overdue if days_overdue > 0 else 0
+                    if _net <= 0.01 or days_overdue < 1:
+                        continue  # paid off, or still within payment terms (not arrears)
+                    cust_name = inv.get("customer_name", "Unknown")
                     if cust_name not in customer_aging:
                         customer_aging[cust_name] = {"name": cust_name, "total": 0, "oldest_days": 0}
                     customer_aging[cust_name]["total"] += _net
-                    customer_aging[cust_name]["oldest_days"] = max(customer_aging[cust_name]["oldest_days"], days)
+                    customer_aging[cust_name]["oldest_days"] = max(customer_aging[cust_name]["oldest_days"], days_overdue)
 
             danger_zone = sorted([c for c in customer_aging.values() if c["oldest_days"] >= 90], key=lambda x: x["total"], reverse=True)
             warning_zone = sorted([c for c in customer_aging.values() if 60 <= c["oldest_days"] < 90], key=lambda x: x["total"], reverse=True)
@@ -944,22 +975,17 @@ def register_pulse_routes(app, db, login_required, Auth, generate_id, now, today
             overdue_invoices = []
             for inv in outstanding_invoices:
                 _net = _inv_net.get(inv.get("id"), float(inv.get("total", 0) or 0))
-                if _net <= 0.01:
-                    continue
-                try:
-                    inv_date = datetime.strptime(str(inv.get("date", ""))[:10], "%Y-%m-%d").date()
-                    days = (today_date - inv_date).days
-                except Exception:
-                    days = 0
-                if days >= 30:
-                    overdue_invoices.append({
-                        "invoice_number": inv.get("invoice_number", "?"),
-                        "customer_name": inv.get("customer_name", "Unknown"),
-                        "total": _net,
-                        "date": str(inv.get("date", ""))[:10],
-                        "days": days,
-                        "created_by": inv.get("created_by", ""),
-                    })
+                _dov = _inv_overdue.get(inv.get("id"), 0)
+                if _net <= 0.01 or _dov < 1:
+                    continue  # paid off, or still within payment terms (not overdue)
+                overdue_invoices.append({
+                    "invoice_number": inv.get("invoice_number", "?"),
+                    "customer_name": inv.get("customer_name", "Unknown"),
+                    "total": _net,
+                    "date": str(inv.get("date", ""))[:10],
+                    "days": _dov,
+                    "created_by": inv.get("created_by", ""),
+                })
 
             overdue_invoices.sort(key=lambda x: x["days"], reverse=True)
             overdue_total = sum(o["total"] for o in overdue_invoices)

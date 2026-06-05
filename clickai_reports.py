@@ -22,6 +22,27 @@ logger = logging.getLogger(__name__)
 ANTHROPIC_API_KEY = os.environ.get("ANTHROPIC_API_KEY", "")
 
 
+def _parse_terms_days(terms):
+    """Parse a customer/supplier payment-terms string into a number of days.
+    '30 Days' -> 30, '7 Days' -> 7, 'COD'/'Cash'/'Prepaid'/'Debit Order' -> 0,
+    'EOM' -> 30, blank/unknown -> 30 (the system default)."""
+    t = str(terms or "").strip().lower()
+    if not t:
+        return 30
+    if any(k in t for k in ("cod", "cash", "prepaid", "debit order", "c.o.d", "on delivery")):
+        return 0
+    import re as _re
+    m = _re.search(r"(\d+)", t)
+    if m:
+        try:
+            return int(m.group(1))
+        except Exception:
+            return 30
+    if "eom" in t:
+        return 30
+    return 30
+
+
 def register_report_routes(app, db, login_required, Auth, render_page,
                            generate_id, money, safe_string, now, today,
                            has_reactor_hud, jarvis_hud_header, jarvis_techline,
@@ -261,15 +282,17 @@ def register_report_routes(app, db, login_required, Auth, render_page,
                 inv_date = today_date
             
             days_old = (today_date - inv_date).days
+            _terms = _parse_terms_days(customer_map.get(cust_id, {}).get("payment_terms"))
+            days_pd = days_old - _terms  # days past the due date (<=0 means still within terms)
             amount = float(inv.get("total", 0))
             
-            if days_old <= 30:
+            if days_pd <= 0:
                 aging_data[cust_id]["current"] += amount
-            elif days_old <= 60:
+            elif days_pd <= 30:
                 aging_data[cust_id]["d30"] += amount
-            elif days_old <= 90:
+            elif days_pd <= 60:
                 aging_data[cust_id]["d60"] += amount
-            elif days_old <= 120:
+            elif days_pd <= 90:
                 aging_data[cust_id]["d90"] += amount
             else:
                 aging_data[cust_id]["d120"] += amount
@@ -425,20 +448,25 @@ def register_report_routes(app, db, login_required, Auth, render_page,
                     days_old = (today_date - inv_date).days
                 except:
                     days_old = 0
+                _terms = _parse_terms_days(c.get("payment_terms"))
+                days_pd = days_old - _terms  # days past the due date
                 
-                # Color code aging
-                if days_old > 90:
+                # Color code by how overdue the invoice is (past its due date)
+                if days_pd > 90:
                     age_color = "var(--red)"
-                    age_text = f"{days_old}d [!]"
-                elif days_old > 60:
+                    age_text = f"{days_pd}d [!]"
+                elif days_pd > 60:
                     age_color = "var(--orange)"
-                    age_text = f"{days_old}d"
-                elif days_old > 30:
+                    age_text = f"{days_pd}d"
+                elif days_pd > 30:
                     age_color = "var(--yellow)"
-                    age_text = f"{days_old}d"
+                    age_text = f"{days_pd}d"
+                elif days_pd > 0:
+                    age_color = "var(--text-muted)"
+                    age_text = f"{days_pd}d"
                 else:
                     age_color = "var(--text-muted)"
-                    age_text = f"{days_old}d"
+                    age_text = "current"
                 
                 inv_rows += f'''
                 <tr style="cursor:pointer;" onclick="window.location='/invoice/{inv.get("id")}'">
@@ -581,20 +609,25 @@ def register_report_routes(app, db, login_required, Auth, render_page,
                     days_old = (today_date - inv_date).days
                 except:
                     days_old = 0
+                _terms = _parse_terms_days(s.get("payment_terms"))
+                days_pd = days_old - _terms  # days past the due date
                 
-                # Color code aging
-                if days_old > 90:
+                # Color code by how overdue the invoice is (past its due date)
+                if days_pd > 90:
                     age_color = "var(--red)"
-                    age_text = f"{days_old}d [!]"
-                elif days_old > 60:
+                    age_text = f"{days_pd}d [!]"
+                elif days_pd > 60:
                     age_color = "var(--orange)"
-                    age_text = f"{days_old}d"
-                elif days_old > 30:
+                    age_text = f"{days_pd}d"
+                elif days_pd > 30:
                     age_color = "var(--yellow)"
-                    age_text = f"{days_old}d"
+                    age_text = f"{days_pd}d"
+                elif days_pd > 0:
+                    age_color = "var(--text-muted)"
+                    age_text = f"{days_pd}d"
                 else:
                     age_color = "var(--text-muted)"
-                    age_text = f"{days_old}d"
+                    age_text = "current"
                 
                 inv_rows += f'''
                 <tr>
@@ -853,15 +886,17 @@ def register_report_routes(app, db, login_required, Auth, render_page,
                 p_date = today_date
             
             days_old = (today_date - p_date).days
+            _terms = _parse_terms_days(supplier_map.get(supp_id, {}).get("payment_terms"))
+            days_pd = days_old - _terms  # days past the due date (<=0 means still within terms)
             amount = float(p.get("total", 0) or 0)
             
-            if days_old <= 30:
+            if days_pd <= 0:
                 aging_data[key]["current"] += amount
-            elif days_old <= 60:
+            elif days_pd <= 30:
                 aging_data[key]["d30"] += amount
-            elif days_old <= 90:
+            elif days_pd <= 60:
                 aging_data[key]["d60"] += amount
-            elif days_old <= 120:
+            elif days_pd <= 90:
                 aging_data[key]["d90"] += amount
             else:
                 aging_data[key]["d120"] += amount
