@@ -53206,12 +53206,84 @@ def tools_page():
             <h3>Import Data</h3>
             <p style="color:var(--text-muted)">Import from CSV/Excel</p>
         </div>
+        <div class="card" style="cursor:pointer" onclick="window.location='/export-data'">
+            <h3>Export Data</h3>
+            <p style="color:var(--text-muted)">Download your data as CSV</p>
+        </div>
     </div>
     
     {fulltech_tools}
     '''
     
     return render_page("Tools", content, user, "tools")
+
+
+@app.route("/export-data")
+@login_required
+def export_data_page():
+    """Export the current business's data tables as CSV (no row limit)."""
+    user = Auth.get_current_user()
+    tables = [
+        ("journals", "Journals", "All GL journal lines"),
+        ("journal_entries", "Journal Entries", "Secondary journal entry lines"),
+        ("bank_transactions", "Bank Transactions", "Imported bank statement lines"),
+        ("chart_of_accounts", "Chart of Accounts", "GL account list"),
+    ]
+    cards = ""
+    for tbl, label, desc in tables:
+        cards += f'''
+        <div class="card" style="display:flex;justify-content:space-between;align-items:center;">
+            <div>
+                <h3 style="margin:0;">{label}</h3>
+                <p style="color:var(--text-muted);margin:4px 0 0 0;">{desc}</p>
+            </div>
+            <a href="/export-data/download?table={tbl}" class="btn btn-primary">Download CSV</a>
+        </div>'''
+    content = f'''
+    <h2 style="margin-bottom:20px;">Export Data</h2>
+    <p style="color:var(--text-muted);margin-bottom:20px;">Download your business data as CSV files. Each file contains all rows for the current business.</p>
+    {cards}
+    <div style="margin-top:20px;">
+        <a href="/tools" class="btn">Back</a>
+    </div>
+    '''
+    return render_page("Export Data", content, user, "tools")
+
+
+@app.route("/export-data/download")
+@login_required
+def export_data_download():
+    """Stream a single table for the current business as CSV. No row limit."""
+    business = Auth.get_current_business()
+    biz_id = business.get("id") if business else None
+    if not biz_id:
+        return redirect("/export-data")
+
+    allowed = {"journals", "journal_entries", "bank_transactions", "chart_of_accounts"}
+    table = request.args.get("table", "")
+    if table not in allowed:
+        return redirect("/export-data")
+
+    rows = db.get(table, {"business_id": biz_id}, limit=1000000) or []
+
+    # Build a stable, ordered set of column names across all rows
+    fieldnames = []
+    for r in rows:
+        for k in r.keys():
+            if k not in fieldnames:
+                fieldnames.append(k)
+
+    output = io.StringIO()
+    writer = csv.DictWriter(output, fieldnames=fieldnames)
+    writer.writeheader()
+    for r in rows:
+        writer.writerow(r)
+
+    return Response(
+        output.getvalue(),
+        mimetype="text/csv",
+        headers={"Content-Disposition": f"attachment;filename={table}.csv"}
+    )
 
 
 # 
