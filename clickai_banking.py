@@ -2259,9 +2259,6 @@ Return ONLY the JSON array. No markdown, no explanation."""
             # ═══════════════════════════════════════════════════════════════
             existing_txns = db.get("bank_transactions", {"business_id": biz_id}) or []
             existing_fingerprints = set()
-            # Fuzzy dedup: date+amount → count how many times this combo exists
-            # This catches OCR variants where description differs slightly
-            existing_date_amount = {}
             for et in existing_txns:
                 _e_date = str(et.get("date", ""))[:10]
                 _e_desc = (et.get("description") or "").strip().upper()[:80]
@@ -2269,17 +2266,13 @@ Return ONLY the JSON array. No markdown, no explanation."""
                 _e_deb = round(float(et.get("debit", 0) or 0), 2)
                 _e_cre = round(float(et.get("credit", 0) or 0), 2)
                 # Robust amount: if 'amount' is 0 but debit/credit have a value, derive it.
-                # Always compare on the ABSOLUTE value so a +/- sign flip never hides a dupe.
-                _e_eff = abs(_e_amt) if _e_amt else abs(_e_cre - _e_deb)
+                # Use the SIGNED amount so a deposit (+) can NEVER collide with a
+                # payment (-) of the same magnitude. (Previously abs() was used, which
+                # let real deposits be dropped as "duplicates" of same-amount payments.)
+                _e_eff = _e_amt if _e_amt else round(_e_cre - _e_deb, 2)
                 existing_fingerprints.add((_e_date, _e_desc, _e_eff))
-                # Track date+abs-amount combos for fuzzy dedup
-                _da_key = (_e_date, _e_eff)
-                existing_date_amount[_da_key] = existing_date_amount.get(_da_key, 0) + 1
             
-            # Also track date+amount within current import batch for intra-file dedup
-            import_date_amount = {}
-            
-            logger.info(f"[BANK IMPORT] Dedup: {len(existing_fingerprints)} exact + {len(existing_date_amount)} date+amount fingerprints loaded")
+            logger.info(f"[BANK IMPORT] Dedup: {len(existing_fingerprints)} signed fingerprints loaded")
             
             # ═══════════════════════════════════════════════════════════════
             # PRE-CACHE: Load all bank patterns ONCE instead of per-transaction
@@ -2439,72 +2432,25 @@ Return ONLY the JSON array. No markdown, no explanation."""
                     # ═══════════════════════════════════════════════════════════════
                     _fp_date = str(txn_date)[:10]
                     _fp_desc = desc_upper.strip()[:80]
-                    # Robust amount: derive from debit/credit if 'amount' is 0, always absolute
+                    # Robust amount: derive from debit/credit if 'amount' is 0.
+                    # SIGNED (not abs) so deposits never collide with same-size payments.
                     _raw_amt = round(amount, 2)
-                    _fp_amt = abs(_raw_amt) if _raw_amt else abs(round(credit, 2) - round(debit, 2))
+                    _fp_amt = _raw_amt if _raw_amt else round(round(credit, 2) - round(debit, 2), 2)
                     fingerprint = (_fp_date, _fp_desc, _fp_amt)
                     if fingerprint in existing_fingerprints:
                         skipped_dupes += 1
                         continue
                     
-                    # Fuzzy dedup: same date + same amount already in DB or this batch?
-                    # This catches OCR variants from overlapping statement pages
-                    # Fuzzy dedup: same date + same amount already seen?
-                    # Bank statements almost NEVER have two genuinely different
-                    # transactions with identical date AND amount. When they do
-                    # (e.g. two R4.90 card fees on the same day), the descriptions
-                    # are very different. OCR duplicates always have SIMILAR descriptions.
-                    _da_key = (_fp_date, _fp_amt)
-                    _existing_count = existing_date_amount.get(_da_key, 0)
-                    _import_count = import_date_amount.get(_da_key, 0)
+                    # A transaction is only a duplicate when its date, full description
+                    # AND signed amount all match an existing one (the exact check above).
+                    # The previous "fuzzy" date+amount+prefix matching is removed: it
+                    # dropped legitimate distinct deposits that shared a generic prefix
+                    # (e.g. "MAGTAPE CREDIT ...", "CREDIT CARD EFTPOS SETTLEMENT ...") and
+                    # happened to have the same amount on a busy day. Erring toward keeping
+                    # a transaction is safe (visible, removable); silently dropping income
+                    # is not (invisible, and it corrupts the bank balance).
                     
-                    import re as _re
-                    _core = _re.sub(r'[0-9#:@%\-\.\s]+', '', _fp_desc)[:20]
-                    
-                    # For re-imports: if DB already has this date+amount combo,
-                    # only allow it if the description is genuinely DIFFERENT
-                    # from ALL existing DB entries with the same date+amount.
-                    # This prevents the first dupe from slipping through.
-                    if _existing_count > 0:
-                        _is_dupe_of_existing = False
-                        for _prev_fp in existing_fingerprints:
-                            if _prev_fp[0] == _fp_date and round(float(str(_prev_fp[2])), 2) == _fp_amt:
-                                _prev_core = _re.sub(r'[0-9#:@%\-\.\s]+', '', _prev_fp[1])[:20]
-                                # If the core text (letters only) matches, it's a dupe
-                                if _core == _prev_core:
-                                    _is_dupe_of_existing = True
-                                    break
-                                # If first 12 chars match, likely dupe
-                                if _fp_desc[:12] == _prev_fp[1][:12]:
-                                    _is_dupe_of_existing = True
-                                    break
-                        if _is_dupe_of_existing:
-                            skipped_dupes += 1
-                            logger.debug(f"[BANK IMPORT] Re-import dedup skip: {_fp_date} {_fp_amt} {_fp_desc[:40]}")
-                            continue
-                    
-                    # Within current import batch: if same date+amount already
-                    # in this batch, only allow if descriptions are genuinely DIFFERENT
-                    if _import_count > 0:
-                        _dominated = False
-                        for _prev_fp in existing_fingerprints:
-                            if _prev_fp[0] == _fp_date and round(float(str(_prev_fp[2])), 2) == _fp_amt:
-                                _prev_core = _re.sub(r'[0-9#:@%\-\.\s]+', '', _prev_fp[1])[:20]
-                                if _core == _prev_core:
-                                    _dominated = True
-                                    break
-                                if _fp_desc[:12] == _prev_fp[1][:12]:
-                                    _dominated = True
-                                    break
-                        if _dominated:
-                            skipped_dupes += 1
-                            logger.debug(f"[BANK IMPORT] Intra-batch dedup skip: {_fp_date} {_fp_amt} {_fp_desc[:40]}")
-                            continue
-                    
-                    # Track within current import batch
-                    import_date_amount[_da_key] = _import_count + 1
-                    
-                    # Also add this new one to prevent exact dupes within the same import file
+                    # Add this new one to prevent exact dupes within the same import file
                     existing_fingerprints.add(fingerprint)
                     
                     # ═══════════════════════════════════════════════════════════════
