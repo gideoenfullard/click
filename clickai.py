@@ -15492,13 +15492,16 @@ class Context:
                 logger.error(f"[DASHBOARD] {key} failed: {e}")
                 results[key] = None
         
-        with ThreadPoolExecutor(max_workers=5) as pool:
-            # Only 5 calls instead of 9 — no duplicates!
+        with ThreadPoolExecutor(max_workers=7) as pool:
+            # 5 column loads + the 2 balance calcs, all in parallel (the balance calcs
+            # only need biz_id, so they no longer have to wait for the loads to finish).
             pool.submit(_fetch, "customers", lambda: db.get_columns("customers", ["name", "phone", "balance"], {"business_id": biz_id}))
             pool.submit(_fetch, "suppliers", lambda: db.get_columns("suppliers", ["balance"], {"business_id": biz_id}))
             pool.submit(_fetch, "sales", lambda: db.get_columns("sales", ["date", "total"], {"business_id": biz_id}))
             pool.submit(_fetch, "stock", lambda: db.get_all_stock(biz_id))
             pool.submit(_fetch, "invoices", lambda: db.get_columns("invoices", ["invoice_number", "customer_name", "total", "status", "date"], {"business_id": biz_id}, limit=200))
+            pool.submit(_fetch, "cust_bals", lambda: calc_all_customer_balances(biz_id))
+            pool.submit(_fetch, "sup_bals", lambda: calc_all_supplier_balances(biz_id))
             pool.shutdown(wait=True)
         _t("dash_parallel")
         
@@ -15514,13 +15517,13 @@ class Context:
         supplier_count = len(suppliers)
         stock_count = len(stock_data)
         
-        # Debtors (calculated from source documents)
-        _all_cust_bals = calc_all_customer_balances(biz_id)
+        # Debtors (calculated from source documents — fetched in parallel above)
+        _all_cust_bals = results.get("cust_bals") or {}
         total_debtors = sum(v for v in _all_cust_bals.values() if v > 0)
         _t("dash_cust")
         
-        # Creditors (calculated from source documents)
-        _all_sup_bals = calc_all_supplier_balances(biz_id)
+        # Creditors (calculated from source documents — fetched in parallel above)
+        _all_sup_bals = results.get("sup_bals") or {}
         total_creditors = sum(v for v in _all_sup_bals.values() if v > 0)
         _t("dash_sup")
         
