@@ -15482,6 +15482,7 @@ class Context:
                 logger.error(f"[DASHBOARD] {key} failed: {e}")
                 results[key] = None
         
+        _dt0 = _time.time()
         with ThreadPoolExecutor(max_workers=5) as pool:
             # Only 5 calls instead of 9 — no duplicates!
             pool.submit(_fetch, "customers", lambda: db.get_columns("customers", ["name", "phone", "balance"], {"business_id": biz_id}))
@@ -15490,6 +15491,7 @@ class Context:
             pool.submit(_fetch, "stock", lambda: db.get_all_stock(biz_id))
             pool.submit(_fetch, "invoices", lambda: db.get_columns("invoices", ["invoice_number", "customer_name", "total", "status", "date"], {"business_id": biz_id}, limit=200))
             pool.shutdown(wait=True)
+        logger.info(f"[DASH TIMING] parallel_db={(_time.time()-_dt0)*1000:.0f}ms")
         
         # Process results — all from single loads
         customers = results.get("customers") or []
@@ -15504,12 +15506,16 @@ class Context:
         stock_count = len(stock_data)
         
         # Debtors (calculated from source documents)
+        _dt1 = _time.time()
         _all_cust_bals = calc_all_customer_balances(biz_id)
         total_debtors = sum(v for v in _all_cust_bals.values() if v > 0)
+        logger.info(f"[DASH TIMING] cust_balances={(_time.time()-_dt1)*1000:.0f}ms")
         
         # Creditors (calculated from source documents)
+        _dt2 = _time.time()
         _all_sup_bals = calc_all_supplier_balances(biz_id)
         total_creditors = sum(v for v in _all_sup_bals.values() if v > 0)
+        logger.info(f"[DASH TIMING] sup_balances={(_time.time()-_dt2)*1000:.0f}ms")
         
         # Sales
         today_str = today()
