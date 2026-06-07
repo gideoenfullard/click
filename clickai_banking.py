@@ -20,6 +20,23 @@ from flask import request, jsonify, session, redirect, flash
 logger = logging.getLogger(__name__)
 
 
+def _bank_fingerprint(date, description, amount=0.0, debit=0.0, credit=0.0):
+    """Dedup fingerprint for a bank transaction: (date, description, SIGNED amount).
+
+    The amount is SIGNED (never abs) so a deposit (+) can NEVER collide with a
+    payment (-) of the same magnitude — the bug that silently dropped real income
+    and corrupted the bank balance. If 'amount' is 0 it is derived from
+    credit - debit. Used by BOTH the existing-transaction load and the per-row
+    dedup check, so the two can never drift apart again.
+    """
+    d = str(date or "")[:10]
+    desc = (description or "").strip().upper()[:80]
+    amt = round(float(amount or 0), 2)
+    if not amt:
+        amt = round(round(float(credit or 0), 2) - round(float(debit or 0), 2), 2)
+    return (d, desc, amt)
+
+
 def register_banking_routes(app, db, login_required, Auth, render_page,
                             generate_id, money, safe_string, now, today,
                             gl, create_journal_entry, log_allocation,
@@ -2260,17 +2277,9 @@ Return ONLY the JSON array. No markdown, no explanation."""
             existing_txns = db.get("bank_transactions", {"business_id": biz_id}) or []
             existing_fingerprints = set()
             for et in existing_txns:
-                _e_date = str(et.get("date", ""))[:10]
-                _e_desc = (et.get("description") or "").strip().upper()[:80]
-                _e_amt = round(float(et.get("amount", 0) or 0), 2)
-                _e_deb = round(float(et.get("debit", 0) or 0), 2)
-                _e_cre = round(float(et.get("credit", 0) or 0), 2)
-                # Robust amount: if 'amount' is 0 but debit/credit have a value, derive it.
-                # Use the SIGNED amount so a deposit (+) can NEVER collide with a
-                # payment (-) of the same magnitude. (Previously abs() was used, which
-                # let real deposits be dropped as "duplicates" of same-amount payments.)
-                _e_eff = _e_amt if _e_amt else round(_e_cre - _e_deb, 2)
-                existing_fingerprints.add((_e_date, _e_desc, _e_eff))
+                existing_fingerprints.add(_bank_fingerprint(
+                    et.get("date", ""), et.get("description"),
+                    et.get("amount", 0), et.get("debit", 0), et.get("credit", 0)))
             
             logger.info(f"[BANK IMPORT] Dedup: {len(existing_fingerprints)} signed fingerprints loaded")
             
@@ -2430,13 +2439,7 @@ Return ONLY the JSON array. No markdown, no explanation."""
                     #          where same transaction has slightly different description
                     #          e.g. "STNDR0BANK" vs "STNDRBANK" from different PDF pages
                     # ═══════════════════════════════════════════════════════════════
-                    _fp_date = str(txn_date)[:10]
-                    _fp_desc = desc_upper.strip()[:80]
-                    # Robust amount: derive from debit/credit if 'amount' is 0.
-                    # SIGNED (not abs) so deposits never collide with same-size payments.
-                    _raw_amt = round(amount, 2)
-                    _fp_amt = _raw_amt if _raw_amt else round(round(credit, 2) - round(debit, 2), 2)
-                    fingerprint = (_fp_date, _fp_desc, _fp_amt)
+                    fingerprint = _bank_fingerprint(txn_date, description, amount, debit, credit)
                     if fingerprint in existing_fingerprints:
                         skipped_dupes += 1
                         continue

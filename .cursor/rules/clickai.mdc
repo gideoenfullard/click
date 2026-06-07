@@ -1,0 +1,53 @@
+---
+description: ClickAI working rules — surgical changes, live-file-only, test before deploy
+globs:
+  - "clickai*.py"
+  - "test_clickai.py"
+alwaysApply: true
+---
+
+# ClickAI — Working Rules
+
+AI-powered business management platform for South African SMEs.
+Python/Flask, deployed on Fly.io, Supabase (PostgreSQL) as the database.
+Modular: `clickai.py` (main) plus route modules using a `register_*_routes`
+pattern. The owner does not edit code himself — deliver complete files.
+
+## Hard rules — never break these
+
+1. **NEVER TOUCH ANYTHING ELSE — only what was explicitly asked.** Every changed
+   line must trace directly to the request. Do not touch adjacent code, comments,
+   or formatting. No unrequested features, abstractions, or "improvements".
+2. **Always work from the latest live file.** Never assume a cached file is
+   current after a deployment. Ask for the latest live file before editing.
+3. **Complete deployable files only** — never snippets, diffs, or patches.
+4. **Verify before delivering.** Run `ast.parse()` on every changed file, then
+   `python3 test_clickai.py` and confirm ALL GREEN before the file is done.
+   Show a diff of what changed.
+5. **Fix everything reported** in one request — not just one item.
+6. **Think before coding.** State assumptions; if ambiguous, ask — never guess.
+7. **Investigate the real code before acting.** Trace the actual execution path.
+
+## The fix → test → deploy loop
+
+After every fix, before deploy, run `python3 test_clickai.py`.
+All green -> safe to `fly deploy`. Any red -> DO NOT DEPLOY; fix first.
+The suite only reads source — it never touches Supabase or live data.
+When a bug is fixed, add a test so it can never silently return.
+
+## Project-specific rules
+
+- Communicate with the owner in **Afrikaans**; all user-facing UI is **English only**.
+- **Balances are always calculated from source documents**, never stored.
+- **Every transaction allocated to a specific GL code** — fallback **7900
+  (Sundry Expenses)**, never 7999. No "General Expenses" catch-all.
+- Use `build_gl_map()` for the business's COA; fall back to `BOOKING_CATEGORIES`
+  only when a business has no COA. **Sage-imported GL codes are preserved exactly.**
+- **Duplicate detection must be airtight** (bank/stock/customer/supplier) —
+  merge-by-code/fingerprint, not bare saves. Bank dedup uses the **signed**
+  amount (never `abs()`).
+- **New DB columns: provide the exact `ALTER TABLE` SQL** (straight quotes only).
+- **One module per session** where possible. **Sage Pastel is the accounting benchmark.**
+- **No emoji or decorative icons in navigation.**
+
+When in doubt: don't assume, don't hide confusion, ask.
