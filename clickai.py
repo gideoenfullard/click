@@ -1052,6 +1052,16 @@ OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY", "")  # For Whisper STT + TTS v
 SUPABASE_URL = os.environ.get("SUPABASE_URL", "")
 SUPABASE_KEY = os.environ.get("SUPABASE_KEY", "")
 
+# Shared HTTP session with connection pooling. Reuses one keep-alive TCP/TLS
+# connection to Supabase across all queries instead of a fresh handshake per call.
+# On a Johannesburg->Ireland link the per-call handshake (~150ms x ~20 calls per
+# page) dominated load time; pooling collapses that to a single reused connection.
+from requests.adapters import HTTPAdapter as _HTTPAdapter
+_DB_SESSION = requests.Session()
+_db_adapter = _HTTPAdapter(pool_connections=20, pool_maxsize=20, max_retries=0)
+_DB_SESSION.mount("https://", _db_adapter)
+_DB_SESSION.mount("http://", _db_adapter)
+
 # Email Config - Sending
 SMTP_HOST = os.environ.get("SMTP_HOST", "smtp.gmail.com")
 SMTP_PORT = int(os.environ.get("SMTP_PORT", "587"))
@@ -4019,7 +4029,7 @@ class DB:
                 for k, v in filters.items():
                     endpoint += f"&{k}=eq.{v}"
             
-            response = requests.get(endpoint, headers=self.headers, timeout=15)
+            response = _DB_SESSION.get(endpoint, headers=self.headers, timeout=15)
             if table == "users" and filters:
                 print(f"[DB DEBUG] GET {table} filters={filters} → status={response.status_code}, rows={len(response.json()) if response.status_code == 200 else 'N/A'}, body={response.text[:200]}", flush=True)
             return response.json() if response.status_code == 200 else []
@@ -4359,7 +4369,7 @@ class DB:
                 for k, v in filters.items():
                     endpoint += f"&{k}=eq.{v}"
             
-            response = requests.get(endpoint, headers=self.headers, timeout=30)
+            response = _DB_SESSION.get(endpoint, headers=self.headers, timeout=30)
             if response.status_code == 200:
                 rows = response.json()
                 return sum(float(r.get(column, 0) or 0) for r in rows)
@@ -4377,7 +4387,7 @@ class DB:
                 for k, v in filters.items():
                     endpoint += f"&{k}=eq.{v}"
             
-            response = requests.get(endpoint, headers=self.headers, timeout=20)
+            response = _DB_SESSION.get(endpoint, headers=self.headers, timeout=20)
             return response.json() if response.status_code == 200 else []
         except Exception as e:
             logger.error(f"[DB] Get columns error: {e}")
@@ -4548,7 +4558,7 @@ class DB:
                              f"?select=id,{merge_key}"
                              f"&business_id=eq.{business_id}"
                              f"&limit=50000")
-                resp = requests.get(fetch_url, headers=self.headers, timeout=60)
+                resp = _DB_SESSION.get(fetch_url, headers=self.headers, timeout=60)
                 if resp.status_code == 200:
                     existing = resp.json() or []
                     code_to_id = {}
@@ -4855,7 +4865,7 @@ class DB:
         try:
             # Try to get one record to see column names
             endpoint = f"{self.url}/rest/v1/{table}?limit=1"
-            response = requests.get(endpoint, headers=self.headers, timeout=30)
+            response = _DB_SESSION.get(endpoint, headers=self.headers, timeout=30)
             
             if response.status_code == 200:
                 data = response.json()
