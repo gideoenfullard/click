@@ -37,6 +37,51 @@ def _bank_fingerprint(date, description, amount=0.0, debit=0.0, credit=0.0):
     return (d, desc, amt)
 
 
+# Income-side categories the bank importer can assign. A money-IN (credit) line may
+# only ever carry one of these (or a neutral one); a money-OUT (debit) line may never.
+_BANK_INCOME_CATEGORIES = frozenset({
+    "CUSTOMER PAYMENT", "CUSTOMER PAYMENT?", "CUSTOMER PAYMENT (MULTI-INVOICE)",
+    "POS DEPOSIT", "SALES", "OTHER INCOME", "INTEREST RECEIVED",
+})
+
+
+def _category_is_expense(category, extra_expense_cats=()):
+    """True if a category represents an expense. Wage/salary/payroll labels always
+    count as expenses (so 'Staff Wages' is caught even if it isn't in the configured
+    expense list); income categories never do."""
+    cat_u = (category or "").upper().strip()
+    if not cat_u or cat_u in _BANK_INCOME_CATEGORIES:
+        return False
+    if any(tok in cat_u for tok in ("WAGE", "SALAR", "PAYROLL")):
+        return True
+    return cat_u in {str(c).upper().strip() for c in extra_expense_cats}
+
+
+def _direction_safe_pattern_category(category, desc_upper, is_credit, extra_expense_cats=()):
+    """Stop income and expense crossing on a learned-pattern match.
+
+    Returns (category_to_use, was_redirected). category_to_use is None when the match
+    must be dropped (left for manual review).
+      - credit (money IN) may never carry an expense label -> redirect to a sensible
+        income suggestion: Interest Received / Refund / else 'Customer Payment?'.
+      - debit (money OUT) may never carry an income label -> drop (manual review).
+    Neutral categories (Refund, Transfer, Loan, Supplier Payment, etc.) pass through.
+    """
+    cat_u = (category or "").upper().strip()
+    if is_credit:
+        if _category_is_expense(category, extra_expense_cats):
+            d = desc_upper or ""
+            if "INTEREST" in d:
+                return "Interest Received", True
+            if "REFUND" in d or "REVERSAL" in d:
+                return "Refund", True
+            return "Customer Payment?", True
+        return category, False
+    if cat_u in _BANK_INCOME_CATEGORIES:
+        return None, False
+    return category, False
+
+
 def register_banking_routes(app, db, login_required, Auth, render_page,
                             generate_id, money, safe_string, now, today,
                             gl, create_journal_entry, log_allocation,
@@ -2238,6 +2283,14 @@ Return ONLY the JSON array. No markdown, no explanation."""
                 "SERVICE FEE": "Bank Charges",
                 "INTEREST": "Interest",
             }
+
+            # Expense categories used to keep income and expense from crossing during
+            # learned-pattern matching (the business COA expense list + the keyword map).
+            try:
+                _import_expense_cats = set(IndustryKnowledge.get_expense_categories(biz_id) or [])
+            except Exception:
+                _import_expense_cats = set()
+            _import_expense_cats |= set(expense_keywords.values())
             
             # Payslips for matching salary EFT payments
             payslips = db.get("payslips", {"business_id": biz_id}) or []
@@ -2656,13 +2709,26 @@ Return ONLY the JSON array. No markdown, no explanation."""
                     if not match_type:
                         pattern_match = _fast_pattern_match(description)
                         if pattern_match.get("confidence", 0) > 0.5:
-                            match_type = "learned_pattern"
-                            match_category = pattern_match.get("category")
-                            match_confidence = pattern_match.get("confidence", 0)
-                            if match_confidence >= 0.8:
-                                auto_matched += 1
-                            else:
+                            _pm_cat = pattern_match.get("category")
+                            _safe_cat, _redirected = _direction_safe_pattern_category(
+                                _pm_cat, desc_upper, credit > 0, _import_expense_cats)
+                            if _safe_cat is None:
+                                # income label on a money-out line — leave for manual review
+                                pass
+                            elif _redirected:
+                                # expense label on a money-in line — never allowed
+                                match_type = "income_redirect"
+                                match_category = _safe_cat
+                                match_confidence = 0.5
                                 suggested += 1
+                            else:
+                                match_type = "learned_pattern"
+                                match_category = _safe_cat
+                                match_confidence = pattern_match.get("confidence", 0)
+                                if match_confidence >= 0.8:
+                                    auto_matched += 1
+                                else:
+                                    suggested += 1
                     
                     txn = {
                         "id": generate_id(),

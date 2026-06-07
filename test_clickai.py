@@ -154,6 +154,31 @@ def test_bank_dedup_signed_not_abs():
            _bank_fingerprint("2026-05-29", "MAGTAPE CREDIT", 5000)
 
 
+def test_bank_income_expense_never_cross():
+    """Money IN may never get an expense label; money OUT may never get an income label.
+
+    This is the 'income tagged as Staff Wages' bug: a learned expense pattern was
+    applied to an incoming credit. Income and expense must never cross.
+    """
+    from clickai_banking import _direction_safe_pattern_category, _category_is_expense
+    exp = {"Staff Wages", "Fuel", "Salaries"}
+    # credit (money IN) with an expense label -> redirected to an income suggestion
+    cat, redirected = _direction_safe_pattern_category("Staff Wages", "CREDIT TRANSFER X", True, exp)
+    assert redirected and cat == "Customer Payment?"
+    # credit with interest / refund hints -> precise income category
+    assert _direction_safe_pattern_category("Salaries", "INTEREST ON ACCOUNT", True, exp)[0] == "Interest Received"
+    assert _direction_safe_pattern_category("Fuel", "REFUND FROM SUPPLIER", True, exp)[0] == "Refund"
+    # legitimate income label on a credit -> kept untouched
+    assert _direction_safe_pattern_category("Customer Payment", "X", True, exp) == ("Customer Payment", False)
+    # expense label on a debit (money OUT) -> kept
+    assert _direction_safe_pattern_category("Fuel", "X", False, exp) == ("Fuel", False)
+    # income label on a debit -> dropped (left for manual review)
+    assert _direction_safe_pattern_category("Customer Payment", "X", False, exp) == (None, False)
+    # wage/salary is always an expense; an income category never is
+    assert _category_is_expense("Staff Wages") is True
+    assert _category_is_expense("Customer Payment") is False
+
+
 # ---------------------------------------------------------------------------
 # Runner — auto-discovers test_* functions. SKIPS (not fails) Tier-3 tests
 # whose module can't be imported in a stripped-down environment.
@@ -167,6 +192,7 @@ _REQUIRES = {  # test name -> module it imports; SKIP (not fail) if that module 
     "test_next_doc_number_sequence":               "clickai",
     "test_generate_id_is_unique_uuid":             "clickai",
     "test_bank_dedup_signed_not_abs":              "clickai_banking",
+    "test_bank_income_expense_never_cross":        "clickai_banking",
 }
 
 def _importable(mod_name):
