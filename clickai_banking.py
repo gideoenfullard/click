@@ -252,6 +252,25 @@ def register_banking_routes(app, db, login_required, Auth, render_page,
                 if _combo_ids:
                     combo_attrs = f' data-combo-invoices="{",".join(_combo_ids)}" data-combo-customer="{_combo_cust}"'
             
+            # Settlement-discount hint attributes (present when ClickAI matched the credit to a
+            # single invoice LESS the customer's discount %) — used to pre-select + pre-tick on confirm.
+            disc_attrs = ""
+            if txn.get("disc_invoice_id"):
+                _disc_inv = txn.get("disc_invoice_id") or ""
+                _disc_cust = txn.get("disc_customer_id") or ""
+                if _disc_inv and _disc_cust:
+                    disc_attrs = f' data-disc-invoice="{_disc_inv}" data-disc-customer="{_disc_cust}"'
+            
+            # Statement (full-account) hint attributes — present when ClickAI matched the credit to a
+            # customer's whole statement balance (optionally less their discount %).
+            stmt_attrs = ""
+            if txn.get("stmt_invoice_ids"):
+                _stmt_ids = [i for i in (txn.get("stmt_invoice_ids") or []) if i]
+                _stmt_cust = txn.get("stmt_customer_id") or ""
+                if _stmt_ids and _stmt_cust:
+                    _stmt_short = txn.get("stmt_shortfall") or 0
+                    stmt_attrs = f' data-stmt-invoices="{",".join(_stmt_ids)}" data-stmt-customer="{_stmt_cust}" data-stmt-shortfall="{_stmt_short}"'
+            
             # Running balance (from bank statement) — show in dim color so it doesn't compete with debit/credit
             running_bal = txn.get("balance")
             if running_bal is None:
@@ -267,7 +286,7 @@ def register_banking_routes(app, db, login_required, Auth, render_page,
                 balance_html = '<span style="color:var(--text-muted);">-</span>'
             
             return f'''
-            <tr data-id="{txn_id}" data-debit="{debit}" data-credit="{credit}"{combo_attrs}>
+            <tr data-id="{txn_id}" data-debit="{debit}" data-credit="{credit}"{combo_attrs}{disc_attrs}{stmt_attrs}>
                 <td style="white-space:nowrap;">{txn.get("date", "-")}</td>
                 <td>
                     <div style="max-width:300px;">{desc}</div>
@@ -669,8 +688,21 @@ def register_banking_routes(app, db, login_required, Auth, render_page,
             const comboInvoiceIds = comboInvoicesStr ? comboInvoicesStr.split(',').filter(Boolean) : [];
             const hasCombo = comboCustomer && comboInvoiceIds.length > 0;
             
+            // Read settlement-discount hint (single invoice matched LESS the customer's discount %)
+            const discCustomer = row ? row.getAttribute('data-disc-customer') || '' : '';
+            const discInvoice = row ? row.getAttribute('data-disc-invoice') || '' : '';
+            const hasDisc = !!(discCustomer && discInvoice);
+            // Read statement (full-account) hint — whole balance matched, optionally less discount %
+            const stmtCustomer = row ? row.getAttribute('data-stmt-customer') || '' : '';
+            const stmtInvoicesStr = row ? row.getAttribute('data-stmt-invoices') || '' : '';
+            const stmtInvoiceIds = stmtInvoicesStr ? stmtInvoicesStr.split(',').filter(Boolean) : [];
+            const stmtShortfall = row ? parseFloat(row.getAttribute('data-stmt-shortfall') || '0') : 0;
+            const hasStmt = !!(stmtCustomer && stmtInvoiceIds.length > 0);
+            // Customer to pre-select: combo wins, then statement, then single-invoice discount.
+            const preCustomer = hasCombo ? comboCustomer : (hasStmt ? stmtCustomer : (hasDisc ? discCustomer : ''));
+            
             let optionsHtml = entities.map(e => {{
-                const selected = (hasCombo && e.id === comboCustomer) ? ' selected' : '';
+                const selected = (preCustomer && e.id === preCustomer) ? ' selected' : '';
                 return `<option value="${{e.id}}" data-name="${{(e.name||'').replace(/"/g,'&quot;')}}"${{selected}}>${{e.name}}</option>`;
             }}).join('');
             
@@ -683,10 +715,22 @@ def register_banking_routes(app, db, login_required, Auth, render_page,
                     Verify the ticks below and click Allocate.
                 </div>` : '';
             
+            // Settlement-discount banner — shown when the amount matched an invoice less the customer's discount %
+            const discBanner = (hasDisc && !hasCombo && !hasStmt) ? `
+                <div style="background:rgba(245,158,11,0.10);border:1px solid rgba(245,158,11,0.4);border-radius:6px;padding:8px 10px;margin-bottom:8px;font-size:11px;color:#f59e0b;">
+                    Matched to this customer's invoice less their settlement discount. The shortfall is pre-ticked as Discount Allowed below — review and change if needed.
+                </div>` : '';
+            
+            // Statement banner — shown when the whole statement balance was matched (optionally less discount)
+            const stmtBanner = (hasStmt && !hasCombo) ? `
+                <div style="background:rgba(34,211,238,0.10);border:1px solid rgba(34,211,238,0.4);border-radius:6px;padding:8px 10px;margin-bottom:8px;font-size:11px;color:#22d3ee;">
+                    Matched to this customer's full statement (${{stmtInvoiceIds.length}} invoices). ${{stmtShortfall > 0.01 ? 'The settlement discount is pre-ticked as Discount Allowed below. ' : ''}}Review the ticks and click Allocate.
+                </div>` : '';
+            
             actionCell.innerHTML = `
                 <div style="background:rgba(139,92,246,0.08);border:1px solid rgba(139,92,246,0.25);border-radius:10px;padding:12px;min-width:320px;">
                     <div style="font-size:13px;font-weight:700;color:#8b5cf6;margin-bottom:8px;">${{category}} — Select ${{label}}</div>
-                    ${{comboBanner}}
+                    ${{comboBanner}}${{discBanner}}${{stmtBanner}}
                     <select id="entityPick_${{txnId}}" onchange="loadEntityInvoices('${{txnId}}','${{category}}')" style="width:100%;padding:8px;border:1px solid var(--border);border-radius:6px;background:var(--card);color:var(--text);font-size:13px;margin-bottom:8px;">
                         <option value="">-- Select ${{label}} --</option>
                         ${{optionsHtml}}
@@ -704,9 +748,9 @@ def register_banking_routes(app, db, login_required, Auth, render_page,
                     </div>
                 </div>`;
             
-            // If we have combo hints, the customer is already selected — auto-load their invoices
-            // (with a small delay so the DOM has settled)
-            if (hasCombo) {{
+            // If we have combo, statement or settlement-discount hints, the customer is already
+            // selected — auto-load their invoices (with a small delay so the DOM has settled)
+            if (hasCombo || hasStmt || hasDisc) {{
                 setTimeout(() => loadEntityInvoices(txnId, category), 50);
             }}
         }}
@@ -725,6 +769,17 @@ def register_banking_routes(app, db, login_required, Auth, render_page,
             const comboInvoiceIds = (comboInvoicesStr && entityId === comboCustomer)
                 ? comboInvoicesStr.split(',').filter(Boolean)
                 : [];
+            // Read settlement-discount hint — auto-tick the matched invoice + pre-tick Discount Allowed.
+            const discCustomer = row ? row.getAttribute('data-disc-customer') || '' : '';
+            const discInvoiceId = (entityId && entityId === discCustomer) ? (row ? row.getAttribute('data-disc-invoice') || '' : '') : '';
+            const hasDiscMatch = !!discInvoiceId;
+            // Read statement (full-account) hint — auto-tick ALL the customer's invoices + pre-tick discount.
+            const stmtCustomer = row ? row.getAttribute('data-stmt-customer') || '' : '';
+            const stmtInvoiceIds = (entityId && entityId === stmtCustomer)
+                ? ((row ? row.getAttribute('data-stmt-invoices') || '' : '').split(',').filter(Boolean))
+                : [];
+            const stmtShortfall = row ? parseFloat(row.getAttribute('data-stmt-shortfall') || '0') : 0;
+            const hasStmtMatch = stmtInvoiceIds.length > 0;
             
             container.innerHTML = '<div style="color:var(--text-muted);font-size:12px;padding:6px;">Loading invoices...</div>';
             
@@ -745,11 +800,19 @@ def register_banking_routes(app, db, login_required, Auth, render_page,
                 }}
                 
                 let html = '<div style="font-size:11px;color:var(--text-muted);margin-bottom:4px;font-weight:600;">Allocate against invoices:</div>';
+                // Statement match: render smallest-outstanding first so the LARGEST invoice is last.
+                // On confirm the payment is applied in order and the last (largest) invoice cleanly
+                // absorbs the settlement-discount shortfall (keeps it within the per-invoice guard).
+                if (hasStmtMatch) {{
+                    data.invoices.sort((a, b) => (((a.total||0) - (a.paid_amount||0)) - ((b.total||0) - (b.paid_amount||0))));
+                }}
                 for (const inv of data.invoices) {{
-                    // If invoice is part of the combo match, pre-tick it and highlight it
+                    // If invoice is part of the combo match (or the settlement-discount match), pre-tick + highlight it
                     const isComboInv = comboInvoiceIds.includes(inv.id);
-                    const checked = isComboInv ? ' checked' : '';
-                    const rowStyle = isComboInv 
+                    const isDiscInv = (inv.id === discInvoiceId);
+                    const isStmtInv = stmtInvoiceIds.includes(inv.id);
+                    const checked = (isComboInv || isDiscInv || isStmtInv) ? ' checked' : '';
+                    const rowStyle = (isComboInv || isDiscInv || isStmtInv)
                         ? 'background:rgba(34,211,238,0.10);border:1px solid rgba(34,211,238,0.35);'
                         : 'background:rgba(255,255,255,0.03);';
                     // Outstanding = total minus any partial payment already recorded
@@ -779,6 +842,14 @@ def register_banking_routes(app, db, login_required, Auth, render_page,
                 </div>`;
                 container.innerHTML = html;
                 srUpdateShortfall(txnId);
+                // Settlement-discount match (single invoice OR full statement) — pre-tick Discount Allowed
+                // so the shortfall closes the invoice(s). srUpdateShortfall has revealed the box;
+                // Daphne can untick to override.
+                if (hasDiscMatch || (hasStmtMatch && stmtShortfall > 0.01)) {{
+                    const da = document.getElementById('discAllowed_' + txnId);
+                    const box = document.getElementById('shortfallBox_' + txnId);
+                    if (da && box && box.style.display !== 'none') {{ da.checked = true; }}
+                }}
             }} catch (err) {{
                 container.innerHTML = '<div style="color:var(--red);font-size:12px;padding:6px;">Failed to load invoices</div>';
             }}
@@ -2248,6 +2319,7 @@ Return ONLY the JSON array. No markdown, no explanation."""
             # Customers for name matching
             customers = db.get("customers", {"business_id": biz_id}) or []
             customer_names = {c.get("name", "").upper(): c for c in customers if c.get("name")}
+            customers_by_id = {c.get("id"): c for c in customers if c.get("id")}
             
             # Known expense keywords
             expense_keywords = {
@@ -2520,6 +2592,15 @@ Return ONLY the JSON array. No markdown, no explanation."""
                     combo_invoice_ids = None
                     combo_invoice_nums = None
                     combo_customer_id = None
+                    disc_invoice_id = None
+                    disc_invoice_num = None
+                    disc_customer_id = None
+                    disc_shortfall = None
+                    disc_pct = None
+                    stmt_invoice_ids = None
+                    stmt_customer_id = None
+                    stmt_shortfall = None
+                    stmt_pct = None
                     
                     # 1. TRY: Match credit to POS daily total
                     if credit > 0:
@@ -2555,6 +2636,108 @@ Return ONLY the JSON array. No markdown, no explanation."""
                                 match_category = "Customer Payment?"
                                 match_confidence = 0.6
                                 match_reference = f"Maybe {inv.get('invoice_number')}?"
+                    
+                    # 2-STMT. TRY: Full-account / statement payment. Account customers (e.g. NDE)
+                    # reconcile against their STATEMENT and pay the whole balance — usually less
+                    # their settlement discount. The statement (= sum of their outstanding invoices)
+                    # is the truth, not any single invoice. Match the credit against each customer's
+                    # outstanding-invoice total (full) or that total LESS their discount %.
+                    # Conservative — no guessing:
+                    #   - target is the sum of THAT customer's own outstanding invoices
+                    #   - matches the SPECIFIC figure to the cent (full preferred over discounted)
+                    #   - fires ONLY for 2+ invoices and ONLY if EXACTLY ONE customer matches;
+                    #     otherwise no auto-match (falls through to single-invoice / review).
+                    if credit > 0 and not match_type:
+                        _stmt_groups = {}
+                        for inv in outstanding:
+                            _icid = inv.get("customer_id")
+                            if not _icid:
+                                continue
+                            _ioz = round(float(inv.get("total", 0)) - float(inv.get("paid_amount", 0) or 0), 2)
+                            if _ioz <= 0:
+                                continue
+                            _g = _stmt_groups.setdefault(_icid, {"sum": 0.0, "ids": []})
+                            _g["sum"] = round(_g["sum"] + _ioz, 2)
+                            _g["ids"].append(inv.get("id"))
+                        _stmt_candidates = []
+                        for _icid, _g in _stmt_groups.items():
+                            if len(_g["ids"]) < 2:
+                                continue  # single invoice is handled by step 2 / 2a, not "statement"
+                            _bal = round(_g["sum"], 2)
+                            if _bal <= 0:
+                                continue
+                            _c = customers_by_id.get(_icid)
+                            # Full statement payment
+                            if abs(credit - _bal) <= 0.02:
+                                _stmt_candidates.append((_icid, _c, _g["ids"], _bal, 0.0, 0.0))
+                                continue
+                            # Statement payment less settlement discount
+                            _cdp = 0.0
+                            if _c:
+                                try:
+                                    _cdp = float(_c.get("discount_percentage", 0) or 0)
+                                except (TypeError, ValueError):
+                                    _cdp = 0.0
+                            if 0 < _cdp <= 50:
+                                _bt = round(_bal * (1 - _cdp / 100.0), 2)
+                                if abs(credit - _bt) <= 0.02:
+                                    _stmt_candidates.append((_icid, _c, _g["ids"], _bal, _cdp, round(_bal - credit, 2)))
+                        if len(_stmt_candidates) == 1:
+                            _s_cid, _s_cust, _s_ids, _s_bal, _s_pct, _s_short = _stmt_candidates[0]
+                            _s_cname = (_s_cust.get("name", "") if _s_cust else "") or ""
+                            match_type = "customer_payment_statement"
+                            match_category = "Customer Payment"
+                            match_confidence = 0.9 if (_s_cname[:5].upper() in desc_upper) else 0.8
+                            match_reference = (f"Statement - {_s_cname} (less {_s_pct:g}% settlement discount)"
+                                               if _s_pct > 0 else f"Statement - {_s_cname}")
+                            stmt_invoice_ids = [i for i in _s_ids if i]
+                            stmt_customer_id = _s_cid
+                            stmt_shortfall = _s_short
+                            stmt_pct = _s_pct
+                            auto_matched += 1
+                    
+                    # 2a. TRY: Single invoice where the credit matches the invoice total LESS
+                    # the customer's own settlement discount %. Only fires when no full-amount
+                    # match was found above (a full-amount match always wins). Conservative —
+                    # no guessing:
+                    #   - uses each customer's OWN stored discount_percentage on their OWN invoice
+                    #   - matches the SPECIFIC discounted figure to the cent (never widens tolerance)
+                    #   - fires ONLY if EXACTLY ONE invoice's discounted target matches; zero or
+                    #     2+ candidates means no auto-match (falls through to review).
+                    if credit > 0 and not match_type:
+                        _disc_candidates = []
+                        for inv in outstanding:
+                            inv_total = float(inv.get("total", 0))
+                            if inv_total <= 0:
+                                continue
+                            _cust_rec = customer_names.get((inv.get("customer_name") or "").upper().strip())
+                            if not _cust_rec:
+                                continue
+                            try:
+                                _dpct = float(_cust_rec.get("discount_percentage", 0) or 0)
+                            except (TypeError, ValueError):
+                                _dpct = 0
+                            # Sane settlement-discount range only — a large % is not a settlement discount.
+                            if _dpct <= 0 or _dpct > 50:
+                                continue
+                            _target = round(inv_total * (1 - _dpct / 100.0), 2)
+                            if abs(credit - _target) <= 0.02:
+                                _disc_candidates.append((inv, _cust_rec, _dpct, round(inv_total - credit, 2)))
+                        if len(_disc_candidates) == 1:
+                            _d_inv, _d_cust, _d_pct, _d_short = _disc_candidates[0]
+                            _d_cname = _d_cust.get("name", "") or _d_inv.get("customer_name", "")
+                            match_type = "customer_payment"
+                            match_category = "Customer Payment"
+                            # Higher confidence when the name corroborates; the exact discounted
+                            # amount alone is still a strong, precise signal.
+                            match_confidence = 0.85 if (_d_cname[:5].upper() in desc_upper) else 0.7
+                            match_reference = f"{_d_inv.get('invoice_number')} - {_d_cname} (less {_d_pct:g}% settlement discount)"
+                            disc_invoice_id = _d_inv.get("id")
+                            disc_invoice_num = _d_inv.get("invoice_number", "")
+                            disc_customer_id = _d_cust.get("id") or _d_inv.get("customer_id", "")
+                            disc_shortfall = _d_short
+                            disc_pct = _d_pct
+                            auto_matched += 1
                     
                     # 2b. TRY: Match credit to SUM of multiple invoices for same customer
                     # Only attempts this if the customer name appears in the description —
@@ -2761,6 +2944,21 @@ Return ONLY the JSON array. No markdown, no explanation."""
                         txn["combo_invoice_nums"] = combo_invoice_nums
                         if combo_customer_id:
                             txn["combo_customer_id"] = combo_customer_id
+                    # Persist settlement-discount match so UI can pre-select the customer,
+                    # pre-tick the invoice and pre-tick the Discount Allowed box on confirm.
+                    if disc_invoice_id:
+                        txn["disc_invoice_id"] = disc_invoice_id
+                        txn["disc_invoice_num"] = disc_invoice_num
+                        txn["disc_customer_id"] = disc_customer_id
+                        txn["disc_shortfall"] = disc_shortfall
+                        txn["disc_pct"] = disc_pct
+                    # Persist statement (full-account) match so UI can pre-select the customer,
+                    # pre-tick ALL their invoices and pre-tick the Discount Allowed box on confirm.
+                    if stmt_invoice_ids:
+                        txn["stmt_invoice_ids"] = stmt_invoice_ids
+                        txn["stmt_customer_id"] = stmt_customer_id
+                        txn["stmt_shortfall"] = stmt_shortfall
+                        txn["stmt_pct"] = stmt_pct
                     
                     txns_to_save.append(txn)
                     imported += 1
