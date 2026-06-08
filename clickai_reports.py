@@ -1203,7 +1203,22 @@ def register_report_routes(app, db, login_required, Auth, render_page,
                 credit = float(oe.get("credit", 0) or 0)
                 
                 if not acc_code:
-                    acc_code = f"9{len(gl_ob_accounts):03d}"
+                    # Sage embeds the GL code inside the account name, e.g.
+                    # "8400/000 : Standard Bank" -> code "8400/000", name "Standard Bank".
+                    # Extract it so the report shows the real Sage code, not a 9xxx placeholder.
+                    _nm = (acc_name or "").strip()
+                    _cp = ""
+                    if " : " in _nm:
+                        _cp = _nm.split(" : ", 1)[0].strip()
+                    elif ": " in _nm:
+                        _cp = _nm.split(": ", 1)[0].strip()
+                    elif " - " in _nm:
+                        _cp = _nm.split(" - ", 1)[0].strip()
+                    if _cp and _cp[0].isdigit():
+                        acc_code = _cp
+                        acc_name = _nm[len(_cp):].lstrip(" :-").strip() or _nm
+                    else:
+                        acc_code = f"9{len(gl_ob_accounts):03d}"
                 
                 if acc_code not in gl_ob_accounts:
                     gl_ob_accounts[acc_code] = {"name": acc_name, "debit": 0, "credit": 0}
@@ -1687,7 +1702,22 @@ def register_report_routes(app, db, login_required, Auth, render_page,
                 credit = float(oe.get("credit", 0) or 0)
                 
                 if not acc_code:
-                    acc_code = f"9{len(tb_accounts):03d}"
+                    # Sage embeds the GL code inside the account name, e.g.
+                    # "8400/000 : Standard Bank" -> code "8400/000", name "Standard Bank".
+                    # Extract it so the report shows the real Sage code, not a 9xxx placeholder.
+                    _nm = (acc_name or "").strip()
+                    _cp = ""
+                    if " : " in _nm:
+                        _cp = _nm.split(" : ", 1)[0].strip()
+                    elif ": " in _nm:
+                        _cp = _nm.split(": ", 1)[0].strip()
+                    elif " - " in _nm:
+                        _cp = _nm.split(" - ", 1)[0].strip()
+                    if _cp and _cp[0].isdigit():
+                        acc_code = _cp
+                        acc_name = _nm[len(_cp):].lstrip(" :-").strip() or _nm
+                    else:
+                        acc_code = f"9{len(tb_accounts):03d}"
                 
                 add_account(acc_code, acc_name, debit, credit)
             
