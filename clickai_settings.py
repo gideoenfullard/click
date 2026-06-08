@@ -1272,11 +1272,16 @@ def register_settings_routes(app, db, login_required, Auth, render_page,
                 "quote_title": request.form.get("quote_title", "QUOTATION"),
             }
             
-            business["invoice_template"] = json.dumps(template_settings)
-            business["updated_at"] = now()
-            db.save("businesses", business)
+            user_id = user.get("id", "") if user else ""
+            ok, result = db.update_business(biz_id, user_id, {
+                "invoice_template": json.dumps(template_settings),
+                "updated_at": now(),
+            })
             
-            flash("Invoice template updated!", "success")
+            if ok:
+                flash("Invoice template updated!", "success")
+            else:
+                flash(f"Could not save template: {result}", "error")
             return redirect("/settings/invoice-template")
         
         # GET - Load existing settings
