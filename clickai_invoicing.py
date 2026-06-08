@@ -26,6 +26,22 @@ def register_invoicing_routes(app, db, login_required, Auth, render_page,
                               build_linked_documents_panel=None):
     """Register all Invoicing routes with the Flask app."""
 
+    def _doc_logo_url(business):
+        """Logo from the saved invoice template (settings stores it there), honouring the
+        Show Logo toggle. Returns '' when there is no logo or Show Logo is off. Tenant-agnostic."""
+        try:
+            _tpl = json.loads(business.get("invoice_template") or "{}") if business else {}
+        except (ValueError, TypeError):
+            _tpl = {}
+        if not _tpl.get("show_logo", True):
+            return ""
+        return (_tpl.get("logo_url") or "").strip()
+
+    def _doc_logo_html(business, height=48):
+        """<img> tag for the document logo, or '' when there is no logo / Show Logo is off."""
+        _u = _doc_logo_url(business)
+        return f'<img src="{_u}" style="height:{height}px;max-width:170px;object-fit:contain;display:block;margin-bottom:6px;" alt="Logo">' if _u else ''
+
     # === INVOICES + RECURRING INVOICES ===
 
     @app.route("/invoices")
@@ -1087,6 +1103,7 @@ def register_invoicing_routes(app, db, login_required, Auth, render_page,
             <!-- TOP BAR -->
             <div style="background:#1a1a2e;color:white;padding:12px 25px;display:flex;justify-content:space-between;align-items:center;">
                 <div>
+                    {_doc_logo_html(business)}
                     <h1 style="margin:0;font-size:16px;font-weight:700;letter-spacing:0.5px;">{biz_name}</h1>
                     {f'<p style="margin:4px 0 0 0;font-size:10px;opacity:0.8;">{biz_address}</p>' if biz_address else ''}
                 </div>
@@ -3416,6 +3433,7 @@ def register_invoicing_routes(app, db, login_required, Auth, render_page,
             <!-- TOP BAR -->
             <div style="background:#1e3a5f;color:white;padding:12px 25px;display:flex;justify-content:space-between;align-items:center;">
                 <div>
+                    {_doc_logo_html(business)}
                     <h1 style="margin:0;font-size:16px;font-weight:700;letter-spacing:0.5px;">{biz_name}</h1>
                     {f'<p style="margin:4px 0 0 0;font-size:10px;opacity:0.8;">{biz_address}</p>' if biz_address else ''}
                 </div>
@@ -4637,8 +4655,8 @@ def register_invoicing_routes(app, db, login_required, Auth, render_page,
             except Exception:
                 linked_docs_html = ""
         
-        # Build logo HTML if business has one
-        biz_logo = business.get("logo_url", "") if business else ""
+        # Build logo HTML — from the saved invoice template (honours Show Logo)
+        biz_logo = _doc_logo_url(business)
         logo_html = f'<img src="{biz_logo}" style="height:60px;object-fit:contain;" alt="Logo">' if biz_logo else f'<div style="width:60px;height:60px;background:rgba(255,255,255,0.2);border-radius:8px;display:flex;align-items:center;justify-content:center;font-size:24px;font-weight:700;">DN</div>'
 
         content = f'''
@@ -4841,7 +4859,7 @@ def register_invoicing_routes(app, db, login_required, Auth, render_page,
         biz_name = business.get("name", "Business") if business else "Business"
         biz_address = safe_string(business.get("address", "")).replace("\n", "<br>") if business else ""
         biz_phone = business.get("phone", "") if business else ""
-        biz_logo = business.get("logo_url", "") if business else ""
+        biz_logo = _doc_logo_url(business)
         
         logo_html = f'<img src="{biz_logo}" style="height:60px;object-fit:contain;" alt="Logo">' if biz_logo else f'<div style="width:60px;height:60px;background:rgba(255,255,255,0.2);border-radius:8px;display:flex;align-items:center;justify-content:center;font-size:24px;font-weight:700;color:white;">DN</div>'
         

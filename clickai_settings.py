@@ -1363,7 +1363,7 @@ def register_settings_routes(app, db, login_required, Auth, render_page,
                             Show Logo
                         </label>
                         <div style="display:flex; align-items:center; gap:10px; margin-bottom:8px;">
-                            <img id="logoPreview" src="{safe_string(logo_url)}" alt=""
+                            <img id="logoPreview" src="{safe_string(logo_url, 5000000)}" alt=""
                                  style="height:48px; max-width:160px; object-fit:contain; border:1px solid var(--border); border-radius:6px; padding:4px; background:#fff; {'' if logo_url else 'display:none;'}">
                             <div>
                                 <input type="file" id="logoFile" accept="image/png,image/jpeg" onchange="handleLogoUpload(this)" style="display:none;">
@@ -1371,7 +1371,7 @@ def register_settings_routes(app, db, login_required, Auth, render_page,
                                 <button type="button" class="btn btn-secondary" id="logoClearBtn" onclick="clearLogo()" style="{'' if logo_url else 'display:none;'}">Remove</button>
                             </div>
                         </div>
-                        <input type="text" name="logo_url" id="logoUrl" class="form-input" value="{safe_string(logo_url)}" 
+                        <input type="text" name="logo_url" id="logoUrl" class="form-input" value="{safe_string(logo_url, 5000000)}" 
                                placeholder="https://yourdomain.com/logo.png">
                         <small style="color: var(--text-muted);">Choose a PNG or JPG from your device, or paste an image URL.</small>
                     </div>
