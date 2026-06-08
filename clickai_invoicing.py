@@ -421,7 +421,7 @@ def register_invoicing_routes(app, db, login_required, Auth, render_page,
                 </div>
                 <div style="display:grid;grid-template-columns:1fr 1fr;gap:20px;margin-bottom:20px;">
                     <div>
-                        <label>Reference</label>
+                        <label>Customer PO / Reference</label>
                         <input type="text" name="reference" placeholder="e.g. PO number, order ref" style="width:100%;padding:10px;border-radius:6px;border:1px solid var(--border);background:var(--card);color:var(--text);">
                     </div>
                     <div>
@@ -884,7 +884,7 @@ def register_invoicing_routes(app, db, login_required, Auth, render_page,
                 _match = next((d for d in _all_docs if (d.get("dn_number", "") or d.get("delivery_note_number", "")).upper() == _doc_num.upper()), None)
                 if _match:
                     _inv_dn_display = _inv_dn_display.replace(safe_string(_doc_num), f'<a href="/delivery-note/{_match["id"]}" style="color:var(--primary);text-decoration:none;">{safe_string(_doc_num)}</a>')
-        ref_row = f'<tr><td style="padding:4px 0;color:#888;">Reference:</td><td style="padding:4px 0;font-weight:600;">{_inv_ref_display}</td></tr>' if inv_reference else ''
+        ref_row = f'<tr><td style="padding:4px 0;color:#888;">Customer PO / Reference:</td><td style="padding:4px 0;font-weight:600;">{_inv_ref_display}</td></tr>' if inv_reference else ''
         dn_row = f'<tr><td style="padding:4px 0;color:#888;">Delivery Note:</td><td style="padding:4px 0;font-weight:600;">{_inv_dn_display}</td></tr>' if inv_delivery_note else ''
         sp_row = f'<tr><td style="padding:4px 0;color:#888;">Sales Person:</td><td style="padding:4px 0;font-weight:600;">{safe_string(inv_sales_person)}</td></tr>' if inv_sales_person else ''
         terms_row = f'<tr><td style="padding:4px 0;color:#888;">Payment Terms:</td><td style="padding:4px 0;font-weight:600;">{safe_string(cust_payment_terms)}</td></tr>' if cust_payment_terms else ''
@@ -1065,7 +1065,7 @@ def register_invoicing_routes(app, db, login_required, Auth, render_page,
                         <input type="text" id="editSalesPerson" value="{safe_string(inv_sales_person)}" placeholder="e.g. Piet" class="form-input">
                     </div>
                     <div>
-                        <label style="font-size:12px;color:var(--text-muted);display:block;margin-bottom:4px;">Reference</label>
+                        <label style="font-size:12px;color:var(--text-muted);display:block;margin-bottom:4px;">Customer PO / Reference</label>
                         <input type="text" id="editReference" value="{safe_string(inv_reference)}" placeholder="e.g. PO12345" class="form-input">
                     </div>
                     <div>
