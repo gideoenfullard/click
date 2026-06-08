@@ -41,7 +41,7 @@ def _bank_fingerprint(date, description, amount=0.0, debit=0.0, credit=0.0):
 # only ever carry one of these (or a neutral one); a money-OUT (debit) line may never.
 _BANK_INCOME_CATEGORIES = frozenset({
     "CUSTOMER PAYMENT", "CUSTOMER PAYMENT?", "CUSTOMER PAYMENT (MULTI-INVOICE)",
-    "POS DEPOSIT", "SALES", "OTHER INCOME", "INTEREST RECEIVED",
+    "POS DEPOSIT", "CARD SETTLEMENT", "SALES", "OTHER INCOME", "INTEREST RECEIVED",
 })
 
 
@@ -159,7 +159,7 @@ def register_banking_routes(app, db, login_required, Auth, render_page,
         category_options = "".join([f'<option value="{c}">{c}</option>' for c in expense_categories])
         
         # Add common categories
-        extra_cats = ["Customer Payment", "Supplier Payment", "POS Deposit", "Owner Drawings", "Owner Capital Introduced", "Loan", "Loan Repayment", "Refund", "Transfer", "Ignore"]
+        extra_cats = ["Customer Payment", "Supplier Payment", "POS Deposit", "Card Settlement", "Owner Drawings", "Owner Capital Introduced", "Loan", "Loan Repayment", "Refund", "Transfer", "Ignore"]
         for cat in extra_cats:
             if cat not in expense_categories:
                 category_options += f'<option value="{cat}">{cat}</option>'
@@ -3179,6 +3179,7 @@ Return ONLY the JSON array. No markdown, no explanation."""
                 # Money IN specials
                 "Customer Payment",      # Debit Bank, Credit Debtors (1200)
                 "POS Deposit",           # Debit Bank, Credit Petty Cash (1100)
+                "Card Settlement",       # Debit Bank, Credit Card Clearing (1010)
                 "Supplier Payment",      # Money OUT: Debit Creditors (2000), Credit Bank
                 "VAT Payment to SARS",   # Debit VAT Output (2100), Credit Bank - paying liability
                 "Owner Drawings",        # Debit Drawings (3200), Credit Bank
@@ -3650,6 +3651,14 @@ Return ONLY the JSON array. No markdown, no explanation."""
                     _cje(biz_id, txn_date, desc_short, ref, [
                         {"account_code": gl(biz_id, "bank"), "debit": income_rounded, "credit": 0},   # Bank up
                         {"account_code": gl(biz_id, "cash"), "debit": 0, "credit": income_rounded},    # Cash On Hand down
+                    ])
+                    
+                elif category == "Card Settlement":
+                    # Card-machine settlement deposited into the bank — clears Card Clearing (1010).
+                    # Net effect: bank up by the actual deposit, Card Clearing reduced by the same.
+                    _cje(biz_id, txn_date, desc_short, ref, [
+                        {"account_code": gl(biz_id, "bank"), "debit": income_rounded, "credit": 0},   # Bank up (actual deposit)
+                        {"account_code": "1010", "debit": 0, "credit": income_rounded},               # Card Clearing down
                     ])
                     
                 elif category == "Owner Capital Introduced":
