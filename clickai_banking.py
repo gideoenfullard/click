@@ -3825,18 +3825,22 @@ Return ONLY the JSON array. No markdown, no explanation."""
             if not user_answer:
                 desc_upper = description.upper()
                 
-                # For EFTPOS: trust the CR/DR in the description, not the column
+                # EFTPOS card settlements: use the money DIRECTION (bank column), NOT the
+                # DR/CR in the description — on Standard Bank "DR EFTPOS"/"CR EFTPOS" means
+                # debit-card vs credit-card, not money out vs in. Money IN clears the Card
+                # Clearing account (1010) since income was already booked at POS; money OUT
+                # is a card-machine fee.
                 if "EFTPOS" in desc_upper or "SETTLEMENT" in desc_upper:
-                    if "SETTLEMENT CR" in desc_upper or " CR " in desc_upper:
-                        logger.info(f"[BANK ZANE] EFTPOS CR: '{description[:40]}' → Sales — Card Machine")
+                    if credit > 0:
+                        logger.info(f"[BANK ZANE] EFTPOS settlement IN: '{description[:40]}' → Card Settlement")
                         return jsonify({
-                            "success": True, "category": "Sales — Card Machine",
-                            "reason": "Card machine settlement — money received from card sales.",
+                            "success": True, "category": "Card Settlement",
+                            "reason": "Card machine settlement deposited — clears the Card Clearing account (income already booked at POS).",
                             "confidence": 0.9, "source": "known_pattern",
                             "needs_clarification": False, "all_categories": all_category_names
                         })
-                    elif "SETTLEMENT DR" in desc_upper or " DR " in desc_upper:
-                        logger.info(f"[BANK ZANE] EFTPOS DR: '{description[:40]}' → Card Machine Fees")
+                    else:
+                        logger.info(f"[BANK ZANE] EFTPOS settlement OUT: '{description[:40]}' → Card Machine Fees")
                         return jsonify({
                             "success": True, "category": "Card Machine Fees",
                             "reason": "EFTPOS settlement fee charged by the bank.",
