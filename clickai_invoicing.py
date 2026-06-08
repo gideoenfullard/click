@@ -252,7 +252,7 @@ def register_invoicing_routes(app, db, login_required, Auth, render_page,
                         # Customer balance is now calculated dynamically — no manual update needed
                     else:
                         # Cash/Card/EFT - Debit Bank/Cash, Credit Sales + VAT
-                        bank_account = "1050" if payment_method == "cash" else "1000"
+                        bank_account = "1050" if payment_method == "cash" else ("1010" if payment_method == "card" else "1000")
                         create_journal_entry(biz_id, today(), f"Invoice {inv_num} - {customer_name} ({payment_method.upper()})", inv_num, [
                             {"account_code": bank_account, "debit": float(total), "credit": 0},
                             {"account_code": gl(biz_id, "sales"), "debit": 0, "credit": float(subtotal)},
@@ -264,7 +264,7 @@ def register_invoicing_routes(app, db, login_required, Auth, render_page,
                 # === ALLOCATION LOG ===
                 try:
                     if log_allocation:
-                        _bank = "1050" if payment_method == "cash" else "1000"
+                        _bank = "1050" if payment_method == "cash" else ("1010" if payment_method == "card" else "1000")
                         _gl = [
                             {"account_code": _bank if payment_method != "account" else "1200", "debit": float(total), "credit": 0},
                             {"account_code": gl(biz_id, "sales"), "debit": 0, "credit": float(subtotal)},
@@ -1490,7 +1490,7 @@ def register_invoicing_routes(app, db, login_required, Auth, render_page,
                 bank_account = "1050"  # Cash On Hand
                 bank_name = "Cash"
             elif payment_method == "card":
-                bank_account = "1000"  # Bank
+                bank_account = "1010"  # Card Clearing (clears to bank on settlement)
                 bank_name = "Card"
             else:  # eft
                 bank_account = "1000"  # Bank

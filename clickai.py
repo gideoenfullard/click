@@ -13786,8 +13786,10 @@ class Actions:
                 # Cash/Card/EFT sale
                 if payment_method == "cash":
                     bank_account = "1050"  # Cash On Hand for POS cash
+                elif payment_method == "card":
+                    bank_account = "1010"  # Card Clearing (clears to bank on settlement)
                 else:
-                    bank_account = "1000"  # Bank for card/EFT
+                    bank_account = "1000"  # Bank for EFT/other
                 create_journal_entry(biz_id, today(), f"Sale - {item.get('description')}", f"SALE-{sale_id[:8]}", [
                     {"account_code": bank_account, "debit": float(line_total), "credit": 0},
                     {"account_code": gl(biz_id, "sales"), "debit": 0, "credit": excl_amount},         # Sales
@@ -53987,8 +53989,10 @@ def api_refund_pos_sale(sale_id):
             bank_account = gl(biz_id, "debtors")
         elif payment_method == "cash":
             bank_account = "1050"  # Cash On Hand (POS till)
+        elif payment_method == "card":
+            bank_account = "1010"  # Card Clearing (reverses the original card sale's clearing entry)
         else:
-            bank_account = "1000"  # Bank (card / EFT)
+            bank_account = "1000"  # Bank (EFT / other)
         
         today_str = today()
         ref = f"REF-{sale_number}"
@@ -54157,6 +54161,8 @@ def api_customer_record_payment():
         # Choose bank account based on method
         if method == "cash":
             bank_code = gl(biz_id, "cash")
+        elif method == "card":
+            bank_code = "1010"  # Card Clearing (card payment clears to bank on settlement)
         else:
             bank_code = gl(biz_id, "bank")
         
