@@ -1506,6 +1506,25 @@ def register_report_routes(app, db, login_required, Auth, render_page,
         source_label = "Chart of Accounts (Sage)" if coa else ("Imported Trial Balance + Live Transactions" if opening_entries else "Built from transactions")
         
         content = f'''
+        <style>
+        /* General Ledger — compact, professional printout (overrides the oversized global print font for THIS page only) */
+        @media print {{
+            @page {{ size: A4 portrait; margin: 10mm; }}
+            /* Hide app chrome so only the ledger prints */
+            .sidebar, .mobile-nav, #glSearch, #glSearchResults {{ display: none !important; }}
+            /* Tame the global 12pt — far too big for a dense ledger */
+            body {{ font-size: 8.5pt !important; }}
+            h2 {{ font-size: 13pt !important; margin: 0 0 4px 0 !important; }}
+            p {{ font-size: 8pt !important; margin: 0 0 6px 0 !important; }}
+            details {{ background: #fff !important; margin: 0 0 6px 0 !important; }}
+            details > summary {{ font-size: 9pt !important; font-weight: 700 !important; padding: 2px 0 !important; }}
+            /* Tight, clean ledger tables */
+            table.table {{ width: 100% !important; border-collapse: collapse !important; font-size: 8pt !important; margin: 2px 0 !important; }}
+            table.table th, table.table td {{ padding: 1px 5px !important; border: 1px solid #999 !important; color: #000 !important; line-height: 1.2 !important; }}
+            table.table thead th {{ background: #e8e8e8 !important; -webkit-print-color-adjust: exact; print-color-adjust: exact; }}
+            table.table tr {{ break-inside: avoid; }}
+        }}
+        </style>
         <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:15px;">
             <a href="/reports" style="color:var(--text-muted);">← Back to Reports</a>
             <div style="display:flex;gap:8px;align-items:center;">
