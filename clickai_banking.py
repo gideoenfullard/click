@@ -127,6 +127,33 @@ def register_banking_routes(app, db, login_required, Auth, render_page,
         needs_attention = [t for t in all_transactions if not t.get("matched") and not t.get("suggested_category") and not t.get("auto_matched") and not t.get("invoice_matched")]
         already_done = [t for t in all_transactions if t.get("matched")]
         
+        # ── Group transactions into import batches (keyed by created_at minute) so a single
+        #    import can be deleted without touching other imports. Allocated txns are counted
+        #    separately and are never deleted by the per-import delete (see /api/banking/delete-import).
+        _import_batches = {}
+        for _t in all_transactions:
+            _bkey = str(_t.get("created_at", "") or "")[:16]  # minute precision = one import
+            if not _bkey:
+                continue
+            _bb = _import_batches.setdefault(_bkey, {"count": 0, "allocated": 0, "dates": []})
+            _bb["count"] += 1
+            if _t.get("matched"):
+                _bb["allocated"] += 1
+            _bd = _t.get("date")
+            if _bd:
+                _bb["dates"].append(str(_bd))
+        import_options_html = ""
+        for _bkey in sorted(_import_batches.keys(), reverse=True):
+            _bb = _import_batches[_bkey]
+            _unalloc = _bb["count"] - _bb["allocated"]
+            _disp = _bkey.replace("T", " ")
+            _drange = ""
+            if _bb["dates"]:
+                _dmin, _dmax = min(_bb["dates"]), max(_bb["dates"])
+                _drange = f" | {_dmin}" + (f" to {_dmax}" if _dmax != _dmin else "")
+            _akept = f", {_bb['allocated']} allocated kept" if _bb["allocated"] else ""
+            import_options_html += f'<option value="{_bkey}">{_disp} UTC: {_bb["count"]} txns ({_unalloc} to delete{_akept}){_drange}</option>'
+        
         # Get expense categories
         expense_categories = IndustryKnowledge.get_expense_categories(biz_id) if biz_id else ["Sundry Expenses"]
         category_options = "".join([f'<option value="{c}">{c}</option>' for c in expense_categories])
@@ -413,6 +440,13 @@ def register_banking_routes(app, db, login_required, Auth, render_page,
                 <a href="/subscriptions" class="btn btn-secondary">📦 Recurring Expenses</a>
                 <button class="btn btn-secondary" style="background:rgba(245,158,11,0.15);border-color:#f59e0b;color:#f59e0b;" onclick="resetPatterns()">Reset Learned Patterns</button>
                 <button class="btn btn-secondary" style="background:rgba(239,68,68,0.15);border-color:#ef4444;color:#ef4444;" onclick="deleteAllTransactions()">🗑️ Delete All</button>
+                <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;background:rgba(239,68,68,0.08);border:1px solid rgba(239,68,68,0.25);border-radius:8px;padding:6px 10px;">
+                    <select id="importBatchSelect" style="padding:5px 8px;border-radius:6px;border:1px solid var(--border);background:var(--card);color:var(--text);font-size:12px;max-width:340px;">
+                        <option value="">Delete a single import…</option>
+                        {import_options_html}
+                    </select>
+                    <button class="btn btn-secondary" style="background:rgba(239,68,68,0.12);border-color:#ef4444;color:#ef4444;" onclick="deleteImport()">Delete unallocated</button>
+                </div>
                 <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;background:rgba(99,102,241,0.08);border:1px solid rgba(99,102,241,0.25);border-radius:8px;padding:6px 10px;">
                     <span style="font-size:11px;color:var(--text-muted);">Import range (optional):</span>
                     <input type="date" id="importDateFrom" title="From date" style="padding:5px 8px;border-radius:6px;border:1px solid var(--border);background:var(--card);color:var(--text);font-size:12px;">
@@ -1345,6 +1379,30 @@ def register_banking_routes(app, db, login_required, Auth, render_page,
             }} catch(e) {{
                 // Silent fail — counter is cosmetic, never break the page
                 console.warn('updateCounts failed', e);
+            }}
+        }}
+        
+        async function deleteImport() {{
+            const sel = document.getElementById('importBatchSelect');
+            const batch = sel ? sel.value : '';
+            if (!batch) {{ alert('Please select an import to delete first.'); return; }}
+            const label = sel.options[sel.selectedIndex].text;
+            if (!confirm(`Delete the UNALLOCATED transactions from this import?\\n\\n${{label}}\\n\\nAllocated transactions are kept and not touched. This cannot be undone.`)) return;
+            try {{
+                const response = await fetch('/api/banking/delete-import', {{
+                    method: 'POST',
+                    headers: {{'Content-Type': 'application/json'}},
+                    body: JSON.stringify({{ batch: batch }})
+                }});
+                const data = await response.json();
+                if (data.success) {{
+                    alert(`✅ ${{data.message}}`);
+                    location.reload();
+                }} else {{
+                    alert('❌ ' + data.error);
+                }}
+            }} catch (err) {{
+                alert('❌ Delete failed: ' + err.message);
             }}
         }}
         
@@ -4318,6 +4376,54 @@ Return ONLY the JSON array. No markdown, no explanation."""
         except Exception as e:
             logger.error(f"[BANK MATCH] Error finding matching expense: {e}")
             return jsonify({"success": False})
+    
+    
+    @app.route("/api/banking/delete-import", methods=["POST"])
+    @login_required
+    def api_banking_delete_import():
+        """Delete the UNALLOCATED transactions of a single import batch (identified by the
+        created_at minute). Allocated (matched) transactions are skipped so their GL journals
+        and customer/supplier payments are never orphaned — re-check happens at delete time."""
+        try:
+            user = Auth.get_current_user()
+            if not user:
+                return jsonify({"success": False, "error": "Not logged in"})
+            business = Auth.get_current_business()
+            biz_id = business.get("id") if business else None
+            if not biz_id:
+                return jsonify({"success": False, "error": "No business selected"})
+            data = request.get_json(silent=True) or {}
+            batch = (data.get("batch") or "").strip()
+            if not batch:
+                return jsonify({"success": False, "error": "No import selected"})
+            
+            all_txns = db.get("bank_transactions", {"business_id": biz_id}) or []
+            # Match this import by created_at minute; NEVER delete an allocated (matched) txn.
+            to_delete = [t["id"] for t in all_txns
+                         if "id" in t
+                         and str(t.get("created_at", "") or "")[:16] == batch
+                         and not t.get("matched")]
+            kept_allocated = len([t for t in all_txns
+                                  if str(t.get("created_at", "") or "")[:16] == batch
+                                  and t.get("matched")])
+            if not to_delete:
+                _msg = ("Nothing to delete — every transaction in this import is allocated."
+                        if kept_allocated else "No matching transactions found for this import.")
+                return jsonify({"success": True, "deleted": 0, "kept": kept_allocated, "message": _msg})
+            
+            success_count, failed_count = db.delete_many("bank_transactions", to_delete, business_id=biz_id)
+            logger.info(f"[BANK DELETE IMPORT] Deleted {success_count} unallocated txns from import {batch} for business {biz_id} ({failed_count} failed, {kept_allocated} allocated kept)")
+            _kept_note = f" {kept_allocated} allocated transaction(s) kept." if kept_allocated else ""
+            return jsonify({
+                "success": True,
+                "deleted": success_count,
+                "failed": failed_count,
+                "kept": kept_allocated,
+                "message": f"Deleted {success_count} unallocated transactions from this import.{_kept_note}"
+            })
+        except Exception as e:
+            logger.error(f"[BANK DELETE IMPORT] Error: {e}")
+            return jsonify({"success": False, "error": str(e)})
     
     
     @app.route("/api/banking/delete-all", methods=["POST"])
