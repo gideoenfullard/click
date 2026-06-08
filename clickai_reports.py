@@ -1521,6 +1521,7 @@ def register_report_routes(app, db, login_required, Auth, render_page,
             /* Tight, clean ledger tables */
             table.table {{ width: 100% !important; border-collapse: collapse !important; font-size: 8pt !important; margin: 2px 0 !important; }}
             table.table th, table.table td {{ padding: 1px 5px !important; border: 1px solid #999 !important; color: #000 !important; line-height: 1.2 !important; }}
+            table.table td:first-child, table.table th:first-child {{ white-space: nowrap !important; }}
             table.table thead th {{ background: #e8e8e8 !important; -webkit-print-color-adjust: exact; print-color-adjust: exact; }}
             table.table tr {{ break-inside: avoid; }}
         }}
