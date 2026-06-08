@@ -6445,7 +6445,7 @@ def register_pos_routes(app, db, login_required, Auth, render_page,
                 debit_account = "1050"  # Cash On Hand (POS counter cash)
                 debit_name = "Cash"
             elif payment_method == "card":
-                debit_account = "1000"  # Bank (card payments go to bank)
+                debit_account = "1010"  # Card Clearing (clears to bank on settlement)
                 debit_name = "Card"
             else:  # account
                 debit_account = "1200"  # Debtors
@@ -6647,7 +6647,7 @@ def register_pos_routes(app, db, login_required, Auth, render_page,
                     if payment_method == "cash":
                         debit_account, debit_name = "1050", "Cash"
                     elif payment_method == "card":
-                        debit_account, debit_name = "1000", "Card"
+                        debit_account, debit_name = "1010", "Card"
                     else:
                         debit_account, debit_name = "1200", "Account"
                     
