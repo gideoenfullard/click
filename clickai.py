@@ -21010,7 +21010,7 @@ select.form-input optgroup {
     body {
         background: white !important;
         color: black !important;
-        font-size: 12pt;
+        font-size: 8.5pt;
         margin: 0;
         padding: 0;
         position: static !important;
@@ -21059,7 +21059,7 @@ select.form-input optgroup {
         border: none !important;
         border-radius: 0 !important;
         box-shadow: none !important;
-        padding: 20px !important;
+        padding: 8px 10px !important;
         margin: 0 !important;
         height: auto !important;
         max-height: none !important;
@@ -21076,8 +21076,10 @@ select.form-input optgroup {
     
     th, td {
         border: 1px solid #ccc !important;
-        padding: 8px !important;
+        padding: 2px 5px !important;
         color: black !important;
+        font-size: 8pt !important;
+        line-height: 1.2 !important;
     }
     
     th {
