@@ -720,6 +720,79 @@ def register_stock_routes(app, db, login_required, Auth, render_page,
         if not rows_html:
             rows_html = '<tr><td colspan="4" style="text-align:center;padding:40px;color:var(--text-muted);">No stock movements found for this period</td></tr>'
         
+        # ── Daily Summary: per-day Bought (IN) vs Sold (OUT), expandable to items ──
+        # Groups the (already filtered) movements by calendar day. Value is derived
+        # from each item's price: IN = qty x cost_price, OUT = qty x selling_price.
+        def _fmt_qty(q):
+            s = f"{float(q or 0):.2f}".rstrip("0").rstrip(".")
+            return s or "0"
+        _daily = {}
+        for m in movements:
+            d = str(m.get("date") or m.get("created_at") or "")[:10]
+            if not d:
+                continue
+            mt = m.get("type", "")
+            sid = m.get("stock_id")
+            q = float(m.get("quantity") or 0)
+            day = _daily.setdefault(d, {"in": {}, "out": {}})
+            if mt == "in":
+                day["in"][sid] = day["in"].get(sid, 0) + q
+            elif mt == "out":
+                day["out"][sid] = day["out"].get(sid, 0) + q
+        
+        daily_html = ""
+        for d in sorted(_daily.keys(), reverse=True):
+            day = _daily[d]
+            in_count = len(day["in"])
+            out_count = len(day["out"])
+            in_val = sum(q * float((stock_lookup.get(sid) or {}).get("cost_price", 0) or 0) for sid, q in day["in"].items())
+            out_val = sum(q * float((stock_lookup.get(sid) or {}).get("selling_price", 0) or 0) for sid, q in day["out"].items())
+            
+            bought_rows = ""
+            for sid, q in sorted(day["in"].items(), key=lambda kv: -kv[1]):
+                s = stock_lookup.get(sid) or {}
+                code = s.get("code", "")
+                desc = s.get("description") or s.get("name") or "Unknown item"
+                cost = float(s.get("cost_price", 0) or 0)
+                bought_rows += f'<tr><td><span style="color:var(--text-muted);font-size:11px;">{safe_string(code)}</span> {safe_string(desc)}</td><td style="text-align:right;">{_fmt_qty(q)}</td><td style="text-align:right;">{money(q * cost)}</td></tr>'
+            if not bought_rows:
+                bought_rows = '<tr><td colspan="3" style="color:var(--text-muted);">Nothing bought</td></tr>'
+            
+            sold_rows = ""
+            for sid, q in sorted(day["out"].items(), key=lambda kv: -kv[1]):
+                s = stock_lookup.get(sid) or {}
+                code = s.get("code", "")
+                desc = s.get("description") or s.get("name") or "Unknown item"
+                price = float(s.get("selling_price", 0) or 0)
+                sold_rows += f'<tr><td><span style="color:var(--text-muted);font-size:11px;">{safe_string(code)}</span> {safe_string(desc)}</td><td style="text-align:right;">{_fmt_qty(q)}</td><td style="text-align:right;">{money(q * price)}</td></tr>'
+            if not sold_rows:
+                sold_rows = '<tr><td colspan="3" style="color:var(--text-muted);">Nothing sold</td></tr>'
+            
+            daily_html += f'''
+            <details style="border-bottom:1px solid var(--border);">
+                <summary style="cursor:pointer;padding:10px 5px;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;">
+                    <span style="font-weight:600;">{d}</span>
+                    <span style="display:flex;gap:18px;flex-wrap:wrap;font-size:13px;">
+                        <span style="color:#10b981;">Bought: {in_count} item{"s" if in_count != 1 else ""} &nbsp;|&nbsp; {money(in_val)}</span>
+                        <span style="color:#ef4444;">Sold: {out_count} item{"s" if out_count != 1 else ""} &nbsp;|&nbsp; {money(out_val)}</span>
+                    </span>
+                </summary>
+                <div style="padding:8px 5px 16px 5px;display:grid;grid-template-columns:1fr 1fr;gap:18px;">
+                    <div>
+                        <div style="font-weight:600;color:#10b981;margin-bottom:4px;">Bought (IN)</div>
+                        <table style="width:100%;"><thead><tr><th style="text-align:left;">Item</th><th style="text-align:right;">Qty</th><th style="text-align:right;">Value</th></tr></thead><tbody>{bought_rows}</tbody></table>
+                    </div>
+                    <div>
+                        <div style="font-weight:600;color:#ef4444;margin-bottom:4px;">Sold (OUT)</div>
+                        <table style="width:100%;"><thead><tr><th style="text-align:left;">Item</th><th style="text-align:right;">Qty</th><th style="text-align:right;">Value</th></tr></thead><tbody>{sold_rows}</tbody></table>
+                    </div>
+                </div>
+            </details>
+            '''
+        
+        if not daily_html:
+            daily_html = '<div style="text-align:center;padding:30px;color:var(--text-muted);">No stock movements found for this period</div>'
+        
         # Stock filter dropdown
         stock_options = '<option value="">All Items</option>'
         for s in sorted(all_stock, key=lambda x: x.get("description") or ""):
@@ -780,6 +853,13 @@ def register_stock_routes(app, db, login_required, Auth, render_page,
                     </select>
                 </div>
             </form>
+        </div>
+        
+        <!-- Daily Summary: Bought vs Sold per day (click a day to expand to items) -->
+        <div class="card" style="margin-bottom:20px;">
+            <h3 style="margin:0 0 4px 0;">Daily Summary — Bought vs Sold</h3>
+            <p style="color:var(--text-muted);margin:0 0 10px 0;font-size:13px;">Click a day to expand. Value = qty × cost (bought) and qty × selling price (sold).</p>
+            {daily_html}
         </div>
         
         <!-- Movements Table -->
