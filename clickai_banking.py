@@ -464,7 +464,7 @@ def register_banking_routes(app, db, login_required, Auth, render_page,
                     <input type="date" id="importDateTo" title="To date" style="padding:5px 8px;border-radius:6px;border:1px solid var(--border);background:var(--card);color:var(--text);font-size:12px;">
                     <label class="btn btn-primary" style="cursor:pointer;margin:0;">
                         📥 Import Statement
-                        <input type="file" accept=".csv,.pdf" style="display:none;" onchange="uploadStatement(this.files[0])">
+                        <input type="file" accept=".csv,.pdf,.txt,text/plain" style="display:none;" onchange="uploadStatement(this.files[0])">
                     </label>
                 </div>
             </div>
