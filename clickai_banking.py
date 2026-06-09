@@ -20,21 +20,31 @@ from flask import request, jsonify, session, redirect, flash
 logger = logging.getLogger(__name__)
 
 
-def _bank_fingerprint(date, description, amount=0.0, debit=0.0, credit=0.0):
-    """Dedup fingerprint for a bank transaction: (date, description, SIGNED amount).
+def _bank_fingerprint(date, description, amount=0.0, debit=0.0, credit=0.0, balance=None):
+    """Dedup fingerprint for a bank transaction: (date, description, SIGNED amount, balance).
 
     The amount is SIGNED (never abs) so a deposit (+) can NEVER collide with a
     payment (-) of the same magnitude — the bug that silently dropped real income
     and corrupted the bank balance. If 'amount' is 0 it is derived from
-    credit - debit. Used by BOTH the existing-transaction load and the per-row
-    dedup check, so the two can never drift apart again.
+    credit - debit.
+
+    The running BALANCE is included because it is unique per statement line: two
+    genuinely different transactions on the same day with the same description and
+    amount (e.g. two R4.90 card-purchase fees) have different running balances, so
+    they no longer collide and get one silently dropped. A re-import of the same
+    statement has identical balances, so it is still deduped. When no balance is
+    available it normalises to 0 on both sides (falls back to old behaviour).
+
+    Used by BOTH the existing-transaction load and the per-row dedup check, so the
+    two can never drift apart again.
     """
     d = str(date or "")[:10]
     desc = (description or "").strip().upper()[:80]
     amt = round(float(amount or 0), 2)
     if not amt:
         amt = round(round(float(credit or 0), 2) - round(float(debit or 0), 2), 2)
-    return (d, desc, amt)
+    bal = round(float(balance or 0), 2)
+    return (d, desc, amt, bal)
 
 
 # Income-side categories the bank importer can assign. A money-IN (credit) line may
@@ -2462,7 +2472,8 @@ Return ONLY the JSON array. No markdown, no explanation."""
             for et in existing_txns:
                 existing_fingerprints.add(_bank_fingerprint(
                     et.get("date", ""), et.get("description"),
-                    et.get("amount", 0), et.get("debit", 0), et.get("credit", 0)))
+                    et.get("amount", 0), et.get("debit", 0), et.get("credit", 0),
+                    et.get("balance", 0)))
             
             logger.info(f"[BANK IMPORT] Dedup: {len(existing_fingerprints)} signed fingerprints loaded")
             
@@ -2616,13 +2627,15 @@ Return ONLY the JSON array. No markdown, no explanation."""
                         continue
                     
                     # ═══════════════════════════════════════════════════════════════
-                    # DEDUP CHECK: Skip if this transaction already exists
-                    # Layer 1: Exact fingerprint (date + description + amount)
-                    # Layer 2: Fuzzy dedup (date + amount) — catches OCR variants
-                    #          where same transaction has slightly different description
-                    #          e.g. "STNDR0BANK" vs "STNDRBANK" from different PDF pages
+                    # DEDUP CHECK: Skip if this transaction already exists.
+                    # Fingerprint = date + full description + signed amount + running
+                    # balance. The balance makes two genuinely different transactions
+                    # on the same day with the same description+amount (e.g. two R4.90
+                    # card fees with different running balances) distinct, so neither
+                    # is silently dropped. A re-import of the same statement has
+                    # identical balances and is still deduped.
                     # ═══════════════════════════════════════════════════════════════
-                    fingerprint = _bank_fingerprint(txn_date, description, amount, debit, credit)
+                    fingerprint = _bank_fingerprint(txn_date, description, amount, debit, credit, running_balance)
                     if fingerprint in existing_fingerprints:
                         skipped_dupes += 1
                         continue
