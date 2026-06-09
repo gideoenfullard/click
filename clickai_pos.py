@@ -1228,7 +1228,7 @@ def register_pos_routes(app, db, login_required, Auth, render_page,
         .f11-search{padding:6px 12px;border-bottom:1px solid rgba(80,180,255,0.08);position:sticky;top:0;z-index:200;background:rgba(4,12,35,0.98);}
         .f11-search input{width:100%;height:44px;background:rgba(8,20,50,0.9);border:2px solid rgba(0,200,255,0.5);color:#e8f4ff;font-family:'Rajdhani',sans-serif;font-size:17px;font-weight:600;padding:0 14px 0 40px;outline:none;letter-spacing:0.5px;border-radius:4px;box-shadow:0 0 12px rgba(0,200,255,0.15);animation:f11searchPulse 2.5s ease-in-out infinite;}
         @keyframes f11searchPulse{0%,100%{border-color:rgba(0,200,255,0.5);box-shadow:0 0 12px rgba(0,200,255,0.15);}50%{border-color:rgba(0,220,255,0.8);box-shadow:0 0 24px rgba(0,200,255,0.3);}}
-        .f11-search::before{content:'🔍';position:absolute;left:22px;top:50%;transform:translateY(-50%);font-size:16px;z-index:1;opacity:0.7;}
+        .f11-search::before{content:'';position:absolute;left:22px;top:50%;transform:translateY(-50%);font-size:16px;z-index:1;opacity:0.7;}
         .f11-search input::placeholder{color:#7ab0d0;font-weight:500;}
         .f11-search input:focus{border-color:rgba(0,220,255,0.8);background:rgba(0,200,255,0.06);box-shadow:0 0 24px rgba(0,200,255,0.3);animation:none;}
         .f11-dd{display:none;position:fixed;left:20px;right:20px;background:rgba(6,14,36,0.98);border:1px solid rgba(80,180,255,0.25);max-height:calc(100vh - 160px);overflow-y:auto;z-index:9999;box-shadow:0 8px 32px rgba(0,0,0,0.6);}
@@ -1387,7 +1387,7 @@ def register_pos_routes(app, db, login_required, Auth, render_page,
         
         pos_html = f'''
         <div class="cashier-bar">
-            <label>👤 Cashier:</label>
+            <label>Cashier:</label>
             {cashier_buttons}
         </div>
         <div class="pos-container">
@@ -1395,7 +1395,7 @@ def register_pos_routes(app, db, login_required, Auth, render_page,
             <div style="display:flex;flex-direction:column;min-height:0;">
                 <div class="pos-search-wrapper">
                     <div class="pos-search">
-                        <span class="pos-search-icon">🔍</span>
+                        <span class="pos-search-icon"></span>
                         <input type="text" id="stockSearch" placeholder="Search code or description..." oninput="filterStock()" autofocus>
                         <span class="pos-search-hint">5*CODE = 5 pcs</span>
                     </div>
@@ -1408,7 +1408,7 @@ def register_pos_routes(app, db, login_required, Auth, render_page,
                         </tbody>
                     </table>
                     <div class="no-results" id="noResults">
-                        <div style="font-size:48px;margin-bottom:15px;">🔍</div>
+                        <div style="font-size:48px;margin-bottom:15px;"></div>
                         <div>No items found</div>
                         <div style="font-size:12px;margin-top:5px;">Try a different search term</div>
                     </div>
@@ -1421,7 +1421,7 @@ def register_pos_routes(app, db, login_required, Auth, render_page,
             <!-- Cart Panel -->
             <div class="pos-cart">
                 <div class="pos-cart-header">
-                    <span class="pos-cart-title">🛒 Cart</span>
+                    <span class="pos-cart-title">Cart</span>
                     <div style="display:flex;align-items:center;gap:10px;">
                         <button id="btnAddItem" onclick="showCustomItemModal()" style="background:#8b5cf6;color:white;border:none;padding:4px 10px;border-radius:4px;font-size:11px;cursor:pointer;" title="Add custom/once-off item">+ Custom</button>
                         <span class="pos-cart-count" id="cartCount">0 items</span>
@@ -1430,7 +1430,7 @@ def register_pos_routes(app, db, login_required, Auth, render_page,
                 
                 <div class="pos-cart-items" id="cartItems">
                     <div class="pos-empty">
-                        <div class="pos-empty-icon">🛒</div>
+                        <div class="pos-empty-icon"></div>
                         <div>Cart is empty</div>
                         <div style="font-size:12px;margin-top:5px;">Click items to add</div>
                     </div>
@@ -1674,7 +1674,7 @@ def register_pos_routes(app, db, login_required, Auth, render_page,
             if (cart.length === 0) {
                 container.innerHTML = `
                     <div class="pos-empty">
-                        <div class="pos-empty-icon">🛒</div>
+                        <div class="pos-empty-icon"></div>
                         <div>Cart is empty</div>
                         <div style="font-size:12px;margin-top:5px;">Click items to add</div>
                     </div>
@@ -1719,7 +1719,7 @@ def register_pos_routes(app, db, login_required, Auth, render_page,
                             <button class="cart-qty-btn" onclick="updateQty('${item.id}', 1)">+</button>
                         </div>
                         <div class="cart-item-total">R${lineTotal.toFixed(2)}</div>
-                        <button class="cart-del-btn" onclick="removeFromCart('${item.id}')" title="Remove">✕</button>
+                        <button class="cart-del-btn" onclick="removeFromCart('${item.id}')" title="Remove">×</button>
                     </div>
                 `;
             });
@@ -1933,7 +1933,7 @@ def register_pos_routes(app, db, login_required, Auth, render_page,
             // Handle "Add New" option
             if (id === 'NEW') {
                 const entityType = currentEntityType === 'customer' ? 'Customer' : 'Supplier';
-                const newName = await posPrompt('👤 ' + entityType + ' name:', '');
+                const newName = await posPrompt('' + entityType + ' name:', '');
                 if (newName && newName.trim()) {
                     const endpoint = currentEntityType === 'customer' ? '/api/customer/quick-add' : '/api/supplier/quick-add';
                     fetch(endpoint, {
@@ -1977,7 +1977,7 @@ def register_pos_routes(app, db, login_required, Auth, render_page,
                                     if (currentEntityType === 'customer') window.customerList.push(newItem);
                                     else window.supplierList.push(newItem);
                                     closeEntityDropdown(true);
-                                    alert('📴 ' + newName.trim() + ' saved offline. Will sync when internet returns.');
+                                    alert('' + newName.trim() + ' saved offline. Will sync when internet returns.');
                                 }).catch(() => alert('Could not save offline'));
                             } else { alert('Error: ' + err.message); }
                         } else { alert('Error: ' + err.message); }
@@ -2140,7 +2140,7 @@ def register_pos_routes(app, db, login_required, Auth, render_page,
         
         async function completeSale(method) {
             if (cart.length === 0) {
-                alert('🛒 Cart is empty!\\n\\nAdd items to cart first.\\n\\nTip: Search for stock items above and click to add them.');
+                alert('Cart is empty!\\n\\nAdd items to cart first.\\n\\nTip: Search for stock items above and click to add them.');
                 document.getElementById('stockSearch').focus();
                 return;
             }
@@ -2343,7 +2343,7 @@ def register_pos_routes(app, db, login_required, Auth, render_page,
                             subtotal: subtotal, vat: vat, total: grandTotal,
                             offline_date: new Date().toISOString().slice(0,10), offline_time: new Date().toISOString()
                         });
-                        alert('📴 OFFLINE QUOTE SAVED\\n\\nFor: ' + (customerName || 'Walk-in') + '\\nTotal: R' + grandTotal.toFixed(2) + '\\n\\nWill sync when internet returns.');
+                        alert('OFFLINE QUOTE SAVED\\n\\nFor: ' + (customerName || 'Walk-in') + '\\nTotal: R' + grandTotal.toFixed(2) + '\\n\\nWill sync when internet returns.');
                         clearCart();
                     } catch(e) { alert('Could not save quote offline'); }
                 } else { alert('Connection error: ' + err.message); }
@@ -2352,7 +2352,7 @@ def register_pos_routes(app, db, login_required, Auth, render_page,
         
         async function createInvoice() {
             if (cart.length === 0) {
-                alert('🛒 Cart is empty!\\n\\nAdd items to cart first, then click Invoice.\\n\\nTip: Search for stock items above and click to add them.');
+                alert('Cart is empty!\\n\\nAdd items to cart first, then click Invoice.\\n\\nTip: Search for stock items above and click to add them.');
                 document.getElementById('stockSearch').focus();
                 return;
             }
@@ -2530,9 +2530,9 @@ def register_pos_routes(app, db, login_required, Auth, render_page,
                             const emailResp = await fetch('/api/purchase/' + data.po_id + '/email', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({})});
                             const emailData = await emailResp.json();
                             if (emailData.success) {
-                                alert('✅ ' + emailData.message);
+                                alert('' + emailData.message);
                             } else {
-                                alert('❌ ' + emailData.error + '\\n\\nOpen PO to add supplier email.');
+                                alert('' + emailData.error + '\\n\\nOpen PO to add supplier email.');
                                 window.location = '/purchase/' + data.po_id;
                             }
                         } catch(e) {
@@ -2940,7 +2940,7 @@ def register_pos_routes(app, db, login_required, Auth, render_page,
                 }
                 
                 // If search already empty, offer to clear cart
-                if (cart.length > 0 && confirm('🗑️ Clear cart?')) {
+                if (cart.length > 0 && confirm('Clear cart?')) {
                     clearCart();
                 }
                 return;
@@ -2995,13 +2995,13 @@ def register_pos_routes(app, db, login_required, Auth, render_page,
             if (forPO || currentEntityType === 'supplier') {
                 document.getElementById('customModalTitle').innerHTML = 'Add Item to PO';
                 document.getElementById('customModalDesc').innerHTML = 'Add item to order from supplier (price optional)';
-                document.getElementById('customPriceLabel').innerHTML = '💰 Est. Cost (optional)';
+                document.getElementById('customPriceLabel').innerHTML = 'Est. Cost (optional)';
                 document.getElementById('customAddBtn').innerHTML = 'GOOD: Add to PO (Enter)';
                 document.getElementById('customPrice').placeholder = 'Leave blank if unknown';
             } else {
                 document.getElementById('customModalTitle').innerHTML = 'Add Custom Item';
                 document.getElementById('customModalDesc').innerHTML = 'Add any item not in your stock list - perfect for special orders, services, or once-off items';
-                document.getElementById('customPriceLabel').innerHTML = '💰 Price (incl VAT) *';
+                document.getElementById('customPriceLabel').innerHTML = 'Price (incl VAT) *';
                 document.getElementById('customAddBtn').innerHTML = 'GOOD: Add to Cart (Enter)';
                 document.getElementById('customPrice').placeholder = '0.00';
             }
@@ -3147,7 +3147,7 @@ def register_pos_routes(app, db, login_required, Auth, render_page,
             if (customerId && customerName) {
                 // Existing customer - prefill name but keep it EDITABLE so user can change
                 document.getElementById('qqCustSection').innerHTML = `
-                    <h3 style="margin:0 0 15px 0;color:#10b981;font-size:16px;">👤 Customer Details</h3>
+                    <h3 style="margin:0 0 15px 0;color:#10b981;font-size:16px;">Customer Details</h3>
                     <div style="display:grid;grid-template-columns:1fr 1fr;gap:15px;">
                         <div>
                             <label style="display:block;margin-bottom:5px;color:white;font-size:13px;">Name *</label>
@@ -3182,7 +3182,7 @@ def register_pos_routes(app, db, login_required, Auth, render_page,
                 document.getElementById('qqCustName').readOnly = false;
                 document.getElementById('qqCustName').style.background = '#1a1a2e';
                 document.getElementById('qqCustSection').innerHTML = `
-                    <h3 style="margin:0 0 15px 0;color:#10b981;font-size:16px;">👤 Customer Details</h3>
+                    <h3 style="margin:0 0 15px 0;color:#10b981;font-size:16px;">Customer Details</h3>
                     <div style="display:grid;grid-template-columns:1fr 1fr;gap:15px;">
                         <div>
                             <label style="display:block;margin-bottom:5px;color:white;font-size:13px;">Name *</label>
@@ -3244,7 +3244,7 @@ def register_pos_routes(app, db, login_required, Auth, render_page,
                     style="padding:10px;border-radius:6px;border:1px solid rgba(255,255,255,0.2);background:#1a1a2e;color:white;font-size:14px;text-align:center;">
                 <input type="number" placeholder="Price" step="0.01" onchange="qqUpdateLine('${lineId}')"
                     style="padding:10px;border-radius:6px;border:1px solid rgba(255,255,255,0.2);background:#1a1a2e;color:white;font-size:14px;text-align:right;">
-                <button onclick="qqRemoveLine('${lineId}')" style="background:#ef4444;color:white;border:none;padding:8px;border-radius:6px;cursor:pointer;">✕</button>
+                <button onclick="qqRemoveLine('${lineId}')" style="background:#ef4444;color:white;border:none;padding:8px;border-radius:6px;cursor:pointer;">×</button>
             </div>`;
             
             document.getElementById('qqLines').insertAdjacentHTML('beforeend', lineHtml);
@@ -3378,7 +3378,7 @@ def register_pos_routes(app, db, login_required, Auth, render_page,
             if (supplierId && supplierName) {
                 // Existing supplier - show simplified header
                 document.getElementById('qpSupplierSection').innerHTML = `
-                    <h3 style="margin:0 0 15px 0;color:#3b82f6;font-size:16px;">🏭 Supplier: ${supplierName}</h3>
+                    <h3 style="margin:0 0 15px 0;color:#3b82f6;font-size:16px;">Supplier: ${supplierName}</h3>
                     <p style="color:rgba(255,255,255,0.5);font-size:12px;margin:0;">Adding custom items for existing supplier</p>
                 `;
             } else {
@@ -3391,7 +3391,7 @@ def register_pos_routes(app, db, login_required, Auth, render_page,
                     }
                 });
                 document.getElementById('qpSupplierSection').innerHTML = `
-                    <h3 style="margin:0 0 15px 0;color:#3b82f6;font-size:16px;">🏭 Supplier Details</h3>
+                    <h3 style="margin:0 0 15px 0;color:#3b82f6;font-size:16px;">Supplier Details</h3>
                     <div style="margin-bottom:15px;">
                         <label style="display:block;margin-bottom:5px;color:white;font-size:13px;">Pick an existing supplier</label>
                         <select id="qpSupplierSelect" onchange="qpOnSupplierSelect()"
@@ -3481,7 +3481,7 @@ def register_pos_routes(app, db, login_required, Auth, render_page,
                     style="padding:10px;border-radius:6px;border:1px solid rgba(255,255,255,0.2);background:#1a1a2e;color:white;font-size:14px;">
                 <input type="number" placeholder="Qty" value="1" min="1" onchange="qpUpdateTotal()"
                     style="padding:10px;border-radius:6px;border:1px solid rgba(255,255,255,0.2);background:#1a1a2e;color:white;font-size:14px;text-align:center;">
-                <button onclick="qpRemoveLine('${lineId}')" style="background:#ef4444;color:white;border:none;padding:8px;border-radius:6px;cursor:pointer;">✕</button>
+                <button onclick="qpRemoveLine('${lineId}')" style="background:#ef4444;color:white;border:none;padding:8px;border-radius:6px;cursor:pointer;">×</button>
             </div>`;
             
             document.getElementById('qpLines').insertAdjacentHTML('beforeend', lineHtml);
@@ -3602,9 +3602,9 @@ def register_pos_routes(app, db, login_required, Auth, render_page,
                             const emailResp = await fetch('/api/purchase/' + data.po_id + '/email', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({})});
                             const emailData = await emailResp.json();
                             if (emailData.success) {
-                                alert('✅ ' + emailData.message);
+                                alert('' + emailData.message);
                             } else {
-                                alert('❌ ' + emailData.error + '\\n\\nOpen PO to add supplier email.');
+                                alert('' + emailData.error + '\\n\\nOpen PO to add supplier email.');
                                 window.location = '/purchase/' + data.po_id;
                             }
                         } catch(e) {
@@ -3727,7 +3727,7 @@ def register_pos_routes(app, db, login_required, Auth, render_page,
                             subtotal: subtotal, vat: vatAmt, total: Math.round((subtotal + vatAmt) * 100) / 100,
                             offline_date: new Date().toISOString().slice(0,10), offline_time: new Date().toISOString()
                         });
-                        alert('📴 OFFLINE QUOTE SAVED\\n\\nFor: ' + (customerName || 'Walk-in') + '\\nTotal: R' + total.toFixed(2) + '\\n\\nWill sync when internet returns.');
+                        alert('OFFLINE QUOTE SAVED\\n\\nFor: ' + (customerName || 'Walk-in') + '\\nTotal: R' + total.toFixed(2) + '\\n\\nWill sync when internet returns.');
                         clearCart();
                     } catch(e) { alert('Could not save quote offline'); }
                 } else { alert('Connection error: ' + err.message); }
@@ -3822,7 +3822,7 @@ def register_pos_routes(app, db, login_required, Auth, render_page,
             const time = now.toLocaleTimeString('en-ZA', {hour: '2-digit', minute: '2-digit'});
             const date = now.toLocaleDateString('en-ZA');
             
-            const methodLabel = {cash: '💵 CASH', card: '💳 CARD', account: '📒 ACCOUNT'}[method] || method.toUpperCase();
+            const methodLabel = {cash: 'CASH', card: 'CARD', account: 'ACCOUNT'}[method] || method.toUpperCase();
             
             let itemsHtml = '';
             items.forEach(item => {
@@ -4309,13 +4309,13 @@ def register_pos_routes(app, db, login_required, Auth, render_page,
                 
                 const data = await response.json();
                 if (data.success) {
-                    alert('✅ Slip emailed to ' + email);
+                    alert('Slip emailed to ' + email);
                     closeEmailSlipModal();
                 } else {
-                    alert('❌ ' + (data.error || 'Failed to send email'));
+                    alert('' + (data.error || 'Failed to send email'));
                 }
             } catch(e) {
-                alert('❌ Error: ' + e.message);
+                alert('Error: ' + e.message);
             }
         }
         
@@ -4334,7 +4334,7 @@ def register_pos_routes(app, db, login_required, Auth, render_page,
         <div id="customItemModal" style="display:none;position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.85);z-index:9999;justify-content:center;align-items:center;">
             <div style="background:linear-gradient(135deg, #1e1e32 0%, #2a2a4a 100%);padding:40px;border-radius:20px;max-width:700px;width:95%;border:2px solid rgba(139,92,246,0.5);box-shadow:0 25px 50px rgba(0,0,0,0.5);">
                 <div style="text-align:center;margin-bottom:30px;">
-                    <div style="font-size:48px;margin-bottom:10px;">✏️</div>
+                    <div style="font-size:48px;margin-bottom:10px;"></div>
                     <h2 style="margin:0;color:white;font-size:28px;" id="customModalTitle">Add Custom Item</h2>
                     <p style="color:rgba(255,255,255,0.6);font-size:16px;margin-top:10px;" id="customModalDesc">
                         Add any item not in your stock list - perfect for special orders, services, or once-off items
@@ -4342,7 +4342,7 @@ def register_pos_routes(app, db, login_required, Auth, render_page,
                 </div>
                 
                 <div style="margin-bottom:25px;">
-                    <label style="display:block;margin-bottom:8px;color:white;font-size:16px;font-weight:bold;">📝 Description *</label>
+                    <label style="display:block;margin-bottom:8px;color:white;font-size:16px;font-weight:bold;">Description *</label>
                     <input type="text" id="customDesc" placeholder="e.g. Special order bracket, Transport, Labour, etc..." 
                         style="width:100%;padding:18px;border-radius:10px;border:2px solid rgba(139,92,246,0.3);background:#1a1a2e;color:white;font-size:18px;box-sizing:border-box;"
                         onkeypress="if(event.key==='Enter'){document.getElementById('customPrice').focus();}">
@@ -4350,20 +4350,20 @@ def register_pos_routes(app, db, login_required, Auth, render_page,
                 
                 <div style="display:grid;grid-template-columns:1fr 1fr;gap:25px;margin-bottom:30px;">
                     <div id="customPriceDiv">
-                        <label style="display:block;margin-bottom:8px;color:white;font-size:16px;font-weight:bold;" id="customPriceLabel">💰 Price (incl VAT) *</label>
+                        <label style="display:block;margin-bottom:8px;color:white;font-size:16px;font-weight:bold;" id="customPriceLabel">Price (incl VAT) *</label>
                         <input type="number" id="customPrice" placeholder="0.00" step="0.01"
                             style="width:100%;padding:18px;border-radius:10px;border:2px solid rgba(139,92,246,0.3);background:#1a1a2e;color:white;font-size:24px;text-align:right;box-sizing:border-box;"
                             onkeypress="if(event.key==='Enter'){document.getElementById('customAddBtn').click();}">
                     </div>
                     <div>
-                        <label style="display:block;margin-bottom:8px;color:white;font-size:16px;font-weight:bold;">📦 Quantity</label>
+                        <label style="display:block;margin-bottom:8px;color:white;font-size:16px;font-weight:bold;">Quantity</label>
                         <input type="number" id="customQty" value="1" min="1"
                             style="width:100%;padding:18px;border-radius:10px;border:2px solid rgba(139,92,246,0.3);background:#1a1a2e;color:white;font-size:24px;text-align:center;box-sizing:border-box;">
                     </div>
                 </div>
                 
                 <div style="display:flex;gap:15px;">
-                    <button onclick="closeCustomItemModal()" style="flex:1;padding:18px;border-radius:10px;border:2px solid rgba(255,255,255,0.3);background:transparent;color:white;cursor:pointer;font-size:16px;font-weight:bold;">✕ Cancel (Esc)</button>
+                    <button onclick="closeCustomItemModal()" style="flex:1;padding:18px;border-radius:10px;border:2px solid rgba(255,255,255,0.3);background:transparent;color:white;cursor:pointer;font-size:16px;font-weight:bold;">Cancel (Esc)</button>
                     <button onclick="addCustomItem()" style="flex:2;padding:18px;border-radius:10px;border:none;background:linear-gradient(135deg, #8b5cf6 0%, #a78bfa 100%);color:white;cursor:pointer;font-size:18px;font-weight:bold;box-shadow:0 4px 15px rgba(139,92,246,0.4);" id="customAddBtn">GOOD: Add to Cart (Enter)</button>
                 </div>
                 
@@ -4377,7 +4377,7 @@ def register_pos_routes(app, db, login_required, Auth, render_page,
         <div id="quickQuoteModal" style="display:none;position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.9);z-index:9999;justify-content:center;align-items:flex-start;overflow-y:auto;padding:20px;">
             <div style="background:linear-gradient(135deg, #1e1e32 0%, #2a2a4a 100%);padding:30px;border-radius:20px;max-width:800px;width:95%;border:2px solid rgba(16,185,129,0.5);box-shadow:0 25px 50px rgba(0,0,0,0.5);margin:auto;">
                 <div style="text-align:center;margin-bottom:20px;">
-                    <div style="font-size:40px;margin-bottom:8px;">📝</div>
+                    <div style="font-size:40px;margin-bottom:8px;"></div>
                     <h2 style="margin:0;color:white;font-size:24px;">Quick Quote</h2>
                     <p style="color:rgba(255,255,255,0.6);font-size:13px;margin-top:5px;">
                         Create a quote without stock items or saved customer
@@ -4386,7 +4386,7 @@ def register_pos_routes(app, db, login_required, Auth, render_page,
                 
                 <!-- Customer Section -->
                 <div id="qqCustSection" style="background:rgba(0,0,0,0.2);padding:20px;border-radius:12px;margin-bottom:20px;">
-                    <h3 style="margin:0 0 15px 0;color:#10b981;font-size:16px;">👤 Customer Details</h3>
+                    <h3 style="margin:0 0 15px 0;color:#10b981;font-size:16px;">Customer Details</h3>
                     <div style="display:grid;grid-template-columns:1fr 1fr;gap:15px;">
                         <div>
                             <label style="display:block;margin-bottom:5px;color:white;font-size:13px;">Name *</label>
@@ -4418,14 +4418,14 @@ def register_pos_routes(app, db, login_required, Auth, render_page,
                 
                 <!-- Salesman (auto from logged-in user) -->
                 <div style="background:rgba(0,0,0,0.2);padding:15px 20px;border-radius:12px;margin-bottom:20px;display:flex;align-items:center;gap:10px;">
-                    <span style="color:white;font-size:14px;font-weight:bold;">🧑‍💼 Salesman:</span>
+                    <span style="color:white;font-size:14px;font-weight:bold;">Salesman:</span>
                     <span style="color:#10b981;font-size:16px;font-weight:bold;" id="qqSalesmanDisplay">{current_user_name}</span>
                 </div>
                 
                 <!-- Line Items Section -->
                 <div style="background:rgba(0,0,0,0.2);padding:20px;border-radius:12px;margin-bottom:20px;">
                     <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:15px;">
-                        <h3 style="margin:0;color:#f59e0b;font-size:16px;">📦 Line Items</h3>
+                        <h3 style="margin:0;color:#f59e0b;font-size:16px;">Line Items</h3>
                         <button onclick="qqAddLine()" style="background:#f59e0b;color:white;border:none;padding:6px 12px;border-radius:6px;cursor:pointer;font-size:13px;">+ Add Item</button>
                     </div>
                     <div id="qqLines" style="max-height:250px;overflow-y:auto;">
@@ -4453,7 +4453,7 @@ def register_pos_routes(app, db, login_required, Auth, render_page,
                 
                 <!-- Buttons -->
                 <div style="display:flex;gap:15px;">
-                    <button onclick="closeQuickQuoteModal()" style="flex:1;padding:15px;border-radius:10px;border:2px solid rgba(255,255,255,0.3);background:transparent;color:white;cursor:pointer;font-size:16px;">✕ Cancel</button>
+                    <button onclick="closeQuickQuoteModal()" style="flex:1;padding:15px;border-radius:10px;border:2px solid rgba(255,255,255,0.3);background:transparent;color:white;cursor:pointer;font-size:16px;">Cancel</button>
                     <button onclick="submitQuickQuote()" style="flex:2;padding:15px;border-radius:10px;border:none;background:linear-gradient(135deg, #10b981 0%, #34d399 100%);color:white;cursor:pointer;font-size:18px;font-weight:bold;box-shadow:0 4px 15px rgba(16,185,129,0.4);">GOOD: Create Quote</button>
                 </div>
             </div>
@@ -4463,7 +4463,7 @@ def register_pos_routes(app, db, login_required, Auth, render_page,
         <div id="quickPOModal" style="display:none;position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.9);z-index:9999;justify-content:center;align-items:flex-start;overflow-y:auto;padding:20px;">
             <div style="background:linear-gradient(135deg, #1e1e32 0%, #2a2a4a 100%);padding:30px;border-radius:20px;max-width:800px;width:95%;border:2px solid rgba(59,130,246,0.5);box-shadow:0 25px 50px rgba(0,0,0,0.5);margin:auto;">
                 <div style="text-align:center;margin-bottom:20px;">
-                    <div style="font-size:40px;margin-bottom:8px;">📦</div>
+                    <div style="font-size:40px;margin-bottom:8px;"></div>
                     <h2 style="margin:0;color:white;font-size:24px;">Quick Purchase Order</h2>
                     <p style="color:rgba(255,255,255,0.6);font-size:13px;margin-top:5px;">
                         Create a PO without stock items or saved supplier
@@ -4472,7 +4472,7 @@ def register_pos_routes(app, db, login_required, Auth, render_page,
                 
                 <!-- Supplier Section -->
                 <div id="qpSupplierSection" style="background:rgba(0,0,0,0.2);padding:20px;border-radius:12px;margin-bottom:20px;">
-                    <h3 style="margin:0 0 15px 0;color:#3b82f6;font-size:16px;">🏭 Supplier Details</h3>
+                    <h3 style="margin:0 0 15px 0;color:#3b82f6;font-size:16px;">Supplier Details</h3>
                     <div style="display:grid;grid-template-columns:1fr 1fr;gap:15px;">
                         <div>
                             <label style="display:block;margin-bottom:5px;color:white;font-size:13px;">Supplier Name *</label>
@@ -4500,7 +4500,7 @@ def register_pos_routes(app, db, login_required, Auth, render_page,
                 <!-- Line Items Section -->
                 <div style="background:rgba(0,0,0,0.2);padding:20px;border-radius:12px;margin-bottom:20px;">
                     <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:15px;">
-                        <h3 style="margin:0;color:#f59e0b;font-size:16px;">📋 Order Items</h3>
+                        <h3 style="margin:0;color:#f59e0b;font-size:16px;">Order Items</h3>
                         <button onclick="qpAddLine()" style="background:#f59e0b;color:white;border:none;padding:6px 12px;border-radius:6px;cursor:pointer;font-size:13px;">+ Add Item</button>
                     </div>
                     <div id="qpLines" style="max-height:250px;overflow-y:auto;">
@@ -4530,7 +4530,7 @@ def register_pos_routes(app, db, login_required, Auth, render_page,
                 
                 <!-- Buttons -->
                 <div style="display:flex;gap:15px;">
-                    <button onclick="closeQuickPOModal()" style="flex:1;padding:15px;border-radius:10px;border:2px solid rgba(255,255,255,0.3);background:transparent;color:white;cursor:pointer;font-size:16px;">✕ Cancel</button>
+                    <button onclick="closeQuickPOModal()" style="flex:1;padding:15px;border-radius:10px;border:2px solid rgba(255,255,255,0.3);background:transparent;color:white;cursor:pointer;font-size:16px;">Cancel</button>
                     <button onclick="submitQuickPO()" style="flex:2;padding:15px;border-radius:10px;border:none;background:linear-gradient(135deg, #3b82f6 0%, #2563eb 100%);color:white;cursor:pointer;font-size:18px;font-weight:bold;box-shadow:0 4px 15px rgba(59,130,246,0.4);">GOOD: Create PO</button>
                 </div>
             </div>
@@ -4540,7 +4540,7 @@ def register_pos_routes(app, db, login_required, Auth, render_page,
         <div id="editCustomerModal" style="display:none;position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.85);z-index:9999;justify-content:center;align-items:center;">
             <div style="background:linear-gradient(135deg, #1e1e32 0%, #2a2a4a 100%);padding:40px;border-radius:20px;max-width:600px;width:95%;border:2px solid rgba(99,102,241,0.5);box-shadow:0 25px 50px rgba(0,0,0,0.5);">
                 <div style="text-align:center;margin-bottom:25px;">
-                    <div style="font-size:48px;margin-bottom:10px;">📝</div>
+                    <div style="font-size:48px;margin-bottom:10px;"></div>
                     <h2 style="margin:0;color:white;font-size:28px;">Edit Customer Details</h2>
                     <p style="color:rgba(255,255,255,0.6);font-size:14px;margin-top:10px;" id="editCustSubtitle">
                         Update customer information
@@ -4550,14 +4550,14 @@ def register_pos_routes(app, db, login_required, Auth, render_page,
                 <input type="hidden" id="editCustId">
                 
                 <div style="margin-bottom:20px;">
-                    <label style="display:block;margin-bottom:8px;color:white;font-size:16px;font-weight:bold;">👤 Customer Name *</label>
+                    <label style="display:block;margin-bottom:8px;color:white;font-size:16px;font-weight:bold;">Customer Name *</label>
                     <input type="text" id="editCustName" placeholder="Company or person name" 
                         style="width:100%;padding:15px;border-radius:10px;border:2px solid rgba(99,102,241,0.3);background:#1a1a2e;color:white;font-size:18px;box-sizing:border-box;">
                 </div>
                 
                 <div style="display:grid;grid-template-columns:1fr 1fr;gap:20px;margin-bottom:20px;">
                     <div>
-                        <label style="display:block;margin-bottom:8px;color:white;font-size:14px;">📱 Phone</label>
+                        <label style="display:block;margin-bottom:8px;color:white;font-size:14px;">Phone</label>
                         <input type="text" id="editCustPhone" placeholder="e.g. 082 123 4567" 
                             style="width:100%;padding:12px;border-radius:8px;border:2px solid rgba(255,255,255,0.2);background:#1a1a2e;color:white;font-size:16px;box-sizing:border-box;">
                     </div>
@@ -4570,19 +4570,19 @@ def register_pos_routes(app, db, login_required, Auth, render_page,
                 
                 <div style="display:grid;grid-template-columns:1fr 1fr;gap:20px;margin-bottom:20px;">
                     <div>
-                        <label style="display:block;margin-bottom:8px;color:white;font-size:14px;">🏢 VAT Number</label>
+                        <label style="display:block;margin-bottom:8px;color:white;font-size:14px;">VAT Number</label>
                         <input type="text" id="editCustVat" placeholder="e.g. 4123456789" 
                             style="width:100%;padding:12px;border-radius:8px;border:2px solid rgba(255,255,255,0.2);background:#1a1a2e;color:white;font-size:16px;box-sizing:border-box;">
                     </div>
                     <div>
-                        <label style="display:block;margin-bottom:8px;color:white;font-size:14px;">📍 Address</label>
+                        <label style="display:block;margin-bottom:8px;color:white;font-size:14px;">Address</label>
                         <input type="text" id="editCustAddress" placeholder="Street, City, Code" 
                             style="width:100%;padding:12px;border-radius:8px;border:2px solid rgba(255,255,255,0.2);background:#1a1a2e;color:white;font-size:16px;box-sizing:border-box;">
                     </div>
                 </div>
                 
                 <div style="display:flex;gap:15px;">
-                    <button onclick="closeEditCustomerModal()" style="flex:1;padding:15px;border-radius:10px;border:2px solid rgba(255,255,255,0.3);background:transparent;color:white;cursor:pointer;font-size:16px;">✕ Cancel</button>
+                    <button onclick="closeEditCustomerModal()" style="flex:1;padding:15px;border-radius:10px;border:2px solid rgba(255,255,255,0.3);background:transparent;color:white;cursor:pointer;font-size:16px;">Cancel</button>
                     <button onclick="submitEditCustomer()" style="flex:2;padding:15px;border-radius:10px;border:none;background:linear-gradient(135deg, #6366f1 0%, #8b5cf6 100%);color:white;cursor:pointer;font-size:18px;font-weight:bold;box-shadow:0 4px 15px rgba(99,102,241,0.4);">GOOD: Save Changes</button>
                 </div>
             </div>
@@ -4592,7 +4592,7 @@ def register_pos_routes(app, db, login_required, Auth, render_page,
         <div id="quickCustomerModal" style="display:none;position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.85);z-index:9999;justify-content:center;align-items:center;">
             <div style="background:linear-gradient(135deg, #1e1e32 0%, #2a2a4a 100%);padding:40px;border-radius:20px;max-width:600px;width:95%;border:2px solid rgba(16,185,129,0.5);box-shadow:0 25px 50px rgba(0,0,0,0.5);">
                 <div style="text-align:center;margin-bottom:25px;">
-                    <div style="font-size:48px;margin-bottom:10px;">👤</div>
+                    <div style="font-size:48px;margin-bottom:10px;"></div>
                     <h2 style="margin:0;color:white;font-size:28px;">Customer Details for Quote</h2>
                     <p style="color:rgba(255,255,255,0.6);font-size:14px;margin-top:10px;">
                         Enter customer details for this quote (will also be saved for future use)
@@ -4600,14 +4600,14 @@ def register_pos_routes(app, db, login_required, Auth, render_page,
                 </div>
                 
                 <div style="margin-bottom:20px;">
-                    <label style="display:block;margin-bottom:8px;color:white;font-size:16px;font-weight:bold;">👤 Customer Name *</label>
+                    <label style="display:block;margin-bottom:8px;color:white;font-size:16px;font-weight:bold;">Customer Name *</label>
                     <input type="text" id="quickCustName" placeholder="Company or person name" 
                         style="width:100%;padding:15px;border-radius:10px;border:2px solid rgba(16,185,129,0.3);background:#1a1a2e;color:white;font-size:18px;box-sizing:border-box;">
                 </div>
                 
                 <div style="display:grid;grid-template-columns:1fr 1fr;gap:20px;margin-bottom:20px;">
                     <div>
-                        <label style="display:block;margin-bottom:8px;color:white;font-size:14px;">📱 Phone</label>
+                        <label style="display:block;margin-bottom:8px;color:white;font-size:14px;">Phone</label>
                         <input type="text" id="quickCustPhone" placeholder="e.g. 082 123 4567" 
                             style="width:100%;padding:12px;border-radius:8px;border:2px solid rgba(255,255,255,0.2);background:#1a1a2e;color:white;font-size:16px;box-sizing:border-box;">
                     </div>
@@ -4620,26 +4620,26 @@ def register_pos_routes(app, db, login_required, Auth, render_page,
                 
                 <div style="display:grid;grid-template-columns:1fr 1fr;gap:20px;margin-bottom:20px;">
                     <div>
-                        <label style="display:block;margin-bottom:8px;color:white;font-size:14px;">🏢 VAT Number</label>
+                        <label style="display:block;margin-bottom:8px;color:white;font-size:14px;">VAT Number</label>
                         <input type="text" id="quickCustVat" placeholder="e.g. 4123456789" 
                             style="width:100%;padding:12px;border-radius:8px;border:2px solid rgba(255,255,255,0.2);background:#1a1a2e;color:white;font-size:16px;box-sizing:border-box;">
                     </div>
                     <div>
-                        <label style="display:block;margin-bottom:8px;color:white;font-size:14px;">📍 Address</label>
+                        <label style="display:block;margin-bottom:8px;color:white;font-size:14px;">Address</label>
                         <input type="text" id="quickCustAddress" placeholder="Street, City, Code" 
                             style="width:100%;padding:12px;border-radius:8px;border:2px solid rgba(255,255,255,0.2);background:#1a1a2e;color:white;font-size:16px;box-sizing:border-box;">
                     </div>
                 </div>
                 
                 <div style="margin-bottom:20px;">
-                    <label style="display:block;margin-bottom:8px;color:white;font-size:16px;font-weight:bold;">🧑‍💼 Salesman</label>
+                    <label style="display:block;margin-bottom:8px;color:white;font-size:16px;font-weight:bold;">Salesman</label>
                     <div style="width:100%;padding:12px;border-radius:8px;border:2px solid rgba(16,185,129,0.3);background:#2a2a4a;color:#10b981;font-size:16px;box-sizing:border-box;font-weight:bold;">
                         <span id="quickQuoteSalesmanDisplay">{current_user_name}</span>
                     </div>
                 </div>
                 
                 <div style="display:flex;gap:15px;">
-                    <button onclick="closeQuickCustomerModal()" style="flex:1;padding:15px;border-radius:10px;border:2px solid rgba(255,255,255,0.3);background:transparent;color:white;cursor:pointer;font-size:16px;">✕ Cancel</button>
+                    <button onclick="closeQuickCustomerModal()" style="flex:1;padding:15px;border-radius:10px;border:2px solid rgba(255,255,255,0.3);background:transparent;color:white;cursor:pointer;font-size:16px;">Cancel</button>
                     <button onclick="submitQuickCustomer()" style="flex:2;padding:15px;border-radius:10px;border:none;background:linear-gradient(135deg, #10b981 0%, #34d399 100%);color:white;cursor:pointer;font-size:18px;font-weight:bold;box-shadow:0 4px 15px rgba(16,185,129,0.4);" id="quickCustSubmitBtn">GOOD: Create Quote</button>
                 </div>
             </div>
@@ -4671,15 +4671,15 @@ def register_pos_routes(app, db, login_required, Auth, render_page,
                     <button id="btnPrintThermal" tabindex="0" onclick="doPrintSlip('thermal')" 
                         onfocus="this.style.outline='4px solid yellow';this.style.outlineOffset='2px';this.style.transform='scale(1.05)'" 
                         onblur="this.style.outline='none';this.style.transform='scale(1)'"
-                        style="flex:1;padding:18px;border-radius:8px;border:3px solid #10b981;background:#10b981;color:white;cursor:pointer;font-weight:bold;font-size:16px;transition:transform 0.1s;" autofocus>🖨️ THERMAL [1]</button>
+                        style="flex:1;padding:18px;border-radius:8px;border:3px solid #10b981;background:#10b981;color:white;cursor:pointer;font-weight:bold;font-size:16px;transition:transform 0.1s;" autofocus>THERMAL [1]</button>
                     <button id="btnPrintA4" tabindex="0" onclick="doPrintSlip('a4')" 
                         onfocus="this.style.outline='4px solid yellow';this.style.outlineOffset='2px';this.style.transform='scale(1.05)'" 
                         onblur="this.style.outline='none';this.style.transform='scale(1)'"
-                        style="flex:1;padding:18px;border-radius:8px;border:3px solid #3b82f6;background:#3b82f6;color:white;cursor:pointer;font-weight:bold;font-size:16px;transition:transform 0.1s;">📄 A4 [2]</button>
+                        style="flex:1;padding:18px;border-radius:8px;border:3px solid #3b82f6;background:#3b82f6;color:white;cursor:pointer;font-weight:bold;font-size:16px;transition:transform 0.1s;">A4 [2]</button>
                     <button id="btnPrintSkip" tabindex="0" onclick="closePrintModal()" 
                         onfocus="this.style.outline='4px solid yellow';this.style.outlineOffset='2px';this.style.transform='scale(1.05)'" 
                         onblur="this.style.outline='none';this.style.transform='scale(1)'"
-                        style="flex:1;padding:18px;border-radius:8px;border:2px solid #ccc;background:white;color:#333;cursor:pointer;font-size:16px;transition:transform 0.1s;">✕ Skip [3]</button>
+                        style="flex:1;padding:18px;border-radius:8px;border:2px solid #ccc;background:white;color:#333;cursor:pointer;font-size:16px;transition:transform 0.1s;">Skip [3]</button>
                 </div>
                 <div style="padding:10px 20px 20px 20px;border-top:1px solid #eee;">
                     <button onclick="showEmailSlipModal()" style="width:100%;padding:15px;border-radius:8px;border:2px solid #8b5cf6;background:white;color:#8b5cf6;cursor:pointer;font-size:14px;">Email Slip to Customer [4]</button>
@@ -4813,7 +4813,7 @@ def register_pos_routes(app, db, login_required, Auth, render_page,
                         offlineEl.style.background = 'rgba(239,68,68,0.2)';
                         offlineEl.style.color = '#fca5a5';
                         if (onlineEl) onlineEl.style.display = 'none';
-                        textEl.textContent = '🔴 OFFLINE';
+                        textEl.textContent = 'OFFLINE';
                         if (n > 0) { countEl.style.display = 'inline'; countEl.textContent = n + ' queued'; }
                         else { countEl.style.display = 'none'; }
                     } else if (n > 0) {
@@ -4823,7 +4823,7 @@ def register_pos_routes(app, db, login_required, Auth, render_page,
                         offlineEl.style.background = 'rgba(245,158,11,0.2)';
                         offlineEl.style.color = '#fcd34d';
                         if (onlineEl) onlineEl.style.display = 'none';
-                        textEl.textContent = '⚠️ SYNC';
+                        textEl.textContent = 'SYNC';
                         countEl.style.display = 'inline';
                         countEl.textContent = n + ' pending';
                         // Auto-sync after 2 seconds
@@ -4918,10 +4918,10 @@ def register_pos_routes(app, db, login_required, Auth, render_page,
                 <a href="/stock">Stock</a>
                 <a href="/customers">Customers</a>
                 <span id="offlineIndicator" style="display:none;padding:4px 10px;font-size:11px;font-weight:700;margin-left:8px;cursor:pointer;" onclick="syncOfflineSales()" title="Click to sync when online">
-                    <span id="offlineText">🔴 OFFLINE</span>
+                    <span id="offlineText">OFFLINE</span>
                     <span id="offlineCount" style="display:none;background:rgba(255,255,255,0.2);padding:1px 6px;margin-left:4px;font-size:10px;"></span>
                 </span>
-                <span id="onlineIndicator" style="padding:2px 8px;font-size:10px;color:#10b981;display:none;">🟢 Online</span>
+                <span id="onlineIndicator" style="padding:2px 8px;font-size:10px;color:#10b981;display:none;">Online</span>
             </div>
         </header>
     
@@ -4948,7 +4948,7 @@ def register_pos_routes(app, db, login_required, Auth, render_page,
                     <button class="pos-hud-btn" onclick="createInvoice()" id="btnInvoice" disabled>INVOICE<span class="pk">F6</span></button>
                     <button class="pos-hud-btn" onclick="createCreditNote()" id="btnCredit" disabled>CREDIT NOTE<span class="pk">F10</span></button>
                     <button class="pos-hud-btn" onclick="toggleF11()">FULLSCREEN<span class="pk">F11</span></button>
-                    <button class="pos-hud-btn" onclick="window.location='/cashup'" style="border-color:rgba(0,255,136,0.3);color:#00ff88;">CASH UP<span class="pk">💰</span></button>
+                    <button class="pos-hud-btn" onclick="window.location='/cashup'" style="border-color:rgba(0,255,136,0.3);color:#00ff88;">CASH UP<span class="pk"></span></button>
                 </div>
                 <div class="pos-lbl"><span>POINT OF SALE</span></div>
             </div>
@@ -5094,7 +5094,7 @@ def register_pos_routes(app, db, login_required, Auth, render_page,
                 html += '<td class="r" style="color:#5a8aaa;cursor:pointer;" onclick="event.stopPropagation();f11EditDisc(' + idx + ')">' + (item.disc ? item.disc + '%' : '—') + '</td>';
                 html += '<td class="r tot">R' + lineTotal.toFixed(2) + '</td>';
                 html += '<td><span class="f11-onhand">' + onHand + '</span></td>';
-                html += '<td style="text-align:center;"><button class="f11-del-btn" onclick="event.stopPropagation();f11RemoveItem(' + idx + ')" title="Remove item">✕</button></td>';
+                html += '<td style="text-align:center;"><button class="f11-del-btn" onclick="event.stopPropagation();f11RemoveItem(' + idx + ')" title="Remove item">×</button></td>';
                 html += '</tr>';
             }});
             tbody.innerHTML = html;
@@ -5213,7 +5213,7 @@ def register_pos_routes(app, db, login_required, Auth, render_page,
                 var seenRH = false;
                 f11DD.innerHTML = f11Matches.map(function(m, i) {{
                     var hdr = '';
-                    if (m.related && !seenRH) {{ seenRH = true; hdr = '<div style="padding:5px 16px;font-size:10px;font-weight:700;color:#f59e0b;letter-spacing:2px;border-top:1px solid rgba(245,158,11,0.3);background:rgba(245,158,11,0.05);">⚡ ALSO NEEDED?</div>'; }}
+                    if (m.related && !seenRH) {{ seenRH = true; hdr = '<div style="padding:5px 16px;font-size:10px;font-weight:700;color:#f59e0b;letter-spacing:2px;border-top:1px solid rgba(245,158,11,0.3);background:rgba(245,158,11,0.05);">ALSO NEEDED?</div>'; }}
                     return hdr + '<div class="f11-dd-item' + (i === f11Sel ? ' sel' : '') + (m.related ? ' f11-dd-rel' : '') + '" data-idx="' + i + '">' +
                     '<span class="f11-dd-code">' + m.code + '</span>' +
                     '<span class="f11-dd-desc">' + m.desc.replace(/&/g,'&amp;').replace(/</g,'&lt;') + '</span>' +
@@ -5580,7 +5580,7 @@ def register_pos_routes(app, db, login_required, Auth, render_page,
             
             <!-- Search & Filters -->
             <div style="display:flex;flex-wrap:wrap;gap:10px;align-items:center;margin-bottom:15px;">
-                <input type="text" id="searchBox" value="{search_q}" placeholder="🔍 Search customer, slip #, item..." 
+                <input type="text" id="searchBox" value="{search_q}" placeholder="Search customer, slip #, item..." 
                        style="padding:8px 12px;border-radius:6px;border:1px solid var(--border);background:var(--card);color:var(--text);flex:1;min-width:200px;"
                        onkeydown="if(event.key==='Enter')applyFilters()">
                 {date_filter_html}
@@ -5610,15 +5610,15 @@ def register_pos_routes(app, db, login_required, Auth, render_page,
             <div style="display:grid;grid-template-columns:repeat(auto-fit, minmax(140px, 1fr));gap:15px;margin-bottom:25px;">
                 <div style="background:linear-gradient(135deg,#10b981,#059669);padding:20px;border-radius:12px;text-align:center;">
                     <div style="font-size:24px;font-weight:bold;color:white;">{money(cash_total)}</div>
-                    <div style="color:rgba(255,255,255,0.8);font-size:13px;">💵 Cash</div>
+                    <div style="color:rgba(255,255,255,0.8);font-size:13px;">Cash</div>
                 </div>
                 <div style="background:linear-gradient(135deg,#3b82f6,#2563eb);padding:20px;border-radius:12px;text-align:center;">
                     <div style="font-size:24px;font-weight:bold;color:white;">{money(card_total)}</div>
-                    <div style="color:rgba(255,255,255,0.8);font-size:13px;">💳 Card</div>
+                    <div style="color:rgba(255,255,255,0.8);font-size:13px;">Card</div>
                 </div>
                 <div style="background:linear-gradient(135deg,#f59e0b,#d97706);padding:20px;border-radius:12px;text-align:center;">
                     <div style="font-size:24px;font-weight:bold;color:white;">{money(account_total)}</div>
-                    <div style="color:rgba(255,255,255,0.8);font-size:13px;">📒 Account</div>
+                    <div style="color:rgba(255,255,255,0.8);font-size:13px;">Account</div>
                 </div>
             </div>
             
@@ -5660,7 +5660,7 @@ def register_pos_routes(app, db, login_required, Auth, render_page,
             <div style="background:white;padding:0;border-radius:8px;max-width:400px;width:90%;max-height:90vh;overflow-y:auto;">
                 <div id="xreadContent" style="padding:30px;font-family:monospace;font-size:14px;color:#000;"></div>
                 <div style="padding:15px;border-top:1px solid #eee;display:flex;gap:10px;">
-                    <button onclick="window.print()" class="btn btn-primary" style="flex:1;">🖨️ Print</button>
+                    <button onclick="window.print()" class="btn btn-primary" style="flex:1;">Print</button>
                     <button onclick="closeModal('xreadModal')" class="btn btn-secondary" style="flex:1;">Close</button>
                 </div>
             </div>
@@ -6102,7 +6102,7 @@ def register_pos_routes(app, db, login_required, Auth, render_page,
             items_html += f'<tr><td style="padding:3px 0;font-size:13px;">{qty}x {item_name}</td><td style="text-align:right;padding:3px 0;font-size:13px;white-space:nowrap;">R{total:.2f}</td></tr>'
         
         payment_method = sale.get("payment_method", "cash").lower()
-        method_label = {"cash": "💵 CASH", "card": "💳 CARD", "account": "📒 ACCOUNT"}.get(payment_method, payment_method.upper())
+        method_label = {"cash": "CASH", "card": "CARD", "account": "ACCOUNT"}.get(payment_method, payment_method.upper())
         customer_name = safe_string(sale.get("customer_name") or {"cash": "Countersale", "card": "Countersale", "account": "Countersale"}.get(payment_method, "Countersale"))
         
         # Extract sale date/time
@@ -6185,8 +6185,8 @@ def register_pos_routes(app, db, login_required, Auth, render_page,
             </div>
             
             <div style="margin-top:20px;display:flex;gap:10px;">
-                <button onclick="reprintSlip('thermal')" class="btn btn-primary" style="flex:1;">🖨️ Thermal Slip</button>
-                <button onclick="reprintSlip('a4')" class="btn btn-secondary" style="flex:1;">🖨️ A4 Print</button>
+                <button onclick="reprintSlip('thermal')" class="btn btn-primary" style="flex:1;">Thermal Slip</button>
+                <button onclick="reprintSlip('a4')" class="btn btn-secondary" style="flex:1;">A4 Print</button>
             </div>
         </div>
         
@@ -6252,7 +6252,7 @@ def register_pos_routes(app, db, login_required, Auth, render_page,
                 line_total = float(item.get("total", price * qty))
                 items_html += f'<tr><td style="padding:8px;border-bottom:1px solid #eee;">{qty}x {desc}</td><td style="padding:8px;border-bottom:1px solid #eee;text-align:right;">R{line_total:,.2f}</td></tr>'
             
-            method_label = {"cash": "💵 Cash", "card": "💳 Card", "account": "📒 Account"}.get(payment_method, payment_method.upper())
+            method_label = {"cash": "Cash", "card": "Card", "account": "Account"}.get(payment_method, payment_method.upper())
             
             subject = f"Receipt {sale_number} from {biz_name}"
             
@@ -7849,5 +7849,5 @@ def register_pos_routes(app, db, login_required, Auth, render_page,
             flash(f"Error saving POS settings: {str(e)}", "error")
             return redirect("/settings")
 
-    logger.info("[POS] All POS & Bar routes registered ✓")
+    logger.info("[POS] All POS & Bar routes registered")
 
