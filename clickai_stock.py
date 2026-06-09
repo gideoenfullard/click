@@ -161,6 +161,25 @@ def _normalise_category(category):
     return s.strip()
 
 
+def _stainless_set(db, biz_id):
+    """Normalised set of category names the business has marked as Stainless Steel.
+
+    Read FRESH from businesses.custom_prices (not the Auth cache) so the split
+    reflects the latest configuration even across Fly.io workers. Anything not in
+    this set counts as Hardware.
+    """
+    try:
+        biz = db.get_one("businesses", biz_id) if biz_id else None
+        cp = (biz.get("custom_prices") if biz else {}) or {}
+        if isinstance(cp, str):
+            cp = json.loads(cp) if cp else {}
+        if not isinstance(cp, dict):
+            cp = {}
+        return set(_normalise_category(c) for c in (cp.get("stainless_categories") or []) if c)
+    except Exception:
+        return set()
+
+
 def _detect_markup(description="", category=""):
     """
     Resolve markup using the priority order:
@@ -720,12 +739,16 @@ def register_stock_routes(app, db, login_required, Auth, render_page,
         if not rows_html:
             rows_html = '<tr><td colspan="4" style="text-align:center;padding:40px;color:var(--text-muted);">No stock movements found for this period</td></tr>'
         
-        # ── Daily Summary: per-day Bought (IN) vs Sold (OUT), expandable to items ──
-        # Groups the (already filtered) movements by calendar day. Value is derived
-        # from each item's price: IN = qty x cost_price, OUT = qty x selling_price.
+        # ── Daily Summary: per-day, split into Stainless Steel vs Hardware ──
+        # For each day & group: Bought (qty x cost), Sold (qty x selling) and
+        # Profit (qty_sold x (selling - cost)). A category is "Stainless Steel" when
+        # it is in the business's configured stainless list; everything else is Hardware.
         def _fmt_qty(q):
             s = f"{float(q or 0):.2f}".rstrip("0").rstrip(".")
             return s or "0"
+        _stainless = _stainless_set(db, biz_id)
+
+        # date -> stock_id -> {"in": qty, "out": qty}
         _daily = {}
         for m in movements:
             d = str(m.get("date") or m.get("created_at") or "")[:10]
@@ -734,64 +757,86 @@ def register_stock_routes(app, db, login_required, Auth, render_page,
             mt = m.get("type", "")
             sid = m.get("stock_id")
             q = float(m.get("quantity") or 0)
-            day = _daily.setdefault(d, {"in": {}, "out": {}})
+            item = _daily.setdefault(d, {}).setdefault(sid, {"in": 0.0, "out": 0.0})
             if mt == "in":
-                day["in"][sid] = day["in"].get(sid, 0) + q
+                item["in"] += q
             elif mt == "out":
-                day["out"][sid] = day["out"].get(sid, 0) + q
-        
+                item["out"] += q
+
+        _GROUPS = ["Stainless Steel", "Hardware"]
+        _GROUP_COLOR = {"Stainless Steel": "#3b82f6", "Hardware": "#f59e0b"}
         daily_html = ""
         for d in sorted(_daily.keys(), reverse=True):
-            day = _daily[d]
-            in_count = len(day["in"])
-            out_count = len(day["out"])
-            in_val = sum(q * float((stock_lookup.get(sid) or {}).get("cost_price", 0) or 0) for sid, q in day["in"].items())
-            out_val = sum(q * float((stock_lookup.get(sid) or {}).get("selling_price", 0) or 0) for sid, q in day["out"].items())
-            
-            bought_rows = ""
-            for sid, q in sorted(day["in"].items(), key=lambda kv: -kv[1]):
+            grp = {g: {"items": [], "bought": 0.0, "sold": 0.0, "profit": 0.0} for g in _GROUPS}
+            for sid, qd in _daily[d].items():
                 s = stock_lookup.get(sid) or {}
-                code = s.get("code", "")
-                desc = s.get("description") or s.get("name") or "Unknown item"
                 cost = float(s.get("cost_price", 0) or 0)
-                bought_rows += f'<tr><td><span style="color:var(--text-muted);font-size:11px;">{safe_string(code)}</span> {safe_string(desc)}</td><td style="text-align:right;">{_fmt_qty(q)}</td><td style="text-align:right;">{money(q * cost)}</td></tr>'
-            if not bought_rows:
-                bought_rows = '<tr><td colspan="3" style="color:var(--text-muted);">Nothing bought</td></tr>'
-            
-            sold_rows = ""
-            for sid, q in sorted(day["out"].items(), key=lambda kv: -kv[1]):
-                s = stock_lookup.get(sid) or {}
-                code = s.get("code", "")
-                desc = s.get("description") or s.get("name") or "Unknown item"
                 price = float(s.get("selling_price", 0) or 0)
-                sold_rows += f'<tr><td><span style="color:var(--text-muted);font-size:11px;">{safe_string(code)}</span> {safe_string(desc)}</td><td style="text-align:right;">{_fmt_qty(q)}</td><td style="text-align:right;">{money(q * price)}</td></tr>'
-            if not sold_rows:
-                sold_rows = '<tr><td colspan="3" style="color:var(--text-muted);">Nothing sold</td></tr>'
-            
+                qin = qd["in"]
+                qout = qd["out"]
+                bval = qin * cost
+                sval = qout * price
+                prof = qout * (price - cost)
+                g = "Stainless Steel" if _normalise_category(s.get("category", "")) in _stainless else "Hardware"
+                grp[g]["items"].append((s, qin, bval, qout, sval, prof))
+                grp[g]["bought"] += bval
+                grp[g]["sold"] += sval
+                grp[g]["profit"] += prof
+            day_bought = sum(grp[g]["bought"] for g in _GROUPS)
+            day_sold = sum(grp[g]["sold"] for g in _GROUPS)
+            day_profit = sum(grp[g]["profit"] for g in _GROUPS)
+
+            sections = ""
+            for g in _GROUPS:
+                gd = grp[g]
+                if not gd["items"]:
+                    continue
+                item_rows = ""
+                for (s, qin, bval, qout, sval, prof) in sorted(gd["items"], key=lambda r: -r[5]):
+                    code = s.get("code", "")
+                    desc = s.get("description") or s.get("name") or "Unknown item"
+                    item_rows += (
+                        f'<tr><td><span style="color:var(--text-muted);font-size:11px;">{safe_string(code)}</span> {safe_string(desc)}</td>'
+                        f'<td style="text-align:right;color:#10b981;">{_fmt_qty(qin)} / {money(bval)}</td>'
+                        f'<td style="text-align:right;color:#ef4444;">{_fmt_qty(qout)} / {money(sval)}</td>'
+                        f'<td style="text-align:right;font-weight:600;">{money(prof)}</td></tr>'
+                    )
+                sections += (
+                    f'<div style="margin-bottom:14px;">'
+                    f'<div style="font-weight:600;color:{_GROUP_COLOR[g]};margin-bottom:4px;">{g} '
+                    f'&nbsp;—&nbsp; Bought {money(gd["bought"])} &nbsp;·&nbsp; Sold {money(gd["sold"])} &nbsp;·&nbsp; Profit {money(gd["profit"])}</div>'
+                    f'<table style="width:100%;"><thead><tr><th style="text-align:left;">Item</th>'
+                    f'<th style="text-align:right;">Bought (qty / R)</th><th style="text-align:right;">Sold (qty / R)</th>'
+                    f'<th style="text-align:right;">Profit</th></tr></thead><tbody>{item_rows}</tbody></table></div>'
+                )
+
             daily_html += f'''
             <details style="border-bottom:1px solid var(--border);">
                 <summary style="cursor:pointer;padding:10px 5px;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;">
                     <span style="font-weight:600;">{d}</span>
-                    <span style="display:flex;gap:18px;flex-wrap:wrap;font-size:13px;">
-                        <span style="color:#10b981;">Bought: {in_count} item{"s" if in_count != 1 else ""} &nbsp;|&nbsp; {money(in_val)}</span>
-                        <span style="color:#ef4444;">Sold: {out_count} item{"s" if out_count != 1 else ""} &nbsp;|&nbsp; {money(out_val)}</span>
+                    <span style="display:flex;gap:16px;flex-wrap:wrap;font-size:13px;">
+                        <span style="color:#10b981;">Bought {money(day_bought)}</span>
+                        <span style="color:#ef4444;">Sold {money(day_sold)}</span>
+                        <span style="font-weight:700;">Profit {money(day_profit)}</span>
                     </span>
                 </summary>
-                <div style="padding:8px 5px 16px 5px;display:grid;grid-template-columns:1fr 1fr;gap:18px;">
-                    <div>
-                        <div style="font-weight:600;color:#10b981;margin-bottom:4px;">Bought (IN)</div>
-                        <table style="width:100%;"><thead><tr><th style="text-align:left;">Item</th><th style="text-align:right;">Qty</th><th style="text-align:right;">Value</th></tr></thead><tbody>{bought_rows}</tbody></table>
-                    </div>
-                    <div>
-                        <div style="font-weight:600;color:#ef4444;margin-bottom:4px;">Sold (OUT)</div>
-                        <table style="width:100%;"><thead><tr><th style="text-align:left;">Item</th><th style="text-align:right;">Qty</th><th style="text-align:right;">Value</th></tr></thead><tbody>{sold_rows}</tbody></table>
-                    </div>
-                </div>
+                <div style="padding:8px 5px 16px 5px;">{sections}</div>
             </details>
             '''
-        
+
         if not daily_html:
             daily_html = '<div style="text-align:center;padding:30px;color:var(--text-muted);">No stock movements found for this period</div>'
+
+        # Config UI data: checkboxes for every category, ticked if currently Stainless
+        _all_cats = sorted(set((s.get("category") or "General") for s in all_stock))
+        category_checkboxes = ""
+        for _cat in _all_cats:
+            _checked = "checked" if _normalise_category(_cat) in _stainless else ""
+            category_checkboxes += f'<label style="display:flex;align-items:center;gap:6px;padding:3px 0;"><input type="checkbox" name="stainless_cat" value="{safe_string(_cat)}" {_checked}> {safe_string(_cat)}</label>'
+        if not category_checkboxes:
+            category_checkboxes = '<span style="color:var(--text-muted);">No categories yet — add categories to your stock items first.</span>'
+        _config_open = "" if _stainless else "open"
+        saved_banner = '<div style="background:rgba(16,185,129,0.13);color:#10b981;padding:8px 12px;border-radius:6px;margin-bottom:12px;">Saved.</div>' if request.args.get("saved") else ""
         
         # Stock filter dropdown
         stock_options = '<option value="">All Items</option>'
@@ -855,10 +900,23 @@ def register_stock_routes(app, db, login_required, Auth, render_page,
             </form>
         </div>
         
-        <!-- Daily Summary: Bought vs Sold per day (click a day to expand to items) -->
+        {saved_banner}
+        <!-- Config: which categories are Stainless Steel (rest = Hardware) -->
+        <details class="card" style="margin-bottom:20px;" {_config_open}>
+            <summary style="cursor:pointer;font-weight:600;">Stainless Steel categories — tap to set up</summary>
+            <p style="color:var(--text-muted);margin:8px 0;font-size:13px;">Tick the categories that are Stainless Steel. Everything else counts as Hardware.</p>
+            <form method="POST" action="/api/stock/stainless-categories">
+                <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(190px,1fr));gap:4px;margin-bottom:12px;">
+                    {category_checkboxes}
+                </div>
+                <button type="submit" class="btn btn-primary">Save</button>
+            </form>
+        </details>
+        
+        <!-- Daily Summary: Bought vs Sold per day, split Stainless Steel vs Hardware -->
         <div class="card" style="margin-bottom:20px;">
-            <h3 style="margin:0 0 4px 0;">Daily Summary — Bought vs Sold</h3>
-            <p style="color:var(--text-muted);margin:0 0 10px 0;font-size:13px;">Click a day to expand. Value = qty × cost (bought) and qty × selling price (sold).</p>
+            <h3 style="margin:0 0 4px 0;">Daily Summary — Stainless Steel vs Hardware</h3>
+            <p style="color:var(--text-muted);margin:0 0 10px 0;font-size:13px;">Click a day to expand into Stainless Steel and Hardware. Bought = qty × cost, Sold = qty × selling price, Profit = qty sold × (selling − cost).</p>
             {daily_html}
         </div>
         
@@ -881,6 +939,34 @@ def register_stock_routes(app, db, login_required, Auth, render_page,
         '''
         
         return render_page("Stock Movements", content, user, "stock")
+    
+    
+    @app.route("/api/stock/stainless-categories", methods=["POST"])
+    @login_required
+    def api_stock_stainless_categories():
+        """Save which stock categories count as Stainless Steel (rest = Hardware).
+        Stored in businesses.custom_prices['stainless_categories']."""
+        business = Auth.get_current_business()
+        biz_id = business.get("id") if business else None
+        user = Auth.get_current_user()
+        if not biz_id:
+            return redirect("/stock/movements")
+        selected = [c.strip() for c in request.form.getlist("stainless_cat") if c.strip()]
+        # MERGE into existing custom_prices (PATCH, not upsert) so other config is preserved.
+        existing = db.get_one("businesses", biz_id) or {}
+        cp = existing.get("custom_prices", {}) or {}
+        if isinstance(cp, str):
+            try:
+                cp = json.loads(cp) if cp else {}
+            except Exception:
+                cp = {}
+        if not isinstance(cp, dict):
+            cp = {}
+        cp["stainless_categories"] = selected
+        user_id = user.get("id") if user else None
+        db.update_business(biz_id, user_id, {"custom_prices": cp})
+        Auth.clear_cache()
+        return redirect("/stock/movements?saved=1")
     
     
     @app.route("/stock/<stock_id>")
