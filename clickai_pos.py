@@ -2804,8 +2804,12 @@ def register_pos_routes(app, db, login_required, Auth, render_page,
             // ESC = Clear search (if no dropdown/modal open)
             
             // === PRINT MODAL KEYBOARD HANDLING ===
+            // Skip entirely when the email-slip modal is open on top, so the
+            // customer email can be typed (keystrokes must reach the input).
             const printModal = document.getElementById('printSlipModal');
-            if (printModal && printModal.style.display === 'flex') {
+            const _emailSlipModalEl = document.getElementById('emailSlipModal');
+            const _emailSlipOpen = _emailSlipModalEl && _emailSlipModalEl.style.display === 'flex';
+            if (printModal && printModal.style.display === 'flex' && !_emailSlipOpen) {
                 
                 // === REPRINT STATE: slip already printed, Enter = print again, Esc = done ===
                 if (_slipPrinted && !_printInProgress) {
