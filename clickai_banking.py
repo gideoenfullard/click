@@ -447,6 +447,7 @@ def register_banking_routes(app, db, login_required, Auth, render_page,
         <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:20px;flex-wrap:wrap;gap:10px;">
             <h2 style="margin:0;">🏦 Bank Reconciliation</h2>
             <div style="display:flex;gap:10px;flex-wrap:wrap;">
+                <a href="/banking/reconcile" class="btn btn-primary">Reconcile vs GL</a>
                 <a href="/subscriptions" class="btn btn-secondary">📦 Recurring Expenses</a>
                 <button class="btn btn-secondary" style="background:rgba(245,158,11,0.15);border-color:#f59e0b;color:#f59e0b;" onclick="resetPatterns()">Reset Learned Patterns</button>
                 <button class="btn btn-secondary" style="background:rgba(239,68,68,0.15);border-color:#ef4444;color:#ef4444;" onclick="deleteAllTransactions()">🗑️ Delete All</button>
@@ -1859,6 +1860,325 @@ def register_banking_routes(app, db, login_required, Auth, render_page,
         return render_page("Banking", content, user, "banking")
     
     
+    def _compute_recon(biz_id):
+        """Engine for the bank reconciliation. Returns the two-sided figures plus the
+        reconciling item lists. Used by BOTH the recon screen and the 'Ask Zane to
+        explain' route, so the numbers Zane explains are exactly the numbers on screen."""
+        try:
+            bank_code = str(gl(biz_id, "bank") or "1000")
+        except Exception:
+            bank_code = "1000"
+
+        def _f(v):
+            try:
+                return float(v or 0)
+            except Exception:
+                return 0.0
+
+        # Statement side: imported bank transactions
+        txns = db.get("bank_transactions", {"business_id": biz_id}) or []
+        txns.sort(key=lambda x: str(x.get("date", ""))[:10])
+        bank_credits = sum(_f(t.get("credit")) for t in txns)
+        bank_debits = sum(_f(t.get("debit")) for t in txns)
+        bank_movement = bank_credits - bank_debits
+        _with_bal = [t for t in txns if t.get("balance") not in (None, "")]
+        if _with_bal:
+            _first, _last = _with_bal[0], _with_bal[-1]
+            bank_opening = _f(_first.get("balance")) - (_f(_first.get("credit")) - _f(_first.get("debit")))
+            bank_closing = _f(_last.get("balance"))
+            have_bank_balance = True
+        else:
+            bank_opening = 0.0
+            bank_closing = bank_opening + bank_movement
+            have_bank_balance = False
+
+        # GL side: bank account in the chart of accounts + journals on it
+        coa = db.get("chart_of_accounts", {"business_id": biz_id}) or []
+        bank_acc = None
+        for _a in coa:
+            if str(_a.get("account_code", "")) == bank_code:
+                bank_acc = _a
+                break
+        gl_opening = _f(bank_acc.get("opening_balance")) if bank_acc else 0.0
+        journals = db.get("journals", {"business_id": biz_id}) or []
+        bank_journals = [j for j in journals if str(j.get("account_code", "")) == bank_code]
+        gl_dr = sum(_f(j.get("debit")) for j in bank_journals)
+        gl_cr = sum(_f(j.get("credit")) for j in bank_journals)
+        gl_movement = gl_dr - gl_cr
+        gl_balance = gl_opening + gl_movement
+
+        # Difference, decomposed so the arithmetic always ties
+        difference = round(bank_closing - gl_balance, 2)
+        opening_gap = round(bank_opening - gl_opening, 2)
+        unalloc = [t for t in txns if not t.get("matched")]
+        unalloc_net = round(sum(_f(t.get("credit")) - _f(t.get("debit")) for t in unalloc), 2)
+        residual = round(difference - opening_gap - unalloc_net, 2)
+
+        # Possible misplaced opening balance (Sage namespace e.g. 8400/000)
+        misplaced = []
+        for _a in coa:
+            _c = str(_a.get("account_code", ""))
+            _ob = _f(_a.get("opening_balance"))
+            if _ob and _c != bank_code and ("8400" in _c or "/000" in _c or _c.endswith("/000")):
+                misplaced.append((_a, _ob))
+
+        # GL bank postings with no matching statement line (by amount + direction)
+        from collections import Counter as _Counter
+        _stmt_in = _Counter(round(_f(t.get("credit")), 2) for t in txns if _f(t.get("credit")) > 0)
+        _stmt_out = _Counter(round(_f(t.get("debit")), 2) for t in txns if _f(t.get("debit")) > 0)
+        gl_only = []
+        for j in bank_journals:
+            _jd, _jc = _f(j.get("debit")), _f(j.get("credit"))
+            if _jd > 0:
+                _amt = round(_jd, 2)
+                if _stmt_in.get(_amt, 0) > 0:
+                    _stmt_in[_amt] -= 1
+                else:
+                    gl_only.append(j)
+            elif _jc > 0:
+                _amt = round(_jc, 2)
+                if _stmt_out.get(_amt, 0) > 0:
+                    _stmt_out[_amt] -= 1
+                else:
+                    gl_only.append(j)
+
+        return {
+            "bank_code": bank_code, "have_bank_balance": have_bank_balance,
+            "bank_opening": bank_opening, "bank_closing": bank_closing,
+            "gl_opening": gl_opening, "gl_balance": gl_balance,
+            "difference": difference, "opening_gap": opening_gap,
+            "unalloc_net": unalloc_net, "residual": residual,
+            "unalloc": unalloc, "gl_only": gl_only, "misplaced": misplaced,
+        }
+
+    @app.route("/banking/reconcile")
+    @login_required
+    def banking_reconcile():
+        """Direct two-sided bank reconciliation: the bank statement balance against the
+        GL bank account balance, with every cent of the difference broken into the
+        reconciling items that explain it (opening balance, unallocated statement lines,
+        and GL bank postings that never came off the statement)."""
+        user = Auth.get_current_user()
+        business = Auth.get_current_business()
+        biz_id = business.get("id") if business else None
+        if not biz_id:
+            return redirect("/banking")
+
+        R = _compute_recon(biz_id)
+        bank_code = R["bank_code"]
+        have_bank_balance = R["have_bank_balance"]
+        bank_opening = R["bank_opening"]
+        bank_closing = R["bank_closing"]
+        gl_opening = R["gl_opening"]
+        gl_balance = R["gl_balance"]
+        difference = R["difference"]
+        opening_gap = R["opening_gap"]
+        unalloc_net = R["unalloc_net"]
+        residual = R["residual"]
+        unalloc = R["unalloc"]
+        gl_only = R["gl_only"]
+        misplaced = R["misplaced"]
+
+        def _f(v):
+            try:
+                return float(v or 0)
+            except Exception:
+                return 0.0
+
+        # ── Build the page (inline styles only; English UI) ────────────────────────
+        _reconciled = abs(difference) < 0.01
+        _diff_color = "var(--green)" if _reconciled else "var(--red)"
+        _bal_color = "var(--green)" if bank_closing >= 0 else "var(--red)"
+        _gl_color = "var(--green)" if gl_balance >= 0 else "var(--red)"
+        _og_color = "var(--green)" if abs(opening_gap) < 0.01 else "var(--red)"
+
+        def _card(label, value, color, sub=""):
+            _s = f'<div style="font-size:12px;color:var(--text-muted);margin-top:4px;">{sub}</div>' if sub else ""
+            return ('<div class="card" style="flex:1;min-width:210px;">'
+                    f'<div style="font-size:13px;color:var(--text-muted);">{label}</div>'
+                    f'<div style="font-size:26px;font-weight:700;color:{color};font-variant-numeric:tabular-nums;">{money(value)}</div>'
+                    f'{_s}</div>')
+
+        cards = ('<div style="display:flex;gap:14px;flex-wrap:wrap;margin-bottom:18px;">'
+                 + _card("Bank statement balance", bank_closing, _bal_color,
+                         "From the bank's running balance" if have_bank_balance else "Opening + movement (no running balance imported)")
+                 + _card("GL bank balance (code " + bank_code + ")", gl_balance, _gl_color, "Opening balance + journals on the bank account")
+                 + _card("Difference", difference, _diff_color,
+                         "Reconciled — the books match the bank" if _reconciled else "Bank minus books — accounted for below")
+                 + '</div>')
+
+        breakdown = ('<div class="card" style="margin-bottom:18px;">'
+                     '<h3 style="margin:0 0 8px 0;">What makes up the difference</h3>'
+                     '<p style="margin:0;color:var(--text-muted);font-size:13px;">'
+                     f'Difference of <b style="color:{_diff_color};">{money(difference)}</b> = '
+                     f'opening balance gap <b>{money(opening_gap)}</b> '
+                     f'+ unallocated statement lines <b>{money(unalloc_net)}</b> ({len(unalloc)}) '
+                     f'+ other GL bank postings <b>{money(residual)}</b>.</p></div>')
+
+        # 1. Opening balance
+        ob_rows = (f'<tr><td>Bank statement opening</td><td style="text-align:right;font-variant-numeric:tabular-nums;">{money(bank_opening)}</td></tr>'
+                   f'<tr><td>GL opening on code {bank_code}</td><td style="text-align:right;font-variant-numeric:tabular-nums;">{money(gl_opening)}</td></tr>'
+                   f'<tr><td><b>Opening gap</b></td><td style="text-align:right;font-variant-numeric:tabular-nums;color:{_og_color};"><b>{money(opening_gap)}</b></td></tr>')
+        misplaced_html = ""
+        if misplaced:
+            _mr = "".join(
+                f'<tr><td>Code {safe_string(str(_a.get("account_code","")))} — {safe_string(_a.get("account_name",""))}</td>'
+                f'<td style="text-align:right;color:#f59e0b;font-variant-numeric:tabular-nums;">{money(_ob)}</td></tr>'
+                for _a, _ob in misplaced)
+            misplaced_html = ('<p style="margin:12px 0 4px 0;font-size:13px;color:#f59e0b;">Opening balances sit on Sage-style codes. '
+                              'If the bank\'s opening balance was loaded here instead of code ' + bank_code + ', this is your gap:</p>'
+                              '<table style="width:100%;font-size:13px;">' + _mr + '</table>')
+        opening_section = (f'<details class="card" style="margin-bottom:14px;" {"open" if abs(opening_gap) >= 0.01 else ""}>'
+                           f'<summary style="cursor:pointer;font-weight:600;">1. Opening balance &mdash; gap {money(opening_gap)}</summary>'
+                           f'<table style="width:100%;font-size:13px;margin-top:8px;">{ob_rows}</table>{misplaced_html}</details>')
+
+        # 2. Unallocated statement lines
+        if unalloc:
+            _ur = "".join(
+                f'<tr><td style="white-space:nowrap;">{safe_string(str(t.get("date","-"))[:10])}</td>'
+                f'<td>{safe_string(t.get("description","-"))}</td>'
+                f'<td style="text-align:right;color:var(--red);font-variant-numeric:tabular-nums;">{money(_f(t.get("debit"))) if _f(t.get("debit")) > 0 else ""}</td>'
+                f'<td style="text-align:right;color:var(--green);font-variant-numeric:tabular-nums;">{money(_f(t.get("credit"))) if _f(t.get("credit")) > 0 else ""}</td></tr>'
+                for t in unalloc[:200])
+            _umore = f'<p style="font-size:12px;color:var(--text-muted);">Showing first 200 of {len(unalloc)}.</p>' if len(unalloc) > 200 else ""
+            unalloc_body = ('<table style="width:100%;font-size:13px;margin-top:8px;"><thead><tr>'
+                            '<th style="text-align:left;">Date</th><th style="text-align:left;">Description</th>'
+                            '<th style="text-align:right;">Out</th><th style="text-align:right;">In</th></tr></thead>'
+                            f'<tbody>{_ur}</tbody></table>{_umore}'
+                            '<p style="margin-top:8px;"><a href="/banking" class="btn btn-primary">Allocate these on the Banking page</a></p>')
+        else:
+            unalloc_body = '<p style="color:var(--text-muted);font-size:13px;margin-top:8px;">All statement lines are allocated to the GL.</p>'
+        unalloc_section = (f'<details class="card" style="margin-bottom:14px;" {"open" if unalloc else ""}>'
+                           f'<summary style="cursor:pointer;font-weight:600;">2. Unallocated statement lines &mdash; {len(unalloc)} ({money(unalloc_net)})</summary>'
+                           '<p style="margin:8px 0 0 0;color:var(--text-muted);font-size:13px;">On the bank statement but not yet posted to the GL. '
+                           'Allocate them (Ask Zane) to close this part of the gap.</p>'
+                           f'{unalloc_body}</details>')
+
+        # 3. GL bank postings with no statement line
+        if gl_only:
+            _gr = "".join(
+                f'<tr><td style="white-space:nowrap;">{safe_string(str(j.get("date","-"))[:10])}</td>'
+                f'<td>{safe_string(j.get("description","-"))}</td>'
+                f'<td>{safe_string(j.get("reference","-"))}</td>'
+                f'<td style="text-align:right;color:var(--green);font-variant-numeric:tabular-nums;">{money(_f(j.get("debit"))) if _f(j.get("debit")) > 0 else ""}</td>'
+                f'<td style="text-align:right;color:var(--red);font-variant-numeric:tabular-nums;">{money(_f(j.get("credit"))) if _f(j.get("credit")) > 0 else ""}</td></tr>'
+                for j in gl_only[:200])
+            _gmore = f'<p style="font-size:12px;color:var(--text-muted);">Showing first 200 of {len(gl_only)}.</p>' if len(gl_only) > 200 else ""
+            gl_only_body = ('<table style="width:100%;font-size:13px;margin-top:8px;"><thead><tr>'
+                            '<th style="text-align:left;">Date</th><th style="text-align:left;">Description</th><th style="text-align:left;">Ref</th>'
+                            '<th style="text-align:right;">Into bank</th><th style="text-align:right;">Out of bank</th></tr></thead>'
+                            f'<tbody>{_gr}</tbody></table>{_gmore}')
+        else:
+            gl_only_body = '<p style="color:var(--text-muted);font-size:13px;margin-top:8px;">Every GL bank posting has a matching statement line.</p>'
+        gl_only_section = (f'<details class="card" style="margin-bottom:14px;" {"open" if gl_only else ""}>'
+                           f'<summary style="cursor:pointer;font-weight:600;">3. GL bank postings with no statement line &mdash; {len(gl_only)}</summary>'
+                           '<p style="margin:8px 0 0 0;color:var(--text-muted);font-size:13px;">Posted to the bank account in the GL but not found on the statement (matched by amount). '
+                           'Usually payments booked in Invoicing/Purchases, manual journals, or duplicates &mdash; check these for double-ups.</p>'
+                           f'{gl_only_body}</details>')
+
+        header = ('<div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px;margin-bottom:8px;">'
+                  '<h2 style="margin:0;">Bank Reconciliation &mdash; Statement vs GL</h2>'
+                  '<div style="display:flex;gap:8px;flex-wrap:wrap;">'
+                  '<button id="zaneReconBtn" class="btn btn-primary" onclick="askZaneRecon()">Ask Zane to explain</button>'
+                  '<a href="/banking" class="btn btn-secondary">Back to Banking</a></div></div>'
+                  '<p style="color:var(--text-muted);margin:0 0 16px 0;font-size:13px;">A direct two-sided check: the bank statement balance against the GL bank account, '
+                  'with every rand of the difference accounted for.</p>')
+
+        _zane_box = '<div id="zaneReconBox" style="display:none;margin-bottom:18px;"></div>'
+        _zane_script = """<script>
+async function askZaneRecon(){
+  var box=document.getElementById('zaneReconBox');
+  var btn=document.getElementById('zaneReconBtn');
+  box.style.display='block';
+  box.innerHTML='<div class="card"><em style="color:var(--text-muted);">Zane is reviewing the reconciliation...</em></div>';
+  if(btn){btn.disabled=true;btn.textContent='Asking Zane...';}
+  try{
+    var r=await fetch('/api/banking/reconcile-explain',{method:'POST',headers:{'Content-Type':'application/json'},body:'{}'});
+    var d=await r.json();
+    if(d.success){box.innerHTML='<div class="card"><h3 style="margin:0 0 8px 0;">Zane explains</h3><p style="margin:0;white-space:pre-wrap;line-height:1.5;">'+escapeHtmlRecon(d.explanation)+'</p></div>';}
+    else{box.innerHTML='<div class="card"><em style="color:var(--red);">Zane could not explain right now: '+escapeHtmlRecon(d.error||'unavailable')+'</em></div>';}
+  }catch(e){box.innerHTML='<div class="card"><em style="color:var(--red);">Could not reach Zane.</em></div>';}
+  if(btn){btn.disabled=false;btn.textContent='Ask Zane to explain';}
+}
+function escapeHtmlRecon(s){return (s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');}
+</script>"""
+        content = header + cards + breakdown + _zane_box + opening_section + unalloc_section + gl_only_section + _zane_script
+        return render_page("Bank Reconciliation", content, user, "banking")
+
+    @app.route("/api/banking/reconcile-explain", methods=["POST"])
+    @login_required
+    def api_banking_reconcile_explain():
+        """Zane explains the reconciliation in plain English and suggests ONE fix.
+        Grounded entirely on the engine's computed figures — Zane cannot invent items."""
+        business = Auth.get_current_business()
+        biz_id = business.get("id") if business else None
+        biz_name = business.get("name", "the business") if business else "the business"
+        if not biz_id:
+            return jsonify({"success": False, "error": "No business"})
+
+        try:
+            R = _compute_recon(biz_id)
+            cur = business.get("currency", "R") if business else "R"
+
+            def _m(v):
+                try:
+                    return money(v)
+                except Exception:
+                    return f"{cur}{float(v or 0):,.2f}"
+
+            misplaced_txt = ""
+            for _a, _ob in R["misplaced"]:
+                misplaced_txt += (f"\n- Possible misplaced opening balance: {_m(_ob)} sits on code "
+                                  f"{_a.get('account_code','')} ({_a.get('account_name','')}), not on the bank code {R['bank_code']}.")
+
+            prompt = (
+                "You are Zane, the bookkeeping assistant in ClickAI. A bank reconciliation has been run for "
+                + biz_name + ". The figures below were computed by the system — trust them exactly and do NOT invent "
+                "any numbers or items.\n\n"
+                f"Bank statement balance: {_m(R['bank_closing'])}\n"
+                f"GL bank balance (code {R['bank_code']}): {_m(R['gl_balance'])}\n"
+                f"Difference (bank minus books): {_m(R['difference'])}\n\n"
+                "The difference is made up of exactly these parts:\n"
+                f"- Opening balance gap: {_m(R['opening_gap'])} (bank opening {_m(R['bank_opening'])} vs GL opening {_m(R['gl_opening'])} on code {R['bank_code']})."
+                + misplaced_txt + "\n"
+                f"- Unallocated statement lines (on the bank, not yet posted to the GL): {len(R['unalloc'])} transactions, net {_m(R['unalloc_net'])}.\n"
+                f"- Other GL bank postings with no statement line (possible duplicates or payments booked in Invoicing/Purchases): {len(R['gl_only'])} entries, residual {_m(R['residual'])}.\n\n"
+                "Write a reply in plain English (UK/SA business English), no markdown, no headings, no bullet symbols, under 130 words, in two short paragraphs:\n"
+                "1) What the difference is made of, in money terms, naming the biggest contributor.\n"
+                "2) The single most important fix to do first, concrete and specific. If a misplaced opening balance explains most of it, say to move that amount from its code to code "
+                + str(R['bank_code']) + " with a journal. If unallocated lines are the biggest part, say to allocate those on the Banking page. "
+                "If the residual/duplicates are biggest, say to check those GL postings for double-ups."
+            )
+
+            api_key = os.environ.get("ANTHROPIC_API_KEY", "")
+            if not api_key:
+                return jsonify({"success": False, "error": "AI not configured"})
+            resp = requests.post(
+                "https://api.anthropic.com/v1/messages",
+                headers={
+                    "x-api-key": api_key,
+                    "anthropic-version": "2023-06-01",
+                    "content-type": "application/json"
+                },
+                json={
+                    "model": "claude-haiku-4-5-20251001",
+                    "max_tokens": 350,
+                    "messages": [{"role": "user", "content": prompt}]
+                },
+                timeout=20
+            )
+            if resp.status_code != 200:
+                logger.error(f"[BANK RECON EXPLAIN] API error: {resp.status_code} — {resp.text[:300]}")
+                return jsonify({"success": False, "error": "AI unavailable"})
+            ai_text = (resp.json().get("content", [{}])[0].get("text", "") or "").strip()
+            if not ai_text:
+                return jsonify({"success": False, "error": "No response"})
+            return jsonify({"success": True, "explanation": ai_text})
+        except Exception as e:
+            logger.error(f"[BANK RECON EXPLAIN] {e}")
+            return jsonify({"success": False, "error": "Could not build explanation"})
+
+
     @app.route("/api/banking/import", methods=["POST"])
     @login_required
     def api_banking_import():
