@@ -180,6 +180,24 @@ def _stainless_set(db, biz_id):
         return set()
 
 
+def _stainless_staff_set(db, biz_id):
+    """Set of employee IDs the business has marked as Stainless staff.
+
+    Read FRESH from businesses.custom_prices['stainless_staff'] (mirrors the
+    category split). Anyone not in this set counts as Hardware staff.
+    """
+    try:
+        biz = db.get_one("businesses", biz_id) if biz_id else None
+        cp = (biz.get("custom_prices") if biz else {}) or {}
+        if isinstance(cp, str):
+            cp = json.loads(cp) if cp else {}
+        if not isinstance(cp, dict):
+            cp = {}
+        return set(str(e) for e in (cp.get("stainless_staff") or []) if e)
+    except Exception:
+        return set()
+
+
 def _detect_markup(description="", category=""):
     """
     Resolve markup using the priority order:
@@ -930,6 +948,21 @@ def register_stock_routes(app, db, login_required, Auth, render_page,
         if not category_checkboxes:
             category_checkboxes = '<span style="color:var(--text-muted);">No categories yet — add categories to your stock items first.</span>'
         _config_open = "" if _stainless else "open"
+
+        # Config UI data: which staff are Stainless (rest = Hardware staff)
+        _stainless_staff = _stainless_staff_set(db, biz_id)
+        _staff = sorted(
+            (db.get("employees", {"business_id": biz_id}) if biz_id else []),
+            key=lambda e: (e.get("name") or "").lower(),
+        )
+        staff_checkboxes = ""
+        for _emp in _staff:
+            _eid = _emp.get("id")
+            _eck = "checked" if str(_eid) in _stainless_staff else ""
+            staff_checkboxes += f'<label style="display:flex;align-items:center;gap:6px;padding:3px 0;"><input type="checkbox" name="stainless_staff" value="{safe_string(_eid)}" {_eck}> {safe_string(_emp.get("name") or "Unnamed")}</label>'
+        if not staff_checkboxes:
+            staff_checkboxes = '<span style="color:var(--text-muted);">No employees yet — add staff in Payroll first.</span>'
+        _staff_open = "" if _stainless_staff else "open"
         saved_banner = '<div style="background:rgba(16,185,129,0.13);color:#10b981;padding:8px 12px;border-radius:6px;margin-bottom:12px;">Saved.</div>' if request.args.get("saved") else ""
         
         # Stock filter dropdown
@@ -1007,6 +1040,18 @@ def register_stock_routes(app, db, login_required, Auth, render_page,
             </form>
         </details>
         
+        <!-- Config: which staff are Stainless (rest = Hardware) -->
+        <details class="card" style="margin-bottom:20px;" {_staff_open}>
+            <summary style="cursor:pointer;font-weight:600;">Stainless Steel staff — tap to set up</summary>
+            <p style="color:var(--text-muted);margin:8px 0;font-size:13px;">Tick the staff who work on the Stainless Steel side. Everyone else counts as Hardware. Used to split salaries between the two parts.</p>
+            <form method="POST" action="/api/stock/stainless-staff">
+                <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(190px,1fr));gap:4px;margin-bottom:12px;">
+                    {staff_checkboxes}
+                </div>
+                <button type="submit" class="btn btn-primary">Save</button>
+            </form>
+        </details>
+        
         <!-- Daily Summary: Bought vs Sold per day, split Stainless Steel vs Hardware -->
         <div class="card" style="margin-bottom:20px;">
             <h3 style="margin:0 0 4px 0;">Daily Summary — Stainless Steel vs Hardware</h3>
@@ -1057,6 +1102,34 @@ def register_stock_routes(app, db, login_required, Auth, render_page,
         if not isinstance(cp, dict):
             cp = {}
         cp["stainless_categories"] = selected
+        user_id = user.get("id") if user else None
+        db.update_business(biz_id, user_id, {"custom_prices": cp})
+        Auth.clear_cache()
+        return redirect("/stock/movements?saved=1")
+    
+    
+    @app.route("/api/stock/stainless-staff", methods=["POST"])
+    @login_required
+    def api_stock_stainless_staff():
+        """Save which employees count as Stainless staff (rest = Hardware staff).
+        Stored in businesses.custom_prices['stainless_staff']."""
+        business = Auth.get_current_business()
+        biz_id = business.get("id") if business else None
+        user = Auth.get_current_user()
+        if not biz_id:
+            return redirect("/stock/movements")
+        selected = [e.strip() for e in request.form.getlist("stainless_staff") if e.strip()]
+        # MERGE into existing custom_prices (PATCH, not upsert) so other config is preserved.
+        existing = db.get_one("businesses", biz_id) or {}
+        cp = existing.get("custom_prices", {}) or {}
+        if isinstance(cp, str):
+            try:
+                cp = json.loads(cp) if cp else {}
+            except Exception:
+                cp = {}
+        if not isinstance(cp, dict):
+            cp = {}
+        cp["stainless_staff"] = selected
         user_id = user.get("id") if user else None
         db.update_business(biz_id, user_id, {"custom_prices": cp})
         Auth.clear_cache()
