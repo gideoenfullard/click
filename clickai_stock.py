@@ -766,6 +766,7 @@ def register_stock_routes(app, db, login_required, Auth, render_page,
         _GROUPS = ["Stainless Steel", "Hardware"]
         _GROUP_COLOR = {"Stainless Steel": "#3b82f6", "Hardware": "#f59e0b"}
         daily_html = ""
+        grand_bought = grand_sold = grand_profit = 0.0
         for d in sorted(_daily.keys(), reverse=True):
             grp = {g: {"items": [], "bought": 0.0, "sold": 0.0, "profit": 0.0} for g in _GROUPS}
             for sid, qd in _daily[d].items():
@@ -785,6 +786,9 @@ def register_stock_routes(app, db, login_required, Auth, render_page,
             day_bought = sum(grp[g]["bought"] for g in _GROUPS)
             day_sold = sum(grp[g]["sold"] for g in _GROUPS)
             day_profit = sum(grp[g]["profit"] for g in _GROUPS)
+            grand_bought += day_bought
+            grand_sold += day_sold
+            grand_profit += day_profit
 
             sections = ""
             for g in _GROUPS:
@@ -814,14 +818,26 @@ def register_stock_routes(app, db, login_required, Auth, render_page,
             <details style="border-bottom:1px solid var(--border);">
                 <summary style="cursor:pointer;padding:10px 5px;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;">
                     <span style="font-weight:600;">{d}</span>
-                    <span style="display:flex;gap:16px;flex-wrap:wrap;font-size:13px;">
-                        <span style="color:#10b981;">Bought {money(day_bought)}</span>
-                        <span style="color:#ef4444;">Sold {money(day_sold)}</span>
-                        <span style="font-weight:700;">Profit {money(day_profit)}</span>
+                    <span style="display:flex;gap:18px;flex-wrap:wrap;font-size:13px;">
+                        <span style="display:inline-flex;justify-content:space-between;gap:10px;min-width:150px;color:#10b981;"><span>Bought</span><span style="font-variant-numeric:tabular-nums;">{money(day_bought)}</span></span>
+                        <span style="display:inline-flex;justify-content:space-between;gap:10px;min-width:150px;color:#ef4444;"><span>Sold</span><span style="font-variant-numeric:tabular-nums;">{money(day_sold)}</span></span>
+                        <span style="display:inline-flex;justify-content:space-between;gap:10px;min-width:150px;font-weight:700;"><span>Profit</span><span style="font-variant-numeric:tabular-nums;">{money(day_profit)}</span></span>
                     </span>
                 </summary>
                 <div style="padding:8px 5px 16px 5px;">{sections}</div>
             </details>
+            '''
+
+        if _daily:
+            daily_html += f'''
+            <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;padding:12px 5px;border-top:2px solid var(--border);font-weight:700;">
+                <span>Total</span>
+                <span style="display:flex;gap:18px;flex-wrap:wrap;font-size:13px;">
+                    <span style="display:inline-flex;justify-content:space-between;gap:10px;min-width:150px;color:#10b981;"><span>Bought</span><span style="font-variant-numeric:tabular-nums;">{money(grand_bought)}</span></span>
+                    <span style="display:inline-flex;justify-content:space-between;gap:10px;min-width:150px;color:#ef4444;"><span>Sold</span><span style="font-variant-numeric:tabular-nums;">{money(grand_sold)}</span></span>
+                    <span style="display:inline-flex;justify-content:space-between;gap:10px;min-width:150px;"><span>Profit</span><span style="font-variant-numeric:tabular-nums;">{money(grand_profit)}</span></span>
+                </span>
+            </div>
             '''
 
         if not daily_html:
