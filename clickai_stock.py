@@ -739,64 +739,141 @@ def register_stock_routes(app, db, login_required, Auth, render_page,
         if not rows_html:
             rows_html = '<tr><td colspan="4" style="text-align:center;padding:40px;color:var(--text-muted);">No stock movements found for this period</td></tr>'
         
-        # ── Daily Summary: per-day, split into Stainless Steel vs Hardware ──
-        # For each day & group: Bought (qty x cost), Sold (qty x selling) and
-        # Profit (qty_sold x (selling - cost)). A category is "Stainless Steel" when
-        # it is in the business's configured stainless list; everything else is Hardware.
+        # ── Daily Summary: per-day, split into Stainless Steel / Hardware / Diens ──
+        # Bought comes from stock "in" movements (qty x cost). Sold + Profit come from
+        # the actual sales documents (POS sales + invoices, excluding draft/cancelled)
+        # so ALL invoicing is counted exactly once. POS already creates an "out" stock
+        # movement, so "out" movements are NOT used for Sold (that would double-count).
+        # A document line is resolved to a stock item by stock_id, then code, then a
+        # unique description match; anything unresolved counts as revenue under "Diens".
         def _fmt_qty(q):
             s = f"{float(q or 0):.2f}".rstrip("0").rstrip(".")
             return s or "0"
         _stainless = _stainless_set(db, biz_id)
 
-        # date -> stock_id -> {"in": qty, "out": qty}
-        _daily = {}
+        def _norm_txt(t):
+            return " ".join(str(t or "").strip().lower().split())
+
+        # Best-effort lookups to resolve document lines back to stock items.
+        _by_code = {}
+        _by_desc = {}
+        for _s in all_stock:
+            _c = _norm_txt(_s.get("code"))
+            if _c and _c not in _by_code:
+                _by_code[_c] = _s
+            _d = _norm_txt(_s.get("description") or _s.get("name"))
+            if _d:
+                _by_desc[_d] = None if _d in _by_desc else _s  # None = ambiguous, never guess
+
+        def _resolve_stock(line):
+            sid = line.get("stock_id")
+            if sid and sid in stock_lookup:
+                return stock_lookup[sid]
+            c = _norm_txt(line.get("code"))
+            if c and c in _by_code:
+                return _by_code[c]
+            dsc = _norm_txt(line.get("description") or line.get("desc"))
+            if dsc and _by_desc.get(dsc):
+                return _by_desc[dsc]
+            return None
+
+        def _doc_lines(doc):
+            raw = doc.get("items")
+            if isinstance(raw, str):
+                try:
+                    raw = json.loads(raw)
+                except Exception:
+                    return []
+            return raw if isinstance(raw, list) else []
+
+        _GROUPS = ["Stainless Steel", "Hardware", "Diens"]
+        _GROUP_COLOR = {"Stainless Steel": "#3b82f6", "Hardware": "#f59e0b", "Diens": "#8b5cf6"}
+
+        # date -> group -> item_key -> [stock_obj, qty_in, bought_val, qty_out, sold_val, profit]
+        _agg = {}
+        def _slot(d, g, key, stock_obj):
+            day = _agg.setdefault(d, {gg: {} for gg in _GROUPS})
+            it = day[g].get(key)
+            if it is None:
+                it = [stock_obj, 0.0, 0.0, 0.0, 0.0, 0.0]
+                day[g][key] = it
+            return it
+
+        # Bought: from "in" stock movements (already filtered by stock_id/type/cutoff).
         for m in movements:
+            if m.get("type") != "in":
+                continue
             d = str(m.get("date") or m.get("created_at") or "")[:10]
             if not d:
                 continue
-            mt = m.get("type", "")
-            sid = m.get("stock_id")
-            q = float(m.get("quantity") or 0)
-            item = _daily.setdefault(d, {}).setdefault(sid, {"in": 0.0, "out": 0.0})
-            if mt == "in":
-                item["in"] += q
-            elif mt == "out":
-                item["out"] += q
+            s = stock_lookup.get(m.get("stock_id")) or {}
+            cost = float(s.get("cost_price", 0) or 0)
+            qin = float(m.get("quantity") or 0)
+            g = "Stainless Steel" if _normalise_category(s.get("category", "")) in _stainless else "Hardware"
+            it = _slot(d, g, ("stock", m.get("stock_id")), s)
+            it[1] += qin
+            it[2] += qin * cost
 
-        _GROUPS = ["Stainless Steel", "Hardware"]
-        _GROUP_COLOR = {"Stainless Steel": "#3b82f6", "Hardware": "#f59e0b"}
+        # Sold + Profit: from sales + invoices documents (skip if user filtered to "in").
+        if move_type != "in":
+            _EXCLUDE = {"draft", "cancelled", "canceled", "void", "deleted"}
+            _docs = []
+            if biz_id:
+                _docs = list(db.get("sales", {"business_id": biz_id}) or [])
+                _docs += [i for i in (db.get("invoices", {"business_id": biz_id}) or [])
+                          if str(i.get("status", "")).strip().lower() not in _EXCLUDE]
+            for doc in _docs:
+                d = str(doc.get("date") or doc.get("created_at") or "")[:10]
+                if not d or d < cutoff:
+                    continue
+                for line in _doc_lines(doc):
+                    st = _resolve_stock(line)
+                    if stock_id and (not st or st.get("id") != stock_id):
+                        continue
+                    qty = float(line.get("qty") or line.get("quantity") or 0)
+                    price = float(line.get("price") or line.get("unit_price") or 0)
+                    _t = line.get("total")
+                    if _t in (None, ""):
+                        _t = line.get("line_total")
+                    sval = float(_t) if _t not in (None, "") else qty * price
+                    if st:
+                        cost = float(st.get("cost_price", 0) or 0)
+                        prof = sval - qty * cost
+                        g = "Stainless Steel" if _normalise_category(st.get("category", "")) in _stainless else "Hardware"
+                        it = _slot(d, g, ("stock", st.get("id")), st)
+                    else:
+                        dsc = line.get("description") or line.get("desc") or "Service"
+                        prof = sval
+                        it = _slot(d, "Diens", ("diens", _norm_txt(dsc)), {"code": "", "description": dsc})
+                    it[3] += qty
+                    it[4] += sval
+                    it[5] += prof
+
         daily_html = ""
         grand_bought = grand_sold = grand_profit = 0.0
-        for d in sorted(_daily.keys(), reverse=True):
-            grp = {g: {"items": [], "bought": 0.0, "sold": 0.0, "profit": 0.0} for g in _GROUPS}
-            for sid, qd in _daily[d].items():
-                s = stock_lookup.get(sid) or {}
-                cost = float(s.get("cost_price", 0) or 0)
-                price = float(s.get("selling_price", 0) or 0)
-                qin = qd["in"]
-                qout = qd["out"]
-                bval = qin * cost
-                sval = qout * price
-                prof = qout * (price - cost)
-                g = "Stainless Steel" if _normalise_category(s.get("category", "")) in _stainless else "Hardware"
-                grp[g]["items"].append((s, qin, bval, qout, sval, prof))
-                grp[g]["bought"] += bval
-                grp[g]["sold"] += sval
-                grp[g]["profit"] += prof
-            day_bought = sum(grp[g]["bought"] for g in _GROUPS)
-            day_sold = sum(grp[g]["sold"] for g in _GROUPS)
-            day_profit = sum(grp[g]["profit"] for g in _GROUPS)
+        for d in sorted(_agg.keys(), reverse=True):
+            day = _agg[d]
+            grp_tot = {}
+            for g in _GROUPS:
+                grp_tot[g] = (
+                    sum(it[2] for it in day[g].values()),
+                    sum(it[4] for it in day[g].values()),
+                    sum(it[5] for it in day[g].values()),
+                )
+            day_bought = sum(grp_tot[g][0] for g in _GROUPS)
+            day_sold = sum(grp_tot[g][1] for g in _GROUPS)
+            day_profit = sum(grp_tot[g][2] for g in _GROUPS)
             grand_bought += day_bought
             grand_sold += day_sold
             grand_profit += day_profit
 
             sections = ""
             for g in _GROUPS:
-                gd = grp[g]
-                if not gd["items"]:
+                items = list(day[g].values())
+                if not items:
                     continue
                 item_rows = ""
-                for (s, qin, bval, qout, sval, prof) in sorted(gd["items"], key=lambda r: -r[5]):
+                for (s, qin, bval, qout, sval, prof) in sorted(items, key=lambda r: -r[5]):
                     code = s.get("code", "")
                     desc = s.get("description") or s.get("name") or "Unknown item"
                     item_rows += (
@@ -805,10 +882,11 @@ def register_stock_routes(app, db, login_required, Auth, render_page,
                         f'<td style="text-align:right;color:#ef4444;">{_fmt_qty(qout)} / {money(sval)}</td>'
                         f'<td style="text-align:right;font-weight:600;">{money(prof)}</td></tr>'
                     )
+                _b, _sd, _p = grp_tot[g]
                 sections += (
                     f'<div style="margin-bottom:14px;">'
                     f'<div style="font-weight:600;color:{_GROUP_COLOR[g]};margin-bottom:4px;">{g} '
-                    f'&nbsp;—&nbsp; Bought {money(gd["bought"])} &nbsp;·&nbsp; Sold {money(gd["sold"])} &nbsp;·&nbsp; Profit {money(gd["profit"])}</div>'
+                    f'&nbsp;—&nbsp; Bought {money(_b)} &nbsp;·&nbsp; Sold {money(_sd)} &nbsp;·&nbsp; Profit {money(_p)}</div>'
                     f'<table style="width:100%;"><thead><tr><th style="text-align:left;">Item</th>'
                     f'<th style="text-align:right;">Bought (qty / R)</th><th style="text-align:right;">Sold (qty / R)</th>'
                     f'<th style="text-align:right;">Profit</th></tr></thead><tbody>{item_rows}</tbody></table></div>'
@@ -828,7 +906,7 @@ def register_stock_routes(app, db, login_required, Auth, render_page,
             </details>
             '''
 
-        if _daily:
+        if _agg:
             daily_html += f'''
             <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;padding:12px 5px;border-top:2px solid var(--border);font-weight:700;">
                 <span>Total</span>
@@ -841,7 +919,7 @@ def register_stock_routes(app, db, login_required, Auth, render_page,
             '''
 
         if not daily_html:
-            daily_html = '<div style="text-align:center;padding:30px;color:var(--text-muted);">No stock movements found for this period</div>'
+            daily_html = '<div style="text-align:center;padding:30px;color:var(--text-muted);">No sales or stock movements found for this period</div>'
 
         # Config UI data: checkboxes for every category, ticked if currently Stainless
         _all_cats = sorted(set((s.get("category") or "General") for s in all_stock))
