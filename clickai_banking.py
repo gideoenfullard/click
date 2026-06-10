@@ -1508,6 +1508,7 @@ def register_banking_routes(app, db, login_required, Auth, render_page,
                         msg += `\\n\\n🔎 Diagnostics: ${{stats.rows_parsed || 0}} rows parsed`;
                         if (stats.duplicates_skipped) msg += `, ${{stats.duplicates_skipped}} duplicates`;
                         if (stats.row_errors) msg += `, ${{stats.row_errors}} row errors`;
+                        msg += `\\nFile: ${{stats.filename || '?'}} | Standard Bank format: ${{stats.sb_prov_detected ? 'yes' : 'no'}}`;
                         if (stats.row_error_sample) msg += `\\nFirst error: ${{stats.row_error_sample}}`;
                     }}
                     alert(msg);
@@ -3562,7 +3563,9 @@ Return ONLY the JSON array. No markdown, no explanation."""
                     "out_of_range_skipped": skipped_out_of_range,
                     "rows_parsed": len(data_rows),
                     "row_errors": _row_errors,
-                    "row_error_sample": _row_error_sample
+                    "row_error_sample": _row_error_sample,
+                    "filename": filename,
+                    "sb_prov_detected": bool(locals().get('_sb_prov_active'))
                 }
             })
             
