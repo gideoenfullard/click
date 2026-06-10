@@ -771,43 +771,85 @@ def register_stock_routes(app, db, login_required, Auth, render_page,
         _stainless = _stainless_set(db, biz_id)
         _stainless_staff = _stainless_staff_set(db, biz_id)
 
-        # ── Salary daily run-rate: basic salary / working days (Mon-Fri), per stream ──
-        # AI-first: months come from the real dates. Each working day uses its own
-        # month's payroll; an unpaid current month carries the most recent month
-        # forward. Salaries start at the FIRST payroll month (so e.g. from 1 May).
+        # ── Salary daily run-rate: cost to company / working days (Mon-Fri), per stream ──
+        # Payslips only arrive at month-end, but the cost runs every day, so:
+        #   • A month WITH payslips uses the real cost to company (basic + employer).
+        #   • A month WITHOUT a payslip yet (the current month) is ESTIMATED from each
+        #     employee's basic salary. When the payslip is captured the real figure
+        #     replaces the estimate, so an absence etc. corrects itself automatically.
+        #   • Every worker also gets a travel allowance ON TOP (payslips exclude travel).
         import calendar as _calendar
         from datetime import date as _date
         def _weekdays_in(yy, mm):
             return sum(1 for dd in range(1, _calendar.monthrange(yy, mm)[1] + 1)
                        if _date(yy, mm, dd).weekday() < 5)
-        _month_basic = {}  # (yy,mm) -> {"Stainless Steel": basic_sum, "Hardware": basic_sum}
-        for _ps in (db.get("payslips", {"business_id": biz_id}) if biz_id else []):
+        # Business default travel allowance per worker / month (per-employee value wins).
+        _cp_biz = business.get("custom_prices") if business else None
+        if isinstance(_cp_biz, str):
+            try:
+                _cp_biz = json.loads(_cp_biz) if _cp_biz else {}
+            except Exception:
+                _cp_biz = {}
+        if not isinstance(_cp_biz, dict):
+            _cp_biz = {}
+        _default_travel = float(_cp_biz.get("travel_allowance") or 0)
+        # Employees: basic-salary estimate + travel, per stream.
+        _employees = db.get("employees", {"business_id": biz_id}) if biz_id else []
+        _emp_basic_by_stream = {"Stainless Steel": 0.0, "Hardware": 0.0}
+        _travel_by_stream = {"Stainless Steel": 0.0, "Hardware": 0.0}
+        _emp_count = 0
+        for _e in _employees:
+            _es = "Stainless Steel" if str(_e.get("id") or "") in _stainless_staff else "Hardware"
+            _emp_basic_by_stream[_es] += float(_e.get("basic_salary") or 0)
+            _travel_by_stream[_es] += (float(_e.get("travel_allowance") or 0) or _default_travel)
+            _emp_count += 1
+        # Actual cost to company per month per stream, from captured payslips.
+        _payslips_raw = db.get("payslips", {"business_id": biz_id}) if biz_id else []
+        _n_payslips = len(_payslips_raw)
+        _month_payslip = {}  # (yy,mm) -> {"Stainless Steel": ctc, "Hardware": ctc}
+        for _ps in _payslips_raw:
             _pd = str(_ps.get("date") or "")[:10]
             if len(_pd) < 7:
                 continue
             try:
                 _yy, _mm = int(_pd[:4]), int(_pd[5:7])
+                _ctc = float(_ps.get("total_cost") or _ps.get("gross") or _ps.get("basic") or 0)
             except Exception:
                 continue
-            _basic = float(_ps.get("basic") or _ps.get("gross") or 0)
-            if _basic <= 0:
+            if _ctc <= 0:
                 continue
             _strm = "Stainless Steel" if str(_ps.get("employee_id") or "") in _stainless_staff else "Hardware"
-            _mb = _month_basic.setdefault((_yy, _mm), {"Stainless Steel": 0.0, "Hardware": 0.0})
-            _mb[_strm] += _basic
-        _salary_months = sorted(_month_basic.keys())
-        _salary_start = ("%04d-%02d-01" % _salary_months[0]) if _salary_months else None
+            _mp = _month_payslip.setdefault((_yy, _mm), {"Stainless Steel": 0.0, "Hardware": 0.0})
+            _mp[_strm] += _ctc
+        _payslip_months = sorted(_month_payslip.keys())
 
-        def _basic_for(yy, mm):
-            """Basic salary per stream for a month; carries the most recent earlier
-            month forward (so an unpaid current month still shows a daily cost)."""
-            if (yy, mm) in _month_basic:
-                return _month_basic[(yy, mm)]
-            _tgt = yy * 12 + mm
-            _prev = [m for m in _salary_months if m[0] * 12 + m[1] <= _tgt]
-            if _prev:
-                return _month_basic[_prev[-1]]
-            return _month_basic[_salary_months[0]] if _salary_months else {"Stainless Steel": 0.0, "Hardware": 0.0}
+        def _month_cost(yy, mm):
+            """Cost to company per stream for a month, incl. travel. Actual payslip where
+            captured, otherwise estimated from employee basic salaries."""
+            _base = _month_payslip[(yy, mm)] if (yy, mm) in _month_payslip else _emp_basic_by_stream
+            return {_s: _base.get(_s, 0.0) + _travel_by_stream.get(_s, 0.0)
+                    for _s in ("Stainless Steel", "Hardware")}
+
+        # Salary floor: first payslip month if any payslips exist; otherwise the 1st of
+        # last month, so the current run-rate shows even before the first payslip.
+        if _payslip_months:
+            _salary_start = "%04d-%02d-01" % _payslip_months[0]
+        elif _employees:
+            _t = _date.today()
+            _ly, _lm = (_t.year, _t.month - 1) if _t.month > 1 else (_t.year - 1, 12)
+            _salary_start = "%04d-%02d-01" % (_ly, _lm)
+        else:
+            _salary_start = None
+        _travel_total = _travel_by_stream["Stainless Steel"] + _travel_by_stream["Hardware"]
+        if not _employees:
+            _salary_note = "No employees found — add staff and their salaries to see salary cost."
+        elif _payslip_months:
+            _salary_note = ("Actual cost to company from %d payslip(s); the current month is estimated "
+                            "from employee salaries until its payslip is captured. Travel %s/month on top."
+                            ) % (_n_payslips, money(_travel_total))
+        else:
+            _salary_note = ("Estimated from %d employee(s) (basic salary + travel); payslips replace the "
+                            "estimate at month-end. Travel %s/month on top.") % (_emp_count, money(_travel_total))
 
         def _norm_txt(t):
             return " ".join(str(t or "").strip().lower().split())
@@ -952,12 +994,12 @@ def register_stock_routes(app, db, login_required, Auth, render_page,
             grand_sold += day_sold
             grand_profit += day_profit
 
-            # Salary share for this day: basic / working days (Mon-Fri), from this day's
-            # month (or carried forward), only on or after the first payroll month.
+            # Salary share for this day: cost to company / working days (Mon-Fri), from
+            # this day's month (actual payslip, or estimate), on/after the salary start.
             if _salary_start and d >= _salary_start and _date(int(d[:4]), int(d[5:7]), int(d[8:10])).weekday() < 5:
-                _bf = _basic_for(int(d[:4]), int(d[5:7]))
+                _mc = _month_cost(int(d[:4]), int(d[5:7]))
                 _wd = _weekdays_in(int(d[:4]), int(d[5:7])) or 1
-                day_salary = sum(_bf[s] / _wd for s in _view_staff_streams)
+                day_salary = sum(_mc[s] / _wd for s in _view_staff_streams)
             else:
                 day_salary = 0.0
             day_net = day_profit - day_salary
@@ -1073,8 +1115,9 @@ def register_stock_routes(app, db, login_required, Auth, render_page,
             f'<div class="card" style="margin-bottom:20px;">'
             f'<h3 style="margin:0 0 4px 0;">Bottom line — {_view_label}</h3>'
             f'<p style="color:var(--text-muted);margin:0 0 10px 0;font-size:13px;">For the selected period. '
-            f'Salaries are basic salary divided by working days (Mon-Fri), counted on each working '
-            f'day from the first payroll month. Salaries are the only expense included so far.</p>'
+            f'Salaries are cost to company divided by working days (Mon-Fri). '
+            f'Salaries are the only expense included so far.<br>'
+            f'<span style="font-size:12px;">{safe_string(_salary_note)}</span></p>'
             f'<div style="max-width:420px;">'
             f'{_pl_row("Sales", _panel_sales)}'
             f'{_pl_row("Cost of sales", _panel_cogs)}'
@@ -1170,6 +1213,10 @@ def register_stock_routes(app, db, login_required, Auth, render_page,
                 <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(190px,1fr));gap:4px;margin-bottom:12px;">
                     {staff_checkboxes}
                 </div>
+                <div style="margin-bottom:12px;">
+                    <label style="display:block;font-size:13px;color:var(--text-muted);margin-bottom:4px;">Travel allowance per worker (R / month) — added on top of salary; used where a worker has no own travel value.</label>
+                    <input type="number" step="0.01" min="0" name="travel_allowance" value="{_default_travel:g}" style="width:160px;padding:8px;border-radius:6px;border:1px solid var(--border);background:var(--card);color:var(--text);">
+                </div>
                 <button type="submit" class="btn btn-primary">Save</button>
             </form>
         </details>
@@ -1255,6 +1302,10 @@ def register_stock_routes(app, db, login_required, Auth, render_page,
         if not isinstance(cp, dict):
             cp = {}
         cp["stainless_staff"] = selected
+        try:
+            cp["travel_allowance"] = float(request.form.get("travel_allowance", 0) or 0)
+        except Exception:
+            pass
         user_id = user.get("id") if user else None
         db.update_business(biz_id, user_id, {"custom_prices": cp})
         Auth.clear_cache()
