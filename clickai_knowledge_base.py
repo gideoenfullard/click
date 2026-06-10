@@ -1211,6 +1211,61 @@ On the scheduled date, ClickAI automatically:
 - View history of all generated invoices
 - Skip a period if needed"""
     },
+
+    # ============================================================
+    # EMAIL SENDING (SMTP) - delivering invoices/quotes/statements
+    # ============================================================
+
+    "email_sending_setup": {
+        "keywords": ["smtp", "send email", "email setup", "set up email", "setup email", "configure email", "email settings", "app password", "gmail app password", "outgoing email", "email not", "emails not", "cannot send email", "smtp port", "email port", "stuur e-pos", "e-pos opstel", "e-pos stuur", "stuur faktuur", "faktuur e-pos"],
+        "title": "Email Sending Setup (SMTP) - Send Invoices, Quotes & Statements",
+        "content": """Set up outgoing email so ClickAI can send invoices, quotes and statements
+straight to your customers from your own Gmail address.
+
+NOTE: This is for SENDING to customers. Receiving supplier invoices by email
+is a separate IMAP setup (see the Scan-to-Email guide).
+
+**Where to set it up (Settings -> Email Settings):**
+- SMTP Host: smtp.gmail.com
+- SMTP Port: 587
+- Username: your full Gmail address (e.g. you@yourbusiness.co.za)
+- Password: a 16-character App Password (NOT your normal Gmail password)
+Then click "Save Email Settings".
+
+**Why an App Password?**
+Google no longer allows normal account passwords for SMTP. You must turn on
+2-Step Verification and then generate a separate App Password for ClickAI.
+
+**Step 1 - Turn on 2-Step Verification (do this first):**
+1. Go to: https://myaccount.google.com/security
+2. Under "How you sign in to Google", open "2-Step Verification" and turn it on.
+(The App Password option only appears AFTER 2-Step Verification is on.)
+
+**Step 2 - Generate the App Password:**
+1. Go to: https://myaccount.google.com/apppasswords
+2. Enter a name like "ClickAI" and click Create/Generate.
+3. Google shows a 16-character code. COPY IT IMMEDIATELY - Google only shows
+   it once, and you cannot see it again after closing the window.
+4. Paste that code into the Password field in ClickAI (Settings -> Email Settings).
+
+**Step 3 - Test it:**
+Open any invoice or quote -> Email, and send one to yourself to confirm it works.
+
+**Google Workspace (custom-domain business accounts):**
+If the account is a Google Workspace account on your own domain, the App Passwords
+page may be hidden or disabled. The Workspace administrator must allow App Passwords
+(or SMTP) in the Google Admin console before you can generate one.
+
+**Ports:**
+- 587 with STARTTLS (the default, recommended)
+- 465 with SSL (alternative if 587 is blocked)
+
+**Emails not sending? Check:**
+- You used the 16-character App Password, not your normal Gmail password
+- 2-Step Verification is actually on
+- Username is the FULL email address
+- For a Workspace account, the admin has allowed App Passwords"""
+    },
 }
 
 

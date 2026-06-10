@@ -20433,13 +20433,23 @@ body {
 .nav-wrapper {
     overflow-x: auto;
     -webkit-overflow-scrolling: touch;
-    scrollbar-width: none;
+    scrollbar-width: thin;
+    scrollbar-color: var(--text-muted) transparent;
     border-top: 1px solid var(--border);
     position: relative;
 }
 
 .nav-wrapper::-webkit-scrollbar {
-    display: none;
+    height: 6px;
+}
+
+.nav-wrapper::-webkit-scrollbar-thumb {
+    background: var(--text-muted);
+    border-radius: 3px;
+}
+
+.nav-wrapper::-webkit-scrollbar-track {
+    background: transparent;
 }
 
 /* Hide tap hint on desktop */
