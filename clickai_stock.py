@@ -705,6 +705,7 @@ def register_stock_routes(app, db, login_required, Auth, render_page,
         stock_id = request.args.get("stock_id", "")
         move_type = request.args.get("type", "")  # in, out, or empty for all
         days = int(request.args.get("days", 30))
+        stream = request.args.get("stream", "all")  # all | stainless | hardware
         
         from datetime import datetime, timedelta
         cutoff = (datetime.now() - timedelta(days=days)).strftime("%Y-%m-%d")
@@ -867,26 +868,45 @@ def register_stock_routes(app, db, login_required, Auth, render_page,
                     it[4] += sval
                     it[5] += prof
 
+        # Stream filter: which product groups this view shows.
+        if stream == "stainless":
+            _view_groups = ["Stainless Steel"]
+        elif stream == "hardware":
+            _view_groups = ["Hardware"]
+        else:
+            _view_groups = list(_GROUPS)  # Combined (incl. Diens)
+
+        # Period totals per group (across all days in window) for the bottom-line panel.
+        period = {g: {"bought": 0.0, "sold": 0.0, "profit": 0.0} for g in _GROUPS}
+        for _dd in _agg.values():
+            for g in _GROUPS:
+                for it in _dd[g].values():
+                    period[g]["bought"] += it[2]
+                    period[g]["sold"] += it[4]
+                    period[g]["profit"] += it[5]
+
         daily_html = ""
         grand_bought = grand_sold = grand_profit = 0.0
         for d in sorted(_agg.keys(), reverse=True):
             day = _agg[d]
+            if not any(day[g] for g in _view_groups):
+                continue
             grp_tot = {}
-            for g in _GROUPS:
+            for g in _view_groups:
                 grp_tot[g] = (
                     sum(it[2] for it in day[g].values()),
                     sum(it[4] for it in day[g].values()),
                     sum(it[5] for it in day[g].values()),
                 )
-            day_bought = sum(grp_tot[g][0] for g in _GROUPS)
-            day_sold = sum(grp_tot[g][1] for g in _GROUPS)
-            day_profit = sum(grp_tot[g][2] for g in _GROUPS)
+            day_bought = sum(grp_tot[g][0] for g in _view_groups)
+            day_sold = sum(grp_tot[g][1] for g in _view_groups)
+            day_profit = sum(grp_tot[g][2] for g in _view_groups)
             grand_bought += day_bought
             grand_sold += day_sold
             grand_profit += day_profit
 
             sections = ""
-            for g in _GROUPS:
+            for g in _view_groups:
                 items = list(day[g].values())
                 if not items:
                     continue
@@ -963,6 +983,80 @@ def register_stock_routes(app, db, login_required, Auth, render_page,
         if not staff_checkboxes:
             staff_checkboxes = '<span style="color:var(--text-muted);">No employees yet — add staff in Payroll first.</span>'
         _staff_open = "" if _stainless_staff else "open"
+
+        # ── Salaries spread evenly over working days (Mon-Fri), per stream ──
+        import calendar as _calendar
+        from datetime import date as _date
+        _today_str = datetime.now().strftime("%Y-%m-%d")
+        salary_by_stream = {"Stainless Steel": 0.0, "Hardware": 0.0}
+        for _ps in (db.get("payslips", {"business_id": biz_id}) if biz_id else []):
+            _pd = str(_ps.get("date") or "")[:10]
+            if len(_pd) < 7:
+                continue
+            try:
+                _yy, _mm = int(_pd[:4]), int(_pd[5:7])
+            except Exception:
+                continue
+            _cost = float(_ps.get("total_cost") or _ps.get("gross") or 0)
+            if _cost <= 0:
+                continue
+            _wdays = [dd for dd in range(1, _calendar.monthrange(_yy, _mm)[1] + 1)
+                      if _date(_yy, _mm, dd).weekday() < 5]
+            if not _wdays:
+                continue
+            _daily_amt = _cost / len(_wdays)
+            _in_window = sum(1 for dd in _wdays if cutoff <= f"{_yy:04d}-{_mm:02d}-{dd:02d}" <= _today_str)
+            if _in_window == 0:
+                continue
+            _emp = str(_ps.get("employee_id") or "")
+            _strm = "Stainless Steel" if _emp in _stainless_staff else "Hardware"
+            salary_by_stream[_strm] += _daily_amt * _in_window
+
+        # Bottom-line figures for the selected view.
+        _panel_sales = sum(period[g]["sold"] for g in _view_groups)
+        _panel_gp = sum(period[g]["profit"] for g in _view_groups)
+        _panel_cogs = _panel_sales - _panel_gp
+        if stream == "stainless":
+            _panel_salaries = salary_by_stream["Stainless Steel"]
+        elif stream == "hardware":
+            _panel_salaries = salary_by_stream["Hardware"]
+        else:
+            _panel_salaries = salary_by_stream["Stainless Steel"] + salary_by_stream["Hardware"]
+        _panel_net = _panel_gp - _panel_salaries
+        _net_color = "#10b981" if _panel_net >= 0 else "#ef4444"
+        _view_label = {"stainless": "Stainless Steel", "hardware": "Hardware"}.get(stream, "Combined")
+
+        def _tab(_val, _lbl):
+            _active = (stream == _val) or (stream not in ("stainless", "hardware") and _val == "all")
+            _bg = "var(--accent)" if _active else "var(--card)"
+            _col = "#fff" if _active else "var(--text)"
+            return (f'<a href="/stock/movements?days={days}&stream={_val}" '
+                    f'style="padding:7px 14px;border-radius:6px;text-decoration:none;background:{_bg};'
+                    f'color:{_col};border:1px solid var(--border);font-size:13px;">{_lbl}</a>')
+        stream_tabs = _tab("all", "Combined") + _tab("stainless", "Stainless") + _tab("hardware", "Hardware")
+
+        def _pl_row(_lbl, _val, bold=False, color=None):
+            _st = "font-weight:700;" if bold else ""
+            _cs = f"color:{color};" if color else ""
+            return (f'<div style="display:flex;justify-content:space-between;padding:6px 0;{_st}">'
+                    f'<span>{_lbl}</span>'
+                    f'<span style="font-variant-numeric:tabular-nums;{_cs}">{money(_val)}</span></div>')
+        bottom_line = (
+            f'<div class="card" style="margin-bottom:20px;">'
+            f'<h3 style="margin:0 0 4px 0;">Bottom line — {_view_label}</h3>'
+            f'<p style="color:var(--text-muted);margin:0 0 10px 0;font-size:13px;">For the selected period. '
+            f"Salaries are each payslip's total cost spread evenly over that month's working days (Mon-Fri); "
+            f'only the part inside this period counts. Salaries are the only expense included so far.</p>'
+            f'<div style="max-width:420px;">'
+            f'{_pl_row("Sales", _panel_sales)}'
+            f'{_pl_row("Cost of sales", _panel_cogs)}'
+            f'{_pl_row("Gross profit", _panel_gp, bold=True)}'
+            f'{_pl_row("Salaries", _panel_salaries)}'
+            f'<div style="border-top:2px solid var(--border);margin-top:4px;">'
+            f'{_pl_row("Net", _panel_net, bold=True, color=_net_color)}</div>'
+            f'</div></div>'
+        )
+
         saved_banner = '<div style="background:rgba(16,185,129,0.13);color:#10b981;padding:8px 12px;border-radius:6px;margin-bottom:12px;">Saved.</div>' if request.args.get("saved") else ""
         
         # Stock filter dropdown
@@ -1052,9 +1146,12 @@ def register_stock_routes(app, db, login_required, Auth, render_page,
             </form>
         </details>
         
-        <!-- Daily Summary: Bought vs Sold per day, split Stainless Steel vs Hardware -->
+        <!-- Stream toggle + bottom-line (Sales / Cost / Gross profit / Salaries / Net) -->
+        <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:14px;">{stream_tabs}</div>
+        {bottom_line}
+        <!-- Daily Summary: Bought vs Sold per day, split by stream -->
         <div class="card" style="margin-bottom:20px;">
-            <h3 style="margin:0 0 4px 0;">Daily Summary — Stainless Steel vs Hardware</h3>
+            <h3 style="margin:0 0 4px 0;">Daily Summary — {_view_label}</h3>
             <p style="color:var(--text-muted);margin:0 0 10px 0;font-size:13px;">Click a day to expand into Stainless Steel and Hardware. Bought = qty × cost, Sold = qty × selling price, Profit = qty sold × (selling − cost).</p>
             {daily_html}
         </div>
