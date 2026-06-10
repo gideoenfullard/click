@@ -1504,6 +1504,12 @@ def register_banking_routes(app, db, login_required, Auth, render_page,
                     if (stats.out_of_range_skipped) {{
                         msg += `\\n📅 Skipped (outside date range): ${{stats.out_of_range_skipped}}`;
                     }}
+                    if ((stats.total || 0) === 0) {{
+                        msg += `\\n\\n🔎 Diagnostics: ${{stats.rows_parsed || 0}} rows parsed`;
+                        if (stats.duplicates_skipped) msg += `, ${{stats.duplicates_skipped}} duplicates`;
+                        if (stats.row_errors) msg += `, ${{stats.row_errors}} row errors`;
+                        if (stats.row_error_sample) msg += `\\nFirst error: ${{stats.row_error_sample}}`;
+                    }}
                     alert(msg);
                     location.reload();
                 }} else {{
@@ -2962,6 +2968,8 @@ Return ONLY the JSON array. No markdown, no explanation."""
             # PROCESS ROWS — build list first, then batch save
             # ═══════════════════════════════════════════════════════════════
             txns_to_save = []
+            _row_errors = 0
+            _row_error_sample = ""
             
             # Anchor a base timestamp so each txn's created_at = base + idx microseconds.
             # Guarantees statement-reading order is preserved exactly in created_at.
@@ -3463,6 +3471,9 @@ Return ONLY the JSON array. No markdown, no explanation."""
                     imported += 1
                     
                 except Exception as row_err:
+                    _row_errors += 1
+                    if not _row_error_sample:
+                        _row_error_sample = f"{type(row_err).__name__}: {row_err}"
                     logger.warning(f"[BANK] Row error: {row_err}")
                     continue
             
@@ -3548,7 +3559,10 @@ Return ONLY the JSON array. No markdown, no explanation."""
                     "suggested": suggested,
                     "needs_attention": max(0, needs_attention),
                     "duplicates_skipped": skipped_dupes,
-                    "out_of_range_skipped": skipped_out_of_range
+                    "out_of_range_skipped": skipped_out_of_range,
+                    "rows_parsed": len(data_rows),
+                    "row_errors": _row_errors,
+                    "row_error_sample": _row_error_sample
                 }
             })
             
