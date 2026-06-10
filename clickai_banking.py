@@ -2594,7 +2594,9 @@ Return ONLY the JSON array. No markdown, no explanation."""
             else:
                 # CSV PARSING (existing logic)
                 content = file.read().decode('utf-8', errors='ignore')
-                reader = csv.reader(io.StringIO(content))
+                # newline='' lets the csv module do its own universal newline handling,
+                # avoiding "new-line character seen in unquoted field" on CRLF/stray-CR files.
+                reader = csv.reader(io.StringIO(content, newline=''))
                 rows = list(reader)
             
                 if len(rows) < 2:
@@ -2667,16 +2669,43 @@ Return ONLY the JSON array. No markdown, no explanation."""
                 
                 if _is_sb_prov(rows):
                     logger.info(f"[BANK IMPORT] Detected Standard Bank PROV/magtape format")
+
+                    def _parse_sb_prov_signed(_field):
+                        """Parse a signed leading-zero balance field, keeping the sign."""
+                        raw = str(_field).strip()
+                        sign = 1
+                        if raw.startswith('-'):
+                            sign = -1
+                            raw = raw[1:]
+                        elif raw.startswith('+'):
+                            raw = raw[1:]
+                        raw = raw.lstrip('0') or '0'
+                        try:
+                            return round(float(raw) * sign, 2)
+                        except ValueError:
+                            return None
+
                     _prov_data = []
                     _prov_meta_skipped = 0
                     _prov_unparseable = 0
+                    _prov_open_balance = None
+                    _prov_close_balance = None
                     for _r in rows:
                         if len(_r) < 6:
                             continue
                         _type = str(_r[2]).strip().upper()
-                        # Skip non-transaction rows: header rows + opening/closing balance rows
-                        # (opening balance import is a separate feature — see Deon's request)
-                        if _type in ("BRANCH", "ACC NO", "ACCNO", "OPEN", "CLOSE"):
+                        # Capture the opening/closing balance rows so the per-line running
+                        # balance can be reconstructed (Standard Bank PROV carries none).
+                        if _type == "OPEN":
+                            _prov_open_balance = _parse_sb_prov_signed(_r[3])
+                            _prov_meta_skipped += 1
+                            continue
+                        if _type == "CLOSE":
+                            _prov_close_balance = _parse_sb_prov_signed(_r[3])
+                            _prov_meta_skipped += 1
+                            continue
+                        # Skip remaining non-transaction rows: header rows.
+                        if _type in ("BRANCH", "ACC NO", "ACCNO"):
                             _prov_meta_skipped += 1
                             continue
                         _d = _parse_sb_prov_date(_r[1])
@@ -2690,7 +2719,27 @@ Return ONLY the JSON array. No markdown, no explanation."""
                         if not _description and _type:
                             _description = _type
                         _prov_data.append([_d, _description, str(_deb), str(_cre), "0"])
-                    
+
+                    # Reconstruct the per-transaction running balance from the opening
+                    # balance row, in date order, so the bank reconciliation has a reliable
+                    # closing balance without the user typing it in. Fully additive: with no
+                    # OPEN row the balances stay "0" and behaviour is unchanged.
+                    if _prov_open_balance is not None and _prov_data:
+                        _prov_data.sort(key=lambda _x: str(_x[0])[:10])
+                        _run = _prov_open_balance
+                        for _row in _prov_data:
+                            try:
+                                _rb_deb = float(_row[2] or 0)
+                                _rb_cre = float(_row[3] or 0)
+                            except (ValueError, TypeError):
+                                _rb_deb = _rb_cre = 0.0
+                            _run = round(_run + _rb_cre - _rb_deb, 2)
+                            _row[4] = str(_run)
+                        if _prov_close_balance is not None and abs(_run - _prov_close_balance) > 0.05:
+                            logger.warning(f"[BANK IMPORT] PROV running balance {_run} != statement CLOSE {_prov_close_balance} (diff {round(_run - _prov_close_balance, 2)})")
+                        else:
+                            logger.info(f"[BANK IMPORT] PROV running balance reconstructed: open {_prov_open_balance} -> close {_run}")
+
                     logger.info(f"[BANK IMPORT] PROV: {len(_prov_data)} txns parsed, {_prov_meta_skipped} meta rows skipped, {_prov_unparseable} unparseable")
                     
                     if not _prov_data:
