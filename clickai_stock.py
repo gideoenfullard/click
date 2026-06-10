@@ -769,6 +769,45 @@ def register_stock_routes(app, db, login_required, Auth, render_page,
             s = f"{float(q or 0):.2f}".rstrip("0").rstrip(".")
             return s or "0"
         _stainless = _stainless_set(db, biz_id)
+        _stainless_staff = _stainless_staff_set(db, biz_id)
+
+        # ── Salary daily run-rate: basic salary / working days (Mon-Fri), per stream ──
+        # AI-first: months come from the real dates. Each working day uses its own
+        # month's payroll; an unpaid current month carries the most recent month
+        # forward. Salaries start at the FIRST payroll month (so e.g. from 1 May).
+        import calendar as _calendar
+        from datetime import date as _date
+        def _weekdays_in(yy, mm):
+            return sum(1 for dd in range(1, _calendar.monthrange(yy, mm)[1] + 1)
+                       if _date(yy, mm, dd).weekday() < 5)
+        _month_basic = {}  # (yy,mm) -> {"Stainless Steel": basic_sum, "Hardware": basic_sum}
+        for _ps in (db.get("payslips", {"business_id": biz_id}) if biz_id else []):
+            _pd = str(_ps.get("date") or "")[:10]
+            if len(_pd) < 7:
+                continue
+            try:
+                _yy, _mm = int(_pd[:4]), int(_pd[5:7])
+            except Exception:
+                continue
+            _basic = float(_ps.get("basic") or _ps.get("gross") or 0)
+            if _basic <= 0:
+                continue
+            _strm = "Stainless Steel" if str(_ps.get("employee_id") or "") in _stainless_staff else "Hardware"
+            _mb = _month_basic.setdefault((_yy, _mm), {"Stainless Steel": 0.0, "Hardware": 0.0})
+            _mb[_strm] += _basic
+        _salary_months = sorted(_month_basic.keys())
+        _salary_start = ("%04d-%02d-01" % _salary_months[0]) if _salary_months else None
+
+        def _basic_for(yy, mm):
+            """Basic salary per stream for a month; carries the most recent earlier
+            month forward (so an unpaid current month still shows a daily cost)."""
+            if (yy, mm) in _month_basic:
+                return _month_basic[(yy, mm)]
+            _tgt = yy * 12 + mm
+            _prev = [m for m in _salary_months if m[0] * 12 + m[1] <= _tgt]
+            if _prev:
+                return _month_basic[_prev[-1]]
+            return _month_basic[_salary_months[0]] if _salary_months else {"Stainless Steel": 0.0, "Hardware": 0.0}
 
         def _norm_txt(t):
             return " ".join(str(t or "").strip().lower().split())
@@ -876,6 +915,14 @@ def register_stock_routes(app, db, login_required, Auth, render_page,
         else:
             _view_groups = list(_GROUPS)  # Combined (incl. Diens)
 
+        # Which staff streams the salary figure covers for this view.
+        if stream == "stainless":
+            _view_staff_streams = ["Stainless Steel"]
+        elif stream == "hardware":
+            _view_staff_streams = ["Hardware"]
+        else:
+            _view_staff_streams = ["Stainless Steel", "Hardware"]
+
         # Period totals per group (across all days in window) for the bottom-line panel.
         period = {g: {"bought": 0.0, "sold": 0.0, "profit": 0.0} for g in _GROUPS}
         for _dd in _agg.values():
@@ -886,7 +933,7 @@ def register_stock_routes(app, db, login_required, Auth, render_page,
                     period[g]["profit"] += it[5]
 
         daily_html = ""
-        grand_bought = grand_sold = grand_profit = 0.0
+        grand_bought = grand_sold = grand_profit = grand_salary = 0.0
         for d in sorted(_agg.keys(), reverse=True):
             day = _agg[d]
             if not any(day[g] for g in _view_groups):
@@ -904,6 +951,17 @@ def register_stock_routes(app, db, login_required, Auth, render_page,
             grand_bought += day_bought
             grand_sold += day_sold
             grand_profit += day_profit
+
+            # Salary share for this day: basic / working days (Mon-Fri), from this day's
+            # month (or carried forward), only on or after the first payroll month.
+            if _salary_start and d >= _salary_start and _date(int(d[:4]), int(d[5:7]), int(d[8:10])).weekday() < 5:
+                _bf = _basic_for(int(d[:4]), int(d[5:7]))
+                _wd = _weekdays_in(int(d[:4]), int(d[5:7])) or 1
+                day_salary = sum(_bf[s] / _wd for s in _view_staff_streams)
+            else:
+                day_salary = 0.0
+            day_net = day_profit - day_salary
+            grand_salary += day_salary
 
             sections = ""
             for g in _view_groups:
@@ -938,6 +996,8 @@ def register_stock_routes(app, db, login_required, Auth, render_page,
                         <span style="display:inline-flex;justify-content:space-between;gap:10px;min-width:150px;color:#10b981;"><span>Bought</span><span style="font-variant-numeric:tabular-nums;">{money(day_bought)}</span></span>
                         <span style="display:inline-flex;justify-content:space-between;gap:10px;min-width:150px;color:#ef4444;"><span>Sold</span><span style="font-variant-numeric:tabular-nums;">{money(day_sold)}</span></span>
                         <span style="display:inline-flex;justify-content:space-between;gap:10px;min-width:150px;font-weight:700;"><span>Profit</span><span style="font-variant-numeric:tabular-nums;">{money(day_profit)}</span></span>
+                        <span style="display:inline-flex;justify-content:space-between;gap:10px;min-width:150px;color:var(--text-muted);"><span>Salaries</span><span style="font-variant-numeric:tabular-nums;">{money(day_salary)}</span></span>
+                        <span style="display:inline-flex;justify-content:space-between;gap:10px;min-width:150px;font-weight:700;color:{'#10b981' if day_net >= 0 else '#ef4444'};"><span>Net</span><span style="font-variant-numeric:tabular-nums;">{money(day_net)}</span></span>
                     </span>
                 </summary>
                 <div style="padding:8px 5px 16px 5px;">{sections}</div>
@@ -952,6 +1012,8 @@ def register_stock_routes(app, db, login_required, Auth, render_page,
                     <span style="display:inline-flex;justify-content:space-between;gap:10px;min-width:150px;color:#10b981;"><span>Bought</span><span style="font-variant-numeric:tabular-nums;">{money(grand_bought)}</span></span>
                     <span style="display:inline-flex;justify-content:space-between;gap:10px;min-width:150px;color:#ef4444;"><span>Sold</span><span style="font-variant-numeric:tabular-nums;">{money(grand_sold)}</span></span>
                     <span style="display:inline-flex;justify-content:space-between;gap:10px;min-width:150px;"><span>Profit</span><span style="font-variant-numeric:tabular-nums;">{money(grand_profit)}</span></span>
+                    <span style="display:inline-flex;justify-content:space-between;gap:10px;min-width:150px;color:var(--text-muted);"><span>Salaries</span><span style="font-variant-numeric:tabular-nums;">{money(grand_salary)}</span></span>
+                    <span style="display:inline-flex;justify-content:space-between;gap:10px;min-width:150px;color:{'#10b981' if grand_profit - grand_salary >= 0 else '#ef4444'};"><span>Net</span><span style="font-variant-numeric:tabular-nums;">{money(grand_profit - grand_salary)}</span></span>
                 </span>
             </div>
             '''
@@ -970,7 +1032,6 @@ def register_stock_routes(app, db, login_required, Auth, render_page,
         _config_open = "" if _stainless else "open"
 
         # Config UI data: which staff are Stainless (rest = Hardware staff)
-        _stainless_staff = _stainless_staff_set(db, biz_id)
         _staff = sorted(
             (db.get("employees", {"business_id": biz_id}) if biz_id else []),
             key=lambda e: (e.get("name") or "").lower(),
@@ -984,44 +1045,11 @@ def register_stock_routes(app, db, login_required, Auth, render_page,
             staff_checkboxes = '<span style="color:var(--text-muted);">No employees yet — add staff in Payroll first.</span>'
         _staff_open = "" if _stainless_staff else "open"
 
-        # ── Salaries spread evenly over working days (Mon-Fri), per stream ──
-        import calendar as _calendar
-        from datetime import date as _date
-        _today_str = datetime.now().strftime("%Y-%m-%d")
-        salary_by_stream = {"Stainless Steel": 0.0, "Hardware": 0.0}
-        for _ps in (db.get("payslips", {"business_id": biz_id}) if biz_id else []):
-            _pd = str(_ps.get("date") or "")[:10]
-            if len(_pd) < 7:
-                continue
-            try:
-                _yy, _mm = int(_pd[:4]), int(_pd[5:7])
-            except Exception:
-                continue
-            _cost = float(_ps.get("total_cost") or _ps.get("gross") or 0)
-            if _cost <= 0:
-                continue
-            _wdays = [dd for dd in range(1, _calendar.monthrange(_yy, _mm)[1] + 1)
-                      if _date(_yy, _mm, dd).weekday() < 5]
-            if not _wdays:
-                continue
-            _daily_amt = _cost / len(_wdays)
-            _in_window = sum(1 for dd in _wdays if cutoff <= f"{_yy:04d}-{_mm:02d}-{dd:02d}" <= _today_str)
-            if _in_window == 0:
-                continue
-            _emp = str(_ps.get("employee_id") or "")
-            _strm = "Stainless Steel" if _emp in _stainless_staff else "Hardware"
-            salary_by_stream[_strm] += _daily_amt * _in_window
-
-        # Bottom-line figures for the selected view.
+        # Bottom-line figures for the selected view (salaries = sum of the per-day shares above).
         _panel_sales = sum(period[g]["sold"] for g in _view_groups)
         _panel_gp = sum(period[g]["profit"] for g in _view_groups)
         _panel_cogs = _panel_sales - _panel_gp
-        if stream == "stainless":
-            _panel_salaries = salary_by_stream["Stainless Steel"]
-        elif stream == "hardware":
-            _panel_salaries = salary_by_stream["Hardware"]
-        else:
-            _panel_salaries = salary_by_stream["Stainless Steel"] + salary_by_stream["Hardware"]
+        _panel_salaries = grand_salary
         _panel_net = _panel_gp - _panel_salaries
         _net_color = "#10b981" if _panel_net >= 0 else "#ef4444"
         _view_label = {"stainless": "Stainless Steel", "hardware": "Hardware"}.get(stream, "Combined")
@@ -1045,8 +1073,8 @@ def register_stock_routes(app, db, login_required, Auth, render_page,
             f'<div class="card" style="margin-bottom:20px;">'
             f'<h3 style="margin:0 0 4px 0;">Bottom line — {_view_label}</h3>'
             f'<p style="color:var(--text-muted);margin:0 0 10px 0;font-size:13px;">For the selected period. '
-            f"Salaries are each payslip's total cost spread evenly over that month's working days (Mon-Fri); "
-            f'only the part inside this period counts. Salaries are the only expense included so far.</p>'
+            f'Salaries are basic salary divided by working days (Mon-Fri), counted on each working '
+            f'day from the first payroll month. Salaries are the only expense included so far.</p>'
             f'<div style="max-width:420px;">'
             f'{_pl_row("Sales", _panel_sales)}'
             f'{_pl_row("Cost of sales", _panel_cogs)}'
