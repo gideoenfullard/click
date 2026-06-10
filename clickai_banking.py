@@ -1860,10 +1860,13 @@ def register_banking_routes(app, db, login_required, Auth, render_page,
         return render_page("Banking", content, user, "banking")
     
     
-    def _compute_recon(biz_id):
+    def _compute_recon(biz_id, stmt_open=None, stmt_close=None):
         """Engine for the bank reconciliation. Returns the two-sided figures plus the
         reconciling item lists. Used by BOTH the recon screen and the 'Ask Zane to
-        explain' route, so the numbers Zane explains are exactly the numbers on screen."""
+        explain' route, so the numbers Zane explains are exactly the numbers on screen.
+        stmt_open/stmt_close are the statement's real balances entered by the user;
+        they take priority over the imported running balance (some bank formats carry
+        no per-line running balance)."""
         try:
             bank_code = str(gl(biz_id, "bank") or "1000")
         except Exception:
@@ -1875,24 +1878,18 @@ def register_banking_routes(app, db, login_required, Auth, render_page,
             except Exception:
                 return 0.0
 
-        # Statement side: imported bank transactions
+        # Statement side: imported bank transactions (movement + any running balance)
         txns = db.get("bank_transactions", {"business_id": biz_id}) or []
         txns.sort(key=lambda x: str(x.get("date", ""))[:10])
         bank_credits = sum(_f(t.get("credit")) for t in txns)
         bank_debits = sum(_f(t.get("debit")) for t in txns)
         bank_movement = bank_credits - bank_debits
         _with_bal = [t for t in txns if t.get("balance") not in (None, "")]
-        if _with_bal:
-            _first, _last = _with_bal[0], _with_bal[-1]
-            bank_opening = _f(_first.get("balance")) - (_f(_first.get("credit")) - _f(_first.get("debit")))
-            bank_closing = _f(_last.get("balance"))
-            have_bank_balance = True
-        else:
-            bank_opening = 0.0
-            bank_closing = bank_opening + bank_movement
-            have_bank_balance = False
 
-        # GL side: bank account in the chart of accounts + journals on it
+        # GL side: chart-of-accounts opening + journals on the bank account.
+        # Opening-balance journals are folded into the OPENING (not the movement), so
+        # they don't masquerade as "postings not on the statement", and the opening
+        # reads correctly whether it lives in the COA field or in a journal.
         coa = db.get("chart_of_accounts", {"business_id": biz_id}) or []
         bank_acc = None
         for _a in coa:
@@ -1902,10 +1899,35 @@ def register_banking_routes(app, db, login_required, Auth, render_page,
         gl_opening = _f(bank_acc.get("opening_balance")) if bank_acc else 0.0
         journals = db.get("journals", {"business_id": biz_id}) or []
         bank_journals = [j for j in journals if str(j.get("account_code", "")) == bank_code]
-        gl_dr = sum(_f(j.get("debit")) for j in bank_journals)
-        gl_cr = sum(_f(j.get("credit")) for j in bank_journals)
+
+        def _is_opening(j):
+            _r = str(j.get("reference", "") or "").upper()
+            _d = str(j.get("description", "") or "").lower()
+            return _r.startswith("OPENING") or "opening balance" in _d
+        opening_journals = [j for j in bank_journals if _is_opening(j)]
+        move_journals = [j for j in bank_journals if not _is_opening(j)]
+        gl_opening += sum(_f(j.get("debit")) - _f(j.get("credit")) for j in opening_journals)
+        gl_dr = sum(_f(j.get("debit")) for j in move_journals)
+        gl_cr = sum(_f(j.get("credit")) for j in move_journals)
         gl_movement = gl_dr - gl_cr
         gl_balance = gl_opening + gl_movement
+
+        # Bank opening/closing: prefer the statement's real balances (entered by the
+        # user), because some bank formats carry no per-line running balance. Fall back
+        # to the imported running balance, then to the GL opening + movement.
+        if stmt_close is not None:
+            bank_closing = stmt_close
+            bank_opening = stmt_open if stmt_open is not None else gl_opening
+            have_bank_balance = True
+        elif _with_bal:
+            _first, _last = _with_bal[0], _with_bal[-1]
+            bank_opening = _f(_first.get("balance")) - (_f(_first.get("credit")) - _f(_first.get("debit")))
+            bank_closing = _f(_last.get("balance"))
+            have_bank_balance = True
+        else:
+            bank_opening = gl_opening
+            bank_closing = bank_opening + bank_movement
+            have_bank_balance = False
 
         # Difference, decomposed so the arithmetic always ties
         difference = round(bank_closing - gl_balance, 2)
@@ -1922,12 +1944,13 @@ def register_banking_routes(app, db, login_required, Auth, render_page,
             if _ob and _c != bank_code and ("8400" in _c or "/000" in _c or _c.endswith("/000")):
                 misplaced.append((_a, _ob))
 
-        # GL bank postings with no matching statement line (by amount + direction)
+        # GL bank postings with no matching statement line (by amount + direction).
+        # Opening-balance journals are excluded — they ARE the opening, not a missing line.
         from collections import Counter as _Counter
         _stmt_in = _Counter(round(_f(t.get("credit")), 2) for t in txns if _f(t.get("credit")) > 0)
         _stmt_out = _Counter(round(_f(t.get("debit")), 2) for t in txns if _f(t.get("debit")) > 0)
         gl_only = []
-        for j in bank_journals:
+        for j in move_journals:
             _jd, _jc = _f(j.get("debit")), _f(j.get("credit"))
             if _jd > 0:
                 _amt = round(_jd, 2)
@@ -1944,6 +1967,7 @@ def register_banking_routes(app, db, login_required, Auth, render_page,
 
         return {
             "bank_code": bank_code, "have_bank_balance": have_bank_balance,
+            "stmt_entered": stmt_close is not None,
             "bank_opening": bank_opening, "bank_closing": bank_closing,
             "gl_opening": gl_opening, "gl_balance": gl_balance,
             "difference": difference, "opening_gap": opening_gap,
@@ -1964,9 +1988,20 @@ def register_banking_routes(app, db, login_required, Auth, render_page,
         if not biz_id:
             return redirect("/banking")
 
-        R = _compute_recon(biz_id)
+        def _parg(name):
+            _v = (request.args.get(name) or "").strip()
+            if not _v:
+                return None
+            try:
+                return float(_v.replace(",", ""))
+            except Exception:
+                return None
+        _stmt_open_in = _parg("stmt_open")
+        _stmt_close_in = _parg("stmt_close")
+        R = _compute_recon(biz_id, _stmt_open_in, _stmt_close_in)
         bank_code = R["bank_code"]
         have_bank_balance = R["have_bank_balance"]
+        stmt_entered = R["stmt_entered"]
         bank_opening = R["bank_opening"]
         bank_closing = R["bank_closing"]
         gl_opening = R["gl_opening"]
@@ -2001,7 +2036,7 @@ def register_banking_routes(app, db, login_required, Auth, render_page,
 
         cards = ('<div style="display:flex;gap:14px;flex-wrap:wrap;margin-bottom:18px;">'
                  + _card("Bank statement balance", bank_closing, _bal_color,
-                         "From the bank's running balance" if have_bank_balance else "Opening + movement (no running balance imported)")
+                         ("From your entered statement closing balance" if stmt_entered else ("From the bank's running balance" if have_bank_balance else "Opening + movement (no running balance imported)")))
                  + _card("GL bank balance (code " + bank_code + ")", gl_balance, _gl_color, "Opening balance + journals on the bank account")
                  + _card("Difference", difference, _diff_color,
                          "Reconciled — the books match the bank" if _reconciled else "Bank minus books — accounted for below")
@@ -2093,7 +2128,8 @@ async function askZaneRecon(){
   box.innerHTML='<div class="card"><em style="color:var(--text-muted);">Zane is reviewing the reconciliation...</em></div>';
   if(btn){btn.disabled=true;btn.textContent='Asking Zane...';}
   try{
-    var r=await fetch('/api/banking/reconcile-explain',{method:'POST',headers:{'Content-Type':'application/json'},body:'{}'});
+    var _sj=window.RECON_STMT||{open:null,close:null};
+    var r=await fetch('/api/banking/reconcile-explain',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({stmt_open:_sj.open,stmt_close:_sj.close})});
     var d=await r.json();
     if(d.success){box.innerHTML='<div class="card"><h3 style="margin:0 0 8px 0;">Zane explains</h3><p style="margin:0;white-space:pre-wrap;line-height:1.5;">'+escapeHtmlRecon(d.explanation)+'</p></div>';}
     else{box.innerHTML='<div class="card"><em style="color:var(--red);">Zane could not explain right now: '+escapeHtmlRecon(d.error||'unavailable')+'</em></div>';}
@@ -2102,7 +2138,24 @@ async function askZaneRecon(){
 }
 function escapeHtmlRecon(s){return (s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');}
 </script>"""
-        content = header + cards + breakdown + _zane_box + opening_section + unalloc_section + gl_only_section + _zane_script
+        _so_val = ("%.2f" % _stmt_open_in) if _stmt_open_in is not None else ""
+        _sc_val = ("%.2f" % _stmt_close_in) if _stmt_close_in is not None else ""
+        _stmt_form = (
+            '<div class="card" style="margin-bottom:16px;">'
+            '<form method="GET" action="/banking/reconcile" style="display:flex;gap:12px;align-items:flex-end;flex-wrap:wrap;">'
+            '<div><label style="display:block;font-size:12px;color:var(--text-muted);margin-bottom:4px;">Statement opening balance</label>'
+            '<input type="text" name="stmt_open" value="' + _so_val + '" placeholder="optional" style="padding:8px;border-radius:6px;border:1px solid var(--border);background:var(--card);color:var(--text);width:170px;"></div>'
+            '<div><label style="display:block;font-size:12px;color:var(--text-muted);margin-bottom:4px;">Statement closing balance</label>'
+            '<input type="text" name="stmt_close" value="' + _sc_val + '" placeholder="e.g. -825523.81" style="padding:8px;border-radius:6px;border:1px solid var(--border);background:var(--card);color:var(--text);width:180px;"></div>'
+            '<button type="submit" class="btn btn-primary">Apply</button>'
+            '<a href="/banking/reconcile" class="btn btn-secondary">Clear</a>'
+            '</form>'
+            '<p style="margin:8px 0 0 0;font-size:12px;color:var(--text-muted);">For bank formats without a per-line running balance, enter the closing balance from your statement (use a minus sign for an overdraft). Leave blank to use the imported balance.</p>'
+            '</div>')
+        _stmt_js = ('<script>window.RECON_STMT={open:%s,close:%s};</script>'
+                    % (("%.2f" % _stmt_open_in) if _stmt_open_in is not None else "null",
+                       ("%.2f" % _stmt_close_in) if _stmt_close_in is not None else "null"))
+        content = header + _stmt_form + cards + breakdown + _zane_box + opening_section + unalloc_section + gl_only_section + _stmt_js + _zane_script
         return render_page("Bank Reconciliation", content, user, "banking")
 
     @app.route("/api/banking/reconcile-explain", methods=["POST"])
@@ -2117,7 +2170,13 @@ function escapeHtmlRecon(s){return (s||'').replace(/&/g,'&amp;').replace(/</g,'&
             return jsonify({"success": False, "error": "No business"})
 
         try:
-            R = _compute_recon(biz_id)
+            _body = request.get_json(silent=True) or {}
+            def _pf(v):
+                try:
+                    return float(v) if v is not None and str(v).strip() != "" else None
+                except Exception:
+                    return None
+            R = _compute_recon(biz_id, _pf(_body.get("stmt_open")), _pf(_body.get("stmt_close")))
             cur = business.get("currency", "R") if business else "R"
 
             def _m(v):
