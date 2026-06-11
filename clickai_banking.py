@@ -1997,6 +1997,55 @@ def register_banking_routes(app, db, login_required, Auth, render_page,
         duplicates.sort(key=lambda d: abs(d["excess"]), reverse=True)
         dup_excess_total = round(sum(abs(d["excess"]) for d in duplicates), 2)
 
+        # Possible over-reversals: the SAME original posting reversed more than once.
+        # The duplicate check above only catches an identical reference repeated; it misses
+        # the case where one original (e.g. BNK-xxxx) was reversed twice under DIFFERENT
+        # REV- references (REV-...-2f48a9 and REV-...-e63b9e). Resolve each REV- journal back
+        # to the real original it reverses (anchored to a known reference, so suffixes
+        # collapse to the same original), then flag any original carrying 2+ reversals.
+        _known_refs = set()
+        for _t in txns:
+            _kr = str(_t.get("reference", "") or "").strip()
+            if _kr:
+                _known_refs.add(_kr)
+        for _j in move_journals:
+            _kr = str(_j.get("reference", "") or "").strip()
+            if _kr and not _kr.upper().startswith("REV-"):
+                _known_refs.add(_kr)
+
+        def _reversal_target(_ref):
+            _base = _ref[4:] if _ref[:4].upper() == "REV-" else _ref
+            if _base in _known_refs:
+                return _base
+            _parts = _base.split("-")
+            while len(_parts) > 1:
+                _parts = _parts[:-1]
+                _cand = "-".join(_parts)
+                if _cand in _known_refs:
+                    return _cand
+            return _base
+
+        _rev_by_target = _dd_dup(list)
+        for _j in move_journals:
+            _ref = str(_j.get("reference", "") or "").strip()
+            if _ref and _ref.upper().startswith("REV-"):
+                _tgt = _reversal_target(_ref)
+                _ramt = round(abs(_f(_j.get("debit")) - _f(_j.get("credit"))), 2)
+                _rev_by_target[(_tgt, _ramt)].append(_j)
+        over_reversals = []
+        for (_tgt, _ramt), _grp in _rev_by_target.items():
+            if len(_grp) >= 2:
+                over_reversals.append({
+                    "reference": _tgt,
+                    "description": str(_grp[0].get("description", "") or ""),
+                    "date": str(_grp[0].get("date", "") or "")[:10],
+                    "count": len(_grp),
+                    "amount": _ramt,
+                    "excess": round(_ramt * (len(_grp) - 1), 2),
+                })
+        over_reversals.sort(key=lambda d: abs(d["excess"]), reverse=True)
+        over_rev_total = round(sum(abs(d["excess"]) for d in over_reversals), 2)
+
         return {
             "bank_code": bank_code, "have_bank_balance": have_bank_balance,
             "stmt_entered": stmt_close is not None,
@@ -2006,6 +2055,7 @@ def register_banking_routes(app, db, login_required, Auth, render_page,
             "unalloc_net": unalloc_net, "residual": residual,
             "unalloc": unalloc, "gl_only": gl_only, "misplaced": misplaced,
             "duplicates": duplicates, "dup_excess_total": dup_excess_total,
+            "over_reversals": over_reversals, "over_rev_total": over_rev_total,
             "txns": txns,
         }
 
@@ -2049,6 +2099,8 @@ def register_banking_routes(app, db, login_required, Auth, render_page,
         misplaced = R["misplaced"]
         duplicates = R["duplicates"]
         dup_excess_total = R["dup_excess_total"]
+        over_reversals = R["over_reversals"]
+        over_rev_total = R["over_rev_total"]
         bank_txns = R["txns"]
 
         def _f(v):
@@ -2171,15 +2223,50 @@ def register_banking_routes(app, db, login_required, Auth, render_page,
                        'Each extra copy is likely a double-up &mdash; review and reverse the duplicates. "Excess" is the doubled-up value (each &times; extra copies).</p>'
                        f'{dup_body}</details>')
 
+        # 5. Possible over-reversals (the same original reversed more than once)
+        if over_reversals:
+            _or = "".join(
+                f'<tr><td style="white-space:nowrap;">{safe_string(d.get("date","-"))}</td>'
+                f'<td>{safe_string(d.get("description","-"))}</td>'
+                f'<td>{safe_string(d.get("reference","-"))}</td>'
+                f'<td style="text-align:center;font-variant-numeric:tabular-nums;">{d.get("count",0)}&times;</td>'
+                f'<td style="text-align:right;font-variant-numeric:tabular-nums;">{money(abs(_f(d.get("amount"))))}</td>'
+                f'<td style="text-align:right;color:var(--red);font-variant-numeric:tabular-nums;">{money(abs(_f(d.get("excess"))))}</td></tr>'
+                for d in over_reversals[:200])
+            _omore = f'<p style="font-size:12px;color:var(--text-muted);">Showing first 200 of {len(over_reversals)}.</p>' if len(over_reversals) > 200 else ""
+            over_rev_body = ('<table style="width:100%;font-size:13px;margin-top:8px;"><thead><tr>'
+                             '<th style="text-align:left;">Date</th><th style="text-align:left;">Description</th><th style="text-align:left;">Original ref</th>'
+                             '<th style="text-align:center;">Reversals</th><th style="text-align:right;">Each</th><th style="text-align:right;">Excess</th></tr></thead>'
+                             f'<tbody>{_or}</tbody></table>{_omore}')
+        else:
+            over_rev_body = '<p style="color:var(--text-muted);font-size:13px;margin-top:8px;">No original is reversed more than once on the bank account.</p>'
+        over_rev_section = (f'<details class="card" style="margin-bottom:14px;" {"open" if over_reversals else ""}>'
+                            f'<summary style="cursor:pointer;font-weight:600;">5. Possible over-reversals &mdash; {len(over_reversals)} (excess {money(over_rev_total)})</summary>'
+                            '<p style="margin:8px 0 0 0;color:var(--text-muted);font-size:13px;">The same original posting was reversed more than once (including via different REV- references that section 4 cannot see). '
+                            'The first reversal cancels the original; each extra reversal over-corrects. "Excess" is the over-reversed value (each &times; extra reversals).</p>'
+                            f'{over_rev_body}</details>')
+
         # Imported bank statement with running balance (the source data, for verification)
         if bank_txns:
+            # Per-line running balance. Use the bank's own balance when a line carries
+            # one; otherwise reconstruct it forward from the opening so formats without a
+            # per-line balance (e.g. Standard Bank) still show a running balance, not "—".
+            _eff_bals = []
+            _run = bank_opening
+            for _t in bank_txns:
+                _stored = _t.get("balance")
+                if _stored not in (None, ""):
+                    _run = _f(_stored)
+                else:
+                    _run = _run + _f(_t.get("credit")) - _f(_t.get("debit"))
+                _eff_bals.append(_run)
             _sr = "".join(
                 f'<tr><td style="white-space:nowrap;">{safe_string(str(t.get("date","-"))[:10])}</td>'
                 f'<td>{safe_string(t.get("description","-"))}</td>'
                 f'<td style="text-align:right;color:var(--red);font-variant-numeric:tabular-nums;">{money(_f(t.get("debit"))) if _f(t.get("debit")) > 0 else ""}</td>'
                 f'<td style="text-align:right;color:var(--green);font-variant-numeric:tabular-nums;">{money(_f(t.get("credit"))) if _f(t.get("credit")) > 0 else ""}</td>'
-                f'<td style="text-align:right;font-variant-numeric:tabular-nums;">{money(_f(t.get("balance"))) if t.get("balance") not in (None, "") else "&mdash;"}</td></tr>'
-                for t in bank_txns[:500])
+                f'<td style="text-align:right;font-variant-numeric:tabular-nums;">{money(_eb)}</td></tr>'
+                for t, _eb in zip(bank_txns[:500], _eff_bals[:500]))
             _smore = f'<p style="font-size:12px;color:var(--text-muted);">Showing first 500 of {len(bank_txns)}.</p>' if len(bank_txns) > 500 else ""
             stmt_body = ('<table style="width:100%;font-size:13px;margin-top:8px;"><thead><tr>'
                          '<th style="text-align:left;">Date</th><th style="text-align:left;">Description</th>'
@@ -2187,9 +2274,10 @@ def register_banking_routes(app, db, login_required, Auth, render_page,
                          '<th style="text-align:right;">Balance</th></tr></thead>'
                          f'<tbody>{_sr}</tbody></table>{_smore}')
             _has_rb = any(t.get("balance") not in (None, "") for t in bank_txns)
-            _rb_note = (f'Running balance reconstructed from the statement opening — opening {money(bank_opening)}, closing {money(bank_closing)}.'
+            _recon_close = _eff_bals[-1] if _eff_bals else bank_opening
+            _rb_note = (f'Running balance from the imported statement — opening {money(bank_opening)}, closing {money(bank_closing)}.'
                         if _has_rb else
-                        'No running balance was imported for these lines. Enter the statement closing balance above, or re-import a format that carries the opening/closing balance.')
+                        f'No per-line balance was imported, so the running balance is reconstructed forward from the opening {money(bank_opening)} (closing {money(_recon_close)}). Enter the statement opening/closing balance above to anchor it to your real statement.')
         else:
             stmt_body = '<p style="color:var(--text-muted);font-size:13px;margin-top:8px;">No bank transactions imported yet.</p>'
             _rb_note = ""
@@ -2242,7 +2330,7 @@ function escapeHtmlRecon(s){return (s||'').replace(/&/g,'&amp;').replace(/</g,'&
         _stmt_js = ('<script>window.RECON_STMT={open:%s,close:%s};</script>'
                     % (("%.2f" % _stmt_open_in) if _stmt_open_in is not None else "null",
                        ("%.2f" % _stmt_close_in) if _stmt_close_in is not None else "null"))
-        content = header + _stmt_form + cards + breakdown + _zane_box + opening_section + unalloc_section + gl_only_section + dup_section + stmt_section + _stmt_js + _zane_script
+        content = header + _stmt_form + cards + breakdown + _zane_box + opening_section + unalloc_section + gl_only_section + dup_section + over_rev_section + stmt_section + _stmt_js + _zane_script
         return render_page("Bank Reconciliation", content, user, "banking")
 
     @app.route("/api/banking/reconcile-explain", methods=["POST"])
