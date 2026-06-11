@@ -2541,8 +2541,8 @@ async function repairOrphans(){
             comps.append(("opening", "the opening balance gap", R["opening_gap"]))
         if R["unalloc"]:
             comps.append(("unalloc", f"{len(R['unalloc'])} unallocated statement line(s)", R["unalloc_net"]))
-        if R["gl_only"]:
-            comps.append(("gl_only", f"{len(R['gl_only'])} GL posting(s) with no statement line", R["residual"]))
+        if abs(R["residual"]) >= 1:
+            comps.append(("residual", "an unexplained remainder still to be traced to specific items", R["residual"]))
         if R["duplicates"]:
             comps.append(("dup", f"{len(R['duplicates'])} duplicate posting(s)", R["dup_excess_total"]))
         if R.get("over_reversals"):
@@ -2558,7 +2558,7 @@ async function repairOrphans(){
         fixes = {
             "opening": f"move {_m(biggest[2])} so the GL opening on code {R['bank_code']} matches the bank — the opening must sit in only one place",
             "unalloc": "allocate those statement lines on the Banking page (Ask Zane)",
-            "gl_only": "check those GL postings for card sales sitting on the bank code and for double-ups, and reverse any duplicates",
+            "residual": "trace the remainder to specific items — list the unmatched GL postings on the bank code and any statement lines not yet booked, then allocate or correct them",
             "dup": "reverse the extra duplicate copies",
             "over_rev": "reverse the extra over-reversals",
         }

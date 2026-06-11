@@ -9232,7 +9232,7 @@ class ZaneToolHandler:
                 "over_reversal_value": R["over_rev_total"],
             },
             "explanation": text,
-            "note": "These figures are computed deterministically by the reconciliation engine. Relay the explanation and figures exactly — do not invent, round, or change any number.",
+            "note": "These figures are computed deterministically by the reconciliation engine. Relay the explanation and figures exactly. Do NOT add causes, percentages, step-by-step guesses, or links between items that are not stated here — report only what is in this result.",
         }
 
     def _tool_get_scan_queue(self, params: dict) -> dict:
@@ -10312,6 +10312,9 @@ When in doubt about what the user wants:
 - If they mention money/payment → get_debtors or get_creditors
 - If they ask how to do something → get_accounting_help THEN give step-by-step
 - Call MULTIPLE tools for complex questions. Don't be lazy.
+
+### RULE 6: REPORT TOOL FIGURES EXACTLY — NEVER DRESS THEM UP
+When a tool returns figures (especially explain_bank_reconciliation), report ONLY what the tool gives you: the numbers and the tool's own explanation. Do NOT invent causes ("probably POS card sales"), percentages ("97% of the problem"), or links between items that the tool did not state. If the tool calls something an "unexplained remainder still to be traced to specific items", say exactly that — do not guess what it is. Being detailed is good, but every figure and every claim must come straight from the tool result, never from you.
 
 ## BUSINESS CONTEXT (basic stats only — for DETAILED info, you MUST use tools)
 - Business: {biz_name} ({biz_type})
