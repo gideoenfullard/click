@@ -2059,6 +2059,144 @@ def register_banking_routes(app, db, login_required, Auth, render_page,
             "txns": txns,
         }
 
+    def _find_orphaned_bank_allocations(biz_id):
+        """Find bank-allocation records (references BNK-<id[:8]> or REV-BNK-<id[:8]>)
+        whose source bank_transaction no longer exists — e.g. left behind when a
+        statement was deleted and re-imported. Deterministic: a record is orphaned
+        only when no bank_transaction id starts with the reference's prefix, never by
+        amount. Returns the ids to delete per table plus the customer/supplier invoices
+        whose paid status must be reset (their backing receipt/payment is being removed)."""
+        txns = db.get("bank_transactions", {"business_id": biz_id}) or []
+        live_prefixes = {str(t.get("id", ""))[:8] for t in txns if t.get("id")}
+
+        def _prefix(ref):
+            r = str(ref or "").strip()
+            up = r.upper()
+            if up.startswith("REV-BNK-"):
+                rest = r[8:]
+            elif up.startswith("BNK-"):
+                rest = r[4:]
+            else:
+                return None
+            return rest.split("-")[0][:8] if rest else None
+
+        def _is_orphan_ref(ref):
+            p = _prefix(ref)
+            return bool(p) and p not in live_prefixes
+
+        journals = db.get("journals", {"business_id": biz_id}) or []
+        receipts = db.get("receipts", {"business_id": biz_id}) or []
+        supplier_payments = db.get("supplier_payments", {"business_id": biz_id}) or []
+        alloc_log = db.get("allocation_log", {"business_id": biz_id}) or []
+
+        orphan_journal_ids = [j["id"] for j in journals if j.get("id") and _is_orphan_ref(j.get("reference"))]
+        orphan_receipt_ids = [r["id"] for r in receipts if r.get("id") and _is_orphan_ref(r.get("reference"))]
+        orphan_sp_ids = [s["id"] for s in supplier_payments if s.get("id") and _is_orphan_ref(s.get("reference"))]
+        orphan_log_ids = [a["id"] for a in alloc_log if a.get("id") and _is_orphan_ref(a.get("reference"))]
+
+        # Supplier invoices carry the BNK- ref in payment_reference — a precise link.
+        supplier_invoices = db.get("supplier_invoices", {"business_id": biz_id}) or []
+        reset_sinv = [s for s in supplier_invoices
+                      if s.get("id") and str(s.get("status", "")).lower() == "paid"
+                      and _is_orphan_ref(s.get("payment_reference"))]
+
+        # Customer invoices have no BNK- ref — link via paid_via + a backing receipt
+        # (customer_id + amount). Reset a banking-paid invoice only when NO surviving
+        # (non-orphaned) receipt still backs it. Precise, and safe for partial repairs.
+        live_receipt_keys = set()
+        for r in receipts:
+            if r.get("id") and not _is_orphan_ref(r.get("reference")):
+                try:
+                    live_receipt_keys.add((str(r.get("customer_id", "")), round(float(r.get("amount", 0) or 0), 2)))
+                except Exception:
+                    pass
+        reset_inv = []
+        for inv in (db.get("invoices", {"business_id": biz_id}) or []):
+            if str(inv.get("paid_via", "")) != "banking_recon":
+                continue
+            if str(inv.get("status", "")).lower() != "paid":
+                continue
+            try:
+                key = (str(inv.get("customer_id", "")), round(float(inv.get("paid_amount", 0) or 0), 2))
+            except Exception:
+                key = (str(inv.get("customer_id", "")), 0.0)
+            if key not in live_receipt_keys:
+                reset_inv.append(inv)
+
+        return {
+            "journal_ids": orphan_journal_ids,
+            "receipt_ids": orphan_receipt_ids,
+            "supplier_payment_ids": orphan_sp_ids,
+            "log_ids": orphan_log_ids,
+            "reset_invoices": reset_inv,
+            "reset_supplier_invoices": reset_sinv,
+        }
+
+    @app.route("/api/banking/repair-orphaned-allocations", methods=["POST"])
+    @login_required
+    def banking_repair_orphaned():
+        """Preview or execute removal of orphaned bank-allocation records (references whose
+        source bank_transaction was deleted, e.g. after a re-import). Deletes the
+        journals/receipts/supplier_payments/allocation_log and resets the paid status on the
+        invoices those allocations had marked paid. Re-allocating the clean bank lines
+        afterwards rebuilds everything correctly. mode='preview' only reports counts;
+        mode='execute' (with confirm=true) performs the change."""
+        try:
+            business = Auth.get_current_business()
+            biz_id = business.get("id") if business else None
+            if not biz_id:
+                return jsonify({"success": False, "error": "No business selected"})
+            data = request.get_json(silent=True) or {}
+            mode = (data.get("mode") or "preview").strip()
+            found = _find_orphaned_bank_allocations(biz_id)
+            counts = {
+                "journals": len(found["journal_ids"]),
+                "receipts": len(found["receipt_ids"]),
+                "supplier_payments": len(found["supplier_payment_ids"]),
+                "allocation_log": len(found["log_ids"]),
+                "invoices_reset": len(found["reset_invoices"]),
+                "supplier_invoices_reset": len(found["reset_supplier_invoices"]),
+            }
+            total = sum(counts.values())
+            if mode != "execute":
+                return jsonify({"success": True, "mode": "preview", "counts": counts, "total": total})
+            if not data.get("confirm"):
+                return jsonify({"success": False, "error": "Confirmation required"})
+
+            deleted = {}
+            for _tbl, _ids in (("journals", found["journal_ids"]),
+                               ("receipts", found["receipt_ids"]),
+                               ("supplier_payments", found["supplier_payment_ids"]),
+                               ("allocation_log", found["log_ids"])):
+                if _ids:
+                    _s, _f = db.delete_many(_tbl, _ids, business_id=biz_id)
+                    deleted[_tbl] = _s
+
+            inv_reset = 0
+            for inv in found["reset_invoices"]:
+                try:
+                    db.update("invoices", inv["id"],
+                              {"status": "outstanding", "paid_date": "", "paid_amount": 0, "paid_via": ""}, biz_id)
+                    inv_reset += 1
+                except Exception as _e:
+                    logger.warning(f"[REPAIR] invoice reset failed {inv.get('id')}: {_e}")
+            sinv_reset = 0
+            for sinv in found["reset_supplier_invoices"]:
+                try:
+                    db.update("supplier_invoices", sinv["id"],
+                              {"status": "outstanding", "paid_date": "", "paid_amount": 0, "payment_reference": ""}, biz_id)
+                    sinv_reset += 1
+                except Exception as _e:
+                    logger.warning(f"[REPAIR] supplier invoice reset failed {sinv.get('id')}: {_e}")
+
+            logger.info(f"[REPAIR] biz {biz_id}: deleted {deleted}, reset {inv_reset} invoices, {sinv_reset} supplier invoices")
+            return jsonify({"success": True, "mode": "execute",
+                            "deleted": deleted, "invoices_reset": inv_reset,
+                            "supplier_invoices_reset": sinv_reset})
+        except Exception as e:
+            logger.error(f"[REPAIR] failed: {e}")
+            return jsonify({"success": False, "error": str(e)})
+
     @app.route("/banking/reconcile")
     @login_required
     def banking_reconcile():
@@ -2330,7 +2468,59 @@ function escapeHtmlRecon(s){return (s||'').replace(/&/g,'&amp;').replace(/</g,'&
         _stmt_js = ('<script>window.RECON_STMT={open:%s,close:%s};</script>'
                     % (("%.2f" % _stmt_open_in) if _stmt_open_in is not None else "null",
                        ("%.2f" % _stmt_close_in) if _stmt_close_in is not None else "null"))
-        content = header + _stmt_form + cards + breakdown + _zane_box + opening_section + unalloc_section + gl_only_section + dup_section + over_rev_section + stmt_section + _stmt_js + _zane_script
+        repair_section = (
+            '<details class="card" style="margin-bottom:14px;">'
+            '<summary style="cursor:pointer;font-weight:600;">Reconciliation repair &mdash; remove orphaned allocations</summary>'
+            '<p style="margin:8px 0 0 0;color:var(--text-muted);font-size:13px;">'
+            'If a statement was re-imported, the earlier allocations can be left orphaned in the GL '
+            '(postings with no matching bank line). Scan to find them, review the counts, then repair. '
+            'This removes the orphaned postings and resets the invoices they had marked paid, so you can '
+            're-allocate the clean statement cleanly. Nothing changes until you confirm.</p>'
+            '<div style="margin-top:10px;"><button id="orphanScanBtn" class="btn btn-secondary" onclick="scanOrphans()">Scan for orphaned allocations</button></div>'
+            '<div id="orphanResult" style="margin-top:10px;"></div>'
+            '</details>')
+        _repair_script = """<script>
+async function scanOrphans(){
+  var btn=document.getElementById('orphanScanBtn');
+  var box=document.getElementById('orphanResult');
+  if(btn){btn.disabled=true;btn.textContent='Scanning...';}
+  box.innerHTML='<em style="color:var(--text-muted);">Scanning...</em>';
+  try{
+    var r=await fetch('/api/banking/repair-orphaned-allocations',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({mode:'preview'})});
+    var d=await r.json();
+    if(!d.success){box.innerHTML='<em style="color:var(--red);">'+(d.error||'Scan failed')+'</em>';}
+    else if(d.total===0){box.innerHTML='<p style="color:var(--green);font-size:13px;margin:0;">No orphaned allocations found &mdash; nothing to repair.</p>';}
+    else{
+      var c=d.counts;
+      box.innerHTML='<table style="width:100%;font-size:13px;"><tbody>'+
+        '<tr><td>Journal postings</td><td style="text-align:right;">'+c.journals+'</td></tr>'+
+        '<tr><td>Customer receipts</td><td style="text-align:right;">'+c.receipts+'</td></tr>'+
+        '<tr><td>Supplier payments</td><td style="text-align:right;">'+c.supplier_payments+'</td></tr>'+
+        '<tr><td>Allocation-log entries</td><td style="text-align:right;">'+c.allocation_log+'</td></tr>'+
+        '<tr><td>Invoices reset to outstanding</td><td style="text-align:right;">'+c.invoices_reset+'</td></tr>'+
+        '<tr><td>Supplier invoices reset</td><td style="text-align:right;">'+c.supplier_invoices_reset+'</td></tr>'+
+        '</tbody></table>'+
+        '<button class="btn btn-primary" style="margin-top:10px;" onclick="repairOrphans()">Repair now</button>';
+    }
+  }catch(e){box.innerHTML='<em style="color:var(--red);">Could not scan.</em>';}
+  if(btn){btn.disabled=false;btn.textContent='Scan for orphaned allocations';}
+}
+async function repairOrphans(){
+  if(!confirm('Remove the orphaned allocations and reset the affected invoices? This cannot be undone. Re-allocate the clean statement afterwards.'))return;
+  var box=document.getElementById('orphanResult');
+  box.innerHTML='<em style="color:var(--text-muted);">Repairing...</em>';
+  try{
+    var r=await fetch('/api/banking/repair-orphaned-allocations',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({mode:'execute',confirm:true})});
+    var d=await r.json();
+    if(!d.success){box.innerHTML='<em style="color:var(--red);">'+(d.error||'Repair failed')+'</em>';}
+    else{
+      var del=d.deleted||{};
+      box.innerHTML='<p style="color:var(--green);font-size:13px;">Repair done. Deleted: journals '+(del.journals||0)+', receipts '+(del.receipts||0)+', supplier payments '+(del.supplier_payments||0)+', log '+(del.allocation_log||0)+'. Reset '+(d.invoices_reset||0)+' invoices, '+(d.supplier_invoices_reset||0)+' supplier invoices. Re-allocate the clean statement, then reload this page.</p>';
+    }
+  }catch(e){box.innerHTML='<em style="color:var(--red);">Could not complete the repair.</em>';}
+}
+</script>"""
+        content = header + _stmt_form + cards + breakdown + repair_section + _zane_box + opening_section + unalloc_section + gl_only_section + dup_section + over_rev_section + stmt_section + _stmt_js + _zane_script + _repair_script
         return render_page("Bank Reconciliation", content, user, "banking")
 
     @app.route("/api/banking/reconcile-explain", methods=["POST"])
