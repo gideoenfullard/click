@@ -6404,6 +6404,16 @@ ZANE_TOOLS = [
                 "limit": {"type": "integer", "description": "Max activities to return (default 100, max 500)", "default": 100}
             }
         }
+    },
+    {
+        "name": "explain_bank_reconciliation",
+        "description": "Explain the bank reconciliation difference in plain language and name the single most important fix. Use whenever the user asks where a difference is, why the bank does not balance, 'where is that money', 'where is the R40k', 'why doesn't my bank match the books', 'reconcile my bank', or what makes up the gap between the bank statement and the GL bank account. Returns the bank statement balance, the GL bank balance, the exact difference, a breakdown of every part (opening gap, unallocated statement lines, GL-only postings, duplicates, over-reversals) and a ready-made plain-language explanation. All figures are computed deterministically by the reconciliation engine — relay them exactly and never invent or change a number.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "statement_closing_balance": {"type": "number", "description": "Optional. The closing balance from the bank statement (use a negative number for an overdraft). Provide this only if the user states it; otherwise the imported balance is used."}
+            }
+        }
     }
 ]
 
@@ -9184,6 +9194,46 @@ class ZaneToolHandler:
                             "id": je.get("id")})
         results.sort(key=lambda x: x["date"] or "", reverse=True)
         return {"total_matches": len(results), "journal_entries": results[:limit]}
+
+    def _tool_explain_bank_reconciliation(self, params: dict) -> dict:
+        """Run the deterministic reconciliation engine (the same one behind the
+        Banking page) and return the difference, its full breakdown, and a ready-made
+        plain-language explanation. No logic is duplicated here — it calls the engine
+        registered by the banking module."""
+        try:
+            import clickai_banking as _bank
+        except Exception:
+            return {"error": "Reconciliation engine not available."}
+        compute = getattr(_bank, "_RECON_COMPUTE", None)
+        explain = getattr(_bank, "_RECON_EXPLAIN", None)
+        if not compute or not explain:
+            return {"error": "Reconciliation engine not loaded yet."}
+        _sc = params.get("statement_closing_balance", None)
+        try:
+            _sc = float(_sc) if _sc is not None and str(_sc).strip() != "" else None
+        except Exception:
+            _sc = None
+        R = compute(self.biz_id, None, _sc)
+        text = explain(R, money)
+        return {
+            "bank_statement_balance": R["bank_closing"],
+            "gl_bank_balance": R["gl_balance"],
+            "bank_code": R["bank_code"],
+            "difference": R["difference"],
+            "breakdown": {
+                "opening_gap": R["opening_gap"],
+                "unallocated_statement_lines": len(R["unalloc"]),
+                "unallocated_net": R["unalloc_net"],
+                "gl_only_postings": len(R["gl_only"]),
+                "residual": R["residual"],
+                "duplicate_references": len(R["duplicates"]),
+                "duplicate_excess": R["dup_excess_total"],
+                "over_reversals": len(R["over_reversals"]),
+                "over_reversal_value": R["over_rev_total"],
+            },
+            "explanation": text,
+            "note": "These figures are computed deterministically by the reconciliation engine. Relay the explanation and figures exactly — do not invent, round, or change any number.",
+        }
 
     def _tool_get_scan_queue(self, params: dict) -> dict:
         status_filter = params.get("status", "")

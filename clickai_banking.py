@@ -92,6 +92,14 @@ def _direction_safe_pattern_category(category, desc_upper, is_credit, extra_expe
     return category, False
 
 
+# Module-level holders for the reconciliation engine, registered when the banking
+# routes load. This lets other modules (e.g. Zane in clickai.py) ask for the
+# reconciliation difference + plain-language explanation using the exact same
+# deterministic engine, without duplicating any logic.
+_RECON_COMPUTE = None
+_RECON_EXPLAIN = None
+
+
 def register_banking_routes(app, db, login_required, Auth, render_page,
                             generate_id, money, safe_string, now, today,
                             gl, create_journal_entry, log_allocation,
@@ -2523,6 +2531,45 @@ async function repairOrphans(){
         content = header + _stmt_form + cards + breakdown + repair_section + _zane_box + opening_section + unalloc_section + gl_only_section + dup_section + over_rev_section + stmt_section + _stmt_js + _zane_script + _repair_script
         return render_page("Bank Reconciliation", content, user, "banking")
 
+    def _recon_plain_explanation(R, _m):
+        """Fully deterministic plain-language explanation of the reconciliation
+        difference and the single most important fix, built only from the engine's
+        computed figures. Always available, even with no AI — the reliable answer
+        behind 'Ask Zane to explain'."""
+        comps = []  # (kind, label, amount)
+        if abs(R["opening_gap"]) >= 1:
+            comps.append(("opening", "the opening balance gap", R["opening_gap"]))
+        if R["unalloc"]:
+            comps.append(("unalloc", f"{len(R['unalloc'])} unallocated statement line(s)", R["unalloc_net"]))
+        if R["gl_only"]:
+            comps.append(("gl_only", f"{len(R['gl_only'])} GL posting(s) with no statement line", R["residual"]))
+        if R["duplicates"]:
+            comps.append(("dup", f"{len(R['duplicates'])} duplicate posting(s)", R["dup_excess_total"]))
+        if R.get("over_reversals"):
+            comps.append(("over_rev", f"{len(R['over_reversals'])} over-reversal(s)", R["over_rev_total"]))
+
+        head = (f"The bank statement shows {_m(R['bank_closing'])} and the books (GL code {R['bank_code']}) "
+                f"show {_m(R['gl_balance'])} — a difference of {_m(R['difference'])}.")
+        if not comps:
+            return head + " Every rand is accounted for; there is nothing outstanding to fix."
+
+        breakdown = " It is made up of " + "; ".join(f"{label} ({_m(amt)})" for (_k, label, amt) in comps) + "."
+        biggest = max(comps, key=lambda c: abs(c[2]))
+        fixes = {
+            "opening": f"move {_m(biggest[2])} so the GL opening on code {R['bank_code']} matches the bank — the opening must sit in only one place",
+            "unalloc": "allocate those statement lines on the Banking page (Ask Zane)",
+            "gl_only": "check those GL postings for card sales sitting on the bank code and for double-ups, and reverse any duplicates",
+            "dup": "reverse the extra duplicate copies",
+            "over_rev": "reverse the extra over-reversals",
+        }
+        fix = fixes.get(biggest[0], "allocate or correct the items above")
+        return head + breakdown + f" The biggest part is {biggest[1]} ({_m(biggest[2])}); to close the gap, {fix}."
+
+    # Expose the deterministic engine to other modules (e.g. Zane chat in clickai.py).
+    global _RECON_COMPUTE, _RECON_EXPLAIN
+    _RECON_COMPUTE = _compute_recon
+    _RECON_EXPLAIN = _recon_plain_explanation
+
     @app.route("/api/banking/reconcile-explain", methods=["POST"])
     @login_required
     def api_banking_reconcile_explain():
@@ -2534,6 +2581,7 @@ async function repairOrphans(){
         if not biz_id:
             return jsonify({"success": False, "error": "No business"})
 
+        _det = None
         try:
             _body = request.get_json(silent=True) or {}
             def _pf(v):
@@ -2549,6 +2597,9 @@ async function repairOrphans(){
                     return money(v)
                 except Exception:
                     return f"{cur}{float(v or 0):,.2f}"
+
+            # Deterministic answer — always available, even if the AI is down.
+            _det = _recon_plain_explanation(R, _m)
 
             misplaced_txt = ""
             for _a, _ob in R["misplaced"]:
@@ -2572,7 +2623,8 @@ async function repairOrphans(){
                 + misplaced_txt + "\n"
                 f"- Unallocated statement lines (on the bank, not yet posted to the GL): {len(R['unalloc'])} transactions, net {_m(R['unalloc_net'])}.\n"
                 f"- Other GL bank postings with no statement line (possible duplicates or payments booked in Invoicing/Purchases): {len(R['gl_only'])} entries, residual {_m(R['residual'])}.\n"
-                f"- Possible duplicate postings (same reference booked more than once on the bank): {len(R['duplicates'])} references, doubled-up value {_m(R['dup_excess_total'])}.{dup_txt}\n\n"
+                f"- Possible duplicate postings (same reference booked more than once on the bank): {len(R['duplicates'])} references, doubled-up value {_m(R['dup_excess_total'])}.{dup_txt}\n"
+                f"- Possible over-reversals (an original reversed more than once): {len(R['over_reversals'])} originals, over-reversed value {_m(R['over_rev_total'])}.\n\n"
                 "Write a reply in plain English (UK/SA business English), no markdown, no headings, no bullet symbols, under 130 words, in two short paragraphs:\n"
                 "1) What the difference is made of, in money terms, naming the biggest contributor.\n"
                 "2) The single most important fix to do first, concrete and specific. If a misplaced opening balance explains most of it, say to move that amount from its code to code "
@@ -2582,7 +2634,7 @@ async function repairOrphans(){
 
             api_key = os.environ.get("ANTHROPIC_API_KEY", "")
             if not api_key:
-                return jsonify({"success": False, "error": "AI not configured"})
+                return jsonify({"success": True, "explanation": _det})
             resp = requests.post(
                 "https://api.anthropic.com/v1/messages",
                 headers={
@@ -2599,13 +2651,15 @@ async function repairOrphans(){
             )
             if resp.status_code != 200:
                 logger.error(f"[BANK RECON EXPLAIN] API error: {resp.status_code} — {resp.text[:300]}")
-                return jsonify({"success": False, "error": "AI unavailable"})
+                return jsonify({"success": True, "explanation": _det})
             ai_text = (resp.json().get("content", [{}])[0].get("text", "") or "").strip()
             if not ai_text:
-                return jsonify({"success": False, "error": "No response"})
+                return jsonify({"success": True, "explanation": _det})
             return jsonify({"success": True, "explanation": ai_text})
         except Exception as e:
             logger.error(f"[BANK RECON EXPLAIN] {e}")
+            if _det:
+                return jsonify({"success": True, "explanation": _det})
             return jsonify({"success": False, "error": "Could not build explanation"})
 
 
