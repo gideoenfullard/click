@@ -1972,6 +1972,31 @@ def register_banking_routes(app, db, login_required, Auth, render_page,
                 else:
                     gl_only.append(j)
 
+        # Possible duplicate bank postings: the SAME reference booked more than once on
+        # the bank account with the same amount (e.g. BNK-xxxx booked several times).
+        # References are unique transaction ids, so a repeat is almost always a double-up.
+        # Listed for review — the user decides what to reverse.
+        from collections import defaultdict as _dd_dup
+        _by_ref = _dd_dup(list)
+        for j in move_journals:
+            _ref = str(j.get("reference", "") or "").strip()
+            if _ref:
+                _ramt = round(_f(j.get("debit")) - _f(j.get("credit")), 2)
+                _by_ref[(_ref, _ramt)].append(j)
+        duplicates = []
+        for (_ref, _ramt), _grp in _by_ref.items():
+            if len(_grp) >= 2:
+                duplicates.append({
+                    "reference": _ref,
+                    "description": str(_grp[0].get("description", "") or ""),
+                    "date": str(_grp[0].get("date", "") or "")[:10],
+                    "count": len(_grp),
+                    "amount": _ramt,
+                    "excess": round(_ramt * (len(_grp) - 1), 2),
+                })
+        duplicates.sort(key=lambda d: abs(d["excess"]), reverse=True)
+        dup_excess_total = round(sum(abs(d["excess"]) for d in duplicates), 2)
+
         return {
             "bank_code": bank_code, "have_bank_balance": have_bank_balance,
             "stmt_entered": stmt_close is not None,
@@ -1980,6 +2005,8 @@ def register_banking_routes(app, db, login_required, Auth, render_page,
             "difference": difference, "opening_gap": opening_gap,
             "unalloc_net": unalloc_net, "residual": residual,
             "unalloc": unalloc, "gl_only": gl_only, "misplaced": misplaced,
+            "duplicates": duplicates, "dup_excess_total": dup_excess_total,
+            "txns": txns,
         }
 
     @app.route("/banking/reconcile")
@@ -2020,6 +2047,9 @@ def register_banking_routes(app, db, login_required, Auth, render_page,
         unalloc = R["unalloc"]
         gl_only = R["gl_only"]
         misplaced = R["misplaced"]
+        duplicates = R["duplicates"]
+        dup_excess_total = R["dup_excess_total"]
+        bank_txns = R["txns"]
 
         def _f(v):
             try:
@@ -2118,6 +2148,56 @@ def register_banking_routes(app, db, login_required, Auth, render_page,
                            'Usually payments booked in Invoicing/Purchases, manual journals, or duplicates &mdash; check these for double-ups.</p>'
                            f'{gl_only_body}</details>')
 
+        # 4. Possible duplicate postings (same reference booked more than once)
+        if duplicates:
+            _dr = "".join(
+                f'<tr><td style="white-space:nowrap;">{safe_string(d.get("date","-"))}</td>'
+                f'<td>{safe_string(d.get("description","-"))}</td>'
+                f'<td>{safe_string(d.get("reference","-"))}</td>'
+                f'<td style="text-align:center;font-variant-numeric:tabular-nums;">{d.get("count",0)}&times;</td>'
+                f'<td style="text-align:right;font-variant-numeric:tabular-nums;">{money(abs(_f(d.get("amount"))))}</td>'
+                f'<td style="text-align:right;color:var(--red);font-variant-numeric:tabular-nums;">{money(abs(_f(d.get("excess"))))}</td></tr>'
+                for d in duplicates[:200])
+            _dmore = f'<p style="font-size:12px;color:var(--text-muted);">Showing first 200 of {len(duplicates)}.</p>' if len(duplicates) > 200 else ""
+            dup_body = ('<table style="width:100%;font-size:13px;margin-top:8px;"><thead><tr>'
+                        '<th style="text-align:left;">Date</th><th style="text-align:left;">Description</th><th style="text-align:left;">Ref</th>'
+                        '<th style="text-align:center;">Times</th><th style="text-align:right;">Each</th><th style="text-align:right;">Excess</th></tr></thead>'
+                        f'<tbody>{_dr}</tbody></table>{_dmore}')
+        else:
+            dup_body = '<p style="color:var(--text-muted);font-size:13px;margin-top:8px;">No reference is booked more than once on the bank account.</p>'
+        dup_section = (f'<details class="card" style="margin-bottom:14px;" {"open" if duplicates else ""}>'
+                       f'<summary style="cursor:pointer;font-weight:600;">4. Possible duplicate postings &mdash; {len(duplicates)} (excess {money(dup_excess_total)})</summary>'
+                       '<p style="margin:8px 0 0 0;color:var(--text-muted);font-size:13px;">The same reference is booked more than once on the bank account. '
+                       'Each extra copy is likely a double-up &mdash; review and reverse the duplicates. "Excess" is the doubled-up value (each &times; extra copies).</p>'
+                       f'{dup_body}</details>')
+
+        # Imported bank statement with running balance (the source data, for verification)
+        if bank_txns:
+            _sr = "".join(
+                f'<tr><td style="white-space:nowrap;">{safe_string(str(t.get("date","-"))[:10])}</td>'
+                f'<td>{safe_string(t.get("description","-"))}</td>'
+                f'<td style="text-align:right;color:var(--red);font-variant-numeric:tabular-nums;">{money(_f(t.get("debit"))) if _f(t.get("debit")) > 0 else ""}</td>'
+                f'<td style="text-align:right;color:var(--green);font-variant-numeric:tabular-nums;">{money(_f(t.get("credit"))) if _f(t.get("credit")) > 0 else ""}</td>'
+                f'<td style="text-align:right;font-variant-numeric:tabular-nums;">{money(_f(t.get("balance"))) if t.get("balance") not in (None, "") else "&mdash;"}</td></tr>'
+                for t in bank_txns[:500])
+            _smore = f'<p style="font-size:12px;color:var(--text-muted);">Showing first 500 of {len(bank_txns)}.</p>' if len(bank_txns) > 500 else ""
+            stmt_body = ('<table style="width:100%;font-size:13px;margin-top:8px;"><thead><tr>'
+                         '<th style="text-align:left;">Date</th><th style="text-align:left;">Description</th>'
+                         '<th style="text-align:right;">Out</th><th style="text-align:right;">In</th>'
+                         '<th style="text-align:right;">Balance</th></tr></thead>'
+                         f'<tbody>{_sr}</tbody></table>{_smore}')
+            _has_rb = any(t.get("balance") not in (None, "") for t in bank_txns)
+            _rb_note = (f'Running balance reconstructed from the statement opening — opening {money(bank_opening)}, closing {money(bank_closing)}.'
+                        if _has_rb else
+                        'No running balance was imported for these lines. Enter the statement closing balance above, or re-import a format that carries the opening/closing balance.')
+        else:
+            stmt_body = '<p style="color:var(--text-muted);font-size:13px;margin-top:8px;">No bank transactions imported yet.</p>'
+            _rb_note = ""
+        stmt_section = ('<details class="card" style="margin-bottom:14px;">'
+                        f'<summary style="cursor:pointer;font-weight:600;">Imported bank statement (running balance) &mdash; {len(bank_txns)} lines &middot; closing {money(bank_closing)}</summary>'
+                        f'<p style="margin:8px 0 0 0;color:var(--text-muted);font-size:13px;">{_rb_note}</p>'
+                        f'{stmt_body}</details>')
+
         header = ('<div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px;margin-bottom:8px;">'
                   '<h2 style="margin:0;">Bank Reconciliation &mdash; Statement vs GL</h2>'
                   '<div style="display:flex;gap:8px;flex-wrap:wrap;">'
@@ -2162,7 +2242,7 @@ function escapeHtmlRecon(s){return (s||'').replace(/&/g,'&amp;').replace(/</g,'&
         _stmt_js = ('<script>window.RECON_STMT={open:%s,close:%s};</script>'
                     % (("%.2f" % _stmt_open_in) if _stmt_open_in is not None else "null",
                        ("%.2f" % _stmt_close_in) if _stmt_close_in is not None else "null"))
-        content = header + _stmt_form + cards + breakdown + _zane_box + opening_section + unalloc_section + gl_only_section + _stmt_js + _zane_script
+        content = header + _stmt_form + cards + breakdown + _zane_box + opening_section + unalloc_section + gl_only_section + dup_section + stmt_section + _stmt_js + _zane_script
         return render_page("Bank Reconciliation", content, user, "banking")
 
     @app.route("/api/banking/reconcile-explain", methods=["POST"])
@@ -2197,6 +2277,11 @@ function escapeHtmlRecon(s){return (s||'').replace(/&/g,'&amp;').replace(/</g,'&
                 misplaced_txt += (f"\n- Possible misplaced opening balance: {_m(_ob)} sits on code "
                                   f"{_a.get('account_code','')} ({_a.get('account_name','')}), not on the bank code {R['bank_code']}.")
 
+            dup_txt = ""
+            for _d in R["duplicates"][:3]:
+                dup_txt += (f"\n  - {_d['reference']} ({_d['description'][:40]}) booked {_d['count']} times, "
+                            f"doubled-up {_m(abs(_d['excess']))}.")
+
             prompt = (
                 "You are Zane, the bookkeeping assistant in ClickAI. A bank reconciliation has been run for "
                 + biz_name + ". The figures below were computed by the system — trust them exactly and do NOT invent "
@@ -2208,7 +2293,8 @@ function escapeHtmlRecon(s){return (s||'').replace(/&/g,'&amp;').replace(/</g,'&
                 f"- Opening balance gap: {_m(R['opening_gap'])} (bank opening {_m(R['bank_opening'])} vs GL opening {_m(R['gl_opening'])} on code {R['bank_code']})."
                 + misplaced_txt + "\n"
                 f"- Unallocated statement lines (on the bank, not yet posted to the GL): {len(R['unalloc'])} transactions, net {_m(R['unalloc_net'])}.\n"
-                f"- Other GL bank postings with no statement line (possible duplicates or payments booked in Invoicing/Purchases): {len(R['gl_only'])} entries, residual {_m(R['residual'])}.\n\n"
+                f"- Other GL bank postings with no statement line (possible duplicates or payments booked in Invoicing/Purchases): {len(R['gl_only'])} entries, residual {_m(R['residual'])}.\n"
+                f"- Possible duplicate postings (same reference booked more than once on the bank): {len(R['duplicates'])} references, doubled-up value {_m(R['dup_excess_total'])}.{dup_txt}\n\n"
                 "Write a reply in plain English (UK/SA business English), no markdown, no headings, no bullet symbols, under 130 words, in two short paragraphs:\n"
                 "1) What the difference is made of, in money terms, naming the biggest contributor.\n"
                 "2) The single most important fix to do first, concrete and specific. If a misplaced opening balance explains most of it, say to move that amount from its code to code "
