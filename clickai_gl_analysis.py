@@ -723,6 +723,97 @@ def run_gl_analysis(accounts):
                       if a["transaction_count"] == 0
                       and abs(a["closing_net_debit"] - a["closing_net_credit"]) < 0.01]
 
+    # ── GL Health checks (deterministic mis-posting detection) ──
+    def _acct_class(acc):
+        """Account class from the imported COA category when present, else the
+        name-based fallback. Authoritative per tenant."""
+        cat = (acc.get("_category", "") or "").lower()
+        if any(k in cat for k in ("income", "revenue", "sales")):
+            return "Income"
+        if "cost of sale" in cat or "cost of goods" in cat:
+            return "Cost of Sales"
+        if "expense" in cat:
+            return "Expenses"
+        if "asset" in cat:
+            return "Assets"
+        if "liabilit" in cat or "payable" in cat:
+            return "Liabilities"
+        if any(k in cat for k in ("equity", "capital", "retained")):
+            return "Equity"
+        return _classify_account(acc["name"])
+
+    # 8e. Balance on the wrong side — income with a DEBIT balance, or expense/COS with a
+    #     CREDIT balance. Strong sign of a mis-coded posting (e.g. a sale booked to an
+    #     expense code). Skip VAT control, drawings and accumulated depreciation, which
+    #     legitimately sit either side.
+    for a in accounts:
+        if a["transaction_count"] == 0:
+            continue
+        nl = a["name"].lower()
+        if "vat" in nl or "drawing" in nl or ("acc" in nl and "depr" in nl):
+            continue
+        cls = _acct_class(a)
+        net = round(a["closing_net_debit"] - a["closing_net_credit"], 2)  # +ve = debit balance
+        if abs(net) < 1:
+            continue
+        if cls == "Income" and net > 1:
+            anomalies.append({
+                "type": "wrong_side_balance", "severity": "alert",
+                "account": a["name"], "amount": abs(net), "date": "",
+                "desc": "Income account with a DEBIT balance",
+                "detail": f"{a['name']} is an income account but carries a DEBIT balance of R{abs(net):,.2f} — income may be mis-posted, or an expense was coded to this income account."
+            })
+        elif cls in ("Expenses", "Cost of Sales") and net < -1:
+            anomalies.append({
+                "type": "wrong_side_balance", "severity": "alert",
+                "account": a["name"], "amount": abs(net), "date": "",
+                "desc": "Expense account with a CREDIT balance",
+                "detail": f"{a['name']} is an expense account but carries a CREDIT balance of R{abs(net):,.2f} — income (e.g. a sale) may have been posted to an expense code by mistake."
+            })
+
+    # 8f. Forbidden catch-all code — every posting should sit on a specific GL code
+    #     (fallback 7900, never 7999, and no "General Expenses" bucket).
+    for a in accounts:
+        if a["transaction_count"] == 0:
+            continue
+        code = str(a.get("_code", "") or "").strip()
+        nl = a["name"].lower()
+        if code == "7999" or "general expense" in nl:
+            net = abs(round(a["closing_net_debit"] - a["closing_net_credit"], 2))
+            anomalies.append({
+                "type": "forbidden_catchall", "severity": "alert",
+                "account": a["name"], "amount": net, "date": "",
+                "desc": f"{a['transaction_count']} postings on a catch-all code",
+                "detail": f"{a['name']} is a catch-all — every transaction should be allocated to a specific GL code (fallback 7900, never 7999)."
+            })
+
+    # 8g. One-legged journal — a per-transaction reference (BNK-/INV-/POS/PAY-/JNL-/REV-…)
+    #     that touches only one account has no counter-entry (e.g. a bank line with no
+    #     income/VAT/expense leg). Only unique per-journal prefixes are checked, so a
+    #     shared batch reference never raises a false alarm.
+    _single_prefixes = ("BNK-", "INV-", "JNL-", "PAY-", "POS", "REV-", "RCT-", "EXP-")
+    _ref_legs = defaultdict(lambda: {"accounts": set(), "date": "", "amount": 0.0})
+    for a in accounts:
+        for t in a["transactions"]:
+            ref = str(t.get("ref", "") or "").strip()
+            if not ref or ref.upper() == "OB":
+                continue
+            if not any(ref.upper().startswith(p) for p in _single_prefixes):
+                continue
+            g = _ref_legs[ref]
+            g["accounts"].add(a["name"])
+            g["date"] = t.get("date_display", "") or g["date"]
+            g["amount"] = max(g["amount"], t["debit"], t["credit"])
+    for ref, g in _ref_legs.items():
+        if len(g["accounts"]) < 2:
+            only_acct = next(iter(g["accounts"]), "")
+            anomalies.append({
+                "type": "one_legged_journal", "severity": "alert",
+                "account": only_acct, "amount": round(g["amount"], 2),
+                "date": g["date"], "desc": f"Ref: {ref}",
+                "detail": f"Journal {ref} touches only one account ({only_acct}) — its counter-entry (income, VAT or expense) is missing, so this posting is one-sided."
+            })
+
     # Sort anomalies by severity then amount
     sev_order = {"alert": 0, "warning": 1, "info": 2}
     anomalies.sort(key=lambda x: (sev_order.get(x["severity"], 9), -x["amount"]))
