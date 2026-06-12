@@ -17327,12 +17327,18 @@ class IndustryKnowledge:
                         if acc_name and acc_code and acc_name == cat_lower:
                             return acc_code
                     
-                    # Partial match — category name in account name or vice versa
+                    # Partial match — category name in account name or vice versa.
+                    # Balance-sheet accounts are skipped here: a category like
+                    # "Bank Charges" must never partially match the "Bank" asset
+                    # account itself — fuzzy matches may only land on P&L accounts.
                     for acc in coa:
                         acc_name = (acc.get("account_name", "") or acc.get("name", "")).strip().lower()
                         acc_code = str(acc.get("account_code", "") or acc.get("code", "")).strip()
                         source = acc.get("source", "")
                         if source == "System Account":
+                            continue
+                        _acc_cat = str(acc.get("category", "") or acc.get("account_type", "") or "").lower()
+                        if any(_k in _acc_cat for _k in ("asset", "liabilit", "equity", "bank")):
                             continue
                         if acc_name and acc_code:
                             if cat_lower in acc_name or acc_name in cat_lower:
@@ -17348,6 +17354,9 @@ class IndustryKnowledge:
                             acc_code = str(acc.get("account_code", "") or acc.get("code", "")).strip()
                             source = acc.get("source", "")
                             if not acc_name or not acc_code or source == "System Account":
+                                continue
+                            _acc_cat = str(acc.get("category", "") or acc.get("account_type", "") or "").lower()
+                            if any(_k in _acc_cat for _k in ("asset", "liabilit", "equity", "bank")):
                                 continue
                             acc_words = set(w for w in acc_name.replace("&", "").replace("/", " ").replace("_and_", " ").split() if len(w) >= 3)
                             overlap = len(cat_words & acc_words)
