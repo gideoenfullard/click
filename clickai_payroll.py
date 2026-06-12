@@ -36,7 +36,7 @@ def safe_float(v):
     return 0.0
 
 
-def calc_monthly_paye(basic, age=0, pension=0, provident=0, medical_members=0):
+def calc_monthly_paye(basic, age=0, pension=0, provident=0, medical_members=0, travel=0):
     """Monthly PAYE — SARS 2026/27 tax tables.
 
     Section 11F: retirement-fund contributions (pension + provident) reduce
@@ -45,15 +45,19 @@ def calc_monthly_paye(basic, age=0, pension=0, provident=0, medical_members=0):
     age rebate. 2026/27 monthly credit: R376 main member, R376 first
     dependant, R254 each further dependant. medical_members is the total
     number of people on the scheme including the employee.
+    Travel allowance: 80% is included in the PAYE base (SARS standard
+    inclusion rate — matches Sage, verified against the Sage payslip).
     """
     basic = safe_float(basic)
     pension = safe_float(pension)
     provident = safe_float(provident)
+    travel = safe_float(travel)
     age = safe_float(age)
     members = int(safe_float(medical_members))
 
-    # Section 11F — taxable income is salary less retirement contributions
-    taxable_monthly = max(0.0, basic - pension - provident)
+    # Section 11F — taxable income is salary less retirement contributions.
+    # 80% of any travel allowance is added to the taxable base first.
+    taxable_monthly = max(0.0, basic + (travel * 0.8) - pension - provident)
     annual = taxable_monthly * 12
 
     if annual <= 245100:
@@ -161,6 +165,7 @@ def register_payroll_routes(app, db, login_required, Auth, render_page,
                 <td>{safe_string((e.get("id_number", "") or "-")[:6])}****</td>
                 <td>{safe_string(e.get("position", "-"))}</td>
                 <td>{money(e.get("basic_salary", 0))}</td>
+                <td><a href="/payroll/payslip-preview/{e.get("id")}" onclick="event.stopPropagation();" class="btn btn-secondary" style="padding:5px 10px;font-size:12px;">View Payslip</a></td>
             </tr>
             '''
         
@@ -227,10 +232,10 @@ def register_payroll_routes(app, db, login_required, Auth, render_page,
             <div style="overflow-x:auto;">
             <table class="table">
                 <thead>
-                    <tr><th>Name</th><th>ID</th><th>Position</th><th>Salary</th></tr>
+                    <tr><th>Name</th><th>ID</th><th>Position</th><th>Salary</th><th>Payslip</th></tr>
                 </thead>
                 <tbody>
-                    {emp_rows or "<tr><td colspan='4' style='text-align:center;color:var(--text-muted)'>No employees yet</td></tr>"}
+                    {emp_rows or "<tr><td colspan='5' style='text-align:center;color:var(--text-muted)'>No employees yet</td></tr>"}
                 </tbody>
             </table>
             </div>
@@ -337,6 +342,20 @@ def register_payroll_routes(app, db, login_required, Auth, render_page,
             except:
                 other_deduction = 0
             
+            # MEIBC / RMA statutory fields (amounts entered per employee, like Sage transaction codes)
+            try:
+                rma_funeral = float(request.form.get("rma_funeral", 0) or 0)
+            except:
+                rma_funeral = 0
+            try:
+                sick_fund = float(request.form.get("sick_fund", 0) or 0)
+            except:
+                sick_fund = 0
+            try:
+                council_levy = float(request.form.get("council_levy", 0) or 0)
+            except:
+                council_levy = 0
+            
             try:
                 provident_fund_amount = float(request.form.get("provident_fund_amount", 0) or 0)
             except:
@@ -364,6 +383,15 @@ def register_payroll_routes(app, db, login_required, Auth, render_page,
             else:
                 pension = 0
                 pension_employer = 0
+            
+            # Manual employer provident override — Sage shows this as the
+            # Fringe Benefit on the payslip and it feeds the UIF base
+            try:
+                _manual_pe = float(request.form.get("pension_employer", 0) or 0)
+            except:
+                _manual_pe = 0
+            if _manual_pe > 0:
+                pension_employer = _manual_pe
             
             # Calculate age from ID
             age = 30
@@ -404,6 +432,9 @@ def register_payroll_routes(app, db, login_required, Auth, render_page,
                 )
                 employee["provident_fund_amount"] = provident_fund_amount
                 employee["medical_members"] = medical_members
+                employee["rma_funeral"] = rma_funeral
+                employee["sick_fund"] = sick_fund
+                employee["council_levy"] = council_levy
                 employee["employee_code"] = request.form.get("employee_code", "").strip()
                 employee["leave_balance"] = safe_float(request.form.get("leave_balance", 0))
                 emp_id = employee["id"]
@@ -547,8 +578,32 @@ def register_payroll_routes(app, db, login_required, Auth, render_page,
                         <input type="number" name="provident_fund_amount" step="0.01" value="0" style="width:100%;padding:10px;border-radius:6px;border:1px solid var(--border);background:var(--card);color:var(--text);">
                     </div>
                     <div>
+                        <label style="display:block;margin-bottom:5px;font-weight:500;">Provident Fund Employer (R)</label>
+                        <input type="number" name="pension_employer" step="0.01" value="0" style="width:100%;padding:10px;border-radius:6px;border:1px solid var(--border);background:var(--card);color:var(--text);">
+                        <p style="color:var(--text-muted);font-size:11px;margin:4px 0 0;">Employer contribution — shown as Fringe Benefit on the payslip. Leave 0 to use the Industry Fund percentage.</p>
+                    </div>
+                </div>
+                <div style="display:grid;grid-template-columns:1fr 1fr;gap:15px;margin-bottom:15px;">
+                    <div>
+                        <label style="display:block;margin-bottom:5px;font-weight:500;">RMA Funeral Benefit (R)</label>
+                        <input type="number" name="rma_funeral" step="0.01" value="0" style="width:100%;padding:10px;border-radius:6px;border:1px solid var(--border);background:var(--card);color:var(--text);">
+                        <p style="color:var(--text-muted);font-size:11px;margin:4px 0 0;">Employee deduction — shows on the payslip.</p>
+                    </div>
+                    <div>
                         <label style="display:block;margin-bottom:5px;font-weight:500;">Loan Repayment (R)</label>
                         <input type="number" name="loan_deduction" step="0.01" value="0" style="width:100%;padding:10px;border-radius:6px;border:1px solid var(--border);background:var(--card);color:var(--text);">
+                    </div>
+                </div>
+                <div style="display:grid;grid-template-columns:1fr 1fr;gap:15px;margin-bottom:15px;">
+                    <div>
+                        <label style="display:block;margin-bottom:5px;font-weight:500;">Bargaining Council Sick Fund (R)</label>
+                        <input type="number" name="sick_fund" step="0.01" value="0" style="width:100%;padding:10px;border-radius:6px;border:1px solid var(--border);background:var(--card);color:var(--text);">
+                        <p style="color:var(--text-muted);font-size:11px;margin:4px 0 0;">Employer contribution (MIBFA/MEIBC) — Company Contributions, not deducted from the employee.</p>
+                    </div>
+                    <div>
+                        <label style="display:block;margin-bottom:5px;font-weight:500;">Bargaining Council Levy (R)</label>
+                        <input type="number" name="council_levy" step="0.01" value="0" style="width:100%;padding:10px;border-radius:6px;border:1px solid var(--border);background:var(--card);color:var(--text);">
+                        <p style="color:var(--text-muted);font-size:11px;margin:4px 0 0;">Employer contribution — Company Contributions, not deducted from the employee.</p>
                     </div>
                 </div>
                 <div style="display:grid;grid-template-columns:1fr 1fr;gap:15px;margin-bottom:15px;">
@@ -733,30 +788,43 @@ def register_payroll_routes(app, db, login_required, Auth, render_page,
                 pension_employer = safe_float(emp.get("pension_employer", 0))
                 # Provident fund — separate employee deduction (apart from pension)
                 provident = safe_float(emp.get("provident_fund_amount", 0))
+                # Travel allowance — added to earnings; 80% PAYE-taxable (Sage)
+                travel = safe_float(emp.get("travel_allowance", 0))
+                # RMA Funeral Benefit — employee deduction (Sage)
+                rma_funeral = safe_float(emp.get("rma_funeral", 0))
+                # Bargaining Council Sick Fund + Levy — employer contributions (Sage)
+                sick_fund = safe_float(emp.get("sick_fund", 0))
+                council_levy = safe_float(emp.get("council_levy", 0))
+                
+                gross = basic + travel
                 
                 # PAYE — SARS 2026/27 (Section 11F retirement deduction +
-                # Section 6A medical credit applied inside the helper)
+                # Section 6A medical credit + 80% travel inclusion inside the helper)
                 _emp_age = safe_float(emp.get("age", 0))
                 _medical_members = safe_float(emp.get("medical_members", 0))
-                paye = calc_monthly_paye(basic, _emp_age, pension, provident, _medical_members)
+                paye = calc_monthly_paye(basic, _emp_age, pension, provident, _medical_members, travel)
                 
-                # UIF - 1% capped at R177.12
-                uif = min(basic * 0.01, 177.12)
+                # UIF - 1% of remuneration capped at R177.12. Remuneration =
+                # basic + 80% travel + employer provident (fringe benefit) —
+                # verified to the cent against the Sage payslip.
+                uif = min((basic + travel * 0.8 + pension_employer) * 0.01, 177.12)
                 uif_employer = uif  # Employer matches
                 
-                # SDL - 1% (employer only) — only if total payroll over R500k threshold
-                sdl = basic * 0.01 if _sdl_applies else 0
+                # SDL - 1% of the PAYE remuneration base (employer only) —
+                # only if total payroll over R500k threshold
+                _sdl_base = max(0.0, basic + travel * 0.8 - pension - provident)
+                sdl = _sdl_base * 0.01 if _sdl_applies else 0
                 
                 # COIDA - ~1% (employer only)
                 coida = basic * 0.01
                 
                 # Total deductions from employee
-                total_ded = paye + uif + medical + union_fees + pension + provident + loan + other_ded
-                net = basic - total_ded
+                total_ded = paye + uif + medical + union_fees + pension + provident + loan + other_ded + rma_funeral
+                net = gross - total_ded
                 
                 # Employer contributions
-                total_employer = uif_employer + sdl + coida + pension_employer
-                total_cost = basic + total_employer
+                total_employer = uif_employer + sdl + coida + pension_employer + sick_fund + council_levy
+                total_cost = gross + total_employer
                 
                 payslip_id = generate_id()
                 payslip = {
@@ -766,7 +834,8 @@ def register_payroll_routes(app, db, login_required, Auth, render_page,
                     "employee_name": emp.get("name"),
                     "date": pay_date,
                     "basic": basic,
-                    "gross": basic,
+                    "gross": round(gross, 2),
+                    "travel_allowance": round(travel, 2),
                     "paye": round(paye, 2),
                     "uif": round(uif, 2),
                     "uif_employee": round(uif, 2),
@@ -777,6 +846,9 @@ def register_payroll_routes(app, db, login_required, Auth, render_page,
                     "pension_employee": round(pension, 2),
                     "pension_employer": round(pension_employer, 2),
                     "provident_fund": round(provident, 2),
+                    "rma_funeral": round(rma_funeral, 2),
+                    "sick_fund": round(sick_fund, 2),
+                    "council_levy": round(council_levy, 2),
                     "loan_deduction": round(loan, 2),
                     "other_deduction": round(other_ded, 2),
                     "sdl": round(sdl, 2),
@@ -812,8 +884,8 @@ def register_payroll_routes(app, db, login_required, Auth, render_page,
                         # Employee salary: Debit expense, Credit liabilities and bank
                         # Must be balanced: Total Debits = Total Credits
                         payroll_entries = [
-                            # EXPENSE SIDE (Debits)
-                            {"account_code": gl(biz_id, "salaries"), "debit": round(basic, 2), "credit": 0},           # Salary expense
+                            # EXPENSE SIDE (Debits) — gross includes travel allowance
+                            {"account_code": gl(biz_id, "salaries"), "debit": round(gross, 2), "credit": 0},           # Salary expense
                         ]
                         
                         # Employer contributions as expense
@@ -831,8 +903,8 @@ def register_payroll_routes(app, db, login_required, Auth, render_page,
                         if employer_sdl_amount > 0:
                             payroll_entries.append({"account_code": "2220", "debit": 0, "credit": round(employer_sdl_amount, 2)})  # SDL Payable
                         
-                        # Other deductions as liabilities (medical, pension, provident, union, loan)
-                        other_deduction_total = round(medical + union_fees + pension + provident + loan + other_ded, 2)
+                        # Other deductions as liabilities (medical, pension, provident, union, loan, RMA)
+                        other_deduction_total = round(medical + union_fees + pension + provident + loan + other_ded + rma_funeral, 2)
                         if other_deduction_total > 0:
                             payroll_entries.append({"account_code": gl(biz_id, "loan"), "debit": 0, "credit": round(other_deduction_total, 2)})  # Other payroll deductions payable
                         
@@ -876,18 +948,24 @@ def register_payroll_routes(app, db, login_required, Auth, render_page,
             union_fees = safe_float(emp.get("union_fees", 0))
             pension = safe_float(emp.get("pension", 0))
             provident = safe_float(emp.get("provident_fund_amount", 0))
+            pension_employer = safe_float(emp.get("pension_employer", 0))
+            travel = safe_float(emp.get("travel_allowance", 0))
+            rma_funeral = safe_float(emp.get("rma_funeral", 0))
             other = safe_float(emp.get("loan_deduction", 0)) + safe_float(emp.get("other_deduction", 0))
+            
+            gross = basic + travel
 
             # PAYE — SARS 2026/27 (Section 11F retirement deduction +
-            # Section 6A medical credit applied inside the helper)
+            # Section 6A medical credit + 80% travel inclusion inside the helper)
             _emp_age = safe_float(emp.get("age", 0))
             _medical_members = safe_float(emp.get("medical_members", 0))
-            paye = calc_monthly_paye(basic, _emp_age, pension, provident, _medical_members)
-            uif = min(basic * 0.01, 177.12)
+            paye = calc_monthly_paye(basic, _emp_age, pension, provident, _medical_members, travel)
+            # UIF base = basic + 80% travel + employer provident (fringe) — Sage
+            uif = min((basic + travel * 0.8 + pension_employer) * 0.01, 177.12)
             
-            total_ded = paye + uif + medical + union_fees + pension + provident + other
-            net = basic - total_ded
-            total_gross += basic
+            total_ded = paye + uif + medical + union_fees + pension + provident + other + rma_funeral
+            net = gross - total_ded
+            total_gross += gross
             total_net += net
             
             row_style = "opacity:0.5;" if already_exists else ""
@@ -896,10 +974,10 @@ def register_payroll_routes(app, db, login_required, Auth, render_page,
             preview_rows += f'''
             <tr style="{row_style}">
                 <td>{safe_string(emp.get("name", "-"))}{skip_badge}</td>
-                <td>{money(basic)}</td>
+                <td>{money(gross)}</td>
                 <td style="color:var(--red);">-{money(paye)}</td>
                 <td style="color:var(--red);">-{money(uif)}</td>
-                <td style="color:var(--red);">-{money(medical + union_fees + pension + provident + other)}</td>
+                <td style="color:var(--red);">-{money(medical + union_fees + pension + provident + other + rma_funeral)}</td>
                 <td style="color:var(--green);font-weight:bold;">{money(net)}</td>
                 <td><a href="/payroll/payslip-preview/{emp.get("id")}" target="_blank" style="color:var(--accent);text-decoration:none;">View</a></td>
             </tr>
@@ -965,6 +1043,16 @@ def register_payroll_routes(app, db, login_required, Auth, render_page,
         
         basic = safe_float(emp.get("basic_salary", 0))
         
+        # Pro-forma controls: full month as if fully worked, minus hours
+        # off/late deducted at basic ÷ average working hours per month.
+        # Defaults: 0 hours off, 195 hours (45h week × 52 ÷ 12 — SA standard).
+        hours_off = max(0.0, safe_float(request.args.get("hours_off", 0)))
+        avg_hours = safe_float(request.args.get("avg_hours", 195)) or 195.0
+        hours_rate = basic / avg_hours if avg_hours > 0 else 0.0
+        hours_off_amount = round(hours_off * hours_rate, 2)
+        basic_full = basic
+        basic = max(0.0, basic - hours_off_amount)
+        
         # Deductions from employee
         medical = safe_float(emp.get("medical_aid", 0))
         union_fees = safe_float(emp.get("union_fees", 0))
@@ -972,16 +1060,24 @@ def register_payroll_routes(app, db, login_required, Auth, render_page,
         provident = safe_float(emp.get("provident_fund_amount", 0))
         loan = safe_float(emp.get("loan_deduction", 0))
         other_ded = safe_float(emp.get("other_deduction", 0))
+        travel = safe_float(emp.get("travel_allowance", 0))
+        rma_funeral = safe_float(emp.get("rma_funeral", 0))
+        sick_fund = safe_float(emp.get("sick_fund", 0))
+        council_levy = safe_float(emp.get("council_levy", 0))
+        pension_employer = safe_float(emp.get("pension_employer", 0))
+        
+        gross = basic + travel
         
         # PAYE — SARS 2026/27 (Section 11F retirement deduction +
-        # Section 6A medical credit applied inside the helper)
+        # Section 6A medical credit + 80% travel inclusion inside the helper)
         _emp_age = safe_float(emp.get("age", 0))
         _medical_members = safe_float(emp.get("medical_members", 0))
-        paye = calc_monthly_paye(basic, _emp_age, pension, provident, _medical_members)
+        paye = calc_monthly_paye(basic, _emp_age, pension, provident, _medical_members, travel)
         
-        uif = min(basic * 0.01, 177.12)
-        total_ded = paye + uif + medical + union_fees + pension + provident + loan + other_ded
-        net = basic - total_ded
+        # UIF base = basic + 80% travel + employer provident (fringe) — Sage
+        uif = min((basic + travel * 0.8 + pension_employer) * 0.01, 177.12)
+        total_ded = paye + uif + medical + union_fees + pension + provident + loan + other_ded + rma_funeral
+        net = gross - total_ded
         
         # Timesheet hours for the current month (a check, not used in the calculation)
         ts_month = today()[:7]
@@ -993,11 +1089,10 @@ def register_payroll_routes(app, db, login_required, Auth, render_page,
         
         # Employer contributions (shown below the payslip as a check, not part of the payslip)
         uif_employer = uif
-        sdl = basic * 0.01
+        sdl = max(0.0, basic + travel * 0.8 - pension - provident) * 0.01
         coida = basic * 0.01
-        pension_employer = safe_float(emp.get("pension_employer", 0))
-        total_employer = uif_employer + sdl + coida + pension_employer
-        total_cost = basic + total_employer
+        total_employer = uif_employer + sdl + coida + pension_employer + sick_fund + council_levy
+        total_cost = gross + total_employer
 
         # Sage-style payslip header data
         biz_name = business.get("name", "Business") if business else "Business"
@@ -1042,6 +1137,8 @@ def register_payroll_routes(app, db, login_required, Auth, render_page,
             deduction_rows += f'<tr style="border-bottom:1px solid #eee;"><td style="padding:8px 0;color:#666;">Pension Fund (Employee)</td><td style="padding:8px 0;text-align:right;color:#ef4444;">-{money(pension)}</td></tr>'
         if provident > 0:
             deduction_rows += f'<tr style="border-bottom:1px solid #eee;"><td style="padding:8px 0;color:#666;">Provident Fund</td><td style="padding:8px 0;text-align:right;color:#ef4444;">-{money(provident)}</td></tr>'
+        if rma_funeral > 0:
+            deduction_rows += f'<tr style="border-bottom:1px solid #eee;"><td style="padding:8px 0;color:#666;">RMA Funeral Benefit</td><td style="padding:8px 0;text-align:right;color:#ef4444;">-{money(rma_funeral)}</td></tr>'
         if loan > 0:
             deduction_rows += f'<tr style="border-bottom:1px solid #eee;"><td style="padding:8px 0;color:#666;">Loan Repayment</td><td style="padding:8px 0;text-align:right;color:#ef4444;">-{money(loan)}</td></tr>'
         if other_ded > 0:
@@ -1097,8 +1194,26 @@ def register_payroll_routes(app, db, login_required, Auth, render_page,
             @media print {{ .no-print {{ display: none !important; }} }}
         </style>
         <div class="no-print" style="display:flex;justify-content:space-between;align-items:center;margin-bottom:15px;">
-            <a href="/payroll/run" style="color:var(--text-muted);">← Back to Run Payroll</a>
-            <span style="background:rgba(245,158,11,0.2);border:1px solid #f59e0b;border-radius:6px;padding:5px 12px;font-size:12px;font-weight:600;">PREVIEW — not yet created</span>
+            <a href="/payroll" style="color:var(--text-muted);">← Back to Payroll</a>
+            <div style="display:flex;gap:10px;align-items:center;">
+                <span style="background:rgba(245,158,11,0.2);border:1px solid #f59e0b;border-radius:6px;padding:5px 12px;font-size:12px;font-weight:600;">PRO-FORMA — no records created</span>
+                <button class="btn btn-primary" onclick="window.print();">Print</button>
+            </div>
+        </div>
+
+        <div class="no-print card" style="max-width:720px;margin:0 auto 15px;">
+            <form method="GET" action="/payroll/payslip-preview/{emp_id}" style="display:flex;gap:15px;align-items:flex-end;flex-wrap:wrap;">
+                <div>
+                    <label style="display:block;margin-bottom:5px;font-weight:500;font-size:13px;">Hours Off / Late</label>
+                    <input type="number" name="hours_off" step="0.25" min="0" value="{hours_off:g}" style="width:120px;padding:10px;border-radius:6px;border:1px solid var(--border);background:var(--card);color:var(--text);">
+                </div>
+                <div>
+                    <label style="display:block;margin-bottom:5px;font-weight:500;font-size:13px;">Avg Working Hours / Month</label>
+                    <input type="number" name="avg_hours" step="0.01" min="1" value="{avg_hours:g}" style="width:140px;padding:10px;border-radius:6px;border:1px solid var(--border);background:var(--card);color:var(--text);">
+                </div>
+                <button type="submit" class="btn btn-secondary">Recalculate</button>
+                <p style="color:var(--text-muted);font-size:12px;margin:0;flex-basis:100%;">Full month with all deductions as if fully worked. Hours off/late are deducted at basic salary ÷ average working hours per month ({money(hours_rate)}/hour).</p>
+            </form>
         </div>
 
         <div class="print-only" style="background:white;color:#333;max-width:720px;margin:0 auto;padding:30px 30px 0;">
@@ -1162,11 +1277,13 @@ def register_payroll_routes(app, db, login_required, Auth, render_page,
                     <table style="width:100%;border-collapse:collapse;font-size:12px;">
                         <tr style="border-bottom:1px solid #eee;">
                             <td style="padding:6px 0;color:#666;">Basic Salary</td>
-                            <td style="padding:6px 0;text-align:right;color:#333;">{money(basic)}</td>
+                            <td style="padding:6px 0;text-align:right;color:#333;">{money(basic_full)}</td>
                         </tr>
+                        {f'<tr style="border-bottom:1px solid #eee;"><td style="padding:6px 0;color:#666;">Hours Off / Late ({hours_off:g} hrs)</td><td style="padding:6px 0;text-align:right;color:#ef4444;">-{money(hours_off_amount)}</td></tr>' if hours_off_amount > 0 else ''}
+                        {f'<tr style="border-bottom:1px solid #eee;"><td style="padding:6px 0;color:#666;">Travel Allowance</td><td style="padding:6px 0;text-align:right;color:#333;">{money(travel)}</td></tr>' if travel > 0 else ''}
                         <tr style="border-bottom:2px solid #333;background:#f9f9f9;">
                             <td style="padding:7px 0;color:#333;font-weight:bold;">TOTAL EARNINGS</td>
-                            <td style="padding:7px 0;text-align:right;color:#333;font-weight:bold;">{money(basic)}</td>
+                            <td style="padding:7px 0;text-align:right;color:#333;font-weight:bold;">{money(gross)}</td>
                         </tr>
                     </table>
                 </div>
@@ -1214,7 +1331,10 @@ def register_payroll_routes(app, db, login_required, Auth, render_page,
                 <tr><td style="padding:3px 0;">SDL (Skills Levy)</td><td style="text-align:right;">{money(sdl)}</td></tr>
                 <tr><td style="padding:3px 0;">COIDA</td><td style="text-align:right;">{money(coida)}</td></tr>
                 {f'<tr><td style="padding:3px 0;">Provident (Employer)</td><td style="text-align:right;">{money(pension_employer)}</td></tr>' if pension_employer > 0 else ""}
+                {f'<tr><td style="padding:3px 0;">Bargaining Council Sick Fund</td><td style="text-align:right;">{money(sick_fund)}</td></tr>' if sick_fund > 0 else ""}
+                {f'<tr><td style="padding:3px 0;">Bargaining Council Levy</td><td style="text-align:right;">{money(council_levy)}</td></tr>' if council_levy > 0 else ""}
                 <tr style="border-top:1px solid var(--border);font-weight:bold;"><td style="padding:5px 0;">Total Cost to Company</td><td style="text-align:right;">{money(total_cost)}</td></tr>
+                {f'<tr><td style="padding:3px 0;color:var(--text-muted);">Fringe Benefits (period total)</td><td style="text-align:right;color:var(--text-muted);">{money(pension_employer)}</td></tr>' if pension_employer > 0 else ""}
             </table>
         </div>
         {action_block}
@@ -1262,29 +1382,37 @@ def register_payroll_routes(app, db, login_required, Auth, render_page,
         other_ded = safe_float(emp.get("other_deduction", 0))
         pension_employer = safe_float(emp.get("pension_employer", 0))
         provident = safe_float(emp.get("provident_fund_amount", 0))
+        travel = safe_float(emp.get("travel_allowance", 0))
+        rma_funeral = safe_float(emp.get("rma_funeral", 0))
+        sick_fund = safe_float(emp.get("sick_fund", 0))
+        council_levy = safe_float(emp.get("council_levy", 0))
+        
+        gross = basic + travel
 
         # PAYE — SARS 2026/27 (Section 11F retirement deduction +
-        # Section 6A medical credit applied inside the helper)
+        # Section 6A medical credit + 80% travel inclusion inside the helper)
         _emp_age = safe_float(emp.get("age", 0))
         _medical_members = safe_float(emp.get("medical_members", 0))
-        paye = calc_monthly_paye(basic, _emp_age, pension, provident, _medical_members)
+        paye = calc_monthly_paye(basic, _emp_age, pension, provident, _medical_members, travel)
 
-        # UIF — 1% capped at R177.12
-        uif = min(basic * 0.01, 177.12)
+        # UIF — 1% of remuneration capped at R177.12. Remuneration =
+        # basic + 80% travel + employer provident (fringe benefit) — Sage
+        uif = min((basic + travel * 0.8 + pension_employer) * 0.01, 177.12)
         uif_employer = uif
 
         # SDL — only if this business's total annual payroll exceeds R500k
         _all_emps = db.get("employees", {"business_id": biz_id}) if biz_id else []
         _total_annual_payroll = sum(safe_float(e.get("basic_salary", 0)) * 12 for e in _all_emps)
-        sdl = basic * 0.01 if _total_annual_payroll > 500000 else 0
+        _sdl_base = max(0.0, basic + travel * 0.8 - pension - provident)
+        sdl = _sdl_base * 0.01 if _total_annual_payroll > 500000 else 0
 
         # COIDA — ~1% (employer only)
         coida = basic * 0.01
 
-        total_ded = paye + uif + medical + union_fees + pension + provident + loan + other_ded
-        net = basic - total_ded
-        total_employer = uif_employer + sdl + coida + pension_employer
-        total_cost = basic + total_employer
+        total_ded = paye + uif + medical + union_fees + pension + provident + loan + other_ded + rma_funeral
+        net = gross - total_ded
+        total_employer = uif_employer + sdl + coida + pension_employer + sick_fund + council_levy
+        total_cost = gross + total_employer
 
         payslip_id = generate_id()
         payslip = {
@@ -1294,7 +1422,8 @@ def register_payroll_routes(app, db, login_required, Auth, render_page,
             "employee_name": emp.get("name"),
             "date": pay_date,
             "basic": basic,
-            "gross": basic,
+            "gross": round(gross, 2),
+            "travel_allowance": round(travel, 2),
             "paye": round(paye, 2),
             "uif": round(uif, 2),
             "uif_employee": round(uif, 2),
@@ -1305,6 +1434,9 @@ def register_payroll_routes(app, db, login_required, Auth, render_page,
             "pension_employee": round(pension, 2),
             "pension_employer": round(pension_employer, 2),
             "provident_fund": round(provident, 2),
+            "rma_funeral": round(rma_funeral, 2),
+            "sick_fund": round(sick_fund, 2),
+            "council_levy": round(council_levy, 2),
             "loan_deduction": round(loan, 2),
             "other_deduction": round(other_ded, 2),
             "sdl": round(sdl, 2),
@@ -1344,7 +1476,7 @@ def register_payroll_routes(app, db, login_required, Auth, render_page,
 
         # GL journal — same balanced pattern as payroll_run
         payroll_entries = [
-            {"account_code": gl(biz_id, "salaries"), "debit": round(basic, 2), "credit": 0},
+            {"account_code": gl(biz_id, "salaries"), "debit": round(gross, 2), "credit": 0},
         ]
         employer_uif_amount = round(uif_employer, 2) if uif_employer > 0 else 0
         employer_sdl_amount = round(sdl, 2) if sdl > 0 else 0
@@ -1357,7 +1489,7 @@ def register_payroll_routes(app, db, login_required, Auth, render_page,
             payroll_entries.append({"account_code": "2210", "debit": 0, "credit": round(uif + employer_uif_amount, 2)})
         if employer_sdl_amount > 0:
             payroll_entries.append({"account_code": "2220", "debit": 0, "credit": round(employer_sdl_amount, 2)})
-        other_deduction_total = round(medical + union_fees + pension + provident + loan + other_ded, 2)
+        other_deduction_total = round(medical + union_fees + pension + provident + loan + other_ded + rma_funeral, 2)
         if other_deduction_total > 0:
             payroll_entries.append({"account_code": gl(biz_id, "loan"), "debit": 0, "credit": other_deduction_total})
         payroll_entries.append({"account_code": gl(biz_id, "bank"), "debit": 0, "credit": round(net, 2)})
@@ -1742,6 +1874,9 @@ def register_payroll_routes(app, db, login_required, Auth, render_page,
             loan_deduction = safe_float(request.form.get("loan_deduction", 0))
             other_deduction = safe_float(request.form.get("other_deduction", 0))
             provident_fund_amount = safe_float(request.form.get("provident_fund_amount", 0))
+            rma_funeral = safe_float(request.form.get("rma_funeral", 0))
+            sick_fund = safe_float(request.form.get("sick_fund", 0))
+            council_levy = safe_float(request.form.get("council_levy", 0))
             
             provident_fund = request.form.get("provident_fund", "off")
             if provident_fund == "mibfa":
@@ -1756,6 +1891,12 @@ def register_payroll_routes(app, db, login_required, Auth, render_page,
             else:
                 pension = 0
                 pension_employer = 0
+            
+            # Manual employer provident override — Sage shows this as the
+            # Fringe Benefit on the payslip and it feeds the UIF base
+            _manual_pe = safe_float(request.form.get("pension_employer", 0))
+            if _manual_pe > 0:
+                pension_employer = _manual_pe
             
             bank_name = request.form.get("bank_name", "").strip()
             bank_account = request.form.get("bank_account", "").strip()
@@ -1779,6 +1920,9 @@ def register_payroll_routes(app, db, login_required, Auth, render_page,
                 "pension": pension,
                 "pension_employer": pension_employer,
                 "provident_fund_amount": provident_fund_amount,
+                "rma_funeral": rma_funeral,
+                "sick_fund": sick_fund,
+                "council_levy": council_levy,
                 "loan_deduction": loan_deduction,
                 "loan_total": safe_float(request.form.get("loan_total", 0)),
                 "loan_balance": safe_float(request.form.get("loan_balance", 0)),
@@ -1956,8 +2100,30 @@ def register_payroll_routes(app, db, login_required, Auth, render_page,
                         <input type="number" name="provident_fund_amount" step="0.01" value="{safe_float(employee.get('provident_fund_amount', 0))}" style="width:100%;padding:10px;border-radius:6px;border:1px solid var(--border);background:var(--card);color:var(--text);">
                     </div>
                     <div>
+                        <label style="display:block;margin-bottom:5px;font-weight:500;">Provident Fund Employer (R)</label>
+                        <input type="number" name="pension_employer" step="0.01" value="{safe_float(employee.get('pension_employer', 0))}" style="width:100%;padding:10px;border-radius:6px;border:1px solid var(--border);background:var(--card);color:var(--text);">
+                        <p style="color:var(--text-muted);font-size:11px;margin:4px 0 0;">Employer contribution — shown as Fringe Benefit on the payslip. Leave 0 to use the Industry Fund percentage.</p>
+                    </div>
+                    <div>
                         <label style="display:block;margin-bottom:5px;font-weight:500;">Other Deduction (R)</label>
                         <input type="number" name="other_deduction" step="0.01" value="{safe_float(employee.get('other_deduction', 0))}" style="width:100%;padding:10px;border-radius:6px;border:1px solid var(--border);background:var(--card);color:var(--text);">
+                    </div>
+                </div>
+                <div style="display:grid;grid-template-columns:repeat(auto-fit, minmax(150px, 1fr));gap:15px;margin-bottom:15px;">
+                    <div>
+                        <label style="display:block;margin-bottom:5px;font-weight:500;">RMA Funeral Benefit (R)</label>
+                        <input type="number" name="rma_funeral" step="0.01" value="{safe_float(employee.get('rma_funeral', 0))}" style="width:100%;padding:10px;border-radius:6px;border:1px solid var(--border);background:var(--card);color:var(--text);">
+                        <p style="color:var(--text-muted);font-size:11px;margin:4px 0 0;">Employee deduction — shows on the payslip.</p>
+                    </div>
+                    <div>
+                        <label style="display:block;margin-bottom:5px;font-weight:500;">Bargaining Council Sick Fund (R)</label>
+                        <input type="number" name="sick_fund" step="0.01" value="{safe_float(employee.get('sick_fund', 0))}" style="width:100%;padding:10px;border-radius:6px;border:1px solid var(--border);background:var(--card);color:var(--text);">
+                        <p style="color:var(--text-muted);font-size:11px;margin:4px 0 0;">Employer contribution (MIBFA/MEIBC) — not deducted from the employee.</p>
+                    </div>
+                    <div>
+                        <label style="display:block;margin-bottom:5px;font-weight:500;">Bargaining Council Levy (R)</label>
+                        <input type="number" name="council_levy" step="0.01" value="{safe_float(employee.get('council_levy', 0))}" style="width:100%;padding:10px;border-radius:6px;border:1px solid var(--border);background:var(--card);color:var(--text);">
+                        <p style="color:var(--text-muted);font-size:11px;margin:4px 0 0;">Employer contribution — not deducted from the employee.</p>
                     </div>
                 </div>
                 
@@ -2024,14 +2190,17 @@ def register_payroll_routes(app, db, login_required, Auth, render_page,
         
         basic = safe_float(payslip.get("basic", 0))
         gross = safe_float(payslip.get("gross", 0)) or basic
+        travel = safe_float(payslip.get("travel_allowance", 0))
         paye = safe_float(payslip.get("paye", 0))
         uif = safe_float(payslip.get("uif", 0)) or safe_float(payslip.get("uif_employee", 0))
         medical = safe_float(payslip.get("medical_aid", 0))
         union_fees = safe_float(payslip.get("union_fees", 0))
         pension = safe_float(payslip.get("pension", 0)) or safe_float(payslip.get("pension_employee", 0))
+        provident = safe_float(payslip.get("provident_fund", 0))
+        rma_funeral = safe_float(payslip.get("rma_funeral", 0))
         loan = safe_float(payslip.get("loan_deduction", 0))
         other_ded = safe_float(payslip.get("other_deduction", 0))
-        total_ded = paye + uif + medical + union_fees + pension + loan + other_ded
+        total_ded = paye + uif + medical + union_fees + pension + provident + loan + other_ded + rma_funeral
         net = safe_float(payslip.get("net", 0)) or (gross - total_ded)
         
         # Employer contributions
@@ -2039,7 +2208,9 @@ def register_payroll_routes(app, db, login_required, Auth, render_page,
         sdl = safe_float(payslip.get("sdl", 0)) or (gross * 0.01)  # 1% SDL
         coida = safe_float(payslip.get("coida", 0)) or (gross * 0.01)  # ~1% COIDA
         pension_employer = safe_float(payslip.get("pension_employer", 0))
-        total_employer = uif_employer + sdl + coida + pension_employer
+        sick_fund = safe_float(payslip.get("sick_fund", 0))
+        council_levy = safe_float(payslip.get("council_levy", 0))
+        total_employer = uif_employer + sdl + coida + pension_employer + sick_fund + council_levy
         total_cost = gross + total_employer
         
         # Build deduction rows - only show if > 0
@@ -2060,6 +2231,10 @@ def register_payroll_routes(app, db, login_required, Auth, render_page,
         if pension > 0:
             # Show Pension Fund separately
             deduction_rows += f'<tr style="border-bottom:1px solid #eee;"><td style="padding:8px 0;color:#666;">Pension Fund (Employee)</td><td style="padding:8px 0;text-align:right;color:#ef4444;">-{money(pension)}</td></tr>'
+        if provident > 0:
+            deduction_rows += f'<tr style="border-bottom:1px solid #eee;"><td style="padding:8px 0;color:#666;">Provident Fund</td><td style="padding:8px 0;text-align:right;color:#ef4444;">-{money(provident)}</td></tr>'
+        if rma_funeral > 0:
+            deduction_rows += f'<tr style="border-bottom:1px solid #eee;"><td style="padding:8px 0;color:#666;">RMA Funeral Benefit</td><td style="padding:8px 0;text-align:right;color:#ef4444;">-{money(rma_funeral)}</td></tr>'
         if loan > 0:
             # Get employee loan balance if available
             emp = db.get_one("employees", payslip.get("employee_id")) if payslip.get("employee_id") else None
@@ -2178,6 +2353,7 @@ def register_payroll_routes(app, db, login_required, Auth, render_page,
                             <td style="padding:6px 0;color:#666;">Basic Salary</td>
                             <td style="padding:6px 0;text-align:right;color:#333;">{money(basic)}</td>
                         </tr>
+                        {f'<tr style="border-bottom:1px solid #eee;"><td style="padding:6px 0;color:#666;">Travel Allowance</td><td style="padding:6px 0;text-align:right;color:#333;">{money(travel)}</td></tr>' if travel > 0 else ''}
                         <tr style="border-bottom:2px solid #333;background:#f9f9f9;">
                             <td style="padding:7px 0;color:#333;font-weight:bold;">TOTAL EARNINGS</td>
                             <td style="padding:7px 0;text-align:right;color:#333;font-weight:bold;">{money(gross)}</td>
@@ -2228,7 +2404,10 @@ def register_payroll_routes(app, db, login_required, Auth, render_page,
                 <tr><td style="padding:3px 0;">SDL (Skills Levy)</td><td style="text-align:right;">{money(sdl)}</td></tr>
                 <tr><td style="padding:3px 0;">COIDA</td><td style="text-align:right;">{money(coida)}</td></tr>
                 {f'<tr><td style="padding:3px 0;">Provident (Employer)</td><td style="text-align:right;">{money(pension_employer)}</td></tr>' if pension_employer > 0 else ""}
+                {f'<tr><td style="padding:3px 0;">Bargaining Council Sick Fund</td><td style="text-align:right;">{money(sick_fund)}</td></tr>' if sick_fund > 0 else ""}
+                {f'<tr><td style="padding:3px 0;">Bargaining Council Levy</td><td style="text-align:right;">{money(council_levy)}</td></tr>' if council_levy > 0 else ""}
                 <tr style="border-top:1px solid var(--border);font-weight:bold;"><td style="padding:5px 0;">Total Cost to Company</td><td style="text-align:right;">{money(total_cost)}</td></tr>
+                {f'<tr><td style="padding:3px 0;color:var(--text-muted);">Fringe Benefits (period total)</td><td style="text-align:right;color:var(--text-muted);">{money(pension_employer)}</td></tr>' if pension_employer > 0 else ""}
             </table>
         </div>
         '''
@@ -2253,26 +2432,32 @@ def register_payroll_routes(app, db, login_required, Auth, render_page,
         if request.method == "POST":
             # Update payslip with form values
             basic = safe_float(request.form.get("basic", 0))
-            gross = safe_float(request.form.get("gross", 0)) or basic
+            travel = safe_float(request.form.get("travel_allowance", 0))
+            gross = safe_float(request.form.get("gross", 0)) or (basic + travel)
             paye = safe_float(request.form.get("paye", 0))
             uif = safe_float(request.form.get("uif", 0))
             medical = safe_float(request.form.get("medical_aid", 0))
             union_fees = safe_float(request.form.get("union_fees", 0))
             pension = safe_float(request.form.get("pension", 0))
+            provident = safe_float(request.form.get("provident_fund", 0))
+            rma_funeral = safe_float(request.form.get("rma_funeral", 0))
             loan = safe_float(request.form.get("loan_deduction", 0))
             other = safe_float(request.form.get("other_deduction", 0))
             
-            total_ded = paye + uif + medical + union_fees + pension + loan + other
+            total_ded = paye + uif + medical + union_fees + pension + provident + loan + other + rma_funeral
             net = gross - total_ded
             
             updates = {
                 "basic": basic,
+                "travel_allowance": travel,
                 "gross": gross,
                 "paye": paye,
                 "uif": uif,
                 "medical_aid": medical,
                 "union_fees": union_fees,
                 "pension": pension,
+                "provident_fund": provident,
+                "rma_funeral": rma_funeral,
                 "loan_deduction": loan,
                 "other_deduction": other,
                 "total_deductions": total_ded,
@@ -2301,12 +2486,15 @@ def register_payroll_routes(app, db, login_required, Auth, render_page,
         
         # GET - show form
         basic = safe_float(payslip.get("basic", 0))
+        travel = safe_float(payslip.get("travel_allowance", 0))
         gross = safe_float(payslip.get("gross", 0)) or basic
         paye = safe_float(payslip.get("paye", 0))
         uif = safe_float(payslip.get("uif", 0))
         medical = safe_float(payslip.get("medical_aid", 0))
         union_fees = safe_float(payslip.get("union_fees", 0))
         pension = safe_float(payslip.get("pension", 0))
+        provident = safe_float(payslip.get("provident_fund", 0))
+        rma_funeral = safe_float(payslip.get("rma_funeral", 0))
         loan = safe_float(payslip.get("loan_deduction", 0))
         other = safe_float(payslip.get("other_deduction", 0))
         
@@ -2325,6 +2513,10 @@ def register_payroll_routes(app, db, login_required, Auth, render_page,
                     <div>
                         <label style="display:block;margin-bottom:5px;">Basic Salary</label>
                         <input type="number" name="basic" step="0.01" value="{basic}" style="width:100%;padding:10px;border-radius:6px;border:1px solid var(--border);background:var(--card);color:var(--text);">
+                    </div>
+                    <div>
+                        <label style="display:block;margin-bottom:5px;">Travel Allowance</label>
+                        <input type="number" name="travel_allowance" step="0.01" value="{travel}" style="width:100%;padding:10px;border-radius:6px;border:1px solid var(--border);background:var(--card);color:var(--text);">
                     </div>
                     <div>
                         <label style="display:block;margin-bottom:5px;">Gross Pay</label>
@@ -2361,6 +2553,16 @@ def register_payroll_routes(app, db, login_required, Auth, render_page,
                     <div>
                         <label style="display:block;margin-bottom:5px;">Loan Repayment</label>
                         <input type="number" name="loan_deduction" step="0.01" value="{loan}" style="width:100%;padding:10px;border-radius:6px;border:1px solid var(--border);background:var(--card);color:var(--text);">
+                    </div>
+                </div>
+                <div style="display:grid;grid-template-columns:1fr 1fr;gap:15px;margin-bottom:15px;">
+                    <div>
+                        <label style="display:block;margin-bottom:5px;">Provident Fund</label>
+                        <input type="number" name="provident_fund" step="0.01" value="{provident}" style="width:100%;padding:10px;border-radius:6px;border:1px solid var(--border);background:var(--card);color:var(--text);">
+                    </div>
+                    <div>
+                        <label style="display:block;margin-bottom:5px;">RMA Funeral Benefit</label>
+                        <input type="number" name="rma_funeral" step="0.01" value="{rma_funeral}" style="width:100%;padding:10px;border-radius:6px;border:1px solid var(--border);background:var(--card);color:var(--text);">
                     </div>
                 </div>
                 <div style="margin-bottom:20px;">
