@@ -332,9 +332,16 @@ def chk_unknown_codes(ctx):
         return [_finding(cid, cname, "info", "Unknown-codes check could not run",
                          "This business has no chart of accounts imported.")]
     grouped = defaultdict(lambda: {"count": 0, "debit": 0.0, "credit": 0.0, "ids": []})
+    blank = {"count": 0, "debit": 0.0, "credit": 0.0, "ids": []}
     for j in ctx["journals"]:
         code = str(j.get("account_code", "") or "").strip()
-        if code and code not in ctx["coa_codes"]:
+        if not code:
+            blank["count"] += 1
+            blank["debit"] += _f(j.get("debit"))
+            blank["credit"] += _f(j.get("credit"))
+            if len(blank["ids"]) < 10:
+                blank["ids"].append(str(j.get("id", "")))
+        elif code not in ctx["coa_codes"]:
             g = grouped[code]
             g["count"] += 1
             g["debit"] += _f(j.get("debit"))
@@ -342,6 +349,20 @@ def chk_unknown_codes(ctx):
             if len(g["ids"]) < 10:
                 g["ids"].append(str(j.get("id", "")))
     findings = []
+    if blank["count"]:
+        findings.append(_finding(
+            cid, cname, "warning",
+            f"{blank['count']} journal line(s) have no account code at all",
+            f"These lines carry debits {money(blank['debit'])} and credits "
+            f"{money(blank['credit'])} but were never mapped to any GL account — "
+            f"typically unmapped opening entries from a migration import. They are "
+            f"invisible to every report until they are assigned a real account.",
+            refs=[{"table": "journals", "id": i, "label": "Journal line with no code"}
+                  for i in blank["ids"]],
+            amounts={"lines": blank["count"], "debits": round(blank["debit"], 2),
+                     "credits": round(blank["credit"], 2),
+                     "net": round(blank["debit"] - blank["credit"], 2)},
+        ))
     for code, g in sorted(grouped.items()):
         findings.append(_finding(
             cid, cname, "warning",
