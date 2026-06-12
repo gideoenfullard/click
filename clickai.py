@@ -251,6 +251,12 @@ except ImportError:
     CONTRACTS_ROUTES_LOADED = False
 
 try:
+    from clickai_health import register_health_routes
+    HEALTH_ROUTES_LOADED = True
+except ImportError:
+    HEALTH_ROUTES_LOADED = False
+
+try:
     from clickai_ai_usage import (
         AIUsageTracker, register_ai_usage_routes, get_usage_meter_html
     )
@@ -66131,6 +66137,18 @@ try:
         logger.info("[HR/CONTRACTS] Routes registered ✓")
 except Exception as e:
     logger.error(f"[HR/CONTRACTS] Failed to register routes: {e}")
+
+# Register System Health routes (separate module)
+try:
+    if HEALTH_ROUTES_LOADED:
+        register_health_routes(
+            app, db, login_required, Auth, render_page,
+            money, safe_string, now, today, gl,
+            calc_all_customer_balances, calc_all_supplier_balances
+        )
+        logger.info("[HEALTH] Routes registered ✓")
+except Exception as e:
+    logger.error(f"[HEALTH] Failed to register routes: {e}")
 
 
 class NightlyScheduler:
