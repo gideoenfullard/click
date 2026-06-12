@@ -2140,6 +2140,86 @@ def register_banking_routes(app, db, login_required, Auth, render_page,
             "reset_supplier_invoices": reset_sinv,
         }
 
+    def _find_relink_matches(biz_id):
+        """Match unallocated statement lines against EXISTING GL postings on the bank
+        account (exact date + amount + direction), without creating or deleting
+        anything. Used after a statement re-import where the books are already correct
+        but the new lines (new ids) lost their link to the earlier allocations. Also
+        identifies lines dated on/before the GL opening cutover — those are already
+        inside the opening balance and must never be allocated again. Deterministic:
+        exact matches only, each GL posting usable once."""
+        try:
+            bank_code = str(gl(biz_id, "bank") or "1000")
+        except Exception:
+            bank_code = "1000"
+
+        def _f(v):
+            try:
+                return float(v or 0)
+            except Exception:
+                return 0.0
+
+        txns = db.get("bank_transactions", {"business_id": biz_id}) or []
+        journals = db.get("journals", {"business_id": biz_id}) or []
+        bank_journals = [j for j in journals if str(j.get("account_code", "")) == bank_code]
+
+        def _is_opening(j):
+            _r = str(j.get("reference", "") or "").upper()
+            _d = str(j.get("description", "") or "").lower()
+            return _r.startswith("OPENING") or "opening balance" in _d
+        opening_journals = [j for j in bank_journals if _is_opening(j)]
+        move_journals = [j for j in bank_journals if not _is_opening(j)]
+        opening_cutoff = max((str(j.get("date", "") or "")[:10] for j in opening_journals), default="")
+
+        unmatched = [t for t in txns if not t.get("matched")]
+        unmatched.sort(key=lambda x: str(x.get("date", ""))[:10])
+
+        opening_lines, candidates = [], []
+        for t in unmatched:
+            _d = str(t.get("date", "") or "")[:10]
+            if opening_cutoff and _d and _d <= opening_cutoff:
+                opening_lines.append(t)
+            else:
+                candidates.append(t)
+
+        # Pool of GL postings, each usable once: key (date, direction, amount)
+        from collections import defaultdict as _dd_rl
+        pool = _dd_rl(list)
+        for j in move_journals:
+            _jd, _jc = _f(j.get("debit")), _f(j.get("credit"))
+            _date = str(j.get("date", "") or "")[:10]
+            if _jd > 0:
+                pool[(_date, "in", round(_jd, 2))].append(j)
+            elif _jc > 0:
+                pool[(_date, "out", round(_jc, 2))].append(j)
+
+        relink, unbooked = [], []
+        for t in candidates:
+            _c, _dbt = _f(t.get("credit")), _f(t.get("debit"))
+            _date = str(t.get("date", "") or "")[:10]
+            if _c > 0:
+                _key = (_date, "in", round(_c, 2))
+            elif _dbt > 0:
+                _key = (_date, "out", round(_dbt, 2))
+            else:
+                unbooked.append(t)
+                continue
+            if pool.get(_key):
+                pool[_key].pop()
+                relink.append(t)
+            else:
+                unbooked.append(t)
+
+        def _net(lines):
+            return round(sum(_f(t.get("credit")) - _f(t.get("debit")) for t in lines), 2)
+
+        return {
+            "opening_cutoff": opening_cutoff,
+            "opening_lines": opening_lines, "opening_net": _net(opening_lines),
+            "relink": relink, "relink_net": _net(relink),
+            "unbooked": unbooked, "unbooked_net": _net(unbooked),
+        }
+
     @app.route("/api/banking/repair-orphaned-allocations", methods=["POST"])
     @login_required
     def banking_repair_orphaned():
@@ -2203,6 +2283,79 @@ def register_banking_routes(app, db, login_required, Auth, render_page,
                             "supplier_invoices_reset": sinv_reset})
         except Exception as e:
             logger.error(f"[REPAIR] failed: {e}")
+            return jsonify({"success": False, "error": str(e)})
+
+    @app.route("/api/banking/relink-statement", methods=["POST"])
+    @login_required
+    def banking_relink_statement():
+        """Preview or execute re-linking of unallocated statement lines to the books
+        that already represent them. Marks each exact-matched line (and each line
+        covered by the GL opening balance) as matched, WITHOUT creating, deleting or
+        changing any journal, receipt or invoice. The lines left over are the genuinely
+        unbooked items to allocate normally. mode='preview' only reports; mode='execute'
+        (with confirm=true) performs the marking."""
+        try:
+            business = Auth.get_current_business()
+            biz_id = business.get("id") if business else None
+            if not biz_id:
+                return jsonify({"success": False, "error": "No business selected"})
+            data = request.get_json(silent=True) or {}
+            mode = (data.get("mode") or "preview").strip()
+            found = _find_relink_matches(biz_id)
+
+            def _f(v):
+                try:
+                    return float(v or 0)
+                except Exception:
+                    return 0.0
+            sample = [{
+                "date": str(t.get("date", "") or "")[:10],
+                "description": str(t.get("description", "") or "")[:60],
+                "in": _f(t.get("credit")), "out": _f(t.get("debit")),
+            } for t in found["unbooked"][:12]]
+            summary = {
+                "opening_cutoff": found["opening_cutoff"],
+                "opening_lines": len(found["opening_lines"]), "opening_net": found["opening_net"],
+                "relink_lines": len(found["relink"]), "relink_net": found["relink_net"],
+                "unbooked_lines": len(found["unbooked"]), "unbooked_net": found["unbooked_net"],
+            }
+            if mode != "execute":
+                return jsonify({"success": True, "mode": "preview", "summary": summary,
+                                "unbooked_sample": sample})
+            if not data.get("confirm"):
+                return jsonify({"success": False, "error": "Confirmation required"})
+
+            _stamp = now()
+            updates = ([(t, "Covered by opening balance") for t in found["opening_lines"]]
+                       + [(t, "Re-linked to existing books") for t in found["relink"]])
+
+            def _mark(item):
+                _t, _cat = item
+                try:
+                    db.update("bank_transactions", _t.get("id"),
+                              {"matched": True, "matched_at": _stamp, "category": _cat}, biz_id)
+                    return True
+                except Exception as _e:
+                    logger.warning(f"[RELINK] mark failed {_t.get('id')}: {_e}")
+                    return False
+
+            marked = 0
+            failed = 0
+            if updates:
+                from concurrent.futures import ThreadPoolExecutor as _TPE_rl
+                with _TPE_rl(max_workers=8) as _ex:
+                    for _ok in _ex.map(_mark, updates):
+                        if _ok:
+                            marked += 1
+                        else:
+                            failed += 1
+
+            logger.info(f"[RELINK] biz {biz_id}: marked {marked} lines "
+                        f"({len(found['opening_lines'])} opening, {len(found['relink'])} re-linked), {failed} failed")
+            return jsonify({"success": True, "mode": "execute", "marked": marked,
+                            "failed": failed, "summary": summary})
+        except Exception as e:
+            logger.error(f"[RELINK] failed: {e}")
             return jsonify({"success": False, "error": str(e)})
 
     @app.route("/banking/reconcile")
@@ -2487,6 +2640,19 @@ function escapeHtmlRecon(s){return (s||'').replace(/&/g,'&amp;').replace(/</g,'&
             '<div style="margin-top:10px;"><button id="orphanScanBtn" class="btn btn-secondary" onclick="scanOrphans()">Scan for orphaned allocations</button></div>'
             '<div id="orphanResult" style="margin-top:10px;"></div>'
             '</details>')
+        relink_section = (
+            '<details class="card" style="margin-bottom:14px;">'
+            '<summary style="cursor:pointer;font-weight:600;">Re-link statement to existing books</summary>'
+            '<p style="margin:8px 0 0 0;color:var(--text-muted);font-size:13px;">'
+            'If a statement was re-imported while the books were already correct, the new lines lose '
+            'their link to the earlier postings and show as unallocated. This matches each line to an '
+            'existing GL posting on the bank account (exact date, amount and direction) and marks it as '
+            'allocated &mdash; nothing is created, deleted or changed in the books. Lines dated on or before '
+            'the GL opening cutover are marked as covered by the opening balance. What remains afterwards '
+            'is the genuinely unbooked items to allocate normally. Nothing changes until you confirm.</p>'
+            '<div style="margin-top:10px;"><button id="relinkScanBtn" class="btn btn-secondary" onclick="scanRelink()">Scan for re-link matches</button></div>'
+            '<div id="relinkResult" style="margin-top:10px;"></div>'
+            '</details>')
         _repair_script = """<script>
 async function scanOrphans(){
   var btn=document.getElementById('orphanScanBtn');
@@ -2528,7 +2694,50 @@ async function repairOrphans(){
   }catch(e){box.innerHTML='<em style="color:var(--red);">Could not complete the repair.</em>';}
 }
 </script>"""
-        content = header + _stmt_form + cards + breakdown + repair_section + _zane_box + opening_section + unalloc_section + gl_only_section + dup_section + over_rev_section + stmt_section + _stmt_js + _zane_script + _repair_script
+        _relink_script = """<script>
+function _rlMoney(v){var n=Number(v)||0;var s=Math.abs(n).toLocaleString('en-ZA',{minimumFractionDigits:2,maximumFractionDigits:2});return (n<0?'-R':'R')+s;}
+async function scanRelink(){
+  var btn=document.getElementById('relinkScanBtn');
+  var box=document.getElementById('relinkResult');
+  if(btn){btn.disabled=true;btn.textContent='Scanning...';}
+  box.innerHTML='<em style="color:var(--text-muted);">Scanning...</em>';
+  try{
+    var r=await fetch('/api/banking/relink-statement',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({mode:'preview'})});
+    var d=await r.json();
+    if(!d.success){box.innerHTML='<em style="color:var(--red);">'+(d.error||'Scan failed')+'</em>';}
+    else{
+      var s=d.summary;
+      var total=(s.opening_lines||0)+(s.relink_lines||0);
+      var html='<table style="width:100%;font-size:13px;"><tbody>'+
+        '<tr><td>Lines covered by the opening balance (on/before '+(s.opening_cutoff||'-')+')</td><td style="text-align:right;">'+s.opening_lines+'</td><td style="text-align:right;">'+_rlMoney(s.opening_net)+'</td></tr>'+
+        '<tr><td>Lines matching an existing GL posting (re-link)</td><td style="text-align:right;">'+s.relink_lines+'</td><td style="text-align:right;">'+_rlMoney(s.relink_net)+'</td></tr>'+
+        '<tr><td>Lines still unbooked (allocate these normally)</td><td style="text-align:right;">'+s.unbooked_lines+'</td><td style="text-align:right;">'+_rlMoney(s.unbooked_net)+'</td></tr>'+
+        '</tbody></table>';
+      if(d.unbooked_sample&&d.unbooked_sample.length){
+        html+='<p style="margin:8px 0 4px 0;font-size:13px;color:var(--text-muted);">First unbooked lines:</p><table style="width:100%;font-size:12px;"><tbody>';
+        d.unbooked_sample.forEach(function(u){html+='<tr><td>'+u.date+'</td><td>'+u.description+'</td><td style="text-align:right;">'+(u.out>0?_rlMoney(u.out):'')+'</td><td style="text-align:right;">'+(u['in']>0?_rlMoney(u['in']):'')+'</td></tr>';});
+        html+='</tbody></table>';
+      }
+      if(total>0){html+='<button class="btn btn-primary" style="margin-top:10px;" onclick="executeRelink()">Re-link now</button>';}
+      else{html+='<p style="color:var(--green);font-size:13px;margin-top:8px;">Nothing to re-link &mdash; every line is either allocated or genuinely unbooked.</p>';}
+      box.innerHTML=html;
+    }
+  }catch(e){box.innerHTML='<em style="color:var(--red);">Could not scan.</em>';}
+  if(btn){btn.disabled=false;btn.textContent='Scan for re-link matches';}
+}
+async function executeRelink(){
+  if(!confirm('Mark the matched lines as allocated? No journals, receipts or invoices are created, deleted or changed. The remaining lines stay unallocated for normal allocation.'))return;
+  var box=document.getElementById('relinkResult');
+  box.innerHTML='<em style="color:var(--text-muted);">Re-linking...</em>';
+  try{
+    var r=await fetch('/api/banking/relink-statement',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({mode:'execute',confirm:true})});
+    var d=await r.json();
+    if(!d.success){box.innerHTML='<em style="color:var(--red);">'+(d.error||'Re-link failed')+'</em>';}
+    else{box.innerHTML='<p style="color:var(--green);font-size:13px;">Re-link done. Marked '+(d.marked||0)+' lines'+((d.failed||0)>0?(', '+d.failed+' failed'):'')+'. Reload this page to see the updated reconciliation.</p>';}
+  }catch(e){box.innerHTML='<em style="color:var(--red);">Could not complete the re-link.</em>';}
+}
+</script>"""
+        content = header + _stmt_form + cards + breakdown + repair_section + relink_section + _zane_box + opening_section + unalloc_section + gl_only_section + dup_section + over_rev_section + stmt_section + _stmt_js + _zane_script + _repair_script + _relink_script
         return render_page("Bank Reconciliation", content, user, "banking")
 
     def _recon_plain_explanation(R, _m):
