@@ -29,6 +29,7 @@
 import logging
 from collections import defaultdict
 from datetime import datetime, timedelta
+from urllib.parse import quote
 
 logger = logging.getLogger(__name__)
 
@@ -537,6 +538,12 @@ def chk_duplicate_journals(ctx):
             counts[key] += 1
         if all(c >= 2 and c % 2 == 0 for c in counts.values()):
             total_debits = sum(_f(l.get("debit")) for l in lines)
+            # Offer a one-click reversal ONLY for the unambiguous "posted exactly
+            # twice" case (every unique line appears 2×). Higher even multiples are
+            # ambiguous about the intended count and are left for manual review.
+            clean_double = len(lines) >= 4 and all(c == 2 for c in counts.values())
+            action = ({"type": "reverse_duplicate", "params": {"reference": ref}}
+                      if clean_double else None)
             findings.append(_finding(
                 cid, cname, "warning",
                 f"Journal {ref} appears to be posted twice",
@@ -550,6 +557,7 @@ def chk_duplicate_journals(ctx):
                 amounts={"lines": len(lines), "unique_lines": len(counts),
                          "total_debits": round(total_debits, 2),
                          "likely_excess": round(total_debits / 2, 2)},
+                suggested_action=action,
             ))
         if len(findings) >= MAX_FINDINGS_PER_CHECK:
             break
@@ -582,6 +590,8 @@ def chk_suspense(ctx):
                 refs=[{"table": "chart_of_accounts", "id": str(a.get("id", "")),
                        "label": f"{code} {name}"}],
                 amounts={"balance": round(bal, 2)},
+                suggested_action={"type": "open_page",
+                                  "params": {"url": "/settings/opening-balances"}},
             ))
     return findings
 
@@ -728,6 +738,12 @@ def register_health_routes(app, db, login_required, Auth, render_page,
                 action_html = (f'<div style="margin-top:10px;"><a href="{sa["params"]["url"]}" '
                                f'class="btn btn-secondary" style="padding:6px 14px;font-size:12px;">'
                                f'Open page</a></div>')
+            elif sa.get("type") == "reverse_duplicate":
+                _ref_q = quote(str(sa.get("params", {}).get("reference", "")))
+                action_html = (f'<div style="margin-top:10px;">'
+                               f'<a href="/system-health/reverse-duplicate?ref={_ref_q}" '
+                               f'class="btn btn-secondary" style="padding:6px 14px;font-size:12px;">'
+                               f'Review &amp; reverse duplicate</a></div>')
             finding_cards += f'''
             <div class="card" style="border-left:4px solid {color};background:{bg};margin-bottom:12px;">
                 <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:10px;flex-wrap:wrap;">
@@ -786,5 +802,145 @@ def register_health_routes(app, db, login_required, Auth, render_page,
         '''
 
         return render_page("System Health", content, user, "reports")
+
+    # --------------------------------------------------------------------------
+    # PHASE 4 — guarded fix action: reverse a duplicate journal (CHK-008).
+    # Two steps, never automatic: the finding links to a confirmation page that
+    # shows the exact reversal, and only an explicit POST posts it. Every step
+    # re-reads the journal fresh and re-verifies it is still a clean duplicate,
+    # so a stale link or an already-fixed entry safely does nothing.
+    # --------------------------------------------------------------------------
+
+    def _load_clean_duplicate(biz_id, ref):
+        """Fresh re-read of one reference's journal lines. Returns a reversal plan
+        ONLY if it is still an unambiguous 'posted exactly twice' duplicate (every
+        unique line appears exactly 2x). Otherwise returns None."""
+        if not ref:
+            return None
+        lines = db.get(
+            "journals", {"business_id": biz_id, "reference": ref}, limit=10000,
+            select="id,date,description,reference,account_code,debit,credit") or []
+        if len(lines) < 4:
+            return None
+        counts = defaultdict(int)
+        for l in lines:
+            key = (str(l.get("account_code", "") or "").strip(),
+                   round(_f(l.get("debit")), 2), round(_f(l.get("credit")), 2))
+            counts[key] += 1
+        if len(counts) < 2 or not all(c == 2 for c in counts.values()):
+            return None
+        reversal = [{"account_code": acc, "debit": cr, "credit": dr}
+                    for (acc, dr, cr) in counts.keys()]
+        amount = round(sum(e["debit"] for e in reversal), 2)
+        return {"lines": lines, "reversal": reversal, "amount": amount,
+                "date": lines[0].get("date", "")}
+
+    @app.route("/system-health/reverse-duplicate")
+    @login_required
+    def system_health_reverse_duplicate_confirm():
+        from flask import request, redirect, flash
+        business = Auth.get_current_business()
+        biz_id = business.get("id") if business else None
+        if not biz_id:
+            flash("Please select a business first", "error")
+            return redirect("/")
+        user = Auth.get_current_user()
+        ref = (request.args.get("ref", "") or "").strip()
+        plan = _load_clean_duplicate(biz_id, ref)
+        if not plan:
+            flash("That journal is no longer a clean duplicate — nothing to reverse.", "error")
+            return redirect("/system-health")
+
+        rows = "".join(
+            f'<tr><td style="padding:6px 10px;">{safe_string(e["account_code"])}</td>'
+            f'<td style="padding:6px 10px;text-align:right;">{money(e["debit"]) if e["debit"] else ""}</td>'
+            f'<td style="padding:6px 10px;text-align:right;">{money(e["credit"]) if e["credit"] else ""}</td></tr>'
+            for e in plan["reversal"])
+
+        content = f'''
+        <div class="card">
+            <h3 class="card-title" style="margin:0 0 4px;">Reverse duplicate journal</h3>
+            <p style="color:var(--text-muted);font-size:13px;margin:0 0 14px;">
+                Reference <strong>{safe_string(ref)}</strong> was posted twice. Confirming posts a
+                single balancing reversal dated today ({safe_string(today())}), under the same
+                reference, so the net posting returns to its correct single value. The original
+                lines are kept for the audit trail — nothing is deleted.
+            </p>
+            <table style="width:100%;border-collapse:collapse;font-size:13px;margin-bottom:6px;">
+                <thead><tr style="border-bottom:1px solid var(--border);">
+                    <th style="padding:6px 10px;text-align:left;">Account</th>
+                    <th style="padding:6px 10px;text-align:right;">Debit</th>
+                    <th style="padding:6px 10px;text-align:right;">Credit</th>
+                </tr></thead>
+                <tbody>{rows}</tbody>
+            </table>
+            <p style="font-size:12px;color:var(--text-muted);margin:0 0 16px;">
+                Reversal total: {money(plan["amount"])}.
+            </p>
+            <form method="POST" action="/system-health/reverse-duplicate" style="display:flex;gap:10px;align-items:center;">
+                <input type="hidden" name="ref" value="{safe_string(ref)}">
+                <button type="submit" class="btn btn-primary">Confirm reversal</button>
+                <a href="/system-health" class="btn btn-secondary">Cancel</a>
+            </form>
+        </div>
+        '''
+        return render_page("Reverse Duplicate", content, user, "reports")
+
+    @app.route("/system-health/reverse-duplicate", methods=["POST"])
+    @login_required
+    def system_health_reverse_duplicate_post():
+        from flask import request, redirect, flash
+        business = Auth.get_current_business()
+        biz_id = business.get("id") if business else None
+        if not biz_id:
+            flash("Please select a business first", "error")
+            return redirect("/")
+
+        try:
+            import clickai as _main
+            role = _main.get_user_role()
+        except Exception:
+            _main, role = None, ""
+        if role not in ("owner", "admin", "manager", "bookkeeper", "accountant"):
+            flash("You don't have permission to post corrections.", "error")
+            return redirect("/system-health")
+
+        ref = (request.form.get("ref", "") or "").strip()
+        plan = _load_clean_duplicate(biz_id, ref)
+        if not plan:
+            flash("That journal is no longer a clean duplicate — nothing was changed.", "error")
+            return redirect("/system-health")
+
+        try:
+            _main.create_journal_entry(
+                biz_id, today(),
+                f"System Health: reversal of duplicate posting ({ref})",
+                ref, plan["reversal"])
+        except Exception as e:
+            logger.error(f"[HEALTH] Duplicate reversal failed for {ref}: {e}")
+            flash(f"Could not post the reversal: {e}", "error")
+            return redirect("/system-health")
+
+        try:
+            from clickai_allocation_log import log_allocation
+        except Exception:
+            log_allocation = None
+        try:
+            if log_allocation:
+                _uid, _uname = _main.get_acting_user()
+                log_allocation(
+                    business_id=biz_id, allocation_type="reversal",
+                    source_table="journals", source_id=ref,
+                    description=f"System Health reversal of duplicate journal {ref} - {money(plan['amount'])}",
+                    amount=plan["amount"], gl_entries=plan["reversal"],
+                    reference=ref, transaction_date=today(),
+                    created_by=_uid, created_by_name=_uname)
+        except Exception as _le:
+            logger.warning(f"[HEALTH] Reversal allocation_log failed: {_le}")
+
+        logger.info(f"[HEALTH] Reversed duplicate journal {ref} for {biz_id} — {plan['amount']}")
+        flash(f"Reversed duplicate posting {ref} ({money(plan['amount'])}). "
+              f"The original lines are kept for audit.", "success")
+        return redirect("/system-health")
 
     logger.info("[HEALTH] System Health routes registered")

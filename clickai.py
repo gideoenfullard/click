@@ -6314,6 +6314,14 @@ ZANE_TOOLS = [
         }
     },
     {
+        "name": "run_accounting_health_check",
+        "description": "Run the deterministic accounting health checks (the same engine behind the System Health page) and return every finding: bank reconciliation, unbalanced journals, debtors/creditors control vs sub-ledger, unknown account codes, missing VAT, postings on the wrong account type, duplicate journals, opening-balance suspense, and stale unallocated bank lines. Use when the user asks to check the books for errors or correctness: 'check my books', 'are there mistakes in my accounting?', 'run a health check', 'is my VAT/control account correct?', 'is daar foute in my joernale?', 'maak seker my boeke is reg'. This is about ACCOUNTING CORRECTNESS, not business performance - for 'how is my business doing?' use get_business_health_check instead. Report ONLY the findings returned; do not invent causes or fixes that are not stated.",
+        "input_schema": {
+            "type": "object",
+            "properties": {}
+        }
+    },
+    {
         "name": "save_memory",
         "description": "Save an important fact, decision, preference, or context about the user or business for future reference. Use this whenever you learn something NEW and IMPORTANT that is NOT already stored in the database. Examples: user preferences ('Deon prefers Afrikaans reports'), business decisions ('decided to increase markup to 20%'), key people ('rekenmeester is Johan at ABC Accounting'), future plans ('wants to open a 4th store in March'), personal context ('wife birthday 15 March'). DO NOT save data that's already in the system (sales figures, customer balances, etc). Save the FACT, not the conversation.",
         "input_schema": {
@@ -9239,6 +9247,43 @@ class ZaneToolHandler:
             },
             "explanation": text,
             "note": "These figures are computed deterministically by the reconciliation engine. Relay the explanation and figures exactly. Do NOT add causes, percentages, step-by-step guesses, or links between items that are not stated here — report only what is in this result.",
+        }
+
+    def _tool_run_accounting_health_check(self, params: dict) -> dict:
+        """Run the deterministic accounting health checks (the same engine behind
+        the System Health page) and return every finding. No logic is duplicated
+        here — it calls the runner registered by the health module, the same lazy
+        pattern used for the reconciliation engine."""
+        try:
+            import clickai_health as _health
+        except Exception:
+            return {"error": "Health check engine not available."}
+        runner = getattr(_health, "_HEALTH_RUN", None)
+        if not runner:
+            return {"error": "Health check engine not loaded yet."}
+        result = runner(self.biz_id)
+        summary = result.get("summary", {})
+        findings = []
+        for f in result.get("findings", []):
+            findings.append({
+                "check_id": f.get("check_id"),
+                "check_name": f.get("check_name"),
+                "severity": f.get("severity"),
+                "title": f.get("title"),
+                "detail": f.get("detail"),
+                "records": [r.get("label", "") for r in (f.get("refs") or [])][:8],
+                "amounts": f.get("amounts", {}),
+            })
+        return {
+            "summary": {
+                "critical": summary.get("critical", 0),
+                "warnings": summary.get("warning", 0),
+                "info": summary.get("info", 0),
+                "checks_run": summary.get("checks_run", 0),
+                "journals_scanned": summary.get("journals_scanned", 0),
+            },
+            "findings": findings,
+            "note": "These checks are computed deterministically by the health engine. Relay the findings and figures exactly. Do NOT invent causes, fixes, percentages, or links between findings that are not stated here — report only what is in this result. If there are no findings, tell the user the books passed all checks.",
         }
 
     def _tool_get_scan_queue(self, params: dict) -> dict:
