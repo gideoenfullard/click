@@ -22324,7 +22324,7 @@ def render_page(title: str, content: str, user: dict = None, active: str = "") -
     {CLICKDB_JS}
     </script>
     
-    <!-- Reactor: measure header after first layout pass, position, then reveal -->
+    <!-- Reactor: visible immediately, position refined after layout, then reveal -->
     <script>
     (function() {{
         document.body.classList.remove('page-entering');
@@ -22333,24 +22333,20 @@ def render_page(title: str, content: str, user: dict = None, active: str = "") -
             var rx = document.querySelector('.j-rx');
             if (!rx) return;
             var hdr = document.querySelector('.header');
-            var top = hdr ? hdr.getBoundingClientRect().bottom : 0;
-            // Only update if position actually changed (avoids unnecessary reflow)
+            var top = hdr ? hdr.getBoundingClientRect().bottom : 60;
+            // Silently refine position — reactor is already visible so no flash occurs.
+            // The CSS transition:top 0.3s smooths any small adjustment.
             var newTop = (top + 6) + 'px';
             if (rx.style.top !== newTop) {{
                 rx.style.top = newTop;
-            }}
-            if (rx.style.opacity !== '1') {{
-                rx.style.opacity = '1';
             }}
             if (!rx.classList.contains('reactor-reveal')) {{
                 rx.classList.add('reactor-reveal');
             }}
         }}
 
-        // Wait for the browser to complete its first layout pass before measuring.
-        // Double-RAF is the standard pattern: first RAF = before paint, second = after.
-        // This guarantees getBoundingClientRect() returns the true rendered value,
-        // preventing the "jump to top then jump down" flash on heavy pages like Stock.
+        // Double-RAF: wait for first real layout pass before measuring.
+        // The reactor is already visible during this wait — no black screen.
         requestAnimationFrame(function() {{
             requestAnimationFrame(positionReactor);
         }});
@@ -22362,8 +22358,7 @@ def render_page(title: str, content: str, user: dict = None, active: str = "") -
             }});
         }}, {{passive: true}});
 
-        // Restore animation continuity: offset each ring's animation-delay by
-        // elapsed time so the reactor appears to keep spinning from where it left off
+        // Restore animation continuity across page loads
         requestAnimationFrame(function() {{
             var rings = document.querySelectorAll('.j-rx .j-rg');
             var periods = [8000, 6000, 4000, 12000];
@@ -25566,7 +25561,7 @@ JARVIS_HUD_CSS = '''
 .j-cn.R::before{background:linear-gradient(90deg,rgba(80,180,255,0.3),rgba(80,180,255,0.05));}
 .j-cn::after{content:'';position:absolute;right:-2px;top:-2.5px;width:7px;height:7px;border-radius:50%;background:rgba(80,180,255,0.35);box-shadow:0 0 8px rgba(80,180,255,0.4);}
 .j-cn.R::after{left:-2px;right:auto;}
-.j-rx{position:fixed;top:0;left:50%;transform:translateX(-50%);width:180px;height:180px;flex-shrink:0;cursor:pointer;z-index:9999;opacity:0;transition:opacity 0.15s ease;}
+.j-rx{position:fixed;top:60px;left:50%;transform:translateX(-50%);width:180px;height:180px;flex-shrink:0;cursor:pointer;z-index:9999;opacity:1;transition:top 0.3s ease;}
 .j-rx:hover .j-core{box-shadow:0 0 60px rgba(0,200,255,0.4),0 0 120px rgba(0,180,255,0.2),0 0 180px rgba(0,200,255,0.08),inset 0 0 35px rgba(0,200,255,0.2),0 0 8px rgba(0,200,255,0.8);border-color:rgba(140,220,255,0.5);}
 .j-rx:hover .j-hint{opacity:1;transform:translateX(-50%) translateY(0);}
 .j-rg{position:absolute;border-radius:50%;border:1px solid rgba(80,180,255,0.2);transition:all 0.4s;}
@@ -25582,11 +25577,11 @@ JARVIS_HUD_CSS = '''
 @keyframes jspin{0%{transform:rotate(0deg)}100%{transform:rotate(360deg)}}
 @keyframes jopen{0%{transform:scale(0);opacity:0;}60%{transform:scale(1.08);opacity:1;}100%{transform:scale(1);opacity:1;}}
 /* Reactor reveal — centre first, then rings outward */
-.reactor-reveal .j-core{animation:jopen 0.35s cubic-bezier(0.34,1.56,0.64,1) 0.00s both, jcore-breathe 3s ease-in-out 0.35s infinite;}
-.reactor-reveal .j-rg.r4{animation:jopen 0.28s cubic-bezier(0.34,1.56,0.64,1) 0.22s both, jspin 12s linear 0.50s infinite reverse;}
-.reactor-reveal .j-rg.r3{animation:jopen 0.28s cubic-bezier(0.34,1.56,0.64,1) 0.36s both, jspin  4s linear 0.64s infinite, jring-pulse-3 3s ease-in-out 0.64s infinite;}
-.reactor-reveal .j-rg.r2{animation:jopen 0.28s cubic-bezier(0.34,1.56,0.64,1) 0.50s both, jspin  6s linear 0.78s infinite reverse, jring-pulse-2 3s ease-in-out 0.78s infinite;}
-.reactor-reveal .j-rg.r1{animation:jopen 0.28s cubic-bezier(0.34,1.56,0.64,1) 0.64s both, jspin  8s linear 0.92s infinite, jring-pulse-1 3s ease-in-out 0.92s infinite;}
+.reactor-reveal .j-core{animation:jopen 0.50s cubic-bezier(0.34,1.56,0.64,1) 0.00s both, jcore-breathe 3s ease-in-out 0.50s infinite;}
+.reactor-reveal .j-rg.r4{animation:jopen 0.35s cubic-bezier(0.34,1.56,0.64,1) 0.30s both, jspin 12s linear 0.65s infinite reverse;}
+.reactor-reveal .j-rg.r3{animation:jopen 0.35s cubic-bezier(0.34,1.56,0.64,1) 0.50s both, jspin  4s linear 0.85s infinite, jring-pulse-3 3s ease-in-out 0.85s infinite;}
+.reactor-reveal .j-rg.r2{animation:jopen 0.35s cubic-bezier(0.34,1.56,0.64,1) 0.70s both, jspin  6s linear 1.05s infinite reverse, jring-pulse-2 3s ease-in-out 1.05s infinite;}
+.reactor-reveal .j-rg.r1{animation:jopen 0.35s cubic-bezier(0.34,1.56,0.64,1) 0.90s both, jspin  8s linear 1.25s infinite, jring-pulse-1 3s ease-in-out 1.25s infinite;}
 @keyframes jring-pulse-1{0%,100%{box-shadow:0 0 40px rgba(80,180,255,0.15),0 0 80px rgba(80,180,255,0.06),0 6px 25px rgba(0,0,0,0.45);border-top-color:rgba(120,210,255,0.7);}50%{box-shadow:0 0 55px rgba(80,180,255,0.22),0 0 100px rgba(80,180,255,0.09),0 6px 25px rgba(0,0,0,0.45);border-top-color:rgba(150,225,255,0.85);}}
 @keyframes jring-pulse-2{0%,100%{box-shadow:0 0 30px rgba(80,180,255,0.12),0 0 55px rgba(80,180,255,0.05),0 4px 16px rgba(0,0,0,0.35);border-bottom-color:rgba(100,200,255,0.65);}50%{box-shadow:0 0 42px rgba(80,180,255,0.18),0 0 70px rgba(80,180,255,0.07),0 4px 16px rgba(0,0,0,0.35);border-bottom-color:rgba(130,215,255,0.8);}}
 @keyframes jring-pulse-3{0%,100%{box-shadow:0 0 22px rgba(80,180,255,0.1),0 0 40px rgba(80,180,255,0.04),0 3px 10px rgba(0,0,0,0.35);border-top-color:rgba(140,220,255,0.6);}50%{box-shadow:0 0 32px rgba(80,180,255,0.16),0 0 55px rgba(80,180,255,0.06),0 3px 10px rgba(0,0,0,0.35);border-top-color:rgba(170,235,255,0.75);}}
