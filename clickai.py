@@ -22329,6 +22329,20 @@ def render_page(title: str, content: str, user: dict = None, active: str = "") -
     (function() {{
         document.body.classList.remove('page-entering');
 
+        // Restore animation continuity: offset each ring's animation-delay by the
+        // elapsed time since epoch mod the ring's period, so the reactor appears
+        // to keep spinning from where it left off rather than resetting to 0°.
+        (function restoreReactorPhase() {{
+            var rings = document.querySelectorAll('.j-rx .j-rg');
+            var periods = [8000, 6000, 4000, 12000]; // must match jspin durations
+            var now = Date.now();
+            rings.forEach(function(ring, i) {{
+                var period = periods[i] || 8000;
+                var offset = -((now % period) / 1000).toFixed(3);
+                ring.style.animationDelay = offset + 's,' + ring.style.animationDelay.split(',').slice(1).join(',');
+            }});
+        }})();
+
         // Keep the reactor spinning the instant a navigation starts, so it spins
         // through the server wait and the next page's load. Class-only — it never
         // calls preventDefault, so it can never block or alter navigation.
@@ -25519,7 +25533,7 @@ JARVIS_HUD_CSS = '''
 .j-cn.R::before{background:linear-gradient(90deg,rgba(80,180,255,0.3),rgba(80,180,255,0.05));}
 .j-cn::after{content:'';position:absolute;right:-2px;top:-2.5px;width:7px;height:7px;border-radius:50%;background:rgba(80,180,255,0.35);box-shadow:0 0 8px rgba(80,180,255,0.4);}
 .j-cn.R::after{left:-2px;right:auto;}
-.j-rx{position:relative;flex-shrink:0;cursor:pointer;z-index:10;}
+.j-rx{position:fixed;top:10px;left:50%;transform:translateX(-50%);width:180px;height:180px;flex-shrink:0;cursor:pointer;z-index:9999;}
 .j-rx:hover .j-core{box-shadow:0 0 60px rgba(0,200,255,0.4),0 0 120px rgba(0,180,255,0.2),0 0 180px rgba(0,200,255,0.08),inset 0 0 35px rgba(0,200,255,0.2),0 0 8px rgba(0,200,255,0.8);border-color:rgba(140,220,255,0.5);}
 .j-rx:hover .j-hint{opacity:1;transform:translateX(-50%) translateY(0);}
 .j-rg{position:absolute;border-radius:50%;border:1px solid rgba(80,180,255,0.2);transition:all 0.4s;}
@@ -25552,9 +25566,9 @@ JARVIS_HUD_CSS = '''
 .j-tl span{font-family:'Share Tech Mono',monospace;font-size:10px;color:#6aaacc;letter-spacing:1.5px;}
 .j-tl span b{color:#8ac0dd;font-weight:400;}
 /* Dashboard big reactor */
-.j-rx.big{width:220px;height:220px;}
-.j-rx.big .j-core{inset:58px;}
-.j-rx.big .j-core .j-brand{font-size:18px;letter-spacing:3px;}
+.j-rx.big{width:180px;height:180px;}
+.j-rx.big .j-core{inset:48px;}
+.j-rx.big .j-core .j-brand{font-size:16px;letter-spacing:3px;}
 .j-rx.big .j-core .j-sub{font-size:7px;letter-spacing:4px;}
 .j-rx.big .j-core .j-ai{font-size:7px;padding:2px 8px;}
 .j-rx.big .j-hint{bottom:-22px;}
@@ -25612,11 +25626,11 @@ JARVIS_HUD_CSS = '''
 .j-hero{flex-wrap:wrap;gap:8px;padding:8px 0 10px;}
 .j-flank{display:none;}
 .j-cn{display:none;}
-.j-rx.big{width:160px;height:160px;}
-.j-rx.big .j-core{inset:42px;}
+.j-rx.big{width:180px;height:180px;}
+.j-rx.big .j-core{inset:48px;}
 .j-rx.big .j-core .j-brand{font-size:14px;letter-spacing:2px;}
-.j-rx.page{width:140px;height:140px;}
-.j-rx.page .j-core{inset:38px;}
+.j-rx.page{width:180px;height:180px;}
+.j-rx.page .j-core{inset:48px;}
 .j-plbl .j-pn{font-size:10px;letter-spacing:3px;}
 .j-zane-layout{flex-direction:column;}
 .j-zane-center{width:100%;flex-direction:row;flex-wrap:wrap;justify-content:center;gap:6px;}
@@ -25627,8 +25641,8 @@ JARVIS_HUD_CSS = '''
 .j-flank{max-width:160px;}
 .j-fv{font-size:10px;}
 .j-fl{font-size:8px;}
-.j-rx.big{width:190px;height:190px;}
-.j-rx.big .j-core{inset:50px;}
+.j-rx.big{width:180px;height:180px;}
+.j-rx.big .j-core{inset:48px;}
 }
 </style>
 '''
@@ -25938,6 +25952,7 @@ def jarvis_hud_header(page_name, page_count, left_items, right_items, reactor_si
         <div class="j-hero" style="padding:14px 20px 0;">
             <div class="j-flank">{left_html}</div>
             <div class="j-cn"></div>
+            <div style="width:180px;height:180px;flex-shrink:0;visibility:hidden;" aria-hidden="true"></div>
             <div class="j-rx {reactor_size}" onclick="jzToggle()" style="z-index:10;">
                 <div class="j-rg r1"></div>
                 <div class="j-rg r2"></div>
@@ -26634,6 +26649,7 @@ def _jarvis_global_hud(title, content):
         <div class="j-hud-wrap" data-page="{page_name}">
             <div class="j-hero" style="padding:10px 20px 0;">
                 <div class="j-cn"></div>
+                <div style="width:180px;height:180px;flex-shrink:0;visibility:hidden;" aria-hidden="true"></div>
                 <div class="j-rx page" onclick="jzToggle()" style="width:180px;height:180px;z-index:10;">
                     <div class="j-rg r1"></div>
                     <div class="j-rg r2"></div>
