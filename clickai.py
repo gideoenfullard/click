@@ -21331,6 +21331,16 @@ select.form-input optgroup {
 .reactor-spinup .j-rg.r4 { animation: jspin 2s linear infinite reverse !important; }
 }
 
+/* Reactor spins fast + smooth WHILE a page is loading — both during the next
+   page's render (.page-entering) and from the moment a nav link is clicked
+   (.reactor-loading). Transform-only + will-change keeps the spin on the GPU
+   compositor, so it stays smooth even while the main thread renders a heavy page. */
+.page-entering .j-rg, .reactor-loading .j-rg { will-change: transform; }
+.page-entering .j-rg.r1, .reactor-loading .j-rg.r1 { animation: jspin 1.5s linear infinite !important; }
+.page-entering .j-rg.r2, .reactor-loading .j-rg.r2 { animation: jspin 1.2s linear infinite reverse !important; }
+.page-entering .j-rg.r3, .reactor-loading .j-rg.r3 { animation: jspin 0.8s linear infinite !important; }
+.page-entering .j-rg.r4, .reactor-loading .j-rg.r4 { animation: jspin 2s linear infinite reverse !important; }
+
 /* Page entering - content fades in fast */
 .page-entering .container {
     animation: fadeSlideIn 0.18s ease-out both;
@@ -22138,17 +22148,25 @@ def render_page(title: str, content: str, user: dict = None, active: str = "") -
     {CLICKDB_JS}
     </script>
     
-    <!-- Reactor spin-up on page load -->
+    <!-- Reactor: spin fast + smooth while loading -->
     <script>
     (function() {{
         document.body.classList.remove('page-entering');
-        
-        // Reactor spin-up: rings spin fast then settle to normal speed
-        var rxEl = document.querySelector('.j-rx') || document.querySelector('.pos-rx');
-        if (rxEl) {{
-            rxEl.classList.add('reactor-spinup');
-            setTimeout(function() {{ rxEl.classList.remove('reactor-spinup'); }}, 2000);
-        }}
+
+        // Keep the reactor spinning the instant a navigation starts, so it spins
+        // through the server wait and the next page's load. Class-only — it never
+        // calls preventDefault, so it can never block or alter navigation.
+        document.addEventListener('click', function(e) {{
+            var a = e.target && e.target.closest ? e.target.closest('a[href]') : null;
+            if (!a) return;
+            if (e.defaultPrevented || e.button !== 0 || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;
+            if (a.target === '_blank' || a.hasAttribute('download')) return;
+            var href = a.getAttribute('href') || '';
+            if (!href || href.charAt(0) === '#' || href.indexOf('javascript:') === 0) return;
+            if (a.host && a.host !== window.location.host) return;
+            document.body.classList.add('reactor-loading');
+            setTimeout(function() {{ document.body.classList.remove('reactor-loading'); }}, 6000);
+        }}, true);
     }})();
     </script>
     
@@ -35423,86 +35441,6 @@ def ensure_gl_account(biz_id: str, role: str, default_name: str, default_type: s
     return code
 
 
-def _infer_coa_type_from_code(code: str) -> tuple:
-    """Infer (account_type, category) for an orphan GL code from its leading digit,
-    following standard Pastel-style numbering. This is a reasonable default so the
-    amount becomes visible on the right statement; the bookkeeper refines the name
-    or type afterwards. 1=asset, 2=liability, 3=equity, 4=income, 5=cost of sales,
-    6-9=expense."""
-    lead = (str(code or "").strip()[:1])
-    if lead == "1":
-        return ("asset", "Current Assets")
-    if lead == "2":
-        return ("liability", "Current Liabilities")
-    if lead == "3":
-        return ("equity", "Owner's Equity")
-    if lead == "4":
-        return ("income", "Sales")
-    if lead == "5":
-        return ("cost_of_sales", "Cost of Sales")
-    return ("expense", "Expenses")
-
-
-def backfill_missing_coa_codes(biz_id: str, dry_run: bool = False) -> dict:
-    """Find GL codes used in journals that have no chart_of_accounts row (orphans)
-    and create a COA row for each, so the amounts stop being invisible to reports.
-    Type and category are inferred from the code's leading digit; the account is
-    marked source='auto_created' for bookkeeper review. Existing Sage codes are
-    preserved exactly — nothing is renamed or remapped.
-
-    Returns {"orphans": [{code, account_type, category, name, debit, credit, lines}],
-             "created": int}. With dry_run=True nothing is written (preview only)."""
-    if not biz_id:
-        return {"orphans": [], "created": 0}
-    journals = db.get("journals", {"business_id": biz_id}, limit=200000,
-                      select="account_code,debit,credit") or []
-    coa = db.get("chart_of_accounts", {"business_id": biz_id}, limit=20000,
-                 select="account_code") or []
-    coa_codes = {str(a.get("account_code", "") or "").strip()
-                 for a in coa if a.get("account_code")}
-    agg = {}
-    for j in journals:
-        code = str(j.get("account_code", "") or "").strip()
-        if not code or code in coa_codes:
-            continue
-        a = agg.setdefault(code, {"debit": 0.0, "credit": 0.0, "lines": 0})
-        try:
-            a["debit"] += float(j.get("debit") or 0)
-            a["credit"] += float(j.get("credit") or 0)
-        except Exception:
-            pass
-        a["lines"] += 1
-    orphans = []
-    created = 0
-    for code in sorted(agg.keys()):
-        a = agg[code]
-        acc_type, category = _infer_coa_type_from_code(code)
-        name = f"Account {code}"
-        orphans.append({"code": code, "account_type": acc_type, "category": category,
-                        "name": name, "debit": round(a["debit"], 2),
-                        "credit": round(a["credit"], 2), "lines": a["lines"]})
-        if not dry_run:
-            try:
-                db.save("chart_of_accounts", {
-                    "business_id": biz_id,
-                    "account_code": code,
-                    "account_name": name,
-                    "account_type": acc_type,
-                    "category": category,
-                    "is_active": True,
-                    "source": "auto_created",
-                })
-                created += 1
-            except Exception as e:
-                logger.error(f"[COA BACKFILL] Failed to create {code} for {biz_id[:8]}: {e}")
-    if not dry_run and created:
-        try:
-            _gl_map_cache.pop(biz_id, None)
-        except Exception:
-            pass
-    return {"orphans": orphans, "created": created}
-
-
 def get_or_create_accounts(biz_id: str) -> list:
     """Get accounts for business, create defaults if none exist"""
     
@@ -38981,17 +38919,6 @@ def api_sage_drop_import():
         except Exception as e:
             logger.error(f"[SAGE DROP] Supplier balance update failed: {e}")
     
-    # Prevention: ensure every GL code used by the imported journals has a chart of
-    # accounts row, so no orphan codes are left invisible to reports after an import.
-    try:
-        _bf = backfill_missing_coa_codes(biz_id)
-        if _bf.get("created"):
-            results.append({"label": "GL accounts auto-created for imported codes",
-                            "imported": _bf["created"], "errors": 0})
-            logger.info(f"[SAGE DROP] COA backfill: {_bf['created']} account(s) created")
-    except Exception as e:
-        logger.error(f"[SAGE DROP] COA backfill failed: {e}")
-
     elapsed = time.time() - t0
     
     # Clear session on success
