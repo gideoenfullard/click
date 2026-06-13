@@ -22324,28 +22324,49 @@ def render_page(title: str, content: str, user: dict = None, active: str = "") -
     {CLICKDB_JS}
     </script>
     
-    <!-- Reactor: spin fast + smooth while loading -->
+    <!-- Reactor: measure header, position precisely below it, then reveal -->
     <script>
     (function() {{
         document.body.classList.remove('page-entering');
 
-        // Restore animation continuity: offset each ring's animation-delay by the
-        // elapsed time since epoch mod the ring's period, so the reactor appears
-        // to keep spinning from where it left off rather than resetting to 0°.
+        function positionReactor() {{
+            var rx = document.querySelector('.j-rx');
+            if (!rx) return;
+            // Measure the fixed header's actual bottom edge
+            var hdr = document.querySelector('.header');
+            var top = hdr ? hdr.getBoundingClientRect().bottom : 0;
+            // Centre the reactor: its centre sits at header-bottom + half its height
+            // so it appears to sit snugly below the header, not overlapping it
+            rx.style.top = (top + 6) + 'px';
+            rx.style.opacity = '1';
+            if (!rx.classList.contains('reactor-reveal')) {{
+                rx.classList.add('reactor-reveal');
+            }}
+        }}
+
+        // Run immediately (header is already in DOM when this script fires)
+        positionReactor();
+
+        // Re-run on resize in case the header reflows (e.g. nav wraps on narrow screens)
+        window.addEventListener('resize', positionReactor, {{passive: true}});
+
+        // Restore animation continuity: offset each ring's animation-delay by
+        // elapsed time so the reactor appears to keep spinning from where it left off
         (function restoreReactorPhase() {{
             var rings = document.querySelectorAll('.j-rx .j-rg');
-            var periods = [8000, 6000, 4000, 12000]; // must match jspin durations
+            var periods = [8000, 6000, 4000, 12000];
             var now = Date.now();
             rings.forEach(function(ring, i) {{
                 var period = periods[i] || 8000;
                 var offset = -((now % period) / 1000).toFixed(3);
-                ring.style.animationDelay = offset + 's,' + ring.style.animationDelay.split(',').slice(1).join(',');
+                var existing = ring.style.animationDelay || '';
+                var parts = existing.split(',');
+                parts[0] = offset + 's';
+                ring.style.animationDelay = parts.join(',');
             }});
         }})();
 
-        // Keep the reactor spinning the instant a navigation starts, so it spins
-        // through the server wait and the next page's load. Class-only — it never
-        // calls preventDefault, so it can never block or alter navigation.
+        // Mark nav-clicks so reactor spins fast through the page load
         document.addEventListener('click', function(e) {{
             var a = e.target && e.target.closest ? e.target.closest('a[href]') : null;
             if (!a) return;
@@ -25533,7 +25554,7 @@ JARVIS_HUD_CSS = '''
 .j-cn.R::before{background:linear-gradient(90deg,rgba(80,180,255,0.3),rgba(80,180,255,0.05));}
 .j-cn::after{content:'';position:absolute;right:-2px;top:-2.5px;width:7px;height:7px;border-radius:50%;background:rgba(80,180,255,0.35);box-shadow:0 0 8px rgba(80,180,255,0.4);}
 .j-cn.R::after{left:-2px;right:auto;}
-.j-rx{position:fixed;top:10px;left:50%;transform:translateX(-50%);width:180px;height:180px;flex-shrink:0;cursor:pointer;z-index:9999;}
+.j-rx{position:fixed;top:0;left:50%;transform:translateX(-50%);width:180px;height:180px;flex-shrink:0;cursor:pointer;z-index:9999;opacity:0;transition:opacity 0.15s ease;}
 .j-rx:hover .j-core{box-shadow:0 0 60px rgba(0,200,255,0.4),0 0 120px rgba(0,180,255,0.2),0 0 180px rgba(0,200,255,0.08),inset 0 0 35px rgba(0,200,255,0.2),0 0 8px rgba(0,200,255,0.8);border-color:rgba(140,220,255,0.5);}
 .j-rx:hover .j-hint{opacity:1;transform:translateX(-50%) translateY(0);}
 .j-rg{position:absolute;border-radius:50%;border:1px solid rgba(80,180,255,0.2);transition:all 0.4s;}
@@ -25547,6 +25568,13 @@ JARVIS_HUD_CSS = '''
 .j-core .j-ai{margin-top:5px;font-family:'Orbitron',monospace;font-size:7px;font-weight:700;color:#00ccff;letter-spacing:2px;padding:2px 8px;border:1px solid rgba(0,200,255,0.25);text-shadow:0 0 8px rgba(0,200,255,0.5);animation:jpulse 2.5s ease-in-out infinite;}
 @keyframes jpulse{0%,100%{border-color:rgba(0,200,255,0.2);box-shadow:none;}50%{border-color:rgba(0,200,255,0.45);box-shadow:0 0 10px rgba(0,200,255,0.15);}}
 @keyframes jspin{0%{transform:rotate(0deg)}100%{transform:rotate(360deg)}}
+@keyframes jopen{0%{transform:scale(0);opacity:0;}60%{transform:scale(1.08);opacity:1;}100%{transform:scale(1);opacity:1;}}
+/* Reactor reveal — centre first, then rings outward */
+.reactor-reveal .j-core{animation:jopen 0.22s cubic-bezier(0.34,1.56,0.64,1) 0.00s both, jcore-breathe 3s ease-in-out 0.22s infinite;}
+.reactor-reveal .j-rg.r4{animation:jopen 0.20s cubic-bezier(0.34,1.56,0.64,1) 0.12s both, jspin 12s linear 0.32s infinite reverse;}
+.reactor-reveal .j-rg.r3{animation:jopen 0.20s cubic-bezier(0.34,1.56,0.64,1) 0.20s both, jspin  4s linear 0.40s infinite, jring-pulse-3 3s ease-in-out 0.40s infinite;}
+.reactor-reveal .j-rg.r2{animation:jopen 0.20s cubic-bezier(0.34,1.56,0.64,1) 0.28s both, jspin  6s linear 0.48s infinite reverse, jring-pulse-2 3s ease-in-out 0.48s infinite;}
+.reactor-reveal .j-rg.r1{animation:jopen 0.20s cubic-bezier(0.34,1.56,0.64,1) 0.36s both, jspin  8s linear 0.56s infinite, jring-pulse-1 3s ease-in-out 0.56s infinite;}
 @keyframes jring-pulse-1{0%,100%{box-shadow:0 0 40px rgba(80,180,255,0.15),0 0 80px rgba(80,180,255,0.06),0 6px 25px rgba(0,0,0,0.45);border-top-color:rgba(120,210,255,0.7);}50%{box-shadow:0 0 55px rgba(80,180,255,0.22),0 0 100px rgba(80,180,255,0.09),0 6px 25px rgba(0,0,0,0.45);border-top-color:rgba(150,225,255,0.85);}}
 @keyframes jring-pulse-2{0%,100%{box-shadow:0 0 30px rgba(80,180,255,0.12),0 0 55px rgba(80,180,255,0.05),0 4px 16px rgba(0,0,0,0.35);border-bottom-color:rgba(100,200,255,0.65);}50%{box-shadow:0 0 42px rgba(80,180,255,0.18),0 0 70px rgba(80,180,255,0.07),0 4px 16px rgba(0,0,0,0.35);border-bottom-color:rgba(130,215,255,0.8);}}
 @keyframes jring-pulse-3{0%,100%{box-shadow:0 0 22px rgba(80,180,255,0.1),0 0 40px rgba(80,180,255,0.04),0 3px 10px rgba(0,0,0,0.35);border-top-color:rgba(140,220,255,0.6);}50%{box-shadow:0 0 32px rgba(80,180,255,0.16),0 0 55px rgba(80,180,255,0.06),0 3px 10px rgba(0,0,0,0.35);border-top-color:rgba(170,235,255,0.75);}}
