@@ -376,7 +376,7 @@ def chk_unknown_codes(ctx):
                   for i in g["ids"]],
             amounts={"lines": g["count"], "debits": round(g["debit"], 2),
                      "credits": round(g["credit"], 2)},
-            suggested_action={"type": "ensure_gl_account", "params": {"account_code": code}},
+            suggested_action={"type": "create_gl_accounts"},
         ))
     return findings
 
@@ -744,6 +744,11 @@ def register_health_routes(app, db, login_required, Auth, render_page,
                                f'<a href="/system-health/reverse-duplicate?ref={_ref_q}" '
                                f'class="btn btn-secondary" style="padding:6px 14px;font-size:12px;">'
                                f'Review &amp; reverse duplicate</a></div>')
+            elif sa.get("type") == "create_gl_accounts":
+                action_html = (f'<div style="margin-top:10px;">'
+                               f'<a href="/system-health/create-gl-accounts" '
+                               f'class="btn btn-secondary" style="padding:6px 14px;font-size:12px;">'
+                               f'Review &amp; create missing accounts</a></div>')
             finding_cards += f'''
             <div class="card" style="border-left:4px solid {color};background:{bg};margin-bottom:12px;">
                 <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:10px;flex-wrap:wrap;">
@@ -941,6 +946,130 @@ def register_health_routes(app, db, login_required, Auth, render_page,
         logger.info(f"[HEALTH] Reversed duplicate journal {ref} for {biz_id} — {plan['amount']}")
         flash(f"Reversed duplicate posting {ref} ({money(plan['amount'])}). "
               f"The original lines are kept for audit.", "success")
+        return redirect("/system-health")
+
+    # --------------------------------------------------------------------------
+    # PHASE 4 — guarded fix action: create missing GL accounts (CHK-005).
+    # Codes used in journals but absent from the chart of accounts are invisible
+    # to every report. This creates a COA row for each, with type inferred from the
+    # code's leading digit, so the amounts become visible. It never moves money and
+    # never renames an existing account — it only adds the missing rows. Two steps,
+    # never automatic: a confirmation page lists exactly what will be created.
+    # --------------------------------------------------------------------------
+
+    @app.route("/system-health/create-gl-accounts")
+    @login_required
+    def system_health_create_gl_accounts_confirm():
+        from flask import redirect, flash
+        business = Auth.get_current_business()
+        biz_id = business.get("id") if business else None
+        if not biz_id:
+            flash("Please select a business first", "error")
+            return redirect("/")
+        user = Auth.get_current_user()
+        try:
+            import clickai as _main
+            preview = _main.backfill_missing_coa_codes(biz_id, dry_run=True)
+        except Exception as e:
+            logger.error(f"[HEALTH] COA preview failed: {e}")
+            flash("Could not read the missing accounts.", "error")
+            return redirect("/system-health")
+        orphans = preview.get("orphans", [])
+        if not orphans:
+            flash("There are no missing GL accounts to create.", "success")
+            return redirect("/system-health")
+
+        rows = "".join(
+            f'<tr>'
+            f'<td style="padding:6px 10px;">{safe_string(o["code"])}</td>'
+            f'<td style="padding:6px 10px;">{safe_string(o["account_type"])}</td>'
+            f'<td style="padding:6px 10px;">{safe_string(o["name"])}</td>'
+            f'<td style="padding:6px 10px;text-align:right;">{o["lines"]}</td>'
+            f'<td style="padding:6px 10px;text-align:right;">{money(o["debit"])}</td>'
+            f'<td style="padding:6px 10px;text-align:right;">{money(o["credit"])}</td>'
+            f'</tr>'
+            for o in orphans)
+
+        content = f'''
+        <div class="card">
+            <h3 class="card-title" style="margin:0 0 4px;">Create missing GL accounts</h3>
+            <p style="color:var(--text-muted);font-size:13px;margin:0 0 14px;">
+                {len(orphans)} account code(s) are used in journals but do not exist in the
+                chart of accounts, so their amounts are invisible to reports. Confirming
+                creates one account for each, with the type inferred from the code number.
+                Nothing is moved and no existing account is renamed — review and rename the
+                new accounts afterwards if needed.
+            </p>
+            <table style="width:100%;border-collapse:collapse;font-size:13px;margin-bottom:16px;">
+                <thead><tr style="border-bottom:1px solid var(--border);">
+                    <th style="padding:6px 10px;text-align:left;">Code</th>
+                    <th style="padding:6px 10px;text-align:left;">Type</th>
+                    <th style="padding:6px 10px;text-align:left;">Name</th>
+                    <th style="padding:6px 10px;text-align:right;">Lines</th>
+                    <th style="padding:6px 10px;text-align:right;">Debits</th>
+                    <th style="padding:6px 10px;text-align:right;">Credits</th>
+                </tr></thead>
+                <tbody>{rows}</tbody>
+            </table>
+            <form method="POST" action="/system-health/create-gl-accounts" style="display:flex;gap:10px;align-items:center;">
+                <button type="submit" class="btn btn-primary">Create {len(orphans)} account(s)</button>
+                <a href="/system-health" class="btn btn-secondary">Cancel</a>
+            </form>
+        </div>
+        '''
+        return render_page("Create GL Accounts", content, user, "system-health")
+
+    @app.route("/system-health/create-gl-accounts", methods=["POST"])
+    @login_required
+    def system_health_create_gl_accounts_post():
+        from flask import redirect, flash
+        business = Auth.get_current_business()
+        biz_id = business.get("id") if business else None
+        if not biz_id:
+            flash("Please select a business first", "error")
+            return redirect("/")
+
+        try:
+            import clickai as _main
+            role = _main.get_user_role()
+        except Exception:
+            _main, role = None, ""
+        if role not in ("owner", "admin", "manager", "bookkeeper", "accountant"):
+            flash("You don't have permission to change the chart of accounts.", "error")
+            return redirect("/system-health")
+
+        try:
+            result = _main.backfill_missing_coa_codes(biz_id)
+        except Exception as e:
+            logger.error(f"[HEALTH] COA backfill failed: {e}")
+            flash(f"Could not create the accounts: {e}", "error")
+            return redirect("/system-health")
+
+        created = result.get("created", 0)
+        try:
+            from clickai_allocation_log import log_allocation
+        except Exception:
+            log_allocation = None
+        try:
+            if log_allocation and created:
+                _uid, _uname = _main.get_acting_user()
+                codes = ", ".join(o["code"] for o in result.get("orphans", []))
+                log_allocation(
+                    business_id=biz_id, allocation_type="coa_repair",
+                    source_table="chart_of_accounts", source_id="health",
+                    description=f"System Health created {created} missing GL account(s): {codes}"[:480],
+                    amount=0, gl_entries=[],
+                    transaction_date=today(),
+                    created_by=_uid, created_by_name=_uname)
+        except Exception as _le:
+            logger.warning(f"[HEALTH] COA repair allocation_log failed: {_le}")
+
+        logger.info(f"[HEALTH] Created {created} missing GL account(s) for {biz_id}")
+        if created:
+            flash(f"Created {created} missing GL account(s). Review their names and types "
+                  f"on the chart of accounts.", "success")
+        else:
+            flash("No missing GL accounts to create.", "success")
         return redirect("/system-health")
 
     logger.info("[HEALTH] System Health routes registered")
