@@ -801,7 +801,7 @@ def register_health_routes(app, db, login_required, Auth, render_page,
         {finding_cards}
         '''
 
-        return render_page("System Health", content, user, "reports")
+        return render_page("System Health", content, user, "system-health")
 
     # --------------------------------------------------------------------------
     # PHASE 4 — guarded fix action: reverse a duplicate journal (CHK-008).
@@ -884,7 +884,7 @@ def register_health_routes(app, db, login_required, Auth, render_page,
             </form>
         </div>
         '''
-        return render_page("Reverse Duplicate", content, user, "reports")
+        return render_page("Reverse Duplicate", content, user, "system-health")
 
     @app.route("/system-health/reverse-duplicate", methods=["POST"])
     @login_required
