@@ -19831,6 +19831,182 @@ CSS = """
 [data-theme="light"] .j-core .j-sub { color: #7c3aed !important; }
 [data-theme="light"] .j-core .j-ai { color: #8b5cf6 !important; border-color: rgba(139,92,246,0.3) !important; text-shadow: 0 0 10px rgba(139,92,246,0.5) !important; }
 
+/* ── LIGHT THEME: Professional Black & White ─────────────────────────────────
+   Goal: white page, black text, crisp borders. No pale-blue-on-white traps.
+   Rule: every interactive element must pass WCAG AA contrast on #ffffff.
+   The dark header/nav is intentional and stays.
+   ─────────────────────────────────────────────────────────────────────────── */
+
+/* Tabs & nav tabs */
+[data-theme="light"] .tab-btn,
+[data-theme="light"] .nav-tab {
+    background: transparent !important;
+    color: #374151 !important;
+    border: 1px solid #d1d5db !important;
+    border-bottom: none !important;
+}
+[data-theme="light"] .tab-btn.active,
+[data-theme="light"] .nav-tab.active,
+[data-theme="light"] .tab-btn:hover,
+[data-theme="light"] .nav-tab:hover {
+    background: #1a1a2e !important;
+    color: #ffffff !important;
+    border-color: #1a1a2e !important;
+}
+
+/* Status pills / badges — force dark-on-white, never light-on-light */
+[data-theme="light"] .badge,
+[data-theme="light"] .pill,
+[data-theme="light"] .status-badge,
+[data-theme="light"] .tag,
+[data-theme="light"] .chip {
+    background: #1a1a2e !important;
+    color: #ffffff !important;
+    border: none !important;
+}
+/* Semantic colours get border treatment instead of pale fills */
+[data-theme="light"] .badge-success, [data-theme="light"] .pill-success,
+[data-theme="light"] .status-paid, [data-theme="light"] .status-active,
+[data-theme="light"] .status-complete {
+    background: #ffffff !important;
+    color: #166534 !important;
+    border: 1.5px solid #166534 !important;
+}
+[data-theme="light"] .badge-warning, [data-theme="light"] .pill-warning,
+[data-theme="light"] .status-pending, [data-theme="light"] .status-partial {
+    background: #ffffff !important;
+    color: #92400e !important;
+    border: 1.5px solid #d97706 !important;
+}
+[data-theme="light"] .badge-danger, [data-theme="light"] .pill-danger,
+[data-theme="light"] .status-overdue, [data-theme="light"] .status-error,
+[data-theme="light"] .status-cancelled {
+    background: #ffffff !important;
+    color: #991b1b !important;
+    border: 1.5px solid #dc2626 !important;
+}
+[data-theme="light"] .badge-info, [data-theme="light"] .pill-info {
+    background: #ffffff !important;
+    color: #1e40af !important;
+    border: 1.5px solid #3b82f6 !important;
+}
+
+/* Flash / toast messages */
+[data-theme="light"] .flash-success, [data-theme="light"] .alert-success {
+    background: #f0fdf4 !important;
+    color: #166534 !important;
+    border: 1px solid #bbf7d0 !important;
+}
+[data-theme="light"] .flash-error, [data-theme="light"] .alert-error,
+[data-theme="light"] .flash-danger, [data-theme="light"] .alert-danger {
+    background: #fef2f2 !important;
+    color: #991b1b !important;
+    border: 1px solid #fecaca !important;
+}
+[data-theme="light"] .flash-warning, [data-theme="light"] .alert-warning {
+    background: #fffbeb !important;
+    color: #92400e !important;
+    border: 1px solid #fde68a !important;
+}
+[data-theme="light"] .flash-info, [data-theme="light"] .alert-info {
+    background: #eff6ff !important;
+    color: #1e40af !important;
+    border: 1px solid #bfdbfe !important;
+}
+
+/* Modals & dropdowns */
+[data-theme="light"] .modal,
+[data-theme="light"] .modal-content,
+[data-theme="light"] .dropdown-menu {
+    background: #ffffff !important;
+    color: #1a1a2e !important;
+    border: 1px solid #e2e5ea !important;
+    box-shadow: 0 8px 32px rgba(0,0,0,0.12) !important;
+}
+[data-theme="light"] .modal-header,
+[data-theme="light"] .modal-footer {
+    background: #f8f9fb !important;
+    border-color: #e2e5ea !important;
+    color: #1a1a2e !important;
+}
+
+/* Tables — full override so no ghost backgrounds bleed through */
+[data-theme="light"] .table,
+[data-theme="light"] table {
+    background: #ffffff !important;
+    color: #1a1a2e !important;
+}
+[data-theme="light"] .table td,
+[data-theme="light"] table td,
+[data-theme="light"] .table th,
+[data-theme="light"] table th {
+    border-color: #e2e5ea !important;
+    color: #1a1a2e !important;
+}
+[data-theme="light"] .table tbody tr:nth-child(even),
+[data-theme="light"] table tbody tr:nth-child(even) {
+    background: #f8f9fb !important;
+}
+
+/* Code / pre blocks */
+[data-theme="light"] code,
+[data-theme="light"] pre {
+    background: #f3f4f6 !important;
+    color: #1a1a2e !important;
+    border: 1px solid #e2e5ea !important;
+}
+
+/* Scrollbars — light grey track, dark thumb */
+[data-theme="light"] ::-webkit-scrollbar { width: 6px; height: 6px; }
+[data-theme="light"] ::-webkit-scrollbar-track { background: #f1f3f5; }
+[data-theme="light"] ::-webkit-scrollbar-thumb { background: #9ca3af; border-radius: 3px; }
+[data-theme="light"] ::-webkit-scrollbar-thumb:hover { background: #6b7280; }
+
+/* Inline hardcoded colour rescue — catch the most common patterns where
+   a vivid accent is used as a pill background on a white page, causing
+   the "readable but clashing" look. We darken them for light-theme only. */
+[data-theme="light"] span[style*="background:#6366f1"],
+[data-theme="light"] span[style*="background: #6366f1"] {
+    background: #1a1a2e !important;
+    color: #ffffff !important;
+}
+[data-theme="light"] span[style*="background:#10b981"],
+[data-theme="light"] span[style*="background: #10b981"] {
+    background: #ffffff !important;
+    color: #166534 !important;
+    border: 1.5px solid #166534 !important;
+}
+[data-theme="light"] span[style*="background:#6b7280"],
+[data-theme="light"] span[style*="background: #6b7280"] {
+    background: #ffffff !important;
+    color: #374151 !important;
+    border: 1.5px solid #9ca3af !important;
+}
+[data-theme="light"] span[style*="background:#ef4444"],
+[data-theme="light"] span[style*="background: #ef4444"],
+[data-theme="light"] span[style*="background:#dc2626"],
+[data-theme="light"] span[style*="background: #dc2626"] {
+    background: #ffffff !important;
+    color: #991b1b !important;
+    border: 1.5px solid #dc2626 !important;
+}
+[data-theme="light"] span[style*="background:#f59e0b"],
+[data-theme="light"] span[style*="background: #f59e0b"],
+[data-theme="light"] span[style*="background:#d97706"],
+[data-theme="light"] span[style*="background: #d97706"] {
+    background: #ffffff !important;
+    color: #92400e !important;
+    border: 1.5px solid #d97706 !important;
+}
+[data-theme="light"] span[style*="background:#3b82f6"],
+[data-theme="light"] span[style*="background: #3b82f6"] {
+    background: #ffffff !important;
+    color: #1e40af !important;
+    border: 1.5px solid #3b82f6 !important;
+}
+
+/* ── END LIGHT THEME PROFESSIONAL OVERRIDES ─────────────────────────────── */
+
 /* THEME: Slate — Neutral professional dark */
 [data-theme="slate"] {
     --bg: #0f172a; --card: #1e293b; --border: #334155;
