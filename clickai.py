@@ -37070,32 +37070,58 @@ def _sd_files_dir(biz_id):
     os.makedirs(d, exist_ok=True)
     return d
 
-def _sd_load_session(biz_id):
-    p = _sd_meta_path(biz_id)
-    if not os.path.exists(p):
-        return {"files": [], "created_at": now()}
+# Sage-drop session meta AND per-file rows are stored in Supabase
+# (table: sage_drop_sessions) so they are shared across ALL Fly.io machines.
+# Disk (/tmp) is per-machine, so upload/classify/import landing on different
+# machines lost the files. The session meta uses file_id = "__meta__".
+SD_TABLE = "sage_drop_sessions"
+SD_META_KEY = "__meta__"
+
+def _sd_db_get(biz_id, file_id):
     try:
-        with open(p, "r", encoding="utf-8") as f:
-            return json.load(f)
+        url = (f"{db.url}/rest/v1/{SD_TABLE}"
+               f"?select=data&business_id=eq.{biz_id}&file_id=eq.{file_id}&limit=1")
+        resp = requests.get(url, headers=db.headers, timeout=30)
+        if resp.status_code == 200:
+            arr = resp.json() or []
+            if arr:
+                return arr[0].get("data")
     except Exception as e:
-        logger.error(f"[SAGE DROP] Failed to load session {p}: {e}")
-        return {"files": [], "created_at": now()}
+        logger.error(f"[SAGE DROP] DB get {file_id} failed: {e}")
+    return None
+
+def _sd_db_put(biz_id, file_id, data):
+    try:
+        url = f"{db.url}/rest/v1/{SD_TABLE}?on_conflict=business_id,file_id"
+        headers = {**db.headers, "Prefer": "resolution=merge-duplicates,return=minimal"}
+        payload = {"business_id": biz_id, "file_id": file_id,
+                   "data": data, "updated_at": now()}
+        resp = requests.post(url, headers=headers, json=payload, timeout=30)
+        if resp.status_code in (200, 201, 204):
+            return True
+        logger.error(f"[SAGE DROP] DB put {file_id} failed: {resp.status_code} {resp.text[:200]}")
+    except Exception as e:
+        logger.error(f"[SAGE DROP] DB put {file_id} failed: {e}")
+    return False
+
+def _sd_load_session(biz_id):
+    meta = _sd_db_get(biz_id, SD_META_KEY)
+    if isinstance(meta, dict) and "files" in meta:
+        return meta
+    return {"files": [], "created_at": now()}
 
 def _sd_save_session(biz_id, meta):
-    p = _sd_meta_path(biz_id)
-    try:
-        with open(p, "w", encoding="utf-8") as f:
-            json.dump(meta, f, indent=2, default=str)
-    except Exception as e:
-        logger.error(f"[SAGE DROP] Failed to save session {p}: {e}")
+    _sd_db_put(biz_id, SD_META_KEY, meta)
+
+def _sd_save_file_rows(biz_id, file_id, rows):
+    _sd_db_put(biz_id, file_id, rows)
 
 def _sd_reset_session(biz_id):
-    d = _sd_session_dir(biz_id)
-    if os.path.exists(d):
-        try:
-            _sd_shutil.rmtree(d)
-        except Exception as e:
-            logger.error(f"[SAGE DROP] Failed to reset session: {e}")
+    try:
+        url = f"{db.url}/rest/v1/{SD_TABLE}?business_id=eq.{biz_id}"
+        requests.delete(url, headers=db.headers, timeout=30)
+    except Exception as e:
+        logger.error(f"[SAGE DROP] Failed to reset session: {e}")
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -37154,7 +37180,7 @@ def _sd_ingest(biz_id, original_filename, raw_bytes):
     if len(raw_bytes) > SD_MAX_FILE_BYTES:
         return [{"error": f"File too large ({len(raw_bytes)/1024/1024:.1f} MB)"}]
     
-    fdir = _sd_files_dir(biz_id)
+    fdir = _sd_files_dir(biz_id)  # retained: ensures /tmp dir exists; rows now go to Supabase
     name_lower = (original_filename or "").lower()
     out = []
     
@@ -37166,44 +37192,31 @@ def _sd_ingest(biz_id, original_filename, raw_bytes):
             if len(rows) < 2:
                 continue
             file_id = hashlib.sha1(f"{original_filename}::{tab_name}::{time.time()}".encode()).hexdigest()[:16]
-            saved_path = os.path.join(fdir, f"{file_id}.json")
-            with open(saved_path, "w", encoding="utf-8") as f:
-                json.dump(rows, f)
+            _sd_save_file_rows(biz_id, file_id, rows)
             out.append({
                 "file_id": file_id,
                 "source_name": f"{original_filename} :: {tab_name}",
                 "rows_count": len(rows) - 1,
                 "headers": rows[0] if rows else [],
-                "saved_path": saved_path,
             })
     else:
         rows = _sd_read_csv_rows(raw_bytes)
         if len(rows) < 2:
             return [{"error": "File has no data rows"}]
         file_id = hashlib.sha1(f"{original_filename}::{time.time()}".encode()).hexdigest()[:16]
-        saved_path = os.path.join(fdir, f"{file_id}.json")
-        with open(saved_path, "w", encoding="utf-8") as f:
-            json.dump(rows, f)
+        _sd_save_file_rows(biz_id, file_id, rows)
         out.append({
             "file_id": file_id,
             "source_name": original_filename,
             "rows_count": len(rows) - 1,
             "headers": rows[0] if rows else [],
-            "saved_path": saved_path,
         })
     return out
 
 
 def _sd_load_file_rows(biz_id, file_id):
-    p = os.path.join(_sd_files_dir(biz_id), f"{file_id}.json")
-    if not os.path.exists(p):
-        return []
-    try:
-        with open(p, "r", encoding="utf-8") as f:
-            return json.load(f)
-    except Exception as e:
-        logger.error(f"[SAGE DROP] Load file {file_id} failed: {e}")
-        return []
+    rows = _sd_db_get(biz_id, file_id)
+    return rows if isinstance(rows, list) else []
 
 
 # ─────────────────────────────────────────────────────────────────────────────

@@ -1,5 +1,5 @@
 app = "clickai"
-primary_region = "jnb"
+primary_region = "lhr"
 
 [build]
 
