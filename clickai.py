@@ -37748,6 +37748,15 @@ def _sd_extract_trial_balance(rows):
         code = ""
         if "account_code" in idx and idx["account_code"] < len(row):
             code = str(row[idx["account_code"]] or "").strip()
+        # Sage exports often leave the Account Number column blank and embed the
+        # code in the name as "CODE : NAME" (e.g. "8400/000 : Standard Bank").
+        # Without splitting it out, every account lands with a blank code = a
+        # "ghost" GL line that cannot be matched to the chart of accounts.
+        if not code and " : " in name:
+            split_code, split_name = _sd_split_code_name(name)
+            if split_code:
+                code = split_code
+                name = split_name
         out.append({"account_name": name, "account_code": code,
                     "debit": debit, "credit": credit})
     return out
