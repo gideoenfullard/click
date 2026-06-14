@@ -21512,18 +21512,31 @@ select.form-input optgroup {
    (.reactor-loading). Transform-only + will-change keeps the spin on the GPU
    compositor, so it stays smooth even while the main thread renders a heavy page. */
 .page-entering .j-rg, .reactor-loading .j-rg { will-change: transform; }
-.page-entering .j-rg.r1, .reactor-loading .j-rg.r1 { animation: jspin 1.5s linear infinite !important; }
-.page-entering .j-rg.r2, .reactor-loading .j-rg.r2 { animation: jspin 1.2s linear infinite reverse !important; }
-.page-entering .j-rg.r3, .reactor-loading .j-rg.r3 { animation: jspin 0.8s linear infinite !important; }
-.page-entering .j-rg.r4, .reactor-loading .j-rg.r4 { animation: jspin 2s linear infinite reverse !important; }
+/* Navigating away (outgoing page): spin only — no glow/box-shadow repaints. */
+.reactor-loading .j-rg.r1 { animation: jspin 1.5s linear infinite !important; }
+.reactor-loading .j-rg.r2 { animation: jspin 1.2s linear infinite reverse !important; }
+.reactor-loading .j-rg.r3 { animation: jspin 0.8s linear infinite !important; }
+.reactor-loading .j-rg.r4 { animation: jspin 2s linear infinite reverse !important; }
+.reactor-loading .j-core { animation: none !important; }
+/* New page render: reactor assembles from the inside out (core, then r4 -> r1)
+   while it spins. Opacity-only reveal stays on the GPU, so no stutter even
+   while the main thread renders a heavy page. */
+.page-entering .j-core { animation: jbuild 0.45s ease-out both !important; }
+.page-entering .j-rg.r4 { animation: jspin 2s linear infinite reverse, jbuild 0.45s ease-out both 0.07s !important; }
+.page-entering .j-rg.r3 { animation: jspin 0.8s linear infinite, jbuild 0.45s ease-out both 0.15s !important; }
+.page-entering .j-rg.r2 { animation: jspin 1.2s linear infinite reverse, jbuild 0.45s ease-out both 0.23s !important; }
+.page-entering .j-rg.r1 { animation: jspin 1.5s linear infinite, jbuild 0.45s ease-out both 0.31s !important; }
+/* Suppress the AI-badge pulse during load (box-shadow repaint = jank). */
+.page-entering .j-core .j-ai, .reactor-loading .j-core .j-ai { animation: none !important; }
+@keyframes jbuild { from { opacity: 0; } to { opacity: 1; } }
 
-/* Page entering - content fades in fast */
+/* Page entering - content settles in (no vertical shift = no screen shake/flash) */
 .page-entering .container {
-    animation: fadeSlideIn 0.18s ease-out both;
+    animation: fadeSlideIn 0.2s ease-out both;
 }
 @keyframes fadeSlideIn {
-    from { opacity: 0.3; transform: translateY(4px); }
-    to { opacity: 1; transform: translateY(0); }
+    from { opacity: 0.6; }
+    to { opacity: 1; }
 }
 
 /* When navigating away - subtle dim */
@@ -25537,6 +25550,12 @@ JARVIS_HUD_CSS = '''
 @keyframes jring-pulse-2{0%,100%{box-shadow:0 0 30px rgba(80,180,255,0.12),0 0 55px rgba(80,180,255,0.05),0 4px 16px rgba(0,0,0,0.35);border-bottom-color:rgba(100,200,255,0.65);}50%{box-shadow:0 0 42px rgba(80,180,255,0.18),0 0 70px rgba(80,180,255,0.07),0 4px 16px rgba(0,0,0,0.35);border-bottom-color:rgba(130,215,255,0.8);}}
 @keyframes jring-pulse-3{0%,100%{box-shadow:0 0 22px rgba(80,180,255,0.1),0 0 40px rgba(80,180,255,0.04),0 3px 10px rgba(0,0,0,0.35);border-top-color:rgba(140,220,255,0.6);}50%{box-shadow:0 0 32px rgba(80,180,255,0.16),0 0 55px rgba(80,180,255,0.06),0 3px 10px rgba(0,0,0,0.35);border-top-color:rgba(170,235,255,0.75);}}
 @keyframes jcore-breathe{0%,100%{box-shadow:0 0 50px rgba(0,200,255,0.3),0 0 100px rgba(0,180,255,0.15),0 0 150px rgba(0,200,255,0.06),inset 0 0 30px rgba(0,200,255,0.15),0 0 6px rgba(0,200,255,0.6);border-color:rgba(100,200,255,0.35);}50%{box-shadow:0 0 70px rgba(0,200,255,0.45),0 0 130px rgba(0,180,255,0.2),0 0 180px rgba(0,200,255,0.08),inset 0 0 40px rgba(0,200,255,0.22),0 0 8px rgba(0,200,255,0.8);border-color:rgba(140,220,255,0.5);}}
+/* Continuous heartbeat: an energy pulse radiating from the core outward (inside -> out). GPU-only (transform+opacity). */
+.j-rx::before{content:'';position:absolute;top:50%;left:50%;width:84px;height:84px;margin:-42px 0 0 -42px;border-radius:50%;border:1.5px solid rgba(120,210,255,0.55);box-shadow:0 0 14px rgba(100,200,255,0.35);transform:scale(0.5);opacity:0;pointer-events:none;z-index:6;animation:jheartbeat 1.3s ease-out infinite;}
+.j-rx.big::before{width:104px;height:104px;margin:-52px 0 0 -52px;}
+@keyframes jheartbeat{0%{transform:scale(0.5);opacity:0;}8%{opacity:0.7;}50%{transform:scale(2.15);opacity:0;}100%{transform:scale(2.15);opacity:0;}}
+/* Pause the heartbeat during load so the inside-out build reads cleanly. */
+.page-entering .j-rx::before,.reactor-loading .j-rx::before{animation:none;opacity:0;}
 .j-hint{position:absolute;bottom:-22px;left:50%;transform:translateX(-50%) translateY(5px);font-family:'Share Tech Mono',monospace;font-size:9px;color:#00ccff;letter-spacing:2px;opacity:0;transition:all 0.3s;white-space:nowrap;text-shadow:0 0 10px rgba(0,200,255,0.5);}
 .j-plbl{position:absolute;bottom:-6px;left:50%;transform:translateX(-50%);text-align:center;z-index:2;}
 .j-plbl .j-pn{font-family:'Orbitron',monospace;font-size:11px;font-weight:600;color:#8ad0f0;letter-spacing:4px;text-shadow:0 0 12px rgba(120,200,240,0.5);}
