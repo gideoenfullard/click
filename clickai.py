@@ -35519,6 +35519,27 @@ COA_KEYWORD_MAP = [
 ]
 
 
+# Well-known Sage/Pastel SYSTEM accounts that export with a BLANK account number
+# (the code lives nowhere in the file). Without a code they are skipped by
+# build_gl_map() and cannot be matched to transactions — the root cause of the
+# "cannot balance the bank" ghost-code problem. We map them to ClickAI's
+# canonical codes. These bare 4-digit codes never collide with Sage's NNNN/000
+# codes, and the import ONLY ever fills a BLANK code — a real Sage code is never
+# touched. Genuine migration artifacts (Conversion Account, Opening Balance
+# adjustments, rounding, etc.) are deliberately left out — they balance on their
+# own and are not matched to transactions, so a wrong code would only mislead.
+SAGE_SYSTEM_ACCOUNT_CODES = {
+    "trade payables": CLICKAI_DEFAULTS["creditors"],            # 2000
+    "trade receivables": CLICKAI_DEFAULTS["debtors"],           # 1200
+    "sales": CLICKAI_DEFAULTS["sales"],                         # 4000
+    "purchases": CLICKAI_DEFAULTS["purchases"],                 # 5100
+    "vat payable": CLICKAI_DEFAULTS["vat_output"],              # 2100
+    "retained income": CLICKAI_DEFAULTS["retained"],            # 3100
+    "discount allowed": CLICKAI_DEFAULTS["discount_allowed"],   # 8400
+    "discount received": CLICKAI_DEFAULTS["discount_received"], # 4300
+}
+
+
 def build_gl_map(biz_id: str) -> dict:
     """
     Build a role→code mapping for a business from its chart_of_accounts.
@@ -37757,6 +37778,14 @@ def _sd_extract_trial_balance(rows):
             if split_code:
                 code = split_code
                 name = split_name
+        # Still no code? Well-known Sage system accounts (Trade Payables, Sales,
+        # VAT Payable, etc.) export with no account number at all. Give them their
+        # canonical ClickAI code so build_gl_map() can match them — otherwise they
+        # are skipped as blank-code "ghosts" and transactions cannot post to them.
+        if not code:
+            canon = SAGE_SYSTEM_ACCOUNT_CODES.get(name.strip().lower())
+            if canon:
+                code = canon
         out.append({"account_name": name, "account_code": code,
                     "debit": debit, "credit": credit})
     return out
