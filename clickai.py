@@ -4723,6 +4723,44 @@ class DB:
         logger.info(f"[DB DELETE_MANY] Total: {success} deleted, {failed} failed")
         return (success, failed)
     
+    def storage_upload(self, bucket, path, data_bytes, content_type="application/octet-stream"):
+        """Upload raw bytes to a private Supabase Storage bucket. Returns (ok, path_or_error)."""
+        try:
+            url = f"{self.url}/storage/v1/object/{bucket}/{path}"
+            headers = {
+                "apikey": SUPABASE_KEY,
+                "Authorization": f"Bearer {SUPABASE_KEY}",
+                "Content-Type": content_type,
+                "x-upsert": "true",
+            }
+            response = requests.post(url, headers=headers, data=data_bytes, timeout=60)
+            if response.status_code in (200, 201):
+                return True, path
+            logger.error(f"[STORAGE] Upload failed {bucket}/{path}: {response.status_code} - {response.text[:200]}")
+            return False, f"{response.status_code}: {response.text[:200]}"
+        except Exception as e:
+            logger.error(f"[STORAGE] Upload error {bucket}/{path}: {e}")
+            return False, str(e)
+
+    def storage_download(self, bucket, path):
+        """Download raw bytes from a private Supabase Storage bucket. Returns bytes or None."""
+        try:
+            if not path:
+                return None
+            url = f"{self.url}/storage/v1/object/{bucket}/{path}"
+            headers = {
+                "apikey": SUPABASE_KEY,
+                "Authorization": f"Bearer {SUPABASE_KEY}",
+            }
+            response = _DB_SESSION.get(url, headers=headers, timeout=60)
+            if response.status_code == 200:
+                return response.content
+            logger.error(f"[STORAGE] Download failed {bucket}/{path}: {response.status_code}")
+            return None
+        except Exception as e:
+            logger.error(f"[STORAGE] Download error {bucket}/{path}: {e}")
+            return None
+
     def update(self, table: str, id: str, data: dict, business_id: str = None) -> bool:
         """Update record - with verification. Auto-handles unknown column errors (PGRST204)."""
         try:
@@ -4945,6 +4983,45 @@ class DB:
 
 
 db = DB()
+
+
+def persist_scanned_image(biz_id, doc_id, image_b64, original_filename=""):
+    """
+    Upload a scanned image (base64) to the private 'scanned-docs' Storage bucket
+    and return its storage_path (e.g. 'biz_id/doc_id.jpg'), or '' on failure.
+    Keeps every scanned document as a photo record without bloating the database.
+    """
+    if not image_b64 or not biz_id or not doc_id:
+        return ""
+    try:
+        s = image_b64.strip()
+        if s.lower().startswith("data:") and "," in s:
+            s = s.split(",", 1)[1]
+        raw = base64.b64decode(s)
+    except Exception as e:
+        logger.error(f"[SCAN STORE] base64 decode failed for {doc_id}: {e}")
+        return ""
+    if not raw:
+        return ""
+    if raw[:4] == b"%PDF":
+        ext, ctype = "pdf", "application/pdf"
+    elif raw[:8] == b"\x89PNG\r\n\x1a\n":
+        ext, ctype = "png", "image/png"
+    elif raw[:3] == b"\xff\xd8\xff":
+        ext, ctype = "jpg", "image/jpeg"
+    elif raw[:6] in (b"GIF87a", b"GIF89a"):
+        ext, ctype = "gif", "image/gif"
+    elif raw[:4] == b"RIFF" and raw[8:12] == b"WEBP":
+        ext, ctype = "webp", "image/webp"
+    else:
+        ext, ctype = "jpg", "image/jpeg"
+    path = f"{biz_id}/{doc_id}.{ext}"
+    ok, res = db.storage_upload("scanned-docs", path, raw, ctype)
+    if ok:
+        logger.info(f"[SCAN STORE] saved {path} ({len(raw)} bytes)")
+        return path
+    logger.error(f"[SCAN STORE] upload failed for {doc_id}: {res}")
+    return ""
 
 
 # 
@@ -60287,9 +60364,20 @@ def api_get_scanned_document(doc_id):
     if not doc or doc.get("business_id") != biz_id:
         return jsonify({"success": False, "error": "Document not found"})
     
+    # Serve the image from Storage when we have a path, else the legacy base64 column
+    img_b64 = doc.get("image_data", "") or ""
+    _sp = doc.get("storage_path")
+    if _sp:
+        try:
+            _raw = db.storage_download("scanned-docs", _sp)
+            if _raw:
+                img_b64 = base64.b64encode(_raw).decode("utf-8")
+        except Exception as _e:
+            logger.error(f"[SCAN GET] storage download failed for {doc_id}: {_e}")
+    
     return jsonify({
         "success": True,
-        "image_data": doc.get("image_data", ""),
+        "image_data": img_b64,
         "reference": doc.get("reference", ""),
         "date": doc.get("date", ""),
         "description": doc.get("description", ""),
@@ -60376,8 +60464,10 @@ def api_linked_doc_upload():
         # Try to inherit customer_id where useful (for cross-page surfacing later)
         customer_id = src_doc.get("customer_id")
         
+        _doc_id = generate_id()
+        _sp = persist_scanned_image(biz_id, _doc_id, image_b64, original_filename)
         scanned_doc = {
-            "id": generate_id(),
+            "id": _doc_id,
             "business_id": biz_id,
             "supplier_id": None,
             "customer_id": customer_id,
@@ -60386,7 +60476,8 @@ def api_linked_doc_upload():
             "description": original_filename,
             "date": today(),
             "amount": 0,
-            "image_data": image_b64,
+            "image_data": "" if _sp else image_b64,
+            "storage_path": _sp,
             "linked_invoice_id": doc_id if doc_type == "invoice" else None,
             "linked_doc_type": doc_type,
             "linked_doc_id": doc_id,
@@ -61081,8 +61172,10 @@ def api_scan_save_supplier_invoice():
                 image_data = scan_item.get("image_data")
         
         if image_data:
+            _doc_id = generate_id()
+            _sp = persist_scanned_image(biz_id, _doc_id, image_data)
             scanned_doc = {
-                "id": generate_id(),
+                "id": _doc_id,
                 "business_id": biz_id,
                 "supplier_id": supplier["id"],
                 "customer_id": None,
@@ -61091,7 +61184,8 @@ def api_scan_save_supplier_invoice():
                 "description": f"Invoice from {supplier_name}",
                 "date": data.get("date", today()),
                 "amount": float(data.get("total", 0)),
-                "image_data": image_data,
+                "image_data": "" if _sp else image_data,
+                "storage_path": _sp,
                 "linked_invoice_id": inv_id,
                 "created_at": now()
             }
