@@ -42,226 +42,6 @@ def register_invoicing_routes(app, db, login_required, Auth, render_page,
         _u = _doc_logo_url(business)
         return f'<img src="{_u}" style="height:{height}px;max-width:170px;object-fit:contain;display:block;margin-bottom:6px;" alt="Logo">' if _u else ''
 
-    # ── Document print-layout (edit-on-document) ────────────────────────────
-    # Per-document-type layout (density, table lines, which columns/fields show)
-    # is stored inside business["invoice_template"] JSON under "layouts"[doc_type].
-    # Applied at render time via CSS classes on a wrapper, so it also works in
-    # the print window (which copies the wrapper's innerHTML).
-    _LAYOUT_COL_LABELS = {
-        "unit": "Unit", "qty": "Qty", "price": "Excl. Price", "disc": "Disc %",
-        "vat": "VAT %", "excltotal": "Excl. Total", "incltotal": "Incl. Total",
-    }
-    _LAYOUT_FIELD_LABELS = {
-        "due_date": "Due Date", "payment_terms": "Payment Terms", "reference": "Reference",
-        "delivery_note": "Delivery Note", "sales_person": "Sales Person",
-        "our_vat": "Our VAT No", "bank_details": "Bank Details", "footer": "Footer",
-    }
-    _LAYOUT_DENSITIES = ("compact", "normal", "roomy")
-    _LAYOUT_LINESTYLES = ("horizontal", "grid", "boxed", "none")
-
-    def _doc_layout(business, doc_type):
-        """Return the print-layout config for a document type with safe defaults."""
-        if doc_type == "delivery_note":
-            fields = {"due_date": False, "payment_terms": False, "reference": True,
-                      "delivery_note": False, "sales_person": True, "our_vat": True,
-                      "bank_details": False, "footer": True}
-            columns = {"unit": True, "qty": True, "price": False, "disc": False,
-                       "vat": False, "excltotal": False, "incltotal": False}
-        else:  # invoice + quote
-            fields = {"due_date": True, "payment_terms": True, "reference": True,
-                      "delivery_note": True, "sales_person": True, "our_vat": True,
-                      "bank_details": True, "footer": True}
-            columns = {"unit": True, "qty": True, "price": True, "disc": True,
-                       "vat": True, "excltotal": True, "incltotal": True}
-        cfg = {"density": "normal", "table_lines": "horizontal",
-               "fields": dict(fields), "columns": dict(columns)}
-        try:
-            tpl = json.loads(business.get("invoice_template") or "{}") if business else {}
-            saved = ((tpl.get("layouts") or {}).get(doc_type) or {})
-        except (ValueError, TypeError, AttributeError):
-            saved = {}
-        if saved.get("density") in _LAYOUT_DENSITIES:
-            cfg["density"] = saved["density"]
-        if saved.get("table_lines") in _LAYOUT_LINESTYLES:
-            cfg["table_lines"] = saved["table_lines"]
-        if isinstance(saved.get("columns"), dict):
-            for k in cfg["columns"]:
-                if k in saved["columns"]:
-                    cfg["columns"][k] = bool(saved["columns"][k])
-        if isinstance(saved.get("fields"), dict):
-            for k in cfg["fields"]:
-                if k in saved["fields"]:
-                    cfg["fields"][k] = bool(saved["fields"][k])
-        return cfg
-
-    def _doc_layout_classes(cfg):
-        """CSS classes for the wrapper element derived from a layout config."""
-        cls = ["doc-print",
-               "density-" + str(cfg.get("density", "normal")),
-               "lines-" + str(cfg.get("table_lines", "horizontal"))]
-        for k, v in (cfg.get("columns") or {}).items():
-            if not v:
-                cls.append("hide-col-" + k)
-        for k, v in (cfg.get("fields") or {}).items():
-            if not v:
-                cls.append("hide-field-" + k)
-        return " ".join(cls)
-
-    def _doc_layout_css():
-        """Layout CSS. Injected both on-page and into the print window's <style>."""
-        return """
-.doc-print { --sec-py: 10px; --row-py: 4px; }
-.doc-print.density-compact { --sec-py: 4px; --row-py: 1px; }
-.doc-print.density-normal  { --sec-py: 10px; --row-py: 4px; }
-.doc-print.density-roomy   { --sec-py: 18px; --row-py: 8px; }
-.doc-print.lines-grid .items-table { border: 1px solid #e5e7eb; }
-.doc-print.lines-grid .items-table th, .doc-print.lines-grid .items-table td { border: 1px solid #e5e7eb !important; }
-.doc-print.lines-boxed .items-table { border: 1px solid #cbd5e1; }
-.doc-print.lines-boxed .items-table th, .doc-print.lines-boxed .items-table td, .doc-print.lines-boxed .items-table tr { border-color: transparent !important; }
-.doc-print.lines-none .items-table, .doc-print.lines-none .items-table th, .doc-print.lines-none .items-table td, .doc-print.lines-none .items-table tr { border: none !important; }
-.doc-print.hide-col-unit .col-unit, .doc-print.hide-col-qty .col-qty, .doc-print.hide-col-price .col-price, .doc-print.hide-col-disc .col-disc, .doc-print.hide-col-vat .col-vat, .doc-print.hide-col-excltotal .col-excltotal, .doc-print.hide-col-incltotal .col-incltotal { display: none !important; }
-.doc-print.hide-field-due_date .field-due_date, .doc-print.hide-field-payment_terms .field-payment_terms, .doc-print.hide-field-reference .field-reference, .doc-print.hide-field-delivery_note .field-delivery_note, .doc-print.hide-field-sales_person .field-sales_person, .doc-print.hide-field-our_vat .field-our_vat, .doc-print.hide-field-bank_details .field-bank_details, .doc-print.hide-field-footer .field-footer { display: none !important; }
-"""
-
-    def _doc_layout_editor(doc_type, cfg, save_url, cols, fields):
-        """Build the no-print 'Edit Layout' side panel + its JS for a document."""
-        def _chk(idp, label, checked):
-            return ('<label style="display:flex;align-items:center;gap:8px;padding:3px 0;font-size:13px;cursor:pointer;">'
-                    f'<input type="checkbox" id="{idp}" {"checked" if checked else ""} onchange="layoutApply()" style="width:16px;height:16px;">'
-                    f'<span>{label}</span></label>')
-
-        def _opt(val, label, cur):
-            return f'<option value="{val}" {"selected" if val == cur else ""}>{label}</option>'
-
-        col_html = "".join(_chk("lcol_" + c, _LAYOUT_COL_LABELS.get(c, c), cfg["columns"].get(c, True)) for c in cols)
-        field_html = "".join(_chk("lfld_" + f, _LAYOUT_FIELD_LABELS.get(f, f), cfg["fields"].get(f, True)) for f in fields)
-        dens = cfg.get("density", "normal")
-        lines = cfg.get("table_lines", "horizontal")
-        dens_opts = _opt("compact", "Compact", dens) + _opt("normal", "Normal", dens) + _opt("roomy", "Roomy", dens)
-        line_opts = (_opt("horizontal", "Horizontal lines", lines) + _opt("grid", "Full grid", lines)
-                     + _opt("boxed", "Boxed (outer only)", lines) + _opt("none", "No lines", lines))
-        cols_list = ",".join('"' + c + '"' for c in cols)
-        fields_list = ",".join('"' + f + '"' for f in fields)
-
-        panel = (
-            '<div id="layoutPanel" class="no-print" style="display:none;position:fixed;top:0;right:0;bottom:0;width:300px;'
-            'background:var(--card,#fff);border-left:1px solid var(--border,#e5e7eb);box-shadow:-4px 0 20px rgba(0,0,0,0.15);'
-            'z-index:10000;padding:18px;overflow-y:auto;color:var(--text,#222);">'
-            '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px;">'
-            '<strong style="font-size:15px;">Edit Layout</strong>'
-            '<button onclick="layoutCancel()" class="btn btn-secondary" style="padding:4px 10px;">Close</button></div>'
-            '<div style="font-size:11px;color:var(--text-muted,#888);margin-bottom:14px;">Changes preview live. Click Save to apply to all future documents of this type.</div>'
-            '<label style="display:block;font-weight:600;font-size:12px;margin:6px 0 4px;">Density</label>'
-            '<select id="layoutDensity" onchange="layoutApply()" class="form-input" style="width:100%;">' + dens_opts + '</select>'
-            '<label style="display:block;font-weight:600;font-size:12px;margin:12px 0 4px;">Table Lines</label>'
-            '<select id="layoutLines" onchange="layoutApply()" class="form-input" style="width:100%;">' + line_opts + '</select>'
-            '<div style="font-weight:600;font-size:12px;margin:14px 0 4px;">Columns</div>' + col_html
-            + '<div style="font-weight:600;font-size:12px;margin:14px 0 4px;">Fields</div>' + field_html
-            + '<button onclick="layoutSave()" class="btn btn-primary" style="width:100%;margin-top:16px;">Save Layout</button>'
-            '<div id="layoutMsg" style="font-size:12px;margin-top:8px;text-align:center;"></div></div>'
-        )
-
-        js = """
-<script>
-(function(){
-  var COLS = [__COLS__];
-  var FIELDS = [__FIELDS__];
-  var SAVE_URL = "__SAVE_URL__";
-  var _orig = null;
-  window.layoutEditOpen = function(){
-    var root = document.getElementById('docLayoutRoot');
-    _orig = root ? root.className : '';
-    document.getElementById('layoutPanel').style.display = 'block';
-  };
-  window.layoutCancel = function(){
-    var root = document.getElementById('docLayoutRoot');
-    if (root && _orig !== null) root.className = _orig;
-    document.getElementById('layoutPanel').style.display = 'none';
-    var m = document.getElementById('layoutMsg'); if (m) m.textContent = '';
-  };
-  window.layoutApply = function(){
-    var root = document.getElementById('docLayoutRoot');
-    if (!root) return;
-    var cls = ['doc-print'];
-    cls.push('density-' + document.getElementById('layoutDensity').value);
-    cls.push('lines-' + document.getElementById('layoutLines').value);
-    COLS.forEach(function(c){ var el = document.getElementById('lcol_' + c); if (el && !el.checked) cls.push('hide-col-' + c); });
-    FIELDS.forEach(function(f){ var el = document.getElementById('lfld_' + f); if (el && !el.checked) cls.push('hide-field-' + f); });
-    root.className = cls.join(' ');
-  };
-  window.layoutSave = async function(){
-    var cfg = { density: document.getElementById('layoutDensity').value,
-                table_lines: document.getElementById('layoutLines').value,
-                columns: {}, fields: {} };
-    COLS.forEach(function(c){ var el = document.getElementById('lcol_' + c); cfg.columns[c] = el ? el.checked : true; });
-    FIELDS.forEach(function(f){ var el = document.getElementById('lfld_' + f); cfg.fields[f] = el ? el.checked : true; });
-    var m = document.getElementById('layoutMsg');
-    if (m) { m.style.color = 'var(--text-muted,#888)'; m.textContent = 'Saving...'; }
-    try {
-      var r = await fetch(SAVE_URL, {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(cfg)});
-      var j = await r.json();
-      if (j && j.success) {
-        if (m) { m.style.color = '#10b981'; m.textContent = 'Saved. Applies to all future documents.'; }
-        _orig = document.getElementById('docLayoutRoot').className;
-      } else {
-        if (m) { m.style.color = '#ef4444'; m.textContent = (j && j.error) ? j.error : 'Save failed'; }
-      }
-    } catch (e) {
-      if (m) { m.style.color = '#ef4444'; m.textContent = 'Save failed: ' + e.message; }
-    }
-  };
-})();
-</script>
-"""
-        js = (js.replace("__COLS__", cols_list)
-                .replace("__FIELDS__", fields_list)
-                .replace("__SAVE_URL__", save_url))
-        return panel + js
-
-    def _save_doc_layout(doc_type):
-        """Persist a document's print-layout into invoice_template['layouts'][doc_type]."""
-        try:
-            user = Auth.get_current_user()
-            business = Auth.get_current_business()
-            if not business:
-                return jsonify({"success": False, "error": "No business"}), 400
-            biz_id = business.get("id")
-            user_id = user.get("id", "") if user else ""
-            data = request.get_json(silent=True) or {}
-            try:
-                tpl = json.loads(business.get("invoice_template") or "{}")
-            except (ValueError, TypeError):
-                tpl = {}
-            if not isinstance(tpl, dict):
-                tpl = {}
-            base = _doc_layout(business, doc_type)
-            density = data.get("density")
-            if density not in _LAYOUT_DENSITIES:
-                density = base["density"]
-            table_lines = data.get("table_lines")
-            if table_lines not in _LAYOUT_LINESTYLES:
-                table_lines = base["table_lines"]
-            in_cols = data.get("columns") if isinstance(data.get("columns"), dict) else {}
-            in_fields = data.get("fields") if isinstance(data.get("fields"), dict) else {}
-            clean = {
-                "density": density,
-                "table_lines": table_lines,
-                "columns": {k: bool(in_cols.get(k, base["columns"][k])) for k in base["columns"]},
-                "fields": {k: bool(in_fields.get(k, base["fields"][k])) for k in base["fields"]},
-            }
-            layouts = tpl.get("layouts") if isinstance(tpl.get("layouts"), dict) else {}
-            layouts[doc_type] = clean
-            tpl["layouts"] = layouts
-            ok, result = db.update_business(biz_id, user_id, {
-                "invoice_template": json.dumps(tpl),
-                "updated_at": now(),
-            })
-            if ok:
-                return jsonify({"success": True})
-            return jsonify({"success": False, "error": str(result)}), 500
-        except Exception as e:
-            return jsonify({"success": False, "error": str(e)}), 500
-
     # === INVOICES + RECURRING INVOICES ===
 
     @app.route("/invoices")
@@ -923,14 +703,14 @@ def register_invoicing_routes(app, db, login_required, Auth, render_page,
             total_incl = round(total_excl + vat_amount, 2)
             items_html += f'''
             <tr style="border-bottom:1px solid #e5e7eb;">
-                <td style="padding:var(--row-py,4px) 6px;font-size:11px;">{safe_string(desc)}</td>
-                <td class="col-unit" style="text-align:center;padding:var(--row-py,4px) 6px;font-size:11px;">{safe_string(unit)}</td>
-                <td class="col-qty" style="text-align:center;padding:var(--row-py,4px) 6px;font-size:11px;">{qty}</td>
-                <td class="col-price" style="text-align:right;padding:var(--row-py,4px) 6px;font-size:11px;">{money(price)}</td>
-                <td class="col-disc" style="text-align:center;padding:var(--row-py,4px) 6px;font-size:11px;">{disc:.1f}%</td>
-                <td class="col-vat" style="text-align:center;padding:var(--row-py,4px) 6px;font-size:11px;">{vat_rate:.0f}%</td>
-                <td class="col-excltotal" style="text-align:right;padding:var(--row-py,4px) 6px;font-size:11px;">{money(total_excl)}</td>
-                <td class="col-incltotal" style="text-align:right;padding:var(--row-py,4px) 6px;font-size:11px;font-weight:600;">{money(total_incl)}</td>
+                <td style="padding:4px 6px;font-size:11px;">{safe_string(desc)}</td>
+                <td style="text-align:center;padding:4px 6px;font-size:11px;">{safe_string(unit)}</td>
+                <td style="text-align:center;padding:4px 6px;font-size:11px;">{qty}</td>
+                <td style="text-align:right;padding:4px 6px;font-size:11px;">{money(price)}</td>
+                <td style="text-align:center;padding:4px 6px;font-size:11px;">{disc:.1f}%</td>
+                <td style="text-align:center;padding:4px 6px;font-size:11px;">{vat_rate:.0f}%</td>
+                <td style="text-align:right;padding:4px 6px;font-size:11px;">{money(total_excl)}</td>
+                <td style="text-align:right;padding:4px 6px;font-size:11px;font-weight:600;">{money(total_incl)}</td>
             </tr>
             '''
         
@@ -1120,10 +900,10 @@ def register_invoicing_routes(app, db, login_required, Auth, render_page,
                 _match = next((d for d in _all_docs if (d.get("dn_number", "") or d.get("delivery_note_number", "")).upper() == _doc_num.upper()), None)
                 if _match:
                     _inv_dn_display = _inv_dn_display.replace(safe_string(_doc_num), f'<a href="/delivery-note/{_match["id"]}" style="color:var(--primary);text-decoration:none;">{safe_string(_doc_num)}</a>')
-        ref_row = f'<tr class="field-reference"><td style="padding:4px 0;color:#888;">Customer PO / Reference:</td><td style="padding:4px 0;font-weight:600;">{_inv_ref_display}</td></tr>' if inv_reference else ''
-        dn_row = f'<tr class="field-delivery_note"><td style="padding:4px 0;color:#888;">Delivery Note:</td><td style="padding:4px 0;font-weight:600;">{_inv_dn_display}</td></tr>' if inv_delivery_note else ''
-        sp_row = f'<tr class="field-sales_person"><td style="padding:4px 0;color:#888;">Sales Person:</td><td style="padding:4px 0;font-weight:600;">{safe_string(inv_sales_person)}</td></tr>' if inv_sales_person else ''
-        terms_row = f'<tr class="field-payment_terms"><td style="padding:4px 0;color:#888;">Payment Terms:</td><td style="padding:4px 0;font-weight:600;">{safe_string(cust_payment_terms)}</td></tr>' if cust_payment_terms else ''
+        ref_row = f'<tr><td style="padding:4px 0;color:#888;">Customer PO / Reference:</td><td style="padding:4px 0;font-weight:600;">{_inv_ref_display}</td></tr>' if inv_reference else ''
+        dn_row = f'<tr><td style="padding:4px 0;color:#888;">Delivery Note:</td><td style="padding:4px 0;font-weight:600;">{_inv_dn_display}</td></tr>' if inv_delivery_note else ''
+        sp_row = f'<tr><td style="padding:4px 0;color:#888;">Sales Person:</td><td style="padding:4px 0;font-weight:600;">{safe_string(inv_sales_person)}</td></tr>' if inv_sales_person else ''
+        terms_row = f'<tr><td style="padding:4px 0;color:#888;">Payment Terms:</td><td style="padding:4px 0;font-weight:600;">{safe_string(cust_payment_terms)}</td></tr>' if cust_payment_terms else ''
         
         # Zero-amount balance warning
         inv_total = float(invoice.get("total", 0) or 0)
@@ -1233,15 +1013,7 @@ def register_invoicing_routes(app, db, login_required, Auth, render_page,
             except Exception:
                 linked_docs_html = ""
         
-        _inv_layout = _doc_layout(business, "invoice")
-        _inv_layout_classes = _doc_layout_classes(_inv_layout)
-        _inv_layout_css = _doc_layout_css()
-        _inv_layout_editor = _doc_layout_editor(
-            "invoice", _inv_layout, "/api/invoice/layout",
-            ["unit", "qty", "price", "disc", "vat", "excltotal", "incltotal"],
-            ["due_date", "payment_terms", "reference", "delivery_note", "sales_person", "our_vat", "bank_details", "footer"])
-
-        content = f'''<style>{_inv_layout_css}</style>{_inv_error_html}{zero_warning}
+        content = f'''{_inv_error_html}{zero_warning}
         <div class="no-print" style="display:flex;justify-content:space-between;align-items:center;margin-bottom:20px;">
             <div>
                 <a href="/invoices" style="color:var(--text-muted);">← Back to Invoices</a>
@@ -1252,11 +1024,9 @@ def register_invoicing_routes(app, db, login_required, Auth, render_page,
                 {dn_btn}
                 {cn_btn}
                 {email_btn}
-                <button class="btn btn-secondary" onclick="layoutEditOpen();">Edit Layout</button>
                 <button class="btn btn-secondary" onclick="printDocument();">🖨️ Print</button>
             </div>
         </div>
-        {_inv_layout_editor}
         
         <!-- EMAIL MODAL -->
         <div id="emailModal" style="display:none;position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.7);z-index:9999;align-items:center;justify-content:center;">
@@ -1330,7 +1100,6 @@ def register_invoicing_routes(app, db, login_required, Auth, render_page,
         {payment_info_html}
         
         <div class="card" id="invoicePrint" style="background:white;color:#333;padding:0;overflow:hidden;">
-            <div id="docLayoutRoot" class="{_inv_layout_classes}">
             <!-- TOP BAR -->
             <div style="background:#1a1a2e;color:white;padding:12px 25px;display:flex;justify-content:space-between;align-items:center;">
                 <div>
@@ -1345,18 +1114,18 @@ def register_invoicing_routes(app, db, login_required, Auth, render_page,
             </div>
             
             <!-- DETAILS GRID -->
-            <div style="padding:var(--sec-py,10px) 25px;display:grid;grid-template-columns:1fr 1fr;gap:0;border-bottom:1px solid #e5e7eb;">
+            <div style="padding:10px 25px;display:grid;grid-template-columns:1fr 1fr;gap:0;border-bottom:1px solid #e5e7eb;">
                 <!-- LEFT: Document details -->
                 <div style="border-right:1px solid #e5e7eb;padding-right:25px;">
                     <table style="width:100%;font-size:11px;color:#333;">
                         <tr><td style="padding:4px 0;color:#888;width:120px;">Number:</td><td style="padding:4px 0;font-weight:600;">{invoice.get("invoice_number", "-")}</td></tr>
                         <tr><td style="padding:4px 0;color:#888;">Date:</td><td style="padding:4px 0;">{invoice.get("date", "-")}</td></tr>
-                        <tr class="field-due_date"><td style="padding:4px 0;color:#888;">Due Date:</td><td style="padding:4px 0;">{invoice.get("due_date", "-")}</td></tr>
+                        <tr><td style="padding:4px 0;color:#888;">Due Date:</td><td style="padding:4px 0;">{invoice.get("due_date", "-")}</td></tr>
                         {sp_row}
                         {ref_row}
                         {dn_row}
                         {terms_row}
-                        {f'<tr class="field-our_vat"><td style="padding:4px 0;color:#888;">Our VAT No:</td><td style="padding:4px 0;">{biz_vat}</td></tr>' if biz_vat else ''}
+                        {f'<tr><td style="padding:4px 0;color:#888;">Our VAT No:</td><td style="padding:4px 0;">{biz_vat}</td></tr>' if biz_vat else ''}
                     </table>
                     {f'<div style="margin-top:8px;font-size:13px;color:#666;"><span>Tel: {biz_phone}</span></div>' if biz_phone else ''}
                     {f'<div style="font-size:13px;color:#666;">{biz_email}</div>' if biz_email else ''}
@@ -1373,18 +1142,18 @@ def register_invoicing_routes(app, db, login_required, Auth, render_page,
             </div>
             
             <!-- ITEMS TABLE -->
-            <div style="padding:0 25px;">
-                <table class="items-table" style="width:100%;border-collapse:collapse;font-size:14px;">
+            <div style="padding:18px 25px 0;">
+                <table style="width:100%;border-collapse:collapse;font-size:14px;">
                     <thead>
                         <tr style="background:#f1f5f9;border-bottom:2px solid #cbd5e1;">
                             <th style="padding:5px 6px;text-align:left;color:#475569;font-weight:600;font-size:10px;text-transform:uppercase;letter-spacing:0.5px;">Description</th>
-                            <th class="col-unit" style="padding:5px 6px;text-align:center;color:#475569;font-weight:600;font-size:10px;text-transform:uppercase;width:50px;">Unit</th>
-                            <th class="col-qty" style="padding:5px 6px;text-align:center;color:#475569;font-weight:600;font-size:10px;text-transform:uppercase;width:60px;">Qty</th>
-                            <th class="col-price" style="padding:5px 6px;text-align:right;color:#475569;font-weight:600;font-size:10px;text-transform:uppercase;width:100px;">Excl. Price</th>
-                            <th class="col-disc" style="padding:5px 6px;text-align:center;color:#475569;font-weight:600;font-size:10px;text-transform:uppercase;width:60px;">Disc %</th>
-                            <th class="col-vat" style="padding:5px 6px;text-align:center;color:#475569;font-weight:600;font-size:10px;text-transform:uppercase;width:60px;">VAT %</th>
-                            <th class="col-excltotal" style="padding:5px 6px;text-align:right;color:#475569;font-weight:600;font-size:10px;text-transform:uppercase;width:100px;">Excl. Total</th>
-                            <th class="col-incltotal" style="padding:5px 6px;text-align:right;color:#475569;font-weight:600;font-size:10px;text-transform:uppercase;width:100px;">Incl. Total</th>
+                            <th style="padding:5px 6px;text-align:center;color:#475569;font-weight:600;font-size:10px;text-transform:uppercase;width:50px;">Unit</th>
+                            <th style="padding:5px 6px;text-align:center;color:#475569;font-weight:600;font-size:10px;text-transform:uppercase;width:60px;">Qty</th>
+                            <th style="padding:5px 6px;text-align:right;color:#475569;font-weight:600;font-size:10px;text-transform:uppercase;width:100px;">Excl. Price</th>
+                            <th style="padding:5px 6px;text-align:center;color:#475569;font-weight:600;font-size:10px;text-transform:uppercase;width:60px;">Disc %</th>
+                            <th style="padding:5px 6px;text-align:center;color:#475569;font-weight:600;font-size:10px;text-transform:uppercase;width:60px;">VAT %</th>
+                            <th style="padding:5px 6px;text-align:right;color:#475569;font-weight:600;font-size:10px;text-transform:uppercase;width:100px;">Excl. Total</th>
+                            <th style="padding:5px 6px;text-align:right;color:#475569;font-weight:600;font-size:10px;text-transform:uppercase;width:100px;">Incl. Total</th>
                         </tr>
                     </thead>
                     <tbody style="color:#333;">
@@ -1394,16 +1163,16 @@ def register_invoicing_routes(app, db, login_required, Auth, render_page,
             </div>
             
             <!-- TOTALS + BANKING -->
-            <div style="padding:var(--sec-py,10px) 25px 15px;display:flex;justify-content:space-between;align-items:flex-end;">
+            <div style="padding:26px 25px 15px;display:flex;justify-content:space-between;align-items:flex-end;">
                 <!-- Banking Details -->
                 <div style="font-size:12px;color:#666;max-width:55%;">
-                    {f"""<div class="field-bank_details" style="border:1px solid #e5e7eb;border-radius:6px;padding:12px;background:#fafafa;">
+                    {f"""<div style="border:1px solid #e5e7eb;border-radius:6px;padding:12px;background:#fafafa;">
                         <div style="font-weight:600;color:#333;margin-bottom:6px;font-size:13px;">Banking Details</div>
                         <div>Bank: {business.get("bank_name", "")}</div>
                         <div>Account: {business.get("bank_account", "")}</div>
                         <div>Branch: {business.get("bank_branch", "")}</div>
                     </div>""" if business and business.get("bank_account") else ''}
-                    <div class="field-footer" style="margin-top:12px;font-size:11px;color:#999;">
+                    <div style="margin-top:12px;font-size:11px;color:#999;">
                         <p style="margin:2px 0;">Thank you for your business!</p>
                         <p style="margin:2px 0;">Generated by Click AI</p>
                     </div>
@@ -1431,7 +1200,6 @@ def register_invoicing_routes(app, db, login_required, Auth, render_page,
                         <td style="padding:8px 8px;text-align:right;color:white;font-size:13px;font-weight:700;">{money(invoice.get("total", 0))}</td>
                     </tr>
                 </table>
-            </div>
             </div>
         </div>
         
@@ -1619,7 +1387,7 @@ def register_invoicing_routes(app, db, login_required, Auth, render_page,
                 <html>
                 <head>
                     <title>Invoice</title>
-                    <style>{_inv_layout_css}
+                    <style>
                         * {{ margin: 0; padding: 0; box-sizing: border-box; }}
                         body {{ 
                             font-family: Arial, Helvetica, sans-serif; 
@@ -1636,8 +1404,8 @@ def register_invoicing_routes(app, db, login_required, Auth, render_page,
                         tr {{ page-break-inside: avoid; }}
                         thead {{ display: table-header-group; }}
                         @media print {{
-                            body {{ padding: 0; }}
-                            @page {{ size: A4; margin: 10mm 12mm; }}
+                            body {{ padding: 10mm 12mm; }}
+                            @page {{ size: A4; margin: 0; }}
                         }}
                     </style>
                 </head>
@@ -1658,13 +1426,6 @@ def register_invoicing_routes(app, db, login_required, Auth, render_page,
         '''
         
         return render_page(f"Invoice {invoice.get('invoice_number', '')}", content, user, "invoices")
-    
-    
-    @app.route("/api/invoice/layout", methods=["POST"])
-    @login_required
-    def api_invoice_layout():
-        """Save the invoice print-layout (applies to all future invoices)."""
-        return _save_doc_layout("invoice")
     
     
     @app.route("/api/invoice/<invoice_id>/pay", methods=["POST"])
@@ -3711,7 +3472,7 @@ def register_invoicing_routes(app, db, login_required, Auth, render_page,
             {weight_info}
             
             <!-- ITEMS TABLE -->
-            <div style="padding:0 25px;">
+            <div style="padding:18px 25px 0;">
                 <table style="width:100%;border-collapse:collapse;font-size:14px;">
                     <thead>
                         <tr style="background:#f1f5f9;border-bottom:2px solid #cbd5e1;">
@@ -3732,7 +3493,7 @@ def register_invoicing_routes(app, db, login_required, Auth, render_page,
             </div>
             
             <!-- TOTALS + BANKING -->
-            <div style="padding:10px 25px 15px;display:flex;justify-content:space-between;align-items:flex-end;">
+            <div style="padding:26px 25px 15px;display:flex;justify-content:space-between;align-items:flex-end;">
                 <div style="font-size:12px;color:#666;max-width:55%;">
                     {f"""<div style="border:1px solid #e5e7eb;border-radius:6px;padding:12px;background:#fafafa;">
                         <div style="font-weight:600;color:#333;margin-bottom:6px;font-size:13px;">Banking Details</div>
@@ -3850,8 +3611,8 @@ def register_invoicing_routes(app, db, login_required, Auth, render_page,
                         tr {{ page-break-inside: avoid; }}
                         thead {{ display: table-header-group; }}
                         @media print {{
-                            body {{ padding: 0; }}
-                            @page {{ size: A4; margin: 10mm 12mm; }}
+                            body {{ padding: 10mm 12mm; }}
+                            @page {{ size: A4; margin: 0; }}
                         }}
                     </style>
                 </head>
@@ -4842,7 +4603,7 @@ def register_invoicing_routes(app, db, login_required, Auth, render_page,
         """View delivery note"""
         
         user = Auth.get_current_user()
-        business = Auth.get_current_business()
+        business = db.get_one("businesses", session.get("business_id")) if session.get("business_id") else Auth.get_current_business()
         
         dn = db.get_one("delivery_notes", dn_id)
         if not dn:
@@ -5012,7 +4773,7 @@ def register_invoicing_routes(app, db, login_required, Auth, render_page,
             </div>
 
             <!-- ITEMS TABLE -->
-            <div style="padding:0 30px;">
+            <div style="padding:18px 30px 0;">
                 <table style="width:100%;border-collapse:collapse;font-size:12px;">
                     <thead class="dn-items-thead">
                         <tr style="background:#f1f5f9;border-bottom:2px solid #cbd5e1;">
@@ -5069,7 +4830,7 @@ def register_invoicing_routes(app, db, login_required, Auth, render_page,
         """Clean printable view of a delivery note - no sidebar, no header, no chrome.
         Opens in a new tab; auto-triggers print dialog. Paginates naturally for long item lists."""
         
-        business = Auth.get_current_business()
+        business = db.get_one("businesses", session.get("business_id")) if session.get("business_id") else Auth.get_current_business()
         
         dn = db.get_one("delivery_notes", dn_id)
         if not dn:
@@ -5284,12 +5045,15 @@ def register_invoicing_routes(app, db, login_required, Auth, render_page,
     }}
     @page {{
         size: A4 portrait;
-        margin: 12mm 0 14mm 0;
+        margin: 0;
     }}
     @media print {{
         html, body {{
             margin: 0;
             padding: 0;
+        }}
+        body {{
+            padding: 12mm 0 14mm 0;
         }}
         .doc {{
             max-width: 100%;

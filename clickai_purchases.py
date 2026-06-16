@@ -2147,7 +2147,7 @@ def register_purchases_routes(app, db, login_required, Auth, render_page,
         """View Purchase Order with full actions"""
         
         user = Auth.get_current_user()
-        business = Auth.get_current_business()
+        business = db.get_one("businesses", session.get("business_id")) if session.get("business_id") else Auth.get_current_business()
         biz_id = business.get("id") if business else None
         
         po = db.get_one("purchase_orders", po_id)
@@ -2190,6 +2190,13 @@ def register_purchases_routes(app, db, login_required, Auth, render_page,
         
         status = po.get("status", "draft")
         biz_name = business.get("name", "Business") if business else "Business"
+        # Logo from the saved invoice template (honours Show Logo) - POs were missing it
+        try:
+            _po_tpl = json.loads(business.get("invoice_template") or "{}") if business else {}
+        except (ValueError, TypeError):
+            _po_tpl = {}
+        _po_logo = (_po_tpl.get("logo_url") or "").strip() if _po_tpl.get("show_logo", True) else ""
+        logo_html = f'<img src="{_po_logo}" style="height:48px;max-width:170px;object-fit:contain;display:block;margin-bottom:6px;" alt="Logo">' if _po_logo else ""
         
         # Action buttons based on status
         action_buttons = ""
@@ -2290,6 +2297,7 @@ def register_purchases_routes(app, db, login_required, Auth, render_page,
             <!-- TOP BAR -->
             <div style="background:#0f766e;color:white;padding:12px 25px;display:flex;justify-content:space-between;align-items:center;">
                 <div>
+                    {logo_html}
                     <h1 style="margin:0;font-size:16px;font-weight:700;">{biz_name}</h1>
                     {f'<p style="margin:4px 0 0 0;font-size:13px;opacity:0.8;">{biz_address}</p>' if biz_address else ''}
                 </div>
@@ -2326,7 +2334,7 @@ def register_purchases_routes(app, db, login_required, Auth, render_page,
             </div>
             
             <!-- ITEMS TABLE -->
-            <div style="padding:0 25px;">
+            <div style="padding:18px 25px 0;">
                 <table style="width:100%;border-collapse:collapse;font-size:14px;">
                     <thead>
                         <tr style="background:#f1f5f9;border-bottom:2px solid #cbd5e1;">
@@ -2585,7 +2593,7 @@ def register_purchases_routes(app, db, login_required, Auth, render_page,
             pw.document.write(`<!DOCTYPE html><html><head><title>Purchase Order</title>
             <style>* {{ margin:0;padding:0;box-sizing:border-box; }} body {{ font-family:Arial,sans-serif;padding:0;color:#333;background:white;font-size:11px; }}
             table {{ width:100%;border-collapse:collapse;page-break-inside:auto; }} tr {{ page-break-inside:avoid; }} thead {{ display:table-header-group; }}
-            @media print {{ body {{ padding:0; }} @page {{ size:A4;margin:10mm 12mm; }} }}</style></head><body>${{content}}</body></html>`);
+            @media print {{ body {{ padding:10mm 12mm; }} @page {{ size:A4;margin:0; }} }}</style></head><body>${{content}}</body></html>`);
             pw.document.close(); pw.focus();
             setTimeout(() => {{ pw.print(); pw.close(); }}, 250);
         }}
