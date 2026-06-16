@@ -1270,6 +1270,7 @@ def register_settings_routes(app, db, login_required, Auth, render_page,
                 "show_vat_breakdown": request.form.get("show_vat_breakdown") == "on",
                 "invoice_title": request.form.get("invoice_title", "INVOICE"),
                 "quote_title": request.form.get("quote_title", "QUOTATION"),
+                "table_lines": request.form.get("table_lines", "horizontal"),
             }
             
             user_id = user.get("id", "") if user else ""
@@ -1302,6 +1303,11 @@ def register_settings_routes(app, db, login_required, Auth, render_page,
         show_vat_breakdown = template.get("show_vat_breakdown", True)
         invoice_title = template.get("invoice_title", "INVOICE")
         quote_title = template.get("quote_title", "QUOTATION")
+        table_lines = template.get("table_lines", "horizontal")
+        sel_h = "selected" if table_lines == "horizontal" else ""
+        sel_g = "selected" if table_lines == "grid" else ""
+        sel_b = "selected" if table_lines == "boxed" else ""
+        sel_n = "selected" if table_lines == "none" else ""
         
         # Template style options with previews
         style_options = {
@@ -1311,6 +1317,36 @@ def register_settings_routes(app, db, login_required, Auth, render_page,
             "minimal": {"name": "Minimal", "desc": "Ultra-clean with lots of white space"},
         }
         
+        # Mini visual preview shown on each style card (replaces the generic icon)
+        def _style_thumb(key):
+            c = primary_color
+            if key == "modern":
+                head = (f'<div style="border-left:3px solid {c};padding-left:6px;">'
+                        f'<div style="height:7px;width:60%;background:{c};border-radius:2px;"></div>'
+                        f'<div style="height:4px;width:35%;background:#cbd5e1;border-radius:2px;margin-top:3px;"></div></div>')
+            elif key == "classic":
+                head = ('<div style="border-bottom:2px solid #333;padding-bottom:4px;">'
+                        '<div style="height:7px;width:55%;background:#333;border-radius:1px;"></div>'
+                        '<div style="height:4px;width:30%;background:#cbd5e1;border-radius:1px;margin-top:3px;"></div></div>')
+            elif key == "bold":
+                head = (f'<div style="background:{c};border-radius:3px;padding:5px 6px;">'
+                        f'<div style="height:7px;width:55%;background:#fff;border-radius:2px;"></div></div>')
+            else:  # minimal
+                head = ('<div style="text-align:center;">'
+                        '<div style="height:6px;width:45%;background:#94a3b8;border-radius:2px;margin:0 auto;"></div></div>')
+            return (
+                '<div style="background:#fff;border:1px solid #e5e7eb;border-radius:6px;padding:8px;'
+                'margin-bottom:10px;box-shadow:0 1px 3px rgba(0,0,0,0.08);text-align:left;">'
+                f'{head}'
+                '<div style="margin-top:6px;display:flex;flex-direction:column;gap:3px;">'
+                '<div style="height:3px;width:100%;background:#eef2f7;border-radius:1px;"></div>'
+                '<div style="height:3px;width:100%;background:#eef2f7;border-radius:1px;"></div>'
+                '<div style="height:3px;width:80%;background:#eef2f7;border-radius:1px;"></div></div>'
+                '<div style="margin-top:6px;display:flex;justify-content:flex-end;">'
+                f'<div style="height:6px;width:40%;background:{c};border-radius:2px;opacity:0.85;"></div></div>'
+                '</div>'
+            )
+
         style_html = ""
         for key, val in style_options.items():
             selected = "border-color: var(--primary); background: rgba(99,102,241,0.1);" if key == template_style else ""
@@ -1320,7 +1356,7 @@ def register_settings_routes(app, db, login_required, Auth, render_page,
                 <div style="border: 2px solid var(--border); border-radius: 12px; padding: 20px; text-align: center; transition: all 0.2s; {selected}" 
                      onmouseover="this.style.borderColor='var(--primary)'" 
                      onmouseout="this.style.borderColor='{f"var(--primary)" if key == template_style else "var(--border)"}'">
-                    <div style="font-size: 32px; margin-bottom: 10px;">📄</div>
+                    {_style_thumb(key)}
                     <div style="font-weight: bold;">{val["name"]}</div>
                     <div style="font-size: 12px; color: var(--text-muted);">{val["desc"]}</div>
                 </div>
@@ -1463,6 +1499,18 @@ def register_settings_routes(app, db, login_required, Auth, render_page,
                 </div>
             </div>
             
+            <div class="card" style="margin-bottom: 20px;">
+                <h3 style="margin: 0 0 20px 0;">Items Table</h3>
+                <label style="display: block; margin-bottom: 5px; font-weight: 500;">Table Lines</label>
+                <select name="table_lines" class="form-input" style="max-width: 340px;">
+                    <option value="horizontal" {sel_h}>Horizontal lines (under each row)</option>
+                    <option value="grid" {sel_g}>Full grid (lines around every cell)</option>
+                    <option value="boxed" {sel_b}>Boxed (outer frame only)</option>
+                    <option value="none" {sel_n}>None (clean, no lines)</option>
+                </select>
+                <small style="color: var(--text-muted); display: block; margin-top: 6px;">Choose how the lines around your invoice items table look. Click Preview to see it.</small>
+            </div>
+            
             <div style="display: flex; gap: 10px;">
                 <button type="submit" class="btn btn-primary" style="padding: 12px 30px;">GOOD: Save Template</button>
                 <a href="/settings" class="btn btn-secondary">Cancel</a>
@@ -1506,14 +1554,15 @@ def register_settings_routes(app, db, login_required, Auth, render_page,
             const terms = document.querySelector('input[name="payment_terms"]').value;
             const footer = document.querySelector('textarea[name="footer_text"]').value;
             const invTitle = document.querySelector('input[name="invoice_title"]').value || 'INVOICE';
+            const tableLines = (document.querySelector('select[name="table_lines"]') || {{}}).value || 'horizontal';
             
             // Generate preview HTML
-            const preview = generatePreview(style, color, showLogo, showBank, showVat, showTerms, terms, footer, invTitle);
+            const preview = generatePreview(style, color, showLogo, showBank, showVat, showTerms, terms, footer, invTitle, tableLines);
             document.getElementById('previewContent').innerHTML = preview;
             document.getElementById('previewModal').style.display = 'flex';
         }}
         
-        function generatePreview(style, color, showLogo, showBank, showVat, showTerms, terms, footer, invTitle) {{
+        function generatePreview(style, color, showLogo, showBank, showVat, showTerms, terms, footer, invTitle, tableLines) {{
             const biz = "{safe_string(business.get('name', 'Your Business'))}";
             const addr = "{safe_string(business.get('address', '123 Main Street'))}";
             const vat = "{safe_string(business.get('vat_number', ''))}";
@@ -1538,6 +1587,23 @@ def register_settings_routes(app, db, login_required, Auth, render_page,
                 titleStyle = `color: #333; font-size: 24px; font-weight: 300; letter-spacing: 4px;`;
             }}
             
+            // Items table line style
+            let tableBorder = '';
+            let thBorder = '';
+            let tdBorder = '';
+            if (tableLines === 'grid') {{
+                tableBorder = 'border: 1px solid #ddd;';
+                thBorder = 'border: 1px solid #ddd;';
+                tdBorder = 'border: 1px solid #eee;';
+            }} else if (tableLines === 'boxed') {{
+                tableBorder = 'border: 1px solid #ddd;';
+            }} else if (tableLines === 'none') {{
+                tableBorder = ''; thBorder = ''; tdBorder = '';
+            }} else {{
+                thBorder = 'border-bottom: 2px solid #ddd;';
+                tdBorder = 'border-bottom: 1px solid #eee;';
+            }}
+            
             return `
                 <div style="${{headerStyle}}">
                     <h1 style="${{titleStyle}}; margin: 0;">${{invTitle}}</h1>
@@ -1559,27 +1625,27 @@ def register_settings_routes(app, db, login_required, Auth, render_page,
                     </div>
                 </div>
                 
-                <table style="width: 100%; border-collapse: collapse; margin: 20px 0;">
+                <table style="width: 100%; border-collapse: collapse; margin: 20px 0; ${{tableBorder}}">
                     <thead>
                         <tr style="background: #f5f5f5;">
-                            <th style="padding: 12px; text-align: left; border-bottom: 2px solid #ddd;">Description</th>
-                            <th style="padding: 12px; text-align: center; border-bottom: 2px solid #ddd;">Qty</th>
-                            <th style="padding: 12px; text-align: right; border-bottom: 2px solid #ddd;">Price</th>
-                            <th style="padding: 12px; text-align: right; border-bottom: 2px solid #ddd;">Total</th>
+                            <th style="padding: 12px; text-align: left; ${{thBorder}}">Description</th>
+                            <th style="padding: 12px; text-align: center; ${{thBorder}}">Qty</th>
+                            <th style="padding: 12px; text-align: right; ${{thBorder}}">Price</th>
+                            <th style="padding: 12px; text-align: right; ${{thBorder}}">Total</th>
                         </tr>
                     </thead>
                     <tbody>
                         <tr>
-                            <td style="padding: 12px; border-bottom: 1px solid #eee;">Sample Product</td>
-                            <td style="padding: 12px; text-align: center; border-bottom: 1px solid #eee;">2</td>
-                            <td style="padding: 12px; text-align: right; border-bottom: 1px solid #eee;">R500.00</td>
-                            <td style="padding: 12px; text-align: right; border-bottom: 1px solid #eee;">R1,000.00</td>
+                            <td style="padding: 12px; ${{tdBorder}}">Sample Product</td>
+                            <td style="padding: 12px; text-align: center; ${{tdBorder}}">2</td>
+                            <td style="padding: 12px; text-align: right; ${{tdBorder}}">R500.00</td>
+                            <td style="padding: 12px; text-align: right; ${{tdBorder}}">R1,000.00</td>
                         </tr>
                         <tr>
-                            <td style="padding: 12px; border-bottom: 1px solid #eee;">Another Item</td>
-                            <td style="padding: 12px; text-align: center; border-bottom: 1px solid #eee;">1</td>
-                            <td style="padding: 12px; text-align: right; border-bottom: 1px solid #eee;">R750.00</td>
-                            <td style="padding: 12px; text-align: right; border-bottom: 1px solid #eee;">R750.00</td>
+                            <td style="padding: 12px; ${{tdBorder}}">Another Item</td>
+                            <td style="padding: 12px; text-align: center; ${{tdBorder}}">1</td>
+                            <td style="padding: 12px; text-align: right; ${{tdBorder}}">R750.00</td>
+                            <td style="padding: 12px; text-align: right; ${{tdBorder}}">R750.00</td>
                         </tr>
                     </tbody>
                 </table>
