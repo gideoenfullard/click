@@ -282,17 +282,17 @@ def register_settings_routes(app, db, login_required, Auth, render_page,
                 <div style="display:grid;grid-template-columns:1fr 1fr;gap:15px;">
                     <div class="form-group">
                         <label class="form-label">SMTP Host</label>
-                        <input type="text" name="smtp_host" class="form-input" value="{safe_string(business.get("smtp_host", "smtp.gmail.com") if business else "smtp.gmail.com")}">
+                        <input type="text" name="smtp_host" id="smtpHost" class="form-input" value="{safe_string(business.get("smtp_host", "smtp.gmail.com") if business else "smtp.gmail.com")}">
                     </div>
                     <div class="form-group">
                         <label class="form-label">SMTP Port</label>
-                        <input type="text" name="smtp_port" class="form-input" value="{safe_string(business.get("smtp_port", "587") if business else "587")}">
+                        <input type="text" name="smtp_port" id="smtpPort" class="form-input" value="{safe_string(business.get("smtp_port", "587") if business else "587")}">
                     </div>
                 </div>
                 
                 <div class="form-group">
                     <label class="form-label">SMTP Username</label>
-                    <input type="text" name="smtp_user" class="form-input" value="{safe_string(business.get("smtp_user", "") if business else "")}">
+                    <input type="text" name="smtp_user" id="smtpUser" oninput="autofillSmtp()" class="form-input" value="{safe_string(business.get("smtp_user", "") if business else "")}">
                 </div>
                 
                 <div class="form-group">
@@ -306,8 +306,65 @@ def register_settings_routes(app, db, login_required, Auth, render_page,
                     <span id="smtpTestResult" style="margin-left:10px;"></span>
                 </div>
             </form>
-            
+
+            <!-- App Password / 2-Step Verification help -->
+            <div style="margin-top:18px;padding:16px 18px;background:#f8fafc;border:1px solid #e5e7eb;border-left:4px solid var(--primary);border-radius:8px;">
+                <h4 style="margin:0 0 8px 0;font-size:15px;">Gmail needs an App Password (not your normal password)</h4>
+                <p style="margin:0 0 10px 0;color:var(--text-muted);font-size:13px;">Google no longer lets apps sign in with your everyday password. You switch on 2-Step Verification, then create a 16-character App Password and paste it into the SMTP Password field above. It takes about 3 minutes.</p>
+                <ol style="margin:0 0 10px 18px;padding:0;color:#334155;font-size:13px;line-height:1.7;">
+                    <li><strong>Turn on 2-Step Verification first.</strong> Copy this link, paste it into your browser, and follow the steps (you confirm with your phone once):
+                        <div style="display:flex;gap:6px;align-items:center;margin:6px 0 4px;">
+                            <code style="flex:1;font-family:monospace;font-size:12px;background:#fff;border:1px solid #e5e7eb;border-radius:5px;padding:6px 8px;word-break:break-all;">https://myaccount.google.com/security</code>
+                            <button type="button" onclick="copyText(this,'https://myaccount.google.com/security')" style="flex-shrink:0;background:var(--primary);color:#fff;border:none;border-radius:5px;padding:6px 12px;font-size:12px;cursor:pointer;">Copy</button>
+                        </div>
+                    </li>
+                    <li><strong>Then open the App Passwords page.</strong> Copy this link and paste it into your browser:
+                        <div style="display:flex;gap:6px;align-items:center;margin:6px 0 4px;">
+                            <code style="flex:1;font-family:monospace;font-size:12px;background:#fff;border:1px solid #e5e7eb;border-radius:5px;padding:6px 8px;word-break:break-all;">https://myaccount.google.com/apppasswords</code>
+                            <button type="button" onclick="copyText(this,'https://myaccount.google.com/apppasswords')" style="flex-shrink:0;background:var(--primary);color:#fff;border:none;border-radius:5px;padding:6px 12px;font-size:12px;cursor:pointer;">Copy</button>
+                        </div>
+                    </li>
+                    <li>Type a name like <strong>ClickAI</strong> and click <strong>Create</strong>.</li>
+                    <li>Google opens a box with the password in four groups of four letters (like <code style="font-family:monospace;background:#fff;border:1px solid #e5e7eb;border-radius:4px;padding:1px 5px;">abcd efgh ijkl mnop</code>). Click the password to copy it, and enter it <strong>without the spaces</strong>. Google shows it only once, so paste it here straight away &mdash; if you lose it, just create a new one.</li>
+                    <li>Paste it into <strong>SMTP Password</strong> above and click <strong>Save Email Settings</strong>.</li>
+                </ol>
+                <p style="margin:0;color:var(--text-muted);font-size:12px;">The Host and Port fill in automatically once you enter your email address. Using Outlook, Hotmail or Yahoo? The steps are similar: turn on 2-step verification in your account, then create an app password and paste it above.</p>
+            </div>
+
             <script>
+            function copyText(btn, txt) {{
+                navigator.clipboard.writeText(txt).then(function() {{
+                    const old = btn.textContent;
+                    btn.textContent = 'Copied!';
+                    setTimeout(function() {{ btn.textContent = old; }}, 1500);
+                }});
+            }}
+            const SMTP_PROVIDERS = {{
+                'gmail.com':      {{ host: 'smtp.gmail.com',        port: '587' }},
+                'googlemail.com': {{ host: 'smtp.gmail.com',        port: '587' }},
+                'outlook.com':    {{ host: 'smtp-mail.outlook.com', port: '587' }},
+                'hotmail.com':    {{ host: 'smtp-mail.outlook.com', port: '587' }},
+                'live.com':       {{ host: 'smtp-mail.outlook.com', port: '587' }},
+                'msn.com':        {{ host: 'smtp-mail.outlook.com', port: '587' }},
+                'yahoo.com':      {{ host: 'smtp.mail.yahoo.com',   port: '587' }},
+                'yahoo.co.za':    {{ host: 'smtp.mail.yahoo.com',   port: '587' }},
+                'icloud.com':     {{ host: 'smtp.mail.me.com',      port: '587' }},
+                'me.com':         {{ host: 'smtp.mail.me.com',      port: '587' }}
+            }};
+            function autofillSmtp() {{
+                const el = document.getElementById('smtpUser');
+                if (!el) return;
+                const u = (el.value || '').trim().toLowerCase();
+                const at = u.lastIndexOf('@');
+                if (at < 0) return;
+                const domain = u.slice(at + 1);
+                const p = SMTP_PROVIDERS[domain];
+                if (!p) return;
+                const h = document.getElementById('smtpHost');
+                const pt = document.getElementById('smtpPort');
+                if (h) h.value = p.host;
+                if (pt) pt.value = p.port;
+            }}
             async function testSmtp() {{
                 const btn = document.getElementById('testSmtpBtn');
                 const result = document.getElementById('smtpTestResult');
