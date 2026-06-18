@@ -112,6 +112,37 @@ def register_banking_routes(app, db, login_required, Auth, render_page,
                             ensure_gl_account=None):
     """Register all Banking routes with the Flask app."""
 
+    def _fetch_all_bank_txns(biz_id):
+        """Fetch ALL bank transactions for a business, NEWEST FIRST, paging past any
+        Supabase/PostgREST max-rows cap (often 1000). Plain db.get sends no ORDER BY,
+        so a capped response returns the OLDEST rows in physical order — which silently
+        drops the most recent month once the table grows past the cap. This pages
+        explicitly with order=date.desc so the latest transactions are always included.
+        Falls back to db.get on any error so the page never breaks."""
+        if not biz_id:
+            return []
+        try:
+            rows = []
+            page_size = 1000
+            offset = 0
+            for _ in range(50):  # hard safety ceiling: up to 50k rows
+                url = (f"{db.url}/rest/v1/bank_transactions"
+                       f"?select=*&business_id=eq.{biz_id}"
+                       f"&order=date.desc.nullslast&limit={page_size}&offset={offset}")
+                resp = requests.get(url, headers=db.headers, timeout=20)
+                if resp.status_code != 200:
+                    logger.warning(f"[BANKING] paged fetch HTTP {resp.status_code}; falling back to db.get")
+                    return db.get("bank_transactions", {"business_id": biz_id}) or []
+                batch = resp.json() or []
+                rows.extend(batch)
+                if len(batch) < page_size:
+                    break
+                offset += page_size
+            return rows
+        except Exception as _e:
+            logger.warning(f"[BANKING] paged fetch failed ({_e}); falling back to db.get")
+            return db.get("bank_transactions", {"business_id": biz_id}) or []
+
     @app.route("/banking")
     @login_required
     def banking_page():
@@ -121,8 +152,9 @@ def register_banking_routes(app, db, login_required, Auth, render_page,
         business = Auth.get_current_business()
         biz_id = business.get("id") if business else None
         
-        # Get ALL transactions, not just unmatched
-        all_transactions = db.get("bank_transactions", {"business_id": biz_id}) if biz_id else []
+        # Get ALL transactions, not just unmatched — paged + ordered so the newest
+        # month is always fetched even when the table exceeds the Supabase row cap.
+        all_transactions = _fetch_all_bank_txns(biz_id)
         # Two-pass stable sort to match the EXACT bank statement order:
         #   1. Sort by created_at ASC (preserves the order AI read them from the statement)
         #   2. Sort by date ASC (stable sort keeps insertion order within same day)
@@ -349,9 +381,21 @@ def register_banking_routes(app, db, login_required, Auth, render_page,
         suggested_rows = "".join([build_row(t, show_approve=True) for t in suggested[:100]])
         needs_rows = "".join([build_row(t, show_approve=False, show_suggestion=False) for t in needs_attention[:100]])
         
-        # Build done rows - show allocated transactions so they're traceable
+        # Build done rows - show allocated transactions so they're traceable.
+        # Newest first (current month at the top) — fixes the old [:200] cut that
+        # silently dropped the most recent month. A bounded window is rendered for
+        # performance; older rows are revealed client-side via "Wys meer".
+        _DONE_INITIAL = 100      # rows visible on first load
+        _DONE_MAX_RENDER = 600   # hard cap rendered into the page (older live in the GL/ledger)
+        _done_sorted = sorted(
+            already_done,
+            key=lambda x: (str(x.get("date", ""))[:10], str(x.get("created_at", ""))),
+            reverse=True,
+        )
+        _done_total = len(_done_sorted)
+        _done_render = _done_sorted[:_DONE_MAX_RENDER]
         done_rows_html = ""
-        for t in already_done[:200]:
+        for _done_i, t in enumerate(_done_render):
             txn_id = t.get("id", "")
             debit = float(t.get("debit", 0))
             credit = float(t.get("credit", 0))
@@ -411,8 +455,9 @@ def register_banking_routes(app, db, login_required, Auth, render_page,
             else:
                 balance_done_html = '<span style="color:var(--text-muted);">-</span>'
             
+            _done_extra_cls = " done-extra done-hidden" if _done_i >= _DONE_INITIAL else ""
             done_rows_html += f'''
-            <tr data-id="{txn_id}">
+            <tr data-id="{txn_id}" class="done-row{_done_extra_cls}">
                 <td style="white-space:nowrap;">{t.get("date", "-")}</td>
                 <td><div style="max-width:300px;">{desc}</div></td>
                 <td style="text-align:right;color:var(--red);white-space:nowrap;">{money(debit) if debit > 0 else "-"}</td>
@@ -425,6 +470,20 @@ def register_banking_routes(app, db, login_required, Auth, render_page,
             </tr>
             '''
         
+        # "Wys meer" control + (rare) cap note — built here so the content f-string stays simple
+        _done_more_html = ""
+        if _done_total > _DONE_INITIAL:
+            _done_more_html = (
+                '<div style="text-align:center;margin-top:14px;">'
+                f'<button id="doneShowMoreBtn" class="btn btn-secondary" onclick="showMoreDone()">'
+                f'Wys meer ({_done_total - _DONE_INITIAL} oorblywend)</button></div>'
+            )
+        if _done_total > _DONE_MAX_RENDER:
+            _done_more_html += (
+                '<div style="text-align:center;margin-top:8px;font-size:11px;color:var(--text-muted);">'
+                f'Wys die nuutste {_DONE_MAX_RENDER} geallokeerde transaksies. Ouer inskrywings bly in die grootboek/GL.</div>'
+            )
+        
         content = f'''
         <style>
         .recon-tabs {{ display: flex; gap: 5px; margin-bottom: 20px; flex-wrap: wrap; }}
@@ -434,6 +493,7 @@ def register_banking_routes(app, db, login_required, Auth, render_page,
         .recon-tab .count {{ background: rgba(255,255,255,0.2); padding: 2px 8px; border-radius: 10px; margin-left: 8px; font-size: 12px; }}
         .recon-section {{ display: none; }}
         .recon-section.active {{ display: block; }}
+        .done-hidden {{ display: none; }}
         .bulk-bar {{ background: linear-gradient(135deg, rgba(16,185,129,0.2), rgba(16,185,129,0.1)); padding: 15px; border-radius: 8px; margin-bottom: 15px; display: flex; justify-content: space-between; align-items: center; }}
         /* Split Modal */
         .split-overlay {{ position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,0.6);z-index:9998;display:none;justify-content:center;align-items:center; }}
@@ -622,6 +682,7 @@ def register_banking_routes(app, db, login_required, Auth, render_page,
                     </tbody>
                 </table>
             </div>
+            {_done_more_html}
         </div>
         
         <!-- TIPS -->
@@ -634,6 +695,21 @@ def register_banking_routes(app, db, login_required, Auth, render_page,
         </div>
         
         <script>
+        function showMoreDone() {{
+            var hidden = document.querySelectorAll('#section-done tr.done-hidden');
+            var chunk = 100, shown = 0;
+            for (var i = 0; i < hidden.length && shown < chunk; i++) {{
+                hidden[i].classList.remove('done-hidden');
+                shown++;
+            }}
+            var remaining = document.querySelectorAll('#section-done tr.done-hidden').length;
+            var btn = document.getElementById('doneShowMoreBtn');
+            if (btn) {{
+                if (remaining <= 0) {{ btn.style.display = 'none'; }}
+                else {{ btn.textContent = 'Wys meer (' + remaining + ' oorblywend)'; }}
+            }}
+        }}
+        
         function showTab(tab) {{
             // Hide all sections
             document.querySelectorAll('.recon-section').forEach(s => s.classList.remove('active'));
