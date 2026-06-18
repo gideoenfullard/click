@@ -33902,10 +33902,12 @@ def api_bulk_statements_schedule():
 
 # 
 
-def _statement_asat(month_param: str = ""):
+def _statement_asat(month_param: str = "", default_current: bool = False):
     """Resolve a statement month to (month_str 'YYYY-MM', asat 'YYYY-MM-DD').
-    The statement closes on the LAST day of that month. Defaults to the
-    previous full month when month_param is blank or invalid."""
+    The statement closes on the LAST day of that month. When month_param is blank
+    or invalid, the default is the previous full month — UNLESS default_current is
+    True, in which case it defaults to the current month (used by the on-screen
+    statement views; emails/scheduled runs keep the previous-month default)."""
     import datetime as _dtm
     _t = _dtm.date.today()
     m = (month_param or "").strip()
@@ -33918,7 +33920,9 @@ def _statement_asat(month_param: str = ""):
         except Exception:
             yy = mm = None
     if yy is None:
-        if _t.month == 1:
+        if default_current:
+            yy, mm = _t.year, _t.month
+        elif _t.month == 1:
             yy, mm = _t.year - 1, 12
         else:
             yy, mm = _t.year, _t.month - 1
@@ -33955,8 +33959,8 @@ def customer_statement(customer_id):
     if not customer:
         return redirect("/customers")
     
-    # Statement closes on the last day of the selected month (default: previous month)
-    _stmt_month, _asat = _statement_asat(request.args.get("month"))
+    # Statement closes on the last day of the selected month (on screen: default current month)
+    _stmt_month, _asat = _statement_asat(request.args.get("month"), default_current=True)
     
     # Get all transactions
     invoices = db.get("invoices", {"business_id": biz_id}) if biz_id else []
@@ -34523,8 +34527,8 @@ def customer_statement_print(customer_id):
     if not customer:
         return "Customer not found", 404
     
-    # Statement closes on the last day of the selected month (default: previous month)
-    _stmt_month, _asat = _statement_asat(request.args.get("month"))
+    # Statement closes on the last day of the selected month (on screen: default current month)
+    _stmt_month, _asat = _statement_asat(request.args.get("month"), default_current=True)
     
     # ── Build transactions (same logic as customer_statement view) ─────────
     invoices = db.get("invoices", {"business_id": biz_id}) if biz_id else []
