@@ -26470,6 +26470,22 @@ def build_linked_documents_panel(db, biz_id, doc_type, doc_id, doc_data=None):
                         <span style="font-weight:600;color:var(--primary);">{safe_string(fname)}</span>
                         <span style="color:var(--text-muted);font-size:11px;">{att_date}</span>
                     </a>''')
+                    # ── DELIBERATE READ: only for stored supplier-invoice images.
+                    #    If not yet processed into a supplier invoice, show a clear
+                    #    "Read with Sonnet" button. If already processed, show a badge.
+                    if att_type_code == "supplier_inv":
+                        _is_processed = bool(att.get("processed")) or att.get("document_type") == "supplier_invoice"
+                        if _is_processed:
+                            rows.append('''<div style="display:flex;align-items:center;gap:6px;margin:-2px 0 8px 26px;font-size:11px;color:var(--green);">
+                                ✓ Verwerk tot 'n verskaffersfaktuur
+                            </div>''')
+                        else:
+                            rows.append(f'''<div style="margin:-2px 0 8px 26px;">
+                                <button type="button" onclick="linkedDocReadWithSonnet('{att_id}','{doc_type}','{doc_id}')"
+                                    style="background:transparent;border:1px solid var(--primary);color:var(--primary);padding:5px 12px;border-radius:6px;cursor:pointer;font-size:11px;font-weight:600;">
+                                    🔍 Lees met Sonnet → skep faktuur
+                                </button>
+                            </div>''')
             except Exception as _e_att:
                 try:
                     logger.warning(f"linked_documents attachments load failed: {_e_att}")
@@ -26504,7 +26520,7 @@ def build_linked_documents_panel(db, biz_id, doc_type, doc_id, doc_data=None):
                             <label style="display:block;margin-bottom:4px;font-weight:600;font-size:12px;color:var(--text-muted);">Document type</label>
                             <select id="linkedDocAttachType" style="width:100%;padding:10px;border:1px solid var(--border);border-radius:6px;background:var(--bg);color:var(--text);font-size:13px;">
                                 <option value="signed_dn">Signed Delivery Note</option>
-                                <option value="supplier_inv">Supplier Invoice (auto-process)</option>
+                                <option value="supplier_inv">Supplier Invoice (stoor nou — lees later)</option>
                                 <option value="pod">Proof of Delivery (POD)</option>
                                 <option value="other">Other</option>
                             </select>
@@ -26578,81 +26594,31 @@ def build_linked_documents_panel(db, biz_id, doc_type, doc_id, doc_data=None):
                     
                     var attachType = typeEl.value;
                     
-                    if (attachType === 'supplier_inv'){
-                        // Run through full OCR scan flow — same as scan-supplier-invoice
-                        statusEl.textContent = 'Reading invoice with AI...';
-                        try {
-                            var fd = new FormData();
-                            fd.append('file', file);
-                            fd.append('type', 'invoice');
-                            var rsp = await fetch('/api/scan/document', {method:'POST', body: fd});
-                            var dat = await rsp.json();
-                            if (!dat.success){
-                                statusEl.style.color = 'var(--red)';
-                                statusEl.textContent = 'AI scan failed: ' + (dat.error || 'unknown error');
-                                btn.disabled = false; btn.textContent = 'Upload';
-                                return;
-                            }
-                            // Persist context for the save step
-                            window.__linkedDocPendingScan = {
-                                scan_data: dat.data || dat,
-                                image_data: dat.image_data || null,
-                                doc_type: ctx.docType,
-                                doc_id: ctx.docId
-                            };
+                    // ── STORE-FIRST: every attachment type (incl. supplier_inv) is
+                    //    stored as-is via /api/linked-doc/upload. NO AI here. Reading a
+                    //    supplier invoice with Sonnet is a separate, deliberate action
+                    //    triggered from the stored row's "Lees met Sonnet" button.
+                    try {
+                        var fd2 = new FormData();
+                        fd2.append('file', file);
+                        fd2.append('doc_type', ctx.docType);
+                        fd2.append('doc_id', ctx.docId);
+                        fd2.append('attachment_type', attachType);
+                        var rsp2 = await fetch('/api/linked-doc/upload', {method:'POST', body: fd2});
+                        var dat2 = await rsp2.json();
+                        if (dat2.success){
                             statusEl.style.color = 'var(--green)';
-                            statusEl.textContent = 'AI read the invoice. Saving as supplier invoice...';
-                            
-                            // Save it directly via save-supplier-invoice with linked-doc fields
-                            var saveBody = Object.assign({}, dat.data || dat, {
-                                image_data: dat.image_data || null,
-                                linked_doc_type: ctx.docType,
-                                linked_doc_id: ctx.docId
-                            });
-                            var sresp = await fetch('/api/scan/save-supplier-invoice', {
-                                method:'POST',
-                                headers:{'Content-Type':'application/json'},
-                                body: JSON.stringify(saveBody)
-                            });
-                            var sdat = await sresp.json();
-                            if (sdat.success){
-                                statusEl.style.color = 'var(--green)';
-                                statusEl.textContent = 'Supplier invoice created and attached. Reloading...';
-                                setTimeout(function(){ location.reload(); }, 900);
-                            } else {
-                                statusEl.style.color = 'var(--red)';
-                                statusEl.textContent = 'Save failed: ' + (sdat.error || 'unknown');
-                                btn.disabled = false; btn.textContent = 'Upload';
-                            }
-                        } catch(e){
+                            statusEl.textContent = 'Gestoor. Herlaai...';
+                            setTimeout(function(){ location.reload(); }, 600);
+                        } else {
                             statusEl.style.color = 'var(--red)';
-                            statusEl.textContent = 'Error: ' + e.message;
+                            statusEl.textContent = 'Stoor het misluk: ' + (dat2.error || 'unknown');
                             btn.disabled = false; btn.textContent = 'Upload';
                         }
-                    } else {
-                        // Plain attach — just store image as proof
-                        try {
-                            var fd2 = new FormData();
-                            fd2.append('file', file);
-                            fd2.append('doc_type', ctx.docType);
-                            fd2.append('doc_id', ctx.docId);
-                            fd2.append('attachment_type', attachType);
-                            var rsp2 = await fetch('/api/linked-doc/upload', {method:'POST', body: fd2});
-                            var dat2 = await rsp2.json();
-                            if (dat2.success){
-                                statusEl.style.color = 'var(--green)';
-                                statusEl.textContent = 'Attached. Reloading...';
-                                setTimeout(function(){ location.reload(); }, 600);
-                            } else {
-                                statusEl.style.color = 'var(--red)';
-                                statusEl.textContent = 'Upload failed: ' + (dat2.error || 'unknown');
-                                btn.disabled = false; btn.textContent = 'Upload';
-                            }
-                        } catch(e){
-                            statusEl.style.color = 'var(--red)';
-                            statusEl.textContent = 'Error: ' + e.message;
-                            btn.disabled = false; btn.textContent = 'Upload';
-                        }
+                    } catch(e){
+                        statusEl.style.color = 'var(--red)';
+                        statusEl.textContent = 'Fout: ' + e.message;
+                        btn.disabled = false; btn.textContent = 'Upload';
                     }
                 };
                 
@@ -26685,6 +26651,254 @@ def build_linked_documents_panel(db, biz_id, doc_type, doc_id, doc_data=None):
                     var vm = document.getElementById('linkedDocViewerModal');
                     if (am && e.target === am) linkedDocCloseAttach();
                     if (vm && e.target === vm) linkedDocCloseViewer();
+                });
+            })();
+            </script>
+
+            <!-- ════════════════════════════════════════════════════════════ -->
+            <!-- Linked Doc Sonnet Review Modal (Fase 2: deliberate read)      -->
+            <!-- ════════════════════════════════════════════════════════════ -->
+            <div id="linkedDocReviewModal" style="display:none;position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.7);z-index:10000;align-items:flex-start;justify-content:center;overflow:auto;padding:24px 12px;">
+                <div style="background:var(--card);padding:24px;border-radius:12px;width:96%;max-width:640px;border:1px solid var(--border);margin:auto;">
+                    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;">
+                        <h3 style="margin:0;font-size:16px;">🔍 Hersien verskaffersfaktuur</h3>
+                        <button onclick="linkedDocCloseReview()" style="background:none;border:none;color:var(--text-muted);font-size:22px;cursor:pointer;">&times;</button>
+                    </div>
+                    <p style="margin:0 0 14px;font-size:12px;color:var(--text-muted);">Sonnet het die beeld gelees. Kontroleer en korrigeer voor jy stoor — niks word geskep voor jy bevestig nie.</p>
+
+                    <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:12px;">
+                        <div>
+                            <label style="display:block;margin-bottom:4px;font-weight:600;font-size:12px;color:var(--text-muted);">Verskaffer</label>
+                            <input id="ldrSupplier" type="text" style="width:100%;padding:9px;border:1px solid var(--border);border-radius:6px;background:var(--bg);color:var(--text);font-size:13px;">
+                        </div>
+                        <div>
+                            <label style="display:block;margin-bottom:4px;font-weight:600;font-size:12px;color:var(--text-muted);">Faktuurnommer</label>
+                            <input id="ldrInvNo" type="text" style="width:100%;padding:9px;border:1px solid var(--border);border-radius:6px;background:var(--bg);color:var(--text);font-size:13px;">
+                        </div>
+                        <div>
+                            <label style="display:block;margin-bottom:4px;font-weight:600;font-size:12px;color:var(--text-muted);">Datum</label>
+                            <input id="ldrDate" type="date" style="width:100%;padding:9px;border:1px solid var(--border);border-radius:6px;background:var(--bg);color:var(--text);font-size:13px;">
+                        </div>
+                        <div>
+                            <label style="display:block;margin-bottom:4px;font-weight:600;font-size:12px;color:var(--text-muted);">Totaal (incl. BTW)</label>
+                            <input id="ldrTotal" type="number" step="0.01" style="width:100%;padding:9px;border:1px solid var(--border);border-radius:6px;background:var(--bg);color:var(--text);font-size:13px;">
+                        </div>
+                        <div>
+                            <label style="display:block;margin-bottom:4px;font-weight:600;font-size:12px;color:var(--text-muted);">Subtotaal</label>
+                            <input id="ldrSubtotal" type="number" step="0.01" style="width:100%;padding:9px;border:1px solid var(--border);border-radius:6px;background:var(--bg);color:var(--text);font-size:13px;">
+                        </div>
+                        <div>
+                            <label style="display:block;margin-bottom:4px;font-weight:600;font-size:12px;color:var(--text-muted);">BTW</label>
+                            <input id="ldrVat" type="number" step="0.01" style="width:100%;padding:9px;border:1px solid var(--border);border-radius:6px;background:var(--bg);color:var(--text);font-size:13px;">
+                        </div>
+                    </div>
+
+                    <div style="margin-bottom:8px;display:flex;justify-content:space-between;align-items:center;">
+                        <label style="font-weight:600;font-size:12px;color:var(--text-muted);">Lyn-items</label>
+                        <button type="button" onclick="linkedDocReviewAddItem()" style="background:transparent;border:1px dashed var(--border);color:var(--text-muted);padding:4px 10px;border-radius:6px;cursor:pointer;font-size:11px;">+ Voeg ry by</button>
+                    </div>
+                    <div id="ldrItems" style="display:flex;flex-direction:column;gap:6px;max-height:220px;overflow:auto;margin-bottom:14px;"></div>
+
+                    <div style="display:flex;flex-wrap:wrap;gap:16px;margin-bottom:14px;">
+                        <label style="display:flex;align-items:center;gap:6px;font-size:12px;color:var(--text);cursor:pointer;">
+                            <input id="ldrPaid" type="checkbox"> Reeds betaal (kontant) — anders op krediet
+                        </label>
+                        <label style="display:flex;align-items:center;gap:6px;font-size:12px;color:var(--text);cursor:pointer;">
+                            <input id="ldrGrv" type="checkbox"> GRV — ontvang lyne in voorraad
+                        </label>
+                    </div>
+
+                    <div id="ldrStatus" style="font-size:12px;color:var(--text-muted);min-height:18px;margin-bottom:6px;"></div>
+                    <div style="display:flex;gap:10px;justify-content:flex-end;">
+                        <button onclick="linkedDocCloseReview()" class="btn btn-secondary" style="padding:9px 16px;font-size:13px;">Kanselleer</button>
+                        <button onclick="linkedDocReviewSubmit()" id="ldrSubmitBtn" class="btn btn-primary" style="padding:9px 16px;font-size:13px;">Skep verskaffersfaktuur</button>
+                    </div>
+                </div>
+            </div>
+
+            <script>
+            (function(){
+                if (window.__linkedDocReviewJSLoaded) return;
+                window.__linkedDocReviewJSLoaded = true;
+
+                function ldrEl(id){ return document.getElementById(id); }
+
+                function ldrB64ToBlob(b64, type){
+                    var binary = atob(b64);
+                    var len = binary.length;
+                    var bytes = new Uint8Array(len);
+                    for (var i = 0; i < len; i++){ bytes[i] = binary.charCodeAt(i); }
+                    return new Blob([bytes], {type: type || 'image/jpeg'});
+                }
+
+                function ldrItemRow(it){
+                    it = it || {};
+                    var wrap = document.createElement('div');
+                    wrap.className = 'ldr-item-row';
+                    wrap.style.cssText = 'display:grid;grid-template-columns:1fr 70px 90px 28px;gap:6px;align-items:center;';
+                    var desc = document.createElement('input');
+                    desc.type = 'text'; desc.className = 'ldr-desc';
+                    desc.value = it.description || '';
+                    desc.placeholder = 'Beskrywing';
+                    desc.style.cssText = 'padding:7px;border:1px solid var(--border);border-radius:5px;background:var(--bg);color:var(--text);font-size:12px;';
+                    var qty = document.createElement('input');
+                    qty.type = 'number'; qty.step = 'any'; qty.className = 'ldr-qty';
+                    qty.value = (it.qty != null ? it.qty : 1);
+                    qty.style.cssText = 'padding:7px;border:1px solid var(--border);border-radius:5px;background:var(--bg);color:var(--text);font-size:12px;';
+                    var price = document.createElement('input');
+                    price.type = 'number'; price.step = 'any'; price.className = 'ldr-price';
+                    price.value = (it.unit_price != null ? it.unit_price : (it.price != null ? it.price : 0));
+                    price.style.cssText = 'padding:7px;border:1px solid var(--border);border-radius:5px;background:var(--bg);color:var(--text);font-size:12px;';
+                    var del = document.createElement('button');
+                    del.type = 'button'; del.textContent = '×';
+                    del.style.cssText = 'border:none;background:transparent;color:var(--red);font-size:18px;cursor:pointer;';
+                    del.onclick = function(){ wrap.remove(); };
+                    wrap.appendChild(desc); wrap.appendChild(qty); wrap.appendChild(price); wrap.appendChild(del);
+                    return wrap;
+                }
+
+                window.linkedDocReviewAddItem = function(){
+                    ldrEl('ldrItems').appendChild(ldrItemRow({}));
+                };
+
+                window.linkedDocCloseReview = function(){
+                    ldrEl('linkedDocReviewModal').style.display = 'none';
+                };
+
+                window.linkedDocReadWithSonnet = async function(attId, docType, docId){
+                    window.__ldrCtx = {attId: attId, docType: docType, docId: docId};
+                    var status = ldrEl('linkedDocAttachStatus');
+                    // We reuse no attach modal here — give feedback on a transient overlay via the button itself.
+                    var oldTitle = document.title;
+                    try {
+                        // 1) Pull the stored image back from the server as base64
+                        var r = await fetch('/api/scanned-document/' + attId);
+                        var d = await r.json();
+                        if (!d.success || !d.image_data){
+                            alert('Kon nie die gestoorde beeld laai nie: ' + (d.error || 'geen beeld'));
+                            return;
+                        }
+                        // 2) Rebuild a file and send to the existing Sonnet OCR endpoint
+                        var blob = ldrB64ToBlob(d.image_data, 'image/jpeg');
+                        var fd = new FormData();
+                        fd.append('file', blob, (d.description || 'supplier_invoice') + '.jpg');
+                        fd.append('type', 'invoice');
+                        // Open modal in a loading state
+                        ldrEl('ldrStatus').style.color = 'var(--text-muted)';
+                        ldrEl('ldrStatus').textContent = 'Sonnet lees die faktuur...';
+                        ldrEl('linkedDocReviewModal').style.display = 'flex';
+                        ldrEl('ldrSubmitBtn').disabled = true;
+
+                        var scanResp = await fetch('/api/scan/document', {method:'POST', body: fd});
+                        var scan = await scanResp.json();
+                        if (!scan.success){
+                            ldrEl('ldrStatus').style.color = 'var(--red)';
+                            ldrEl('ldrStatus').textContent = 'Sonnet kon nie lees nie: ' + (scan.error || 'onbekende fout');
+                            ldrEl('ldrSubmitBtn').disabled = false;
+                            return;
+                        }
+                        var ex = scan.extracted || {};
+                        // 3) Populate review fields
+                        ldrEl('ldrSupplier').value = ex.supplier_name || '';
+                        ldrEl('ldrInvNo').value = ex.invoice_number || '';
+                        ldrEl('ldrDate').value = (ex.date || '').slice(0,10);
+                        ldrEl('ldrSubtotal').value = ex.subtotal || 0;
+                        ldrEl('ldrVat').value = ex.vat || 0;
+                        ldrEl('ldrTotal').value = ex.total || 0;
+                        ldrEl('ldrPaid').checked = false;
+                        ldrEl('ldrGrv').checked = false;
+                        var box = ldrEl('ldrItems');
+                        box.innerHTML = '';
+                        var items = ex.items || [];
+                        if (!items.length){ box.appendChild(ldrItemRow({})); }
+                        else { items.forEach(function(it){ box.appendChild(ldrItemRow(it)); }); }
+                        window.__ldrScanSupplierMeta = {
+                            supplier_phone: ex.supplier_phone || '',
+                            supplier_email: ex.supplier_email || '',
+                            supplier_address: ex.supplier_address || '',
+                            supplier_vat_number: ex.supplier_vat_number || '',
+                            original_scan: ex
+                        };
+                        ldrEl('ldrStatus').textContent = '';
+                        ldrEl('ldrSubmitBtn').disabled = false;
+                    } catch(e){
+                        ldrEl('ldrStatus').style.color = 'var(--red)';
+                        ldrEl('ldrStatus').textContent = 'Fout: ' + e.message;
+                        ldrEl('ldrSubmitBtn').disabled = false;
+                    } finally {
+                        document.title = oldTitle;
+                    }
+                };
+
+                window.linkedDocReviewSubmit = async function(){
+                    var ctx = window.__ldrCtx || {};
+                    var meta = window.__ldrScanSupplierMeta || {};
+                    var btn = ldrEl('ldrSubmitBtn');
+                    var status = ldrEl('ldrStatus');
+                    var supplier = (ldrEl('ldrSupplier').value || '').trim();
+                    if (!supplier){
+                        status.style.color = 'var(--red)';
+                        status.textContent = 'Verskaffernaam is verpligtend.';
+                        return;
+                    }
+                    var items = [];
+                    document.querySelectorAll('#ldrItems .ldr-item-row').forEach(function(row){
+                        var desc = (row.querySelector('.ldr-desc').value || '').trim();
+                        var qty = parseFloat(row.querySelector('.ldr-qty').value || 0) || 0;
+                        var price = parseFloat(row.querySelector('.ldr-price').value || 0) || 0;
+                        if (desc){ items.push({description: desc, qty: qty, unit_price: price, price: price}); }
+                    });
+                    var grvOn = ldrEl('ldrGrv').checked;
+                    var payload = {
+                        supplier_name: supplier,
+                        supplier_phone: meta.supplier_phone || '',
+                        supplier_email: meta.supplier_email || '',
+                        supplier_address: meta.supplier_address || '',
+                        invoice_number: (ldrEl('ldrInvNo').value || '').trim(),
+                        date: ldrEl('ldrDate').value || '',
+                        items: items,
+                        subtotal: parseFloat(ldrEl('ldrSubtotal').value || 0) || 0,
+                        vat: parseFloat(ldrEl('ldrVat').value || 0) || 0,
+                        total: parseFloat(ldrEl('ldrTotal').value || 0) || 0,
+                        paid: ldrEl('ldrPaid').checked,
+                        grv_enabled: grvOn,
+                        grv_line_indices: grvOn ? items.map(function(_, i){ return i; }) : [],
+                        _original_scan: meta.original_scan || {},
+                        // Link back to the customer-side document this image hangs on
+                        linked_doc_type: ctx.docType,
+                        linked_doc_id: ctx.docId,
+                        // Reuse the already-stored image instead of creating a duplicate
+                        promote_scanned_doc_id: ctx.attId
+                    };
+                    btn.disabled = true;
+                    status.style.color = 'var(--text-muted)';
+                    status.textContent = 'Skep verskaffersfaktuur...';
+                    try {
+                        var resp = await fetch('/api/scan/save-supplier-invoice', {
+                            method:'POST',
+                            headers:{'Content-Type':'application/json'},
+                            body: JSON.stringify(payload)
+                        });
+                        var res = await resp.json();
+                        if (res.success){
+                            status.style.color = 'var(--green)';
+                            status.textContent = 'Verskaffersfaktuur geskep. Herlaai...';
+                            setTimeout(function(){ location.reload(); }, 900);
+                        } else {
+                            status.style.color = 'var(--red)';
+                            status.textContent = 'Stoor het misluk: ' + (res.error || 'onbekend');
+                            btn.disabled = false;
+                        }
+                    } catch(e){
+                        status.style.color = 'var(--red)';
+                        status.textContent = 'Fout: ' + e.message;
+                        btn.disabled = false;
+                    }
+                };
+
+                document.addEventListener('click', function(e){
+                    var rm = ldrEl('linkedDocReviewModal');
+                    if (rm && e.target === rm) linkedDocCloseReview();
                 });
             })();
             </script>
@@ -61171,7 +61385,35 @@ def api_scan_save_supplier_invoice():
             if scan_item:
                 image_data = scan_item.get("image_data")
         
-        if image_data:
+        # ── PROMOTE: this scan came from a "store-first" linked-doc attachment.
+        #    Reuse that existing scanned_documents row instead of creating a new
+        #    one — link it to the new supplier invoice and mark it processed so the
+        #    "Lees met Sonnet" button disappears and no duplicate image is created.
+        #    NOTE: db.save merges only the supplied columns (Supabase merge-duplicates),
+        #    so storage_path / image_data / linked_doc_* on the existing row are kept.
+        #    'processed' is best-effort (auto-stripped if the column is absent); the
+        #    'document_type' flip to 'supplier_invoice' is the durable processed signal.
+        _promote_id = data.get("promote_scanned_doc_id")
+        _promoted = False
+        if _promote_id:
+            try:
+                _existing = db.get_one("scanned_documents", _promote_id)
+                if _existing and _existing.get("business_id") == biz_id:
+                    db.save("scanned_documents", {
+                        "id": _promote_id,
+                        "supplier_id": supplier["id"],
+                        "document_type": "supplier_invoice",
+                        "reference": data.get("invoice_number", f"INV-{inv_id[:6]}"),
+                        "amount": float(data.get("total", 0) or 0),
+                        "linked_invoice_id": inv_id,
+                        "processed": True,
+                    })
+                    _promoted = True
+                    logger.info(f"[SCAN] Promoted stored attachment {_promote_id} -> supplier invoice {inv_id}")
+            except Exception as _prom_e:
+                logger.warning(f"[SCAN] promote_scanned_doc_id failed (non-fatal): {_prom_e}")
+        
+        if image_data and not _promoted:
             _doc_id = generate_id()
             _sp = persist_scanned_image(biz_id, _doc_id, image_data)
             scanned_doc = {
