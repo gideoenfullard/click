@@ -14424,9 +14424,14 @@ class Actions:
                 supplier = s
                 break
         
-        # Calculate VAT (assume VAT inclusive)
-        vat_amount = amount * float(VAT_RATE) / (1 + float(VAT_RATE))
-        subtotal = amount - vat_amount
+        # Calculate VAT (assume VAT inclusive). Non-VAT-registered suppliers charge
+        # no VAT, so the amount is the full net expense and no VAT is claimed.
+        if supplier and supplier.get("vat_registered") is False:
+            vat_amount = 0.0
+            subtotal = amount
+        else:
+            vat_amount = amount * float(VAT_RATE) / (1 + float(VAT_RATE))
+            subtotal = amount - vat_amount
         
         invoice = RecordFactory.supplier_invoice(
             business_id=biz_id,
@@ -30069,6 +30074,8 @@ def _supplier_form(v=None, is_edit=False):
     """Full supplier form HTML. v=supplier dict for edit, None for new."""
     if v is None: v = {}
     def val(k, d=""): return safe_string(str(v.get(k, d) or d))
+    # Checkbox is ticked only when the supplier is explicitly flagged not VAT-registered.
+    _not_vat_checked = "checked" if v.get("vat_registered") is False else ""
     back = f'<a href="/supplier/{v.get("id")}" style="color:var(--text-muted);">← Back to {val("name","Supplier")}</a>' if is_edit else '<a href="/suppliers" style="color:var(--text-muted);">← Back to Suppliers</a>'
     title = "Edit Supplier" if is_edit else "New Supplier"
     btn = "Save Changes" if is_edit else "Create Supplier"
@@ -30106,6 +30113,7 @@ def _supplier_form(v=None, is_edit=False):
             </div>
             <div class="fs"><h3>📄 Registration Details</h3>
                 <div class="fg2"><div><label class="fl">VAT Number</label><input type="text" name="vat_number" class="fi" value="{val('vat_number')}" placeholder="4123456789"></div><div><label class="fl">Company Reg Number</label><input type="text" name="registration_number" class="fi" value="{val('registration_number')}" placeholder="2020/123456/07"></div></div>
+                <div class="fg1" style="margin-top:10px;"><label class="fl" style="display:flex;align-items:center;gap:8px;cursor:pointer;font-weight:normal;"><input type="checkbox" name="not_vat_registered" value="on" {_not_vat_checked} style="width:auto;margin:0;"> This supplier is <strong style="margin:0 3px;">NOT</strong> VAT registered — don't calculate VAT on their invoices</label></div>
             </div>
             <div class="fs"><h3>🏦 Banking Details</h3>
                 <div class="fg2"><div><label class="fl">Bank Name</label><select name="bank_name" class="fi">{_bank_opts(val('bank_name'))}</select></div><div><label class="fl">Account Type</label><select name="bank_account_type" class="fi">{_acct_opts(val('bank_account_type'))}</select></div></div>
@@ -61352,6 +61360,13 @@ def api_scan_save_supplier_invoice():
             _inv_subtotal = round(_scan_gross_net, 2)
             _inv_vat = float(data.get("vat", 0) or 0)
             _inv_total = float(data.get("total", 0) or 0)
+        
+        # Non-VAT-registered supplier: strip VAT from the invoice and the GL entirely
+        # (the VAT-input line is already guarded by `if vat_amount > 0`, and the credit
+        # side follows _inv_total).
+        if supplier and supplier.get("vat_registered") is False:
+            _inv_vat = 0.0
+            _inv_total = round(_inv_subtotal, 2)
         
         invoice = RecordFactory.supplier_invoice(
             business_id=biz_id,
