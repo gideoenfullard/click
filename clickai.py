@@ -36261,7 +36261,20 @@ def journals_page():
         if _ac and _an:
             _coa_opts.append((_ac, _an))
     _coa_opts.sort(key=lambda x: x[0])
-    _acc_options_html = '<option value="">Select account...</option>' + "".join(
+    # Pinned "Staff Wages" shortcut at the top of the account dropdown — used to
+    # recharge another business (e.g. the pub) for wages Fulltech paid. Uses the
+    # real wages/salaries account if one exists in the COA, else the standard
+    # 6000 Salaries & Wages code.
+    _wages_code, _wages_name = "", ""
+    for _c, _n in _coa_opts:
+        _nl = _n.lower()
+        if "wage" in _nl or "salar" in _nl:
+            _wages_code, _wages_name = _c, _n
+            break
+    if not _wages_code:
+        _wages_code, _wages_name = "6000", "Salaries & Wages"
+    _wages_pin = f'<option value="{safe_string(_wages_code)}">⭐ Staff Wages — {safe_string(_wages_name)} ({safe_string(_wages_code)})</option>'
+    _acc_options_html = '<option value="">Select account...</option>' + _wages_pin + "".join(
         f'<option value="{safe_string(_c)}">{safe_string(_c)} - {safe_string(_n)}</option>' for _c, _n in _coa_opts
     )
     _today_str = today()
