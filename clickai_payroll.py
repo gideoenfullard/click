@@ -236,6 +236,7 @@ def register_payroll_routes(app, db, login_required, Auth, render_page,
                     <a href="/timesheets/add" class="btn btn-secondary">+ Add Timesheet</a>
                     <a href="/payroll/run" class="btn btn-primary">▶️ Run Payroll</a>
                     <a href="/payroll/report" class="btn btn-secondary">📊 Monthly Report</a>
+                    <a href="/payroll/payslips" class="btn btn-secondary">Payslips by Month</a>
                 </div>
             </div>
             <div style="overflow-x:auto;">
@@ -1201,8 +1202,11 @@ def register_payroll_routes(app, db, login_required, Auth, render_page,
         content = f'''
         <style>
             .print-only {{ display: none; }}
-            @media print {{ .print-only {{ display: block !important; }} }}
-            @media print {{ .no-print {{ display: none !important; }} }}
+            @media print {{
+                body * {{ visibility: hidden !important; }}
+                .print-only, .print-only * {{ visibility: visible !important; }}
+                .print-only {{ display: block !important; position: absolute; left: 0; top: 0; width: 100%; }}
+            }}
         </style>
         <div class="no-print" style="display:flex;justify-content:space-between;align-items:center;margin-bottom:15px;">
             <a href="/payroll" style="color:var(--text-muted);">← Back to Payroll</a>
@@ -2296,9 +2300,12 @@ def register_payroll_routes(app, db, login_required, Auth, render_page,
 
         content = f'''
         <style>
-            @media print {{ .no-print {{ display: none !important; }} }}
             .print-only {{ display: none; }}
-            @media print {{ .print-only {{ display: block !important; }} }}
+            @media print {{
+                body * {{ visibility: hidden !important; }}
+                .print-only, .print-only * {{ visibility: visible !important; }}
+                .print-only {{ display: block !important; position: absolute; left: 0; top: 0; width: 100%; }}
+            }}
         </style>
         
         <div class="no-print" style="display:flex;justify-content:space-between;align-items:center;margin-bottom:20px;">
@@ -2738,7 +2745,7 @@ def register_payroll_routes(app, db, login_required, Auth, render_page,
                     <p style="color:var(--text-muted);margin:5px 0 0 0;font-size:13px;">Submit declarations and payments online</p>
                 </div>
                 <div style="display:flex;gap:10px;flex-wrap:wrap;">
-                    <a href="https://www.ufiling.co.za" target="_blank" class="btn btn-primary" style="background:#3b82f6;">🔗 uFiling (UIF)</a>
+                    <a href="https://ufiling.labour.gov.za/uif/login" target="_blank" class="btn btn-primary" style="background:#3b82f6;">🔗 uFiling (UIF)</a>
                     <a href="https://www.sarsefiling.co.za" target="_blank" class="btn btn-secondary">🔗 SARS eFiling</a>
                     <a href="https://www.labour.gov.za/coida" target="_blank" class="btn btn-secondary">🔗 COID Online</a>
                 </div>
@@ -2770,5 +2777,126 @@ def register_payroll_routes(app, db, login_required, Auth, render_page,
         return render_page("Payroll Monthly Report", content, user, "payroll")
     
     
+    @app.route("/payroll/payslips")
+    @login_required
+    def payroll_payslips():
+        """Bulk view of all payslips for a selected month / pay-run."""
+        user = Auth.get_current_user()
+        business = Auth.get_current_business()
+        biz_id = business.get("id") if business else None
+
+        payslips = db.get("payslips", {"business_id": biz_id}) if biz_id else []
+
+        from collections import defaultdict
+        from datetime import datetime as dt
+
+        by_month = defaultdict(list)
+        for p in payslips:
+            period = str(p.get("date") or p.get("created_at") or "")[:7]  # YYYY-MM
+            if period and len(period) >= 7:
+                by_month[period].append(p)
+
+        available_months = sorted(by_month.keys(), reverse=True)
+
+        selected = request.args.get("month", "")
+        if selected not in by_month:
+            selected = available_months[0] if available_months else ""
+
+        def _month_label(_m):
+            try:
+                return dt.strptime(_m, "%Y-%m").strftime("%B %Y")
+            except Exception:
+                return _m
+
+        options_html = ""
+        for m in available_months:
+            sel = " selected" if m == selected else ""
+            options_html += f'<option value="{m}"{sel}>{_month_label(m)} ({len(by_month[m])} slips)</option>'
+
+        slips = sorted(by_month.get(selected, []), key=lambda x: safe_string(x.get("employee_name", "")).lower())
+
+        rows_html = ""
+        tot = {"gross": 0, "paye": 0, "uif": 0, "pension": 0, "net": 0}
+        for p in slips:
+            gross = safe_float(p.get("gross", 0))
+            paye = safe_float(p.get("paye", 0))
+            uif = safe_float(p.get("uif", 0)) or safe_float(p.get("uif_employee", 0))
+            pension = safe_float(p.get("pension", 0)) or safe_float(p.get("pension_employee", 0))
+            net = safe_float(p.get("net", 0)) or (gross - (paye + uif + pension))
+            tot["gross"] += gross
+            tot["paye"] += paye
+            tot["uif"] += uif
+            tot["pension"] += pension
+            tot["net"] += net
+            rows_html += f'''
+                <tr style="border-bottom:1px solid var(--border);">
+                    <td style="padding:12px;font-weight:600;">{safe_string(p.get("employee_name", "-"))}</td>
+                    <td style="padding:12px;text-align:right;">{money(gross)}</td>
+                    <td style="padding:12px;text-align:right;color:#ef4444;">{money(paye)}</td>
+                    <td style="padding:12px;text-align:right;color:#3b82f6;">{money(uif)}</td>
+                    <td style="padding:12px;text-align:right;color:#8b5cf6;">{money(pension)}</td>
+                    <td style="padding:12px;text-align:right;font-weight:600;">{money(net)}</td>
+                    <td style="padding:12px;text-align:center;"><a href="/payslip/{p.get("id")}" class="btn btn-secondary" style="padding:5px 10px;font-size:12px;">View</a></td>
+                </tr>'''
+
+        if slips:
+            rows_html += f'''
+                <tr style="background:var(--bg);border-top:2px solid var(--text);font-weight:700;">
+                    <td style="padding:14px;">TOTAL ({len(slips)} slips)</td>
+                    <td style="padding:14px;text-align:right;">{money(tot["gross"])}</td>
+                    <td style="padding:14px;text-align:right;color:#ef4444;">{money(tot["paye"])}</td>
+                    <td style="padding:14px;text-align:right;color:#3b82f6;">{money(tot["uif"])}</td>
+                    <td style="padding:14px;text-align:right;color:#8b5cf6;">{money(tot["pension"])}</td>
+                    <td style="padding:14px;text-align:right;">{money(tot["net"])}</td>
+                    <td style="padding:14px;"></td>
+                </tr>'''
+        else:
+            rows_html = '<tr><td colspan="7" style="padding:20px;text-align:center;color:var(--text-muted);">No payslips for this month.</td></tr>'
+
+        if not available_months:
+            selector_html = '<p style="color:var(--text-muted);margin:0;">No payslips have been created yet.</p>'
+        else:
+            selector_html = f'''
+            <form method="GET" action="/payroll/payslips" style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;">
+                <label style="font-weight:500;">Month / Pay-Run:</label>
+                <select name="month" onchange="this.form.submit()" style="padding:10px;border-radius:6px;border:1px solid var(--border);background:var(--card);color:var(--text);min-width:220px;">
+                    {options_html}
+                </select>
+            </form>'''
+
+        content = f'''
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:20px;flex-wrap:wrap;gap:10px;">
+            <div>
+                <h2 style="margin:0;">Payslips by Month</h2>
+                <p style="color:var(--text-muted);margin:5px 0 0 0;">All payslips for a selected pay-run</p>
+            </div>
+            <a href="/payroll" class="btn btn-secondary">← Back to Payroll</a>
+        </div>
+
+        <div class="card" style="margin-bottom:20px;">
+            {selector_html}
+        </div>
+
+        <div class="card" style="overflow-x:auto;">
+            <table style="width:100%;">
+                <thead>
+                    <tr style="background:var(--bg);">
+                        <th style="padding:12px;text-align:left;">Employee</th>
+                        <th style="padding:12px;text-align:right;">Gross</th>
+                        <th style="padding:12px;text-align:right;">PAYE</th>
+                        <th style="padding:12px;text-align:right;">UIF</th>
+                        <th style="padding:12px;text-align:right;">Pension</th>
+                        <th style="padding:12px;text-align:right;">Net Pay</th>
+                        <th style="padding:12px;text-align:center;">Action</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {rows_html}
+                </tbody>
+            </table>
+        </div>
+        '''
+
+        return render_page("Payslips by Month", content, user, "payroll")
 
     logger.info("[PAYROLL] All payroll routes registered ✓")
