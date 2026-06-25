@@ -36,6 +36,15 @@ def safe_float(v):
     return 0.0
 
 
+def _industry_fund_label(provident_fund_type):
+    """Display name for the MIBFA industry-fund line on screens and payslips."""
+    if provident_fund_type == "mibfa_pension":
+        return "Pension Fund"
+    if provident_fund_type in ("mibfa", "mibfa_provident"):
+        return "Provident Fund"
+    return "Pension Fund"
+
+
 def calc_monthly_paye(basic, age=0, pension=0, provident=0, medical_members=0, travel=0):
     """Monthly PAYE — SARS 2026/27 tax tables.
 
@@ -368,9 +377,9 @@ def register_payroll_routes(app, db, login_required, Auth, render_page,
             
             # Industry fund (MIBFA/CETA)
             provident_fund = request.form.get("provident_fund", "off")
-            if provident_fund == "mibfa":
+            if provident_fund in ("mibfa", "mibfa_provident", "mibfa_pension"):
                 pension = basic_salary * 0.075
-                pension_employer = basic_salary * 0.075
+                pension_employer = basic_salary * 0.083
             elif provident_fund == "ceta":
                 pension = basic_salary * 0.05
                 pension_employer = basic_salary * 0.05
@@ -562,7 +571,8 @@ def register_payroll_routes(app, db, login_required, Auth, render_page,
                         <label style="display:block;margin-bottom:5px;font-weight:500;">Industry Fund</label>
                         <select name="provident_fund" id="industryFund" onchange="toggleFund()" style="width:100%;padding:10px;border-radius:6px;border:1px solid var(--border);background:var(--card);color:var(--text);">
                             <option value="off">None</option>
-                            <option value="mibfa">MIBFA - Metal (7.5%+7.5%)</option>
+                            <option value="mibfa_provident">MIBFA Provident Fund (7.5% + 8.3%)</option>
+                            <option value="mibfa_pension">MIBFA Pension Fund (7.5% + 8.3%)</option>
                             <option value="ceta">CETA - Construction (5%+5%)</option>
                             <option value="on">Custom amount</option>
                         </select>
@@ -710,7 +720,7 @@ def register_payroll_routes(app, db, login_required, Auth, render_page,
             const pensionInput = document.getElementById('pensionAmount');
             const salary = parseFloat(document.querySelector('input[name="basic_salary"]')?.value || 0);
             
-            if (fund === 'mibfa') {
+            if (fund === 'mibfa' || fund === 'mibfa_provident' || fund === 'mibfa_pension') {
                 pensionInput.value = (salary * 0.075).toFixed(2);
                 pensionGroup.style.display = '';
             } else if (fund === 'ceta') {
@@ -725,7 +735,7 @@ def register_payroll_routes(app, db, login_required, Auth, render_page,
         }
         document.querySelector('input[name="basic_salary"]')?.addEventListener('change', function() {
             const fund = document.getElementById('industryFund').value;
-            if (fund === 'mibfa' || fund === 'ceta') toggleFund();
+            if (fund === 'mibfa' || fund === 'mibfa_provident' || fund === 'mibfa_pension' || fund === 'ceta') toggleFund();
         });
         </script>
         '''
@@ -1042,6 +1052,7 @@ def register_payroll_routes(app, db, login_required, Auth, render_page,
             return redirect("/payroll")
         
         basic = safe_float(emp.get("basic_salary", 0))
+        fund_label = _industry_fund_label(emp.get("provident_fund"))
         
         # Pro-forma controls: full month as if fully worked, minus hours
         # off/late deducted at basic ÷ average working hours per month.
@@ -1134,7 +1145,7 @@ def register_payroll_routes(app, db, login_required, Auth, render_page,
         if union_fees > 0:
             deduction_rows += f'<tr style="border-bottom:1px solid #eee;"><td style="padding:8px 0;color:#666;">Union Fees</td><td style="padding:8px 0;text-align:right;color:#ef4444;">-{money(union_fees)}</td></tr>'
         if pension > 0:
-            deduction_rows += f'<tr style="border-bottom:1px solid #eee;"><td style="padding:8px 0;color:#666;">Pension Fund (Employee)</td><td style="padding:8px 0;text-align:right;color:#ef4444;">-{money(pension)}</td></tr>'
+            deduction_rows += f'<tr style="border-bottom:1px solid #eee;"><td style="padding:8px 0;color:#666;">{fund_label} (Employee)</td><td style="padding:8px 0;text-align:right;color:#ef4444;">-{money(pension)}</td></tr>'
         if provident > 0:
             deduction_rows += f'<tr style="border-bottom:1px solid #eee;"><td style="padding:8px 0;color:#666;">Provident Fund</td><td style="padding:8px 0;text-align:right;color:#ef4444;">-{money(provident)}</td></tr>'
         if rma_funeral > 0:
@@ -1330,7 +1341,7 @@ def register_payroll_routes(app, db, login_required, Auth, render_page,
                 <tr><td style="padding:3px 0;">UIF</td><td style="text-align:right;">{money(uif_employer)}</td></tr>
                 <tr><td style="padding:3px 0;">SDL (Skills Levy)</td><td style="text-align:right;">{money(sdl)}</td></tr>
                 <tr><td style="padding:3px 0;">COIDA</td><td style="text-align:right;">{money(coida)}</td></tr>
-                {f'<tr><td style="padding:3px 0;">Provident (Employer)</td><td style="text-align:right;">{money(pension_employer)}</td></tr>' if pension_employer > 0 else ""}
+                {f'<tr><td style="padding:3px 0;">{fund_label} (Employer)</td><td style="text-align:right;">{money(pension_employer)}</td></tr>' if pension_employer > 0 else ""}
                 {f'<tr><td style="padding:3px 0;">Bargaining Council Sick Fund</td><td style="text-align:right;">{money(sick_fund)}</td></tr>' if sick_fund > 0 else ""}
                 {f'<tr><td style="padding:3px 0;">Bargaining Council Levy</td><td style="text-align:right;">{money(council_levy)}</td></tr>' if council_levy > 0 else ""}
                 <tr style="border-top:1px solid var(--border);font-weight:bold;"><td style="padding:5px 0;">Total Cost to Company</td><td style="text-align:right;">{money(total_cost)}</td></tr>
@@ -1879,9 +1890,9 @@ def register_payroll_routes(app, db, login_required, Auth, render_page,
             council_levy = safe_float(request.form.get("council_levy", 0))
             
             provident_fund = request.form.get("provident_fund", "off")
-            if provident_fund == "mibfa":
+            if provident_fund in ("mibfa", "mibfa_provident", "mibfa_pension"):
                 pension = basic_salary * 0.075
-                pension_employer = basic_salary * 0.075
+                pension_employer = basic_salary * 0.083
             elif provident_fund == "ceta":
                 pension = basic_salary * 0.05
                 pension_employer = basic_salary * 0.05
@@ -2039,7 +2050,8 @@ def register_payroll_routes(app, db, login_required, Auth, render_page,
                         <label style="display:block;margin-bottom:5px;font-weight:500;">Industry Fund</label>
                         <select name="provident_fund" id="fundSelect" onchange="toggleFundFields()" style="width:100%;padding:10px;border-radius:6px;border:1px solid var(--border);background:var(--card);color:var(--text);">
                             <option value="off" {"selected" if employee.get("provident_fund") in (None, "", "off") else ""}>None</option>
-                            <option value="mibfa" {"selected" if employee.get("provident_fund") == "mibfa" else ""}>MIBFA - Metal Industry</option>
+                            <option value="mibfa_provident" {"selected" if employee.get("provident_fund") in ("mibfa", "mibfa_provident") else ""}>MIBFA Provident Fund (7.5% + 8.3%)</option>
+                            <option value="mibfa_pension" {"selected" if employee.get("provident_fund") == "mibfa_pension" else ""}>MIBFA Pension Fund (7.5% + 8.3%)</option>
                             <option value="ceta" {"selected" if employee.get("provident_fund") == "ceta" else ""}>CETA - Construction</option>
                             <option value="on" {"selected" if employee.get("provident_fund") == "on" else ""}>Custom amount</option>
                         </select>
@@ -2051,18 +2063,18 @@ def register_payroll_routes(app, db, login_required, Auth, render_page,
                 </div>
                 
                 <!-- MIBFA Breakdown Info -->
-                <div id="mibfaInfo" style="display:{"block" if employee.get("provident_fund") == "mibfa" else "none"};background:rgba(99,102,241,0.08);padding:15px;border-radius:8px;margin-bottom:15px;border:1px solid rgba(99,102,241,0.2);">
-                    <div style="font-weight:600;color:var(--primary);margin-bottom:10px;font-size:13px;">🏭 MIBFA BREAKDOWN (7.5% Employee + 7.5% Employer)</div>
+                <div id="mibfaInfo" style="display:{"block" if employee.get("provident_fund") in ("mibfa", "mibfa_provident", "mibfa_pension") else "none"};background:rgba(99,102,241,0.08);padding:15px;border-radius:8px;margin-bottom:15px;border:1px solid rgba(99,102,241,0.2);">
+                    <div style="font-weight:600;color:var(--primary);margin-bottom:10px;font-size:13px;">🏭 MIBFA BREAKDOWN (7.5% Employee + 8.3% Employer)</div>
                     <div style="display:grid;grid-template-columns:1fr 1fr;gap:15px;">
                         <div style="background:var(--card);padding:10px;border-radius:6px;">
-                            <div style="font-size:11px;color:var(--text-muted);text-transform:uppercase;">Pension Fund (Employee)</div>
+                            <div id="mibfaEeTitle" style="font-size:11px;color:var(--text-muted);text-transform:uppercase;">{_industry_fund_label(employee.get("provident_fund"))} (Employee)</div>
                             <div style="font-size:18px;font-weight:700;">R{safe_float(employee.get('basic_salary', 0)) * 0.075:.2f}</div>
                             <div style="font-size:11px;color:var(--text-muted);">7.5% of basic salary</div>
                         </div>
                         <div style="background:var(--card);padding:10px;border-radius:6px;">
-                            <div style="font-size:11px;color:var(--text-muted);text-transform:uppercase;">Provident Fund (Employer)</div>
-                            <div style="font-size:18px;font-weight:700;">R{safe_float(employee.get('basic_salary', 0)) * 0.075:.2f}</div>
-                            <div style="font-size:11px;color:var(--text-muted);">7.5% of basic salary</div>
+                            <div id="mibfaErTitle" style="font-size:11px;color:var(--text-muted);text-transform:uppercase;">{_industry_fund_label(employee.get("provident_fund"))} (Employer)</div>
+                            <div style="font-size:18px;font-weight:700;">R{safe_float(employee.get('basic_salary', 0)) * 0.083:.2f}</div>
+                            <div style="font-size:11px;color:var(--text-muted);">8.3% of basic salary</div>
                         </div>
                     </div>
                 </div>
@@ -2161,9 +2173,15 @@ def register_payroll_routes(app, db, login_required, Auth, render_page,
         function toggleFundFields() {{
             const fund = document.getElementById('fundSelect').value;
             const mibfaInfo = document.getElementById('mibfaInfo');
+            const isMibfa = (fund === 'mibfa' || fund === 'mibfa_provident' || fund === 'mibfa_pension');
             if (mibfaInfo) {{
-                mibfaInfo.style.display = (fund === 'mibfa') ? 'block' : 'none';
+                mibfaInfo.style.display = isMibfa ? 'block' : 'none';
             }}
+            const lbl = (fund === 'mibfa_pension') ? 'Pension Fund' : 'Provident Fund';
+            const eeT = document.getElementById('mibfaEeTitle');
+            const erT = document.getElementById('mibfaErTitle');
+            if (eeT) eeT.textContent = lbl + ' (Employee)';
+            if (erT) erT.textContent = lbl + ' (Employer)';
         }}
         </script>
         '''
@@ -2184,6 +2202,8 @@ def register_payroll_routes(app, db, login_required, Auth, render_page,
             return redirect("/payroll")
         
         biz_name = business.get("name", "Business") if business else "Business"
+        _emp_fund = db.get_one("employees", payslip.get("employee_id")) if payslip.get("employee_id") else None
+        fund_label = _industry_fund_label(_emp_fund.get("provident_fund") if _emp_fund else None)
         
         # Get all values safely
         # safe_float is module-level
@@ -2230,7 +2250,7 @@ def register_payroll_routes(app, db, login_required, Auth, render_page,
             deduction_rows += f'<tr style="border-bottom:1px solid #eee;"><td style="padding:8px 0;color:#666;">Union Fees</td><td style="padding:8px 0;text-align:right;color:#ef4444;">-{money(union_fees)}</td></tr>'
         if pension > 0:
             # Show Pension Fund separately
-            deduction_rows += f'<tr style="border-bottom:1px solid #eee;"><td style="padding:8px 0;color:#666;">Pension Fund (Employee)</td><td style="padding:8px 0;text-align:right;color:#ef4444;">-{money(pension)}</td></tr>'
+            deduction_rows += f'<tr style="border-bottom:1px solid #eee;"><td style="padding:8px 0;color:#666;">{fund_label} (Employee)</td><td style="padding:8px 0;text-align:right;color:#ef4444;">-{money(pension)}</td></tr>'
         if provident > 0:
             deduction_rows += f'<tr style="border-bottom:1px solid #eee;"><td style="padding:8px 0;color:#666;">Provident Fund</td><td style="padding:8px 0;text-align:right;color:#ef4444;">-{money(provident)}</td></tr>'
         if rma_funeral > 0:
@@ -2403,7 +2423,7 @@ def register_payroll_routes(app, db, login_required, Auth, render_page,
                 <tr><td style="padding:3px 0;">UIF</td><td style="text-align:right;">{money(uif_employer)}</td></tr>
                 <tr><td style="padding:3px 0;">SDL (Skills Levy)</td><td style="text-align:right;">{money(sdl)}</td></tr>
                 <tr><td style="padding:3px 0;">COIDA</td><td style="text-align:right;">{money(coida)}</td></tr>
-                {f'<tr><td style="padding:3px 0;">Provident (Employer)</td><td style="text-align:right;">{money(pension_employer)}</td></tr>' if pension_employer > 0 else ""}
+                {f'<tr><td style="padding:3px 0;">{fund_label} (Employer)</td><td style="text-align:right;">{money(pension_employer)}</td></tr>' if pension_employer > 0 else ""}
                 {f'<tr><td style="padding:3px 0;">Bargaining Council Sick Fund</td><td style="text-align:right;">{money(sick_fund)}</td></tr>' if sick_fund > 0 else ""}
                 {f'<tr><td style="padding:3px 0;">Bargaining Council Levy</td><td style="text-align:right;">{money(council_levy)}</td></tr>' if council_levy > 0 else ""}
                 <tr style="border-top:1px solid var(--border);font-weight:bold;"><td style="padding:5px 0;">Total Cost to Company</td><td style="text-align:right;">{money(total_cost)}</td></tr>
