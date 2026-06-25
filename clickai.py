@@ -56107,6 +56107,39 @@ def api_scan_document():
             media_type = "image/jpeg"
         
         # ══════════════════════════════════════════════════════════════════════
+        # STEP 0: TRUST THE BYTES, NOT THE FILENAME
+        # A PDF without a .pdf name, an iPhone HEIC photo, or a renamed file sent
+        # as a raw "image" is the #1 cause of the API's "Could not process image".
+        # Sniff the magic bytes, set the real type, and convert/reject early.
+        # ══════════════════════════════════════════════════════════════════════
+        _head = file_data[:16] if file_data else b""
+        if _head[:4] == b"%PDF":
+            media_type = "application/pdf"
+        elif _head[:8] == b"\x89PNG\r\n\x1a\n":
+            media_type = "image/png"
+        elif _head[:3] == b"\xff\xd8\xff":
+            media_type = "image/jpeg"
+        elif _head[:6] in (b"GIF87a", b"GIF89a"):
+            media_type = "image/gif"
+        elif _head[:4] == b"RIFF" and file_data[8:12] == b"WEBP":
+            media_type = "image/webp"
+        elif media_type.startswith("image/"):
+            # Unknown image bytes (e.g. iPhone HEIC) — convert to JPEG so the API
+            # can read it; if conversion is not possible, tell the user instead of
+            # sending bytes the API will reject as "Could not process image".
+            try:
+                from PIL import Image as _PILSniff
+                _im = _PILSniff.open(io.BytesIO(file_data))
+                if _im.mode != "RGB":
+                    _im = _im.convert("RGB")
+                _buf = io.BytesIO()
+                _im.save(_buf, format="JPEG", quality=90)
+                file_data = _buf.getvalue()
+                media_type = "image/jpeg"
+            except Exception:
+                return jsonify({"success": False, "error": "Unsupported file type. Please upload a PDF, JPG, or PNG of the bank statement."})
+        
+        # ══════════════════════════════════════════════════════════════════════
         # STEP 1: IMAGE PREPROCESSING - enhance before AI reads it
         # ══════════════════════════════════════════════════════════════════════
         if media_type.startswith('image/'):
@@ -56388,6 +56421,10 @@ For original_invoice_ref: only fill it when document_type is "credit_note" AND y
                     buf = io.BytesIO()
                     if part_img.mode != 'RGB':
                         part_img = part_img.convert('RGB')
+                    # Keep each half within the API's limits — it rejects images
+                    # over 8000px and downscales large ones anyway.
+                    if max(part_img.size) > 2000:
+                        part_img.thumbnail((2000, 2000), PILImage.Resampling.LANCZOS)
                     part_img.save(buf, format='JPEG', quality=90)
                     part_data = buf.getvalue()
                     part_b64 = base64.b64encode(part_data).decode('utf-8')
