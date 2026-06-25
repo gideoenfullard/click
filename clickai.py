@@ -56137,6 +56137,8 @@ def api_scan_document():
                 file_data = _buf.getvalue()
                 media_type = "image/jpeg"
             except Exception:
+                if scan_type == 'bank_statement':
+                    return jsonify({"success": False, "error": "This looks like a text statement file. Please use the 'Import Statement' button on the Banking page \u2014 it reads CSV and TXT bank files directly."})
                 return jsonify({"success": False, "error": "Unsupported file type. Please upload a PDF, JPG, or PNG of the bank statement."})
         
         # ══════════════════════════════════════════════════════════════════════
