@@ -47,7 +47,8 @@ echo.
 :: --- FLY DEPLOY (die belangrike stuk!) ---
 echo [3/3] Fly deploy...
 echo.
-fly deploy
+set "DOCKER_HOST="
+fly deploy --remote-only
 if errorlevel 1 (
     color 0C
     echo.
