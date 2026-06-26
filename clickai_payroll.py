@@ -1066,6 +1066,28 @@ def register_payroll_routes(app, db, login_required, Auth, render_page,
         hours_off_amount = round(hours_off * hours_rate, 2)
         basic_full = basic
         basic = max(0.0, basic - hours_off_amount)
+
+        # Hourly employees have no basic salary — their pay is this month's
+        # worked hours x rate. Use that as the earnings base so the payslip
+        # shows the real amount instead of zero.
+        _emp_rate = safe_float(emp.get("hourly_rate", 0))
+        is_hourly = basic_full <= 0 and _emp_rate > 0
+        hourly_normal = hourly_ot = 0.0
+        if is_hourly:
+            _wmonth = today()[:7]
+            _wentries = db.get("timesheet_entries", {"business_id": biz_id, "employee_id": emp_id}) if biz_id else []
+            _wme = [e for e in _wentries if str(e.get("date", "")).startswith(_wmonth)]
+            hourly_normal = sum(safe_float(e.get("normal_hours", e.get("hours", 0))) for e in _wme)
+            hourly_ot = sum(safe_float(e.get("overtime", 0)) for e in _wme)
+            basic = round((hourly_normal + hourly_ot) * _emp_rate, 2)
+            basic_full = basic
+            hours_off_amount = 0.0
+            earnings_first_row = (f'<tr style="border-bottom:1px solid #eee;"><td style="padding:6px 0;color:#666;">'
+                                  f'Wages ({hourly_normal + hourly_ot:.2f} hrs @ {money(_emp_rate)}/h)</td>'
+                                  f'<td style="padding:6px 0;text-align:right;color:#333;">{money(basic_full)}</td></tr>')
+        else:
+            earnings_first_row = ('<tr style="border-bottom:1px solid #eee;"><td style="padding:6px 0;color:#666;">'
+                                  f'Basic Salary</td><td style="padding:6px 0;text-align:right;color:#333;">{money(basic_full)}</td></tr>')
         
         # Deductions from employee
         medical = safe_float(emp.get("medical_aid", 0))
@@ -1294,10 +1316,7 @@ def register_payroll_routes(app, db, login_required, Auth, render_page,
                 <div style="flex:1;min-width:260px;">
                     <h4 style="color:#333;margin:10px 0 6px;font-size:12px;border-bottom:1px solid #ccc;padding-bottom:3px;">EARNINGS</h4>
                     <table style="width:100%;border-collapse:collapse;font-size:12px;">
-                        <tr style="border-bottom:1px solid #eee;">
-                            <td style="padding:6px 0;color:#666;">Basic Salary</td>
-                            <td style="padding:6px 0;text-align:right;color:#333;">{money(basic_full)}</td>
-                        </tr>
+                        {earnings_first_row}
                         {f'<tr style="border-bottom:1px solid #eee;"><td style="padding:6px 0;color:#666;">Hours Off / Late ({hours_off:g} hrs)</td><td style="padding:6px 0;text-align:right;color:#ef4444;">-{money(hours_off_amount)}</td></tr>' if hours_off_amount > 0 else ''}
                         {f'<tr style="border-bottom:1px solid #eee;"><td style="padding:6px 0;color:#666;">Travel Allowance</td><td style="padding:6px 0;text-align:right;color:#333;">{money(travel)}</td></tr>' if travel > 0 else ''}
                         <tr style="border-bottom:2px solid #333;background:#f9f9f9;">
@@ -1321,16 +1340,6 @@ def register_payroll_routes(app, db, login_required, Auth, render_page,
             <div style="display:flex;justify-content:space-between;align-items:center;padding:14px 18px;background:#10b981;border-radius:8px;color:white;margin-top:18px;">
                 <span style="font-size:16px;font-weight:bold;">NETT PAY</span>
                 <span style="font-size:24px;font-weight:bold;">{money(net)}</span>
-            </div>
-
-            <div style="margin-top:18px;padding:14px;background:#f5f5f5;border-radius:8px;">
-                <h4 style="margin:0 0 8px;color:#888;font-size:11px;">YEAR-TO-DATE TOTALS</h4>
-                <table style="width:100%;font-size:12px;color:#555;">
-                    <tr><td style="padding:3px 0;">Taxable Earnings</td><td style="text-align:right;">{money(ytd_gross)}</td></tr>
-                    <tr><td style="padding:3px 0;">PAYE Paid</td><td style="text-align:right;">{money(ytd_paye)}</td></tr>
-                    <tr><td style="padding:3px 0;">UIF Paid</td><td style="text-align:right;">{money(ytd_uif)}</td></tr>
-                    <tr style="border-top:1px solid #ccc;font-weight:bold;color:#333;"><td style="padding:5px 0;">Nett Paid YTD</td><td style="text-align:right;">{money(ytd_net)}</td></tr>
-                </table>
             </div>
 
             <div style="margin-top:14px;padding:10px 14px;background:#f5f5f5;border-radius:8px;font-size:12px;color:#555;">
@@ -1633,8 +1642,11 @@ def register_payroll_routes(app, db, login_required, Auth, render_page,
                 "employee_id": emp.get("id"),
                 "employee_name": emp.get("name"),
                 "date": pay_date,
+                "period": pay_month,
                 "basic": round(gross, 2),
                 "gross": round(gross, 2),
+                "hours_worked": round(safe_float(result.get("normal_hours", 0)), 2),
+                "overtime_hours": round(safe_float(result.get("overtime_hours", 0)), 2),
                 "paye": round(paye, 2),
                 "uif": round(uif, 2),
                 "uif_employee": round(uif, 2),
@@ -2221,6 +2233,27 @@ def register_payroll_routes(app, db, login_required, Auth, render_page,
         basic = safe_float(payslip.get("basic", 0))
         gross = safe_float(payslip.get("gross", 0)) or basic
         travel = safe_float(payslip.get("travel_allowance", 0))
+
+        # Earnings rows: hourly workers (hours stored on the payslip) show a
+        # Wages line with hours x rate; salaried workers show Basic Salary.
+        hours_worked = safe_float(payslip.get("hours_worked", 0))
+        overtime_hours = safe_float(payslip.get("overtime_hours", 0))
+        emp_rate = safe_float(_emp_fund.get("hourly_rate", 0)) if _emp_fund else 0.0
+        if hours_worked > 0 or overtime_hours > 0:
+            _wage = round(gross - travel, 2)
+            _norm_amt = round(hours_worked * emp_rate, 2)
+            _ot_amt = round(_wage - _norm_amt, 2)
+            earnings_rows = (f'<tr style="border-bottom:1px solid #eee;"><td style="padding:6px 0;color:#666;">'
+                             f'Wages ({hours_worked:.2f} hrs @ {money(emp_rate)}/h)</td>'
+                             f'<td style="padding:6px 0;text-align:right;color:#333;">{money(_norm_amt)}</td></tr>')
+            if _ot_amt > 0.005:
+                earnings_rows += (f'<tr style="border-bottom:1px solid #eee;"><td style="padding:6px 0;color:#666;">'
+                                  f'Overtime / premium ({overtime_hours:.2f} hrs)</td>'
+                                  f'<td style="padding:6px 0;text-align:right;color:#333;">{money(_ot_amt)}</td></tr>')
+        else:
+            earnings_rows = ('<tr style="border-bottom:1px solid #eee;"><td style="padding:6px 0;color:#666;">'
+                             f'Basic Salary</td><td style="padding:6px 0;text-align:right;color:#333;">{money(basic)}</td></tr>')
+
         paye = safe_float(payslip.get("paye", 0))
         uif = safe_float(payslip.get("uif", 0)) or safe_float(payslip.get("uif_employee", 0))
         medical = safe_float(payslip.get("medical_aid", 0))
@@ -2384,10 +2417,7 @@ def register_payroll_routes(app, db, login_required, Auth, render_page,
                 <div style="flex:1;min-width:260px;">
                     <h4 style="color:#333;margin:10px 0 6px;font-size:12px;border-bottom:1px solid #ccc;padding-bottom:3px;">EARNINGS</h4>
                     <table style="width:100%;border-collapse:collapse;font-size:12px;">
-                        <tr style="border-bottom:1px solid #eee;">
-                            <td style="padding:6px 0;color:#666;">Basic Salary</td>
-                            <td style="padding:6px 0;text-align:right;color:#333;">{money(basic)}</td>
-                        </tr>
+                        {earnings_rows}
                         {f'<tr style="border-bottom:1px solid #eee;"><td style="padding:6px 0;color:#666;">Travel Allowance</td><td style="padding:6px 0;text-align:right;color:#333;">{money(travel)}</td></tr>' if travel > 0 else ''}
                         <tr style="border-bottom:2px solid #333;background:#f9f9f9;">
                             <td style="padding:7px 0;color:#333;font-weight:bold;">TOTAL EARNINGS</td>
@@ -2410,16 +2440,6 @@ def register_payroll_routes(app, db, login_required, Auth, render_page,
             <div style="display:flex;justify-content:space-between;align-items:center;padding:14px 18px;background:#10b981;border-radius:8px;color:white;margin-top:18px;">
                 <span style="font-size:16px;font-weight:bold;">NETT PAY</span>
                 <span style="font-size:24px;font-weight:bold;">{money(net)}</span>
-            </div>
-
-            <div style="margin-top:18px;padding:14px;background:#f5f5f5;border-radius:8px;">
-                <h4 style="margin:0 0 8px;color:#888;font-size:11px;">YEAR-TO-DATE TOTALS</h4>
-                <table style="width:100%;font-size:12px;color:#555;">
-                    <tr><td style="padding:3px 0;">Taxable Earnings</td><td style="text-align:right;">{money(ytd_gross)}</td></tr>
-                    <tr><td style="padding:3px 0;">PAYE Paid</td><td style="text-align:right;">{money(ytd_paye)}</td></tr>
-                    <tr><td style="padding:3px 0;">UIF Paid</td><td style="text-align:right;">{money(ytd_uif)}</td></tr>
-                    <tr style="border-top:1px solid #ccc;font-weight:bold;color:#333;"><td style="padding:5px 0;">Nett Paid YTD</td><td style="text-align:right;">{money(ytd_net)}</td></tr>
-                </table>
             </div>
 
             <div style="margin-top:14px;padding:10px 14px;background:#f5f5f5;border-radius:8px;font-size:12px;color:#555;">

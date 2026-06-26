@@ -1,38 +1,129 @@
---- /mnt/user-data/uploads/clickai_payroll.py	2026-06-26 10:58:33.980952000 +0000
-+++ clickai_payroll.py	2026-06-26 12:19:42.148728704 +0000
-@@ -196,6 +196,7 @@
-         <div class="card" style="border:2px solid #f59e0b;background:rgba(245,158,11,0.05);">
-             <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:15px;flex-wrap:wrap;gap:10px;">
-                 <h3 class="card-title" style="margin:0;">[FORM] Timesheet Staging ({len(staging_batches)})</h3>
-+                <a href="/timesheets" class="btn btn-secondary" style="padding:6px 14px;font-size:13px;">View all scanned timesheets</a>
+--- /mnt/user-data/uploads/clickai_payroll.py	2026-06-26 14:42:23.499170000 +0000
++++ clickai_payroll_live.py	2026-06-26 14:48:35.549566231 +0000
+@@ -1066,6 +1066,28 @@
+         hours_off_amount = round(hours_off * hours_rate, 2)
+         basic_full = basic
+         basic = max(0.0, basic - hours_off_amount)
++
++        # Hourly employees have no basic salary — their pay is this month's
++        # worked hours x rate. Use that as the earnings base so the payslip
++        # shows the real amount instead of zero.
++        _emp_rate = safe_float(emp.get("hourly_rate", 0))
++        is_hourly = basic_full <= 0 and _emp_rate > 0
++        hourly_normal = hourly_ot = 0.0
++        if is_hourly:
++            _wmonth = today()[:7]
++            _wentries = db.get("timesheet_entries", {"business_id": biz_id, "employee_id": emp_id}) if biz_id else []
++            _wme = [e for e in _wentries if str(e.get("date", "")).startswith(_wmonth)]
++            hourly_normal = sum(safe_float(e.get("normal_hours", e.get("hours", 0))) for e in _wme)
++            hourly_ot = sum(safe_float(e.get("overtime", 0)) for e in _wme)
++            basic = round((hourly_normal + hourly_ot) * _emp_rate, 2)
++            basic_full = basic
++            hours_off_amount = 0.0
++            earnings_first_row = (f'<tr style="border-bottom:1px solid #eee;"><td style="padding:6px 0;color:#666;">'
++                                  f'Wages ({hourly_normal + hourly_ot:.2f} hrs @ {money(_emp_rate)}/h)</td>'
++                                  f'<td style="padding:6px 0;text-align:right;color:#333;">{money(basic_full)}</td></tr>')
++        else:
++            earnings_first_row = ('<tr style="border-bottom:1px solid #eee;"><td style="padding:6px 0;color:#666;">'
++                                  f'Basic Salary</td><td style="padding:6px 0;text-align:right;color:#333;">{money(basic_full)}</td></tr>')
+         
+         # Deductions from employee
+         medical = safe_float(emp.get("medical_aid", 0))
+@@ -1294,10 +1316,7 @@
+                 <div style="flex:1;min-width:260px;">
+                     <h4 style="color:#333;margin:10px 0 6px;font-size:12px;border-bottom:1px solid #ccc;padding-bottom:3px;">EARNINGS</h4>
+                     <table style="width:100%;border-collapse:collapse;font-size:12px;">
+-                        <tr style="border-bottom:1px solid #eee;">
+-                            <td style="padding:6px 0;color:#666;">Basic Salary</td>
+-                            <td style="padding:6px 0;text-align:right;color:#333;">{money(basic_full)}</td>
+-                        </tr>
++                        {earnings_first_row}
+                         {f'<tr style="border-bottom:1px solid #eee;"><td style="padding:6px 0;color:#666;">Hours Off / Late ({hours_off:g} hrs)</td><td style="padding:6px 0;text-align:right;color:#ef4444;">-{money(hours_off_amount)}</td></tr>' if hours_off_amount > 0 else ''}
+                         {f'<tr style="border-bottom:1px solid #eee;"><td style="padding:6px 0;color:#666;">Travel Allowance</td><td style="padding:6px 0;text-align:right;color:#333;">{money(travel)}</td></tr>' if travel > 0 else ''}
+                         <tr style="border-bottom:2px solid #333;background:#f9f9f9;">
+@@ -1323,16 +1342,6 @@
+                 <span style="font-size:24px;font-weight:bold;">{money(net)}</span>
              </div>
-             <div style="overflow-x:auto;">
-             <table class="table">
-@@ -234,6 +235,7 @@
-                 <div style="display:flex;gap:10px;flex-wrap:wrap;">
-                     <a href="/employee/new" class="btn btn-secondary">+ Add Employee</a>
-                     <a href="/timesheets/add" class="btn btn-secondary">+ Add Timesheet</a>
-+                    <a href="/timesheets" class="btn btn-secondary">Scanned Timesheets</a>
-                     <a href="/payroll/run" class="btn btn-primary">▶️ Run Payroll</a>
-                     <a href="/payroll/report" class="btn btn-secondary">📊 Monthly Report</a>
-                     <a href="/payroll/payslips" class="btn btn-secondary">Payslips by Month</a>
-@@ -1536,7 +1538,7 @@
-             return redirect("/payroll")
  
-         try:
--            from clickai_pay_conditions import calculate_pay_from_timesheet, build_entries_from_days
-+            from clickai_pay_conditions import build_payslip_gross
-         except Exception as e:
-             logger.error(f"[POST BATCH] pay conditions module not available: {e}")
-             flash("Pay conditions module not loaded — use Approve & Save instead", "error")
-@@ -1594,8 +1596,8 @@
-                 continue
+-            <div style="margin-top:18px;padding:14px;background:#f5f5f5;border-radius:8px;">
+-                <h4 style="margin:0 0 8px;color:#888;font-size:11px;">YEAR-TO-DATE TOTALS</h4>
+-                <table style="width:100%;font-size:12px;color:#555;">
+-                    <tr><td style="padding:3px 0;">Taxable Earnings</td><td style="text-align:right;">{money(ytd_gross)}</td></tr>
+-                    <tr><td style="padding:3px 0;">PAYE Paid</td><td style="text-align:right;">{money(ytd_paye)}</td></tr>
+-                    <tr><td style="padding:3px 0;">UIF Paid</td><td style="text-align:right;">{money(ytd_uif)}</td></tr>
+-                    <tr style="border-top:1px solid #ccc;font-weight:bold;color:#333;"><td style="padding:5px 0;">Nett Paid YTD</td><td style="text-align:right;">{money(ytd_net)}</td></tr>
+-                </table>
+-            </div>
+-
+             <div style="margin-top:14px;padding:10px 14px;background:#f5f5f5;border-radius:8px;font-size:12px;color:#555;">
+                 <strong>Leave Type:</strong> Annual Leave &nbsp;·&nbsp; <strong>Closing Balance:</strong> {leave_balance:.4f} days
+             </div>
+@@ -1633,8 +1642,11 @@
+                 "employee_id": emp.get("id"),
+                 "employee_name": emp.get("name"),
+                 "date": pay_date,
++                "period": pay_month,
+                 "basic": round(gross, 2),
+                 "gross": round(gross, 2),
++                "hours_worked": round(safe_float(result.get("normal_hours", 0)), 2),
++                "overtime_hours": round(safe_float(result.get("overtime_hours", 0)), 2),
+                 "paye": round(paye, 2),
+                 "uif": round(uif, 2),
+                 "uif_employee": round(uif, 2),
+@@ -2221,6 +2233,27 @@
+         basic = safe_float(payslip.get("basic", 0))
+         gross = safe_float(payslip.get("gross", 0)) or basic
+         travel = safe_float(payslip.get("travel_allowance", 0))
++
++        # Earnings rows: hourly workers (hours stored on the payslip) show a
++        # Wages line with hours x rate; salaried workers show Basic Salary.
++        hours_worked = safe_float(payslip.get("hours_worked", 0))
++        overtime_hours = safe_float(payslip.get("overtime_hours", 0))
++        emp_rate = safe_float(_emp_fund.get("hourly_rate", 0)) if _emp_fund else 0.0
++        if hours_worked > 0 or overtime_hours > 0:
++            _wage = round(gross - travel, 2)
++            _norm_amt = round(hours_worked * emp_rate, 2)
++            _ot_amt = round(_wage - _norm_amt, 2)
++            earnings_rows = (f'<tr style="border-bottom:1px solid #eee;"><td style="padding:6px 0;color:#666;">'
++                             f'Wages ({hours_worked:.2f} hrs @ {money(emp_rate)}/h)</td>'
++                             f'<td style="padding:6px 0;text-align:right;color:#333;">{money(_norm_amt)}</td></tr>')
++            if _ot_amt > 0.005:
++                earnings_rows += (f'<tr style="border-bottom:1px solid #eee;"><td style="padding:6px 0;color:#666;">'
++                                  f'Overtime / premium ({overtime_hours:.2f} hrs)</td>'
++                                  f'<td style="padding:6px 0;text-align:right;color:#333;">{money(_ot_amt)}</td></tr>')
++        else:
++            earnings_rows = ('<tr style="border-bottom:1px solid #eee;"><td style="padding:6px 0;color:#666;">'
++                             f'Basic Salary</td><td style="padding:6px 0;text-align:right;color:#333;">{money(basic)}</td></tr>')
++
+         paye = safe_float(payslip.get("paye", 0))
+         uif = safe_float(payslip.get("uif", 0)) or safe_float(payslip.get("uif_employee", 0))
+         medical = safe_float(payslip.get("medical_aid", 0))
+@@ -2384,10 +2417,7 @@
+                 <div style="flex:1;min-width:260px;">
+                     <h4 style="color:#333;margin:10px 0 6px;font-size:12px;border-bottom:1px solid #ccc;padding-bottom:3px;">EARNINGS</h4>
+                     <table style="width:100%;border-collapse:collapse;font-size:12px;">
+-                        <tr style="border-bottom:1px solid #eee;">
+-                            <td style="padding:6px 0;color:#666;">Basic Salary</td>
+-                            <td style="padding:6px 0;text-align:right;color:#333;">{money(basic)}</td>
+-                        </tr>
++                        {earnings_rows}
+                         {f'<tr style="border-bottom:1px solid #eee;"><td style="padding:6px 0;color:#666;">Travel Allowance</td><td style="padding:6px 0;text-align:right;color:#333;">{money(travel)}</td></tr>' if travel > 0 else ''}
+                         <tr style="border-bottom:2px solid #333;background:#f9f9f9;">
+                             <td style="padding:7px 0;color:#333;font-weight:bold;">TOTAL EARNINGS</td>
+@@ -2412,16 +2442,6 @@
+                 <span style="font-size:24px;font-weight:bold;">{money(net)}</span>
+             </div>
  
-             days = employees_data[i].get("days", []) if i < len(employees_data) else []
--            entries = build_entries_from_days(days, pay_month)
--            result = calculate_pay_from_timesheet(emp, entries, pay_month)
-+            employee_data = employees_data[i] if i < len(employees_data) else {"days": days}
-+            result = build_payslip_gross(emp, employee_data, pay_month, business=business)
-             gross = safe_float(result.get("gross", 0))
-             if gross <= 0:
-                 skipped += 1
+-            <div style="margin-top:18px;padding:14px;background:#f5f5f5;border-radius:8px;">
+-                <h4 style="margin:0 0 8px;color:#888;font-size:11px;">YEAR-TO-DATE TOTALS</h4>
+-                <table style="width:100%;font-size:12px;color:#555;">
+-                    <tr><td style="padding:3px 0;">Taxable Earnings</td><td style="text-align:right;">{money(ytd_gross)}</td></tr>
+-                    <tr><td style="padding:3px 0;">PAYE Paid</td><td style="text-align:right;">{money(ytd_paye)}</td></tr>
+-                    <tr><td style="padding:3px 0;">UIF Paid</td><td style="text-align:right;">{money(ytd_uif)}</td></tr>
+-                    <tr style="border-top:1px solid #ccc;font-weight:bold;color:#333;"><td style="padding:5px 0;">Nett Paid YTD</td><td style="text-align:right;">{money(ytd_net)}</td></tr>
+-                </table>
+-            </div>
+-
+             <div style="margin-top:14px;padding:10px 14px;background:#f5f5f5;border-radius:8px;font-size:12px;color:#555;">
+                 <strong>Leave Type:</strong> Annual Leave &nbsp;·&nbsp; <strong>Closing Balance:</strong> {leave_balance:.4f} days
+             </div>
