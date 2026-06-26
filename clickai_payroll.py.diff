@@ -1,0 +1,38 @@
+--- /mnt/user-data/uploads/clickai_payroll.py	2026-06-26 10:58:33.980952000 +0000
++++ clickai_payroll.py	2026-06-26 12:19:42.148728704 +0000
+@@ -196,6 +196,7 @@
+         <div class="card" style="border:2px solid #f59e0b;background:rgba(245,158,11,0.05);">
+             <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:15px;flex-wrap:wrap;gap:10px;">
+                 <h3 class="card-title" style="margin:0;">[FORM] Timesheet Staging ({len(staging_batches)})</h3>
++                <a href="/timesheets" class="btn btn-secondary" style="padding:6px 14px;font-size:13px;">View all scanned timesheets</a>
+             </div>
+             <div style="overflow-x:auto;">
+             <table class="table">
+@@ -234,6 +235,7 @@
+                 <div style="display:flex;gap:10px;flex-wrap:wrap;">
+                     <a href="/employee/new" class="btn btn-secondary">+ Add Employee</a>
+                     <a href="/timesheets/add" class="btn btn-secondary">+ Add Timesheet</a>
++                    <a href="/timesheets" class="btn btn-secondary">Scanned Timesheets</a>
+                     <a href="/payroll/run" class="btn btn-primary">▶️ Run Payroll</a>
+                     <a href="/payroll/report" class="btn btn-secondary">📊 Monthly Report</a>
+                     <a href="/payroll/payslips" class="btn btn-secondary">Payslips by Month</a>
+@@ -1536,7 +1538,7 @@
+             return redirect("/payroll")
+ 
+         try:
+-            from clickai_pay_conditions import calculate_pay_from_timesheet, build_entries_from_days
++            from clickai_pay_conditions import build_payslip_gross
+         except Exception as e:
+             logger.error(f"[POST BATCH] pay conditions module not available: {e}")
+             flash("Pay conditions module not loaded — use Approve & Save instead", "error")
+@@ -1594,8 +1596,8 @@
+                 continue
+ 
+             days = employees_data[i].get("days", []) if i < len(employees_data) else []
+-            entries = build_entries_from_days(days, pay_month)
+-            result = calculate_pay_from_timesheet(emp, entries, pay_month)
++            employee_data = employees_data[i] if i < len(employees_data) else {"days": days}
++            result = build_payslip_gross(emp, employee_data, pay_month, business=business)
+             gross = safe_float(result.get("gross", 0))
+             if gross <= 0:
+                 skipped += 1

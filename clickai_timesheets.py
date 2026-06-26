@@ -43,6 +43,61 @@ def _guess_pay_month(period_text, today_str):
     return str(today_str)[:7]
 
 
+def _cell_is_time(v):
+    """True when a scanned In/Out cell holds an actual clock time (not
+    'Absent' / 'LATE' / 'HOLIDAY' / blank)."""
+    try:
+        from clickai_pay_conditions import _cell_marker
+        return _cell_marker(v) == "time"
+    except Exception:
+        import re as _re
+        s = str(v or "").strip()
+        return bool(_re.match(r"^\d{1,2}\s*[:.h]\s*\d{2}$", s, _re.I)) or s.isdigit()
+
+
+def _apply_review_edits(form, employees_data, count):
+    """Overlay the edited per-day In/Out times from the review form onto the
+    scanned batch data, then recompute each employee's worked-hour totals.
+
+    Returns the updated employees_data list. Days the reviewer did not touch
+    keep their scanned value. This is what makes a Jacqo misread (or a blank
+    Out time) fixable and stick — the corrected times are written back to the
+    batch and used by both pay models.
+    """
+    try:
+        from clickai_pay_conditions import compute_worked_hours
+    except Exception:
+        compute_worked_hours = None
+
+    for i in range(count):
+        if i >= len(employees_data):
+            break
+        emp = employees_data[i]
+        days = emp.get("days", []) or []
+        try:
+            daycount = int(form.get(f"daycount_{i}", len(days)) or len(days))
+        except Exception:
+            daycount = len(days)
+        for j in range(min(daycount, len(days))):
+            in_v = form.get(f"in_{i}_{j}", None)
+            out_v = form.get(f"out_{i}_{j}", None)
+            if in_v is not None:
+                days[j]["in"] = in_v.strip()
+            if out_v is not None:
+                days[j]["out"] = out_v.strip()
+        # Recompute worked totals from the (possibly edited) times so the
+        # hourly model and the saved entries reflect the corrections.
+        if compute_worked_hours:
+            worked = compute_worked_hours(days)
+            emp["days"] = worked["days"]
+            emp["total_hours"] = worked["total_hours"]
+            emp["total_overtime"] = worked["total_overtime"]
+            emp["total_sunday"] = worked["total_sunday"]
+        else:
+            emp["days"] = days
+    return employees_data
+
+
 def register_timesheet_routes(app, db, login_required, Auth, render_page,
                               generate_id, money, safe_string, now, today,
                               _anthropic_client):
@@ -576,7 +631,7 @@ def register_timesheet_routes(app, db, login_required, Auth, render_page,
                 calc_ot = 0
                 calc_sunday = 0
                 
-                for day in days:
+                for j, day in enumerate(days):
                     d_date = day.get("date", "-")
                     d_in = day.get("in", "-")
                     d_out = day.get("out", "-")
@@ -590,12 +645,14 @@ def register_timesheet_routes(app, db, login_required, Auth, render_page,
                     calc_sunday += d_sunday
                     
                     row_style = "background:rgba(59,130,246,0.15);" if is_sun else ""
+                    in_border = "1px solid var(--border)" if _cell_is_time(d_in) else "2px solid #f59e0b"
+                    out_border = "1px solid var(--border)" if _cell_is_time(d_out) else "2px solid #f59e0b"
                     
                     days_html += f'''
                     <tr style="{row_style}">
-                        <td>{d_date} {"☀️" if is_sun else ""}</td>
-                        <td>{d_in}</td>
-                        <td>{d_out}</td>
+                        <td style="white-space:nowrap;">{d_date} {"☀️" if is_sun else ""}</td>
+                        <td><input type="text" name="in_{i}_{j}" value="{safe_string(str(d_in))}" style="width:78px;padding:5px;border-radius:5px;border:{in_border};background:#1a1a2e;color:var(--text);"></td>
+                        <td><input type="text" name="out_{i}_{j}" value="{safe_string(str(d_out))}" style="width:78px;padding:5px;border-radius:5px;border:{out_border};background:#1a1a2e;color:var(--text);"></td>
                         <td>{d_hours if d_hours > 0 else "-"}</td>
                         <td style="color:#f59e0b;font-weight:bold;">{d_ot if d_ot > 0 else "-"}</td>
                         <td style="color:#3b82f6;font-weight:bold;">{d_sunday if d_sunday > 0 else "-"}</td>
@@ -604,12 +661,13 @@ def register_timesheet_routes(app, db, login_required, Auth, render_page,
                 
                 days_html += f'''
                     <tr style="background:rgba(34,197,94,0.15); font-weight:bold;">
-                        <td colspan="3">🧮 CALCULATED BY FLASK</td>
+                        <td colspan="3">CALCULATED BY FLASK</td>
                         <td>{calc_hours}</td>
                         <td style="color:#f59e0b;">{calc_ot}</td>
                         <td style="color:#3b82f6;">{calc_sunday}</td>
                     </tr>
                 </tbody></table>
+                <input type="hidden" name="daycount_{i}" value="{len(days)}">
                 '''
             else:
                 days_html = '<p style="color:var(--text-muted);font-size:13px;">No daily breakdown available</p>'
@@ -649,16 +707,16 @@ def register_timesheet_routes(app, db, login_required, Auth, render_page,
                         <select name="job_{i}" class="form-input" style="border:1px solid #8b5cf6;">{job_options}</select>
                     </div>
                     <div>
-                        <label class="form-label">Normal ✏️</label>
-                        <input type="number" name="hours_{i}" value="{total_hours}" class="form-input" style="width:80px;background:#1a1a2e;border:2px solid #22c55e;" step="0.5">
+                        <label class="form-label">Normal</label>
+                        <input type="number" name="hours_{i}" value="{total_hours}" class="form-input" style="width:80px;background:#15151f;border:1px solid #22c55e;color:#9ca3af;" step="0.5" readonly>
                     </div>
                     <div>
-                        <label class="form-label" style="color:#f59e0b;">OT ✏️</label>
-                        <input type="number" name="overtime_{i}" value="{total_overtime}" class="form-input" style="width:80px;background:#1a1a2e;border:2px solid #f59e0b;" step="0.5">
+                        <label class="form-label" style="color:#f59e0b;">OT</label>
+                        <input type="number" name="overtime_{i}" value="{total_overtime}" class="form-input" style="width:80px;background:#15151f;border:1px solid #f59e0b;color:#9ca3af;" step="0.5" readonly>
                     </div>
                     <div>
-                        <label class="form-label" style="color:#3b82f6;">Sunday ✏️</label>
-                        <input type="number" name="sunday_{i}" value="{total_sunday}" class="form-input" style="width:80px;background:#1a1a2e;border:2px solid #3b82f6;" step="0.5">
+                        <label class="form-label" style="color:#3b82f6;">Sunday</label>
+                        <input type="number" name="sunday_{i}" value="{total_sunday}" class="form-input" style="width:80px;background:#15151f;border:1px solid #3b82f6;color:#9ca3af;" step="0.5" readonly>
                     </div>
                 </div>
             </div>
@@ -684,8 +742,8 @@ def register_timesheet_routes(app, db, login_required, Auth, render_page,
         </div>
         
         <div style="background:rgba(139,92,246,0.1); border:1px solid #8b5cf6; border-radius:8px; padding:12px 16px; margin-bottom:20px;">
-            <strong>✏️ Edit Before Approving</strong><br>
-            <span style="color:var(--text-muted);">Fix any wrong hours in the green boxes below. Match employee name from dropdown. Then approve.</span>
+            <strong>Edit before approving</strong><br>
+            <span style="color:var(--text-muted);">Fix any In/Out time Jacqo misread (orange boxes), and fill in any missing Out time. Hours recalculate from the times when you approve. Match each name from the dropdown, then approve.</span>
         </div>
         
         <form method="POST" action="/timesheets/process/{batch_id}">
@@ -711,6 +769,88 @@ def register_timesheet_routes(app, db, login_required, Auth, render_page,
         return render_page("Review Timesheet", content, user, "timesheets")
     
     
+    @app.route("/timesheets/view/<batch_id>")
+    @login_required
+    def timesheets_view(batch_id):
+        """Read-only view of a scanned timesheet batch — works at any time,
+        including after the payslips were built (the batch is never deleted)."""
+        user = Auth.get_current_user()
+        business = Auth.get_current_business()
+        biz_id = business.get("id") if business else None
+
+        batch = db.get_one("timesheet_batches", batch_id)
+        if not batch:
+            flash("Timesheet not found", "error")
+            return redirect("/timesheets")
+
+        raw_data = batch.get("data", "{}")
+        parsed = json.loads(raw_data) if isinstance(raw_data, str) else raw_data
+        if isinstance(parsed, list):
+            employees_data = parsed
+            period = batch.get("period", "")
+        else:
+            employees_data = parsed.get("employees", [])
+            period = parsed.get("period", "") or batch.get("period", "")
+
+        status = batch.get("status", "")
+        created = str(batch.get("created_at", ""))[:16].replace("T", " ")
+
+        cards_html = ""
+        for emp in employees_data:
+            name = emp.get("name", "Unknown")
+            days = emp.get("days", [])
+            rows = ""
+            for day in days:
+                is_sun = day.get("is_sunday", False)
+                rows += f'''
+                <tr style="{'background:rgba(59,130,246,0.12);' if is_sun else ''}">
+                    <td style="padding:4px 8px;white-space:nowrap;">{day.get("date","-")}</td>
+                    <td style="padding:4px 8px;">{safe_string(str(day.get("in","-")))}</td>
+                    <td style="padding:4px 8px;">{safe_string(str(day.get("out","-")))}</td>
+                    <td style="padding:4px 8px;text-align:right;">{day.get("hours",0) or "-"}</td>
+                    <td style="padding:4px 8px;text-align:right;color:#f59e0b;">{day.get("overtime",0) or "-"}</td>
+                    <td style="padding:4px 8px;text-align:right;color:#3b82f6;">{day.get("sunday",0) or "-"}</td>
+                </tr>'''
+            cards_html += f'''
+            <div class="card" style="margin-bottom:14px;">
+                <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">
+                    <h3 style="margin:0;font-size:17px;">{safe_string(name)}</h3>
+                    <div style="font-size:13px;color:var(--text-muted);">
+                        {emp.get("total_hours",0)} hrs · {emp.get("total_overtime",0)} OT · {emp.get("total_sunday",0)} Sun
+                    </div>
+                </div>
+                <table style="width:100%;font-size:13px;">
+                    <thead><tr style="border-bottom:1px solid var(--border);">
+                        <th style="text-align:left;padding:4px 8px;">Date</th>
+                        <th style="text-align:left;padding:4px 8px;">In</th>
+                        <th style="text-align:left;padding:4px 8px;">Out</th>
+                        <th style="text-align:right;padding:4px 8px;">Hours</th>
+                        <th style="text-align:right;padding:4px 8px;">OT</th>
+                        <th style="text-align:right;padding:4px 8px;">Sun</th>
+                    </tr></thead>
+                    <tbody>{rows}</tbody>
+                </table>
+            </div>'''
+
+        reopen = ""
+        if status not in ("processed",):
+            reopen = f'<a href="/timesheets/review/{batch_id}" class="btn btn-primary" style="padding:10px 18px;">Open in review</a>'
+
+        content = f'''
+        <div style="margin-bottom:18px;">
+            <a href="/timesheets" style="color:var(--text-muted);">← Timesheets</a>
+            <h1 style="margin-top:8px;">Timesheet — {period or "Not specified"}</h1>
+            <p style="color:var(--text-muted);">Status: <strong>{status or "—"}</strong> · Scanned {created} · {len(employees_data)} employees (read-only)</p>
+        </div>
+        {cards_html or '<div class="card"><p style="color:var(--text-muted);">No data on this timesheet.</p></div>'}
+        <div style="display:flex;gap:10px;margin-top:6px;">
+            {reopen}
+            <a href="/timesheets" class="btn btn-secondary" style="padding:10px 18px;">← Back</a>
+        </div>
+        '''
+        return render_page("View Timesheet", content, user, "timesheets")
+    
+    
     @app.route("/timesheets/payslip-preview/<batch_id>", methods=["POST"])
     @login_required
     def timesheets_payslip_preview(batch_id):
@@ -727,7 +867,7 @@ def register_timesheet_routes(app, db, login_required, Auth, render_page,
 
         # Pay-conditions engine (try/except so a missing module never crashes payroll)
         try:
-            from clickai_pay_conditions import calculate_pay_from_timesheet, build_entries_from_days
+            from clickai_pay_conditions import build_payslip_gross
         except Exception as e:
             logger.error(f"[TIMESHEET PREVIEW] pay conditions module not available: {e}")
             flash("Pay conditions module not loaded — using Approve & Save instead", "error")
@@ -737,8 +877,10 @@ def register_timesheet_routes(app, db, login_required, Auth, render_page,
         parsed = json.loads(raw_data) if isinstance(raw_data, str) else raw_data
         if isinstance(parsed, list):
             employees_data = parsed
+            wrapper = {"employees": employees_data}
         else:
             employees_data = parsed.get("employees", [])
+            wrapper = parsed
         # Pay month (YYYY-MM) comes from the review screen; fall back to today.
         period = request.form.get("pay_month", "") or today()[:7]
         if len(period) < 7:
@@ -746,6 +888,17 @@ def register_timesheet_routes(app, db, login_required, Auth, render_page,
         period = period[:7]
 
         count = int(request.form.get("count", 0))
+
+        # Apply the reviewer's In/Out edits, recompute, and persist back to the
+        # batch so the corrections stick and the post step reads the fixed data.
+        employees_data = _apply_review_edits(request.form, employees_data, count)
+        wrapper["employees"] = employees_data
+        wrapper["period"] = wrapper.get("period", "") or batch.get("period", "")
+        try:
+            db.save("timesheet_batches", {"id": batch_id, "data": json.dumps(wrapper), "status": "approved"})
+        except Exception as _se:
+            logger.error(f"[TIMESHEET PREVIEW] could not persist edits: {_se}")
+
         cards = ""
         hidden_emps = ""
 
@@ -759,11 +912,9 @@ def register_timesheet_routes(app, db, login_required, Auth, render_page,
 
             hidden_emps += f'<input type="hidden" name="emp_{i}" value="{emp_id}">'
 
-            # Rebuild engine entries with real calendar dates for the pay month
-            days = employees_data[i].get("days", []) if i < len(employees_data) else []
-            entries = build_entries_from_days(days, period)
-
-            result = calculate_pay_from_timesheet(emp, entries, period)
+            employee_data = employees_data[i] if i < len(employees_data) else {"days": []}
+            result = build_payslip_gross(emp, employee_data, period, business=business)
+            model = result.get("pay_model", "salaried")
 
             # Build the line rows
             if not result["is_setup"]:
@@ -779,16 +930,22 @@ def register_timesheet_routes(app, db, login_required, Auth, render_page,
                     sign = "+" if ln["amount"] >= 0 else "-"
                     lines_html += f'''
                     <tr>
-                        <td style="padding:6px 0;">{ln["date"]}</td>
+                        <td style="padding:6px 0;">{ln.get("date", "")}</td>
                         <td>{safe_string(ln["label"])}</td>
                         <td style="text-align:right;color:{colour};">{sign}{money(abs(ln["amount"]))}</td>
                     </tr>'''
 
-            rate_note = ""
-            if result["is_setup"]:
-                rate_note = (f'Rate {money(result["hourly_rate"])}/h · '
+            if model == "hourly":
+                rate_note = (f'Hourly · {money(result["hourly_rate"])}/h · '
+                             f'{result.get("normal_hours",0):.1f} normal + '
+                             f'{result.get("overtime_hours",0):.1f} OT + '
+                             f'{result.get("sunday_hours",0):.1f} Sun')
+            elif result["is_setup"]:
+                rate_note = (f'Salaried · {money(result["hourly_rate"])}/h · '
                              f'{result["agreed_hours"]:.1f} agreed hours · '
                              f'base {money(result["base_pay"])}')
+            else:
+                rate_note = ""
 
             cards += f'''
             <div class="card" style="margin-bottom:16px;">
@@ -805,7 +962,7 @@ def register_timesheet_routes(app, db, login_required, Auth, render_page,
                 <table style="width:100%;font-size:13px;">
                     <thead><tr style="border-bottom:1px solid var(--border);">
                         <th style="text-align:left;padding:4px 0;">Date</th>
-                        <th style="text-align:left;">Adjustment</th>
+                        <th style="text-align:left;">{"Item" if model == "hourly" else "Adjustment"}</th>
                         <th style="text-align:right;">Amount</th>
                     </tr></thead>
                     <tbody>{lines_html}</tbody>
@@ -853,13 +1010,42 @@ def register_timesheet_routes(app, db, login_required, Auth, render_page,
         saved = 0
         job_logged = 0
         errors = []
+
+        # Apply the reviewer's In/Out edits, recompute worked totals, and
+        # persist back to the batch so the saved hours reflect the fixes and
+        # the timesheet can be re-opened later.
+        batch = db.get_one("timesheet_batches", batch_id)
+        employees_data = []
+        if batch:
+            raw_data = batch.get("data", "{}")
+            parsed = json.loads(raw_data) if isinstance(raw_data, str) else raw_data
+            if isinstance(parsed, list):
+                employees_data = parsed
+                wrapper = {"employees": employees_data}
+            else:
+                employees_data = parsed.get("employees", [])
+                wrapper = parsed
+            employees_data = _apply_review_edits(request.form, employees_data, count)
+            wrapper["employees"] = employees_data
+            wrapper["period"] = wrapper.get("period", "") or batch.get("period", "")
+            try:
+                db.save("timesheet_batches", {"id": batch_id, "data": json.dumps(wrapper)})
+            except Exception as _se:
+                logger.error(f"[TIMESHEET PROCESS] could not persist edits: {_se}")
         
         for i in range(count):
             emp_id = request.form.get(f"emp_{i}", "")
             job_id = request.form.get(f"job_{i}", "")
-            hours = float(request.form.get(f"hours_{i}", 0) or 0)
-            overtime = float(request.form.get(f"overtime_{i}", 0) or 0)
-            sunday = float(request.form.get(f"sunday_{i}", 0) or 0)
+            # Use the recomputed totals from the (edited) times, not the
+            # read-only display boxes.
+            if i < len(employees_data):
+                hours = float(employees_data[i].get("total_hours", 0) or 0)
+                overtime = float(employees_data[i].get("total_overtime", 0) or 0)
+                sunday = float(employees_data[i].get("total_sunday", 0) or 0)
+            else:
+                hours = float(request.form.get(f"hours_{i}", 0) or 0)
+                overtime = float(request.form.get(f"overtime_{i}", 0) or 0)
+                sunday = float(request.form.get(f"sunday_{i}", 0) or 0)
             
             logger.info(f"[TIMESHEET PROCESS] Row {i}: emp_id={emp_id}, job_id={job_id}, hours={hours}, ot={overtime}, sun={sunday}")
             
@@ -1460,6 +1646,47 @@ def register_timesheet_routes(app, db, login_required, Auth, render_page,
         job_options = "".join([f'<option value="{j.get("id")}">{j.get("job_number")} - {safe_string(j.get("title", ""))}</option>' for j in active_jobs])
         
         emp_options = "".join([f'<option value="{e.get("id")}">{safe_string(e.get("name", ""))}</option>' for e in employees])
+
+        # Scanned timesheet batches — including processed ones, so a timesheet
+        # can be re-opened and viewed at any time after the payslips are built.
+        batches = db.get("timesheet_batches", {"business_id": biz_id}) if biz_id else []
+        batches = [b for b in batches if b.get("status") != "discarded"]
+        batches.sort(key=lambda b: str(b.get("created_at", "")), reverse=True)
+        _status_label = {"pending": "Pending review", "approved": "Approved",
+                         "processed": "Payslips built"}
+        _status_colour = {"pending": "#f59e0b", "approved": "#3b82f6",
+                          "processed": "#22c55e"}
+        archive_rows = ""
+        for b in batches[:50]:
+            try:
+                _d = json.loads(b.get("data", "{}")) if isinstance(b.get("data"), str) else (b.get("data") or {})
+                _emps = _d if isinstance(_d, list) else _d.get("employees", [])
+            except Exception:
+                _emps = []
+            st = b.get("status", "")
+            archive_rows += f'''
+            <tr style="cursor:pointer;" onclick="window.location='/timesheets/view/{b.get("id")}'">
+                <td style="padding:8px;">{safe_string(b.get("period","") or "—")}</td>
+                <td style="padding:8px;">{len(_emps)}</td>
+                <td style="padding:8px;"><span style="color:{_status_colour.get(st,'var(--text-muted)')};">{_status_label.get(st, st or "—")}</span></td>
+                <td style="padding:8px;color:var(--text-muted);">{str(b.get("created_at",""))[:10]}</td>
+                <td style="padding:8px;text-align:right;"><a href="/timesheets/view/{b.get("id")}" class="btn btn-secondary" style="padding:5px 12px;font-size:12px;">View</a></td>
+            </tr>'''
+        archive_section = f'''
+        <div class="card" style="margin-top:20px;">
+            <h3 style="margin:0 0 12px 0;">Scanned Timesheets</h3>
+            <table style="width:100%;font-size:13px;">
+                <thead><tr style="border-bottom:1px solid var(--border);color:var(--text-muted);">
+                    <th style="text-align:left;padding:8px;">Period</th>
+                    <th style="text-align:left;padding:8px;">Employees</th>
+                    <th style="text-align:left;padding:8px;">Status</th>
+                    <th style="text-align:left;padding:8px;">Scanned</th>
+                    <th></th>
+                </tr></thead>
+                <tbody>{archive_rows or '<tr><td colspan="5" style="padding:10px;color:var(--text-muted);">No scanned timesheets yet.</td></tr>'}</tbody>
+            </table>
+        </div>
+        '''
         
         content = f'''
         <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:20px;">
@@ -1505,6 +1732,8 @@ def register_timesheet_routes(app, db, login_required, Auth, render_page,
         <div class="stats-grid">
             {emp_cards or '<div class="card"><p style="color:var(--text-muted);text-align:center;">No employees yet. Add employees in Payroll.</p></div>'}
         </div>
+        
+        {archive_section}
         
         <div class="card" style="margin-top:20px;">
             <h3 style="margin-bottom:10px;"> Tips</h3>
