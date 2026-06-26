@@ -561,7 +561,12 @@ def build_payslip_gross(emp, employee_data, period, business=None,
     cond = get_conditions(emp)
     days = employee_data.get("days", []) if isinstance(employee_data, dict) else []
 
-    if cond["is_setup"] and cond["pay_model"] == "hourly":
+    # Pay the worked-hours (hourly) model when the worker is explicitly on the
+    # hourly model OR their rate is an hourly rate. Hourly staff often have no
+    # fixed schedule, so the salaried (schedule-deviation) engine would return
+    # zero for them — this routes them to hours x rate instead.
+    use_hourly = cond["pay_model"] == "hourly" or cond["rate_method"] == "hourly"
+    if cond["is_setup"] and use_hourly:
         split_ot = bool(business.get("split_overtime")) if business else False
         lunch_min = 30
         if cond["schedule"].get("lunch_deducted"):
