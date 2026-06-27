@@ -377,9 +377,9 @@ def register_settings_routes(app, db, login_required, Auth, render_page,
                     const data = await res.json();
                     
                     if (data.success) {{
-                        result.innerHTML = '<span style="color:var(--green);">data.message + '</span>';
+                        result.innerHTML = '<span style="color:var(--green);">' + data.message + '</span>';
                     }} else {{
-                        result.innerHTML = '<span style="color:var(--red);">data.error + '</span>';
+                        result.innerHTML = '<span style="color:var(--red);">' + data.error + '</span>';
                     }}
                 }} catch (e) {{
                     result.innerHTML = '<span style="color:var(--red);">Error: ' + e.message + '</span>';
