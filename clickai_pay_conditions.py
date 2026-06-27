@@ -483,7 +483,7 @@ def compute_worked_hours(days, split_overtime=False, lunch_minutes=30,
                 ot = 0.0
 
         if is_sun:
-            sunday = round(hours + ot, 2)
+            sunday = hours + ot
             hours = ot = 0.0
             total_sun += sunday
         else:

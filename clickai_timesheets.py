@@ -1334,6 +1334,7 @@ def register_timesheet_routes(app, db, login_required, Auth, render_page,
             message = client.messages.create(
                 model="claude-sonnet-4-6",
                 max_tokens=4000,
+                temperature=0,
                 messages=[
                     {
                         "role": "user",
@@ -1398,10 +1399,15 @@ def register_timesheet_routes(app, db, login_required, Auth, render_page,
                 except:
                     return None
             
-            def is_sunday(date_str):
-                """Check if day is Sunday"""
-                date_lower = str(date_str).lower()
-                return "sun" in date_lower or "son" in date_lower  # English or Afrikaans
+            # Use the same Sunday detection as the payslip recompute so the
+            # scan view and the payslip never disagree (parses a real ISO date
+            # when present, else falls back to the label text).
+            try:
+                from clickai_pay_conditions import _is_sunday as is_sunday
+            except Exception:
+                def is_sunday(date_str):
+                    sl = str(date_str or "").lower()
+                    return "sun" in sl or "son" in sl  # English or Afrikaans
             
             def calc_hours(time_in, time_out, lunch_break=30):
                 """Calculate work hours from in/out times"""
@@ -1432,7 +1438,10 @@ def register_timesheet_routes(app, db, login_required, Auth, render_page,
                     normal = worked_hours
                     overtime = 0
                 
-                return round(normal, 1), round(overtime, 1)
+                # Return exact hours — totals are rounded once at the end so
+                # summing per-day values never drifts (kept identical to the
+                # payslip recompute in compute_worked_hours).
+                return normal, overtime
             
             # Process each employee - Flask calculates!
             processed_employees = []
@@ -1484,9 +1493,9 @@ def register_timesheet_routes(app, db, login_required, Auth, render_page,
                         "date": d_date,
                         "in": d_in,
                         "out": d_out,
-                        "hours": hours,
-                        "overtime": ot,
-                        "sunday": sunday_hours,
+                        "hours": round(hours, 2),
+                        "overtime": round(ot, 2),
+                        "sunday": round(sunday_hours, 2),
                         "is_sunday": is_sunday(d_date)
                     })
                 
@@ -1496,9 +1505,9 @@ def register_timesheet_routes(app, db, login_required, Auth, render_page,
                     "job_id": matched_job_id,
                     "job_title": matched_job_title,
                     "days": calculated_days,
-                    "total_hours": round(total_hours, 1),
-                    "total_overtime": round(total_overtime, 1),
-                    "total_sunday": round(total_sunday, 1)
+                    "total_hours": round(total_hours, 2),
+                    "total_overtime": round(total_overtime, 2),
+                    "total_sunday": round(total_sunday, 2)
                 })
             
             # Save as a batch for review
