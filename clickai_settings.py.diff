@@ -1,5 +1,14 @@
 --- /mnt/user-data/uploads/clickai_settings.py	2026-06-27 10:53:48.035669000 +0000
-+++ settings_cur.py	2026-06-27 11:02:55.946330444 +0000
++++ /mnt/user-data/outputs/clickai_settings.py	2026-06-27 11:19:12.504196706 +0000
+@@ -297,7 +297,7 @@
+                 
+                 <div class="form-group">
+                     <label class="form-label">SMTP Password</label>
+-                    <input type="password" name="smtp_pass" class="form-input" placeholder="App password">
++                    <input type="password" name="smtp_pass" class="form-input" autocomplete="new-password" placeholder="{'Saved - leave blank to keep, or type a new password' if (business and business.get('smtp_pass')) else 'Enter SMTP / app password'}">
+                 </div>
+                 
+                 <div style="display:flex;gap:10px;align-items:center;">
 @@ -377,9 +377,9 @@
                      const data = await res.json();
                      

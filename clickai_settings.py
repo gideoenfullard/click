@@ -297,7 +297,7 @@ def register_settings_routes(app, db, login_required, Auth, render_page,
                 
                 <div class="form-group">
                     <label class="form-label">SMTP Password</label>
-                    <input type="password" name="smtp_pass" class="form-input" placeholder="App password">
+                    <input type="password" name="smtp_pass" class="form-input" autocomplete="new-password" placeholder="{'Saved - leave blank to keep, or type a new password' if (business and business.get('smtp_pass')) else 'Enter SMTP / app password'}">
                 </div>
                 
                 <div style="display:flex;gap:10px;align-items:center;">
