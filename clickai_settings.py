@@ -2200,8 +2200,11 @@ def register_settings_routes(app, db, login_required, Auth, render_page,
                 flash("No business selected", "error")
                 return redirect("/settings")
             
+            user = Auth.get_current_user()
+            biz_id = business.get("id")
+            user_id = user.get("id", "") if user else ""
+            
             updates = {
-                "id": business.get("id"),
                 "smtp_host": request.form.get("smtp_host", ""),
                 "smtp_port": request.form.get("smtp_port", ""),
                 "smtp_user": request.form.get("smtp_user", ""),
@@ -2212,8 +2215,12 @@ def register_settings_routes(app, db, login_required, Auth, render_page,
             if not updates["smtp_pass"]:
                 del updates["smtp_pass"]
             
-            db.save("businesses", updates)
-            flash("Email settings saved", "success")
+            ok, msg = db.update_business(biz_id, user_id, updates)
+            if ok:
+                Auth.clear_cache()   # so the SMTP test reads the fresh settings
+                flash("Email settings saved", "success")
+            else:
+                flash(f"Error saving email settings: {msg}", "error")
             
             return redirect("/settings")
         except Exception as e:
