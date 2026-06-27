@@ -95,6 +95,29 @@ def _apply_review_edits(form, employees_data, count):
             emp["total_sunday"] = worked["total_sunday"]
         else:
             emp["days"] = days
+
+        # Manual total override: if the reviewer changed a total box (its value
+        # differs from the hidden original that was rendered), use the typed
+        # total and flag it so the payslip honours it. Untouched totals keep
+        # tracking the daily times.
+        overridden = False
+        def _ovr(field, orig_field, fallback):
+            nonlocal overridden
+            try:
+                sub = form.get(field, None)
+                orig = form.get(orig_field, None)
+                if sub is None or orig is None:
+                    return fallback
+                if abs(float(sub) - float(orig)) > 0.001:
+                    overridden = True
+                    return round(float(sub), 2)
+            except Exception:
+                pass
+            return fallback
+        emp["total_hours"] = _ovr(f"hours_{i}", f"hours_orig_{i}", emp.get("total_hours", 0))
+        emp["total_overtime"] = _ovr(f"overtime_{i}", f"ot_orig_{i}", emp.get("total_overtime", 0))
+        emp["total_sunday"] = _ovr(f"sunday_{i}", f"sun_orig_{i}", emp.get("total_sunday", 0))
+        emp["totals_overridden"] = overridden
     return employees_data
 
 
@@ -708,15 +731,18 @@ def register_timesheet_routes(app, db, login_required, Auth, render_page,
                     </div>
                     <div>
                         <label class="form-label">Normal</label>
-                        <input type="number" name="hours_{i}" value="{total_hours}" class="form-input" style="width:80px;background:#15151f;border:1px solid #22c55e;color:#9ca3af;" step="0.5" readonly>
+                        <input type="number" name="hours_{i}" value="{total_hours}" class="form-input" style="width:80px;background:#1a1a2e;border:1px solid #22c55e;" step="0.5">
+                        <input type="hidden" name="hours_orig_{i}" value="{total_hours}">
                     </div>
                     <div>
                         <label class="form-label" style="color:#f59e0b;">OT</label>
-                        <input type="number" name="overtime_{i}" value="{total_overtime}" class="form-input" style="width:80px;background:#15151f;border:1px solid #f59e0b;color:#9ca3af;" step="0.5" readonly>
+                        <input type="number" name="overtime_{i}" value="{total_overtime}" class="form-input" style="width:80px;background:#1a1a2e;border:1px solid #f59e0b;" step="0.5">
+                        <input type="hidden" name="ot_orig_{i}" value="{total_overtime}">
                     </div>
                     <div>
                         <label class="form-label" style="color:#3b82f6;">Sunday</label>
-                        <input type="number" name="sunday_{i}" value="{total_sunday}" class="form-input" style="width:80px;background:#15151f;border:1px solid #3b82f6;color:#9ca3af;" step="0.5" readonly>
+                        <input type="number" name="sunday_{i}" value="{total_sunday}" class="form-input" style="width:80px;background:#1a1a2e;border:1px solid #3b82f6;" step="0.5">
+                        <input type="hidden" name="sun_orig_{i}" value="{total_sunday}">
                     </div>
                 </div>
             </div>
@@ -1316,7 +1342,9 @@ def register_timesheet_routes(app, db, login_required, Auth, render_page,
           "days": [
             {{"date": "Mon 6", "in": "07:00", "out": "16:00"}},
             {{"date": "Tue 7", "in": "07:00", "out": "17:30"}},
-            {{"date": "Wed 8", "in": "07:00", "out": "16:00"}}
+            {{"date": "Wed 8", "in": "07:00", "out": "16:00"}},
+            {{"date": "Sat 11", "in": "08:00", "out": "13:00"}},
+            {{"date": "Sun 12", "in": "08:00", "out": "12:00"}}
           ]
         }}
       ]
@@ -1326,7 +1354,8 @@ def register_timesheet_routes(app, db, login_required, Auth, render_page,
     - Only read what is written - DO NOT calculate hours
     - Read times in 24hr format (07:00, 16:00, etc)
     - If a time is unclear, make your best guess
-    - If a day is blank or marked off, skip it
+    - Read EVERY dated row that has clock times, including Saturdays and Sundays - never skip a weekend row that has times written
+    - Only skip a row when it is genuinely blank or marked off (no times written)
     - Look for job numbers written as JC-001, JC 001, Job 001, J001, etc - normalize to JC-XXXX-XXX format
     - If no job number is found for an employee, set job_number to null
     - DO NOT add any hours or overtime fields - just in/out times"""

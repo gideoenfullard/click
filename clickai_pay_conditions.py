@@ -567,12 +567,22 @@ def build_payslip_gross(emp, employee_data, period, business=None,
     # zero for them — this routes them to hours x rate instead.
     use_hourly = cond["pay_model"] == "hourly" or cond["rate_method"] == "hourly"
     if cond["is_setup"] and use_hourly:
-        split_ot = bool(business.get("split_overtime")) if business else False
-        lunch_min = 30
-        if cond["schedule"].get("lunch_deducted"):
-            lunch_min = int(_safe_float(cond["schedule"].get("lunch_minutes", 30)) or 30)
-        worked = compute_worked_hours(days, split_overtime=split_ot,
-                                      lunch_minutes=lunch_min)
+        # If the reviewer manually overrode the totals on the review screen,
+        # honour those typed totals. Otherwise compute from the daily times
+        # (with the business overtime-split rule).
+        if isinstance(employee_data, dict) and employee_data.get("totals_overridden"):
+            worked = {
+                "total_hours": _safe_float(employee_data.get("total_hours", 0)),
+                "total_overtime": _safe_float(employee_data.get("total_overtime", 0)),
+                "total_sunday": _safe_float(employee_data.get("total_sunday", 0)),
+            }
+        else:
+            split_ot = bool(business.get("split_overtime")) if business else False
+            lunch_min = 30
+            if cond["schedule"].get("lunch_deducted"):
+                lunch_min = int(_safe_float(cond["schedule"].get("lunch_minutes", 30)) or 30)
+            worked = compute_worked_hours(days, split_overtime=split_ot,
+                                          lunch_minutes=lunch_min)
         return calculate_hourly_pay(emp, period, worked)
 
     # salaried (and the not-set-up fallback) -> deviation engine

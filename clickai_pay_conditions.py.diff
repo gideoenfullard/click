@@ -1,11 +1,31 @@
---- /mnt/user-data/uploads/clickai_pay_conditions.py	2026-06-27 08:05:34.580494000 +0000
-+++ pc_live.py	2026-06-27 08:08:09.996159753 +0000
-@@ -483,7 +483,7 @@
-                 ot = 0.0
+--- /mnt/user-data/outputs/clickai_pay_conditions.py	2026-06-27 08:11:01.352385000 +0000
++++ clickai_pay_conditions.py	2026-06-27 09:46:08.794370144 +0000
+@@ -567,12 +567,22 @@
+     # zero for them — this routes them to hours x rate instead.
+     use_hourly = cond["pay_model"] == "hourly" or cond["rate_method"] == "hourly"
+     if cond["is_setup"] and use_hourly:
+-        split_ot = bool(business.get("split_overtime")) if business else False
+-        lunch_min = 30
+-        if cond["schedule"].get("lunch_deducted"):
+-            lunch_min = int(_safe_float(cond["schedule"].get("lunch_minutes", 30)) or 30)
+-        worked = compute_worked_hours(days, split_overtime=split_ot,
+-                                      lunch_minutes=lunch_min)
++        # If the reviewer manually overrode the totals on the review screen,
++        # honour those typed totals. Otherwise compute from the daily times
++        # (with the business overtime-split rule).
++        if isinstance(employee_data, dict) and employee_data.get("totals_overridden"):
++            worked = {
++                "total_hours": _safe_float(employee_data.get("total_hours", 0)),
++                "total_overtime": _safe_float(employee_data.get("total_overtime", 0)),
++                "total_sunday": _safe_float(employee_data.get("total_sunday", 0)),
++            }
++        else:
++            split_ot = bool(business.get("split_overtime")) if business else False
++            lunch_min = 30
++            if cond["schedule"].get("lunch_deducted"):
++                lunch_min = int(_safe_float(cond["schedule"].get("lunch_minutes", 30)) or 30)
++            worked = compute_worked_hours(days, split_overtime=split_ot,
++                                          lunch_minutes=lunch_min)
+         return calculate_hourly_pay(emp, period, worked)
  
-         if is_sun:
--            sunday = round(hours + ot, 2)
-+            sunday = hours + ot
-             hours = ot = 0.0
-             total_sun += sunday
-         else:
+     # salaried (and the not-set-up fallback) -> deviation engine
