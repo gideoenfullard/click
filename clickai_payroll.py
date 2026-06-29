@@ -809,27 +809,29 @@ def register_payroll_routes(app, db, login_required, Auth, render_page,
                 sick_fund = safe_float(emp.get("sick_fund", 0))
                 council_levy = safe_float(emp.get("council_levy", 0))
                 
-                gross = basic + travel
+                other_allow = safe_float(emp.get("other_allowance", 0))
+                gross = basic + travel + other_allow
                 
                 # PAYE — SARS 2026/27 (Section 11F retirement deduction +
-                # Section 6A medical credit + 80% travel inclusion inside the helper)
+                # Section 6A medical credit + 80% travel inclusion inside the helper).
+                # Other Allowance is a fully-taxable cash allowance — 100% in the base.
                 _emp_age = safe_float(emp.get("age", 0))
                 _medical_members = safe_float(emp.get("medical_members", 0))
-                paye = calc_monthly_paye(basic, _emp_age, pension, provident, _medical_members, travel)
+                paye = calc_monthly_paye(basic + other_allow, _emp_age, pension, provident, _medical_members, travel)
                 
                 # UIF - 1% of remuneration capped at R177.12. Remuneration =
-                # basic + 80% travel + employer provident (fringe benefit) —
+                # basic + other allowance + 80% travel + employer provident (fringe benefit) —
                 # verified to the cent against the Sage payslip.
-                uif = min((basic + travel * 0.8 + pension_employer) * 0.01, 177.12)
+                uif = min((basic + other_allow + travel * 0.8 + pension_employer) * 0.01, 177.12)
                 uif_employer = uif  # Employer matches
                 
                 # SDL - 1% of the PAYE remuneration base (employer only) —
                 # only if total payroll over R500k threshold
-                _sdl_base = max(0.0, basic + travel * 0.8 - pension - provident)
+                _sdl_base = max(0.0, basic + other_allow + travel * 0.8 - pension - provident)
                 sdl = _sdl_base * 0.01 if _sdl_applies else 0
                 
                 # COIDA - ~1% (employer only)
-                coida = basic * 0.01
+                coida = (basic + other_allow) * 0.01
                 
                 # Total deductions from employee
                 total_ded = paye + uif + medical + union_fees + pension + provident + loan + other_ded + rma_funeral
@@ -849,6 +851,7 @@ def register_payroll_routes(app, db, login_required, Auth, render_page,
                     "basic": basic,
                     "gross": round(gross, 2),
                     "travel_allowance": round(travel, 2),
+                    "other_allowance": round(other_allow, 2),
                     "paye": round(paye, 2),
                     "uif": round(uif, 2),
                     "uif_employee": round(uif, 2),
@@ -965,16 +968,18 @@ def register_payroll_routes(app, db, login_required, Auth, render_page,
             travel = safe_float(emp.get("travel_allowance", 0))
             rma_funeral = safe_float(emp.get("rma_funeral", 0))
             other = safe_float(emp.get("loan_deduction", 0)) + safe_float(emp.get("other_deduction", 0))
+            other_allow = safe_float(emp.get("other_allowance", 0))
             
-            gross = basic + travel
+            gross = basic + travel + other_allow
 
             # PAYE — SARS 2026/27 (Section 11F retirement deduction +
-            # Section 6A medical credit + 80% travel inclusion inside the helper)
+            # Section 6A medical credit + 80% travel inclusion inside the helper).
+            # Other Allowance is a fully-taxable cash allowance — 100% in the base.
             _emp_age = safe_float(emp.get("age", 0))
             _medical_members = safe_float(emp.get("medical_members", 0))
-            paye = calc_monthly_paye(basic, _emp_age, pension, provident, _medical_members, travel)
-            # UIF base = basic + 80% travel + employer provident (fringe) — Sage
-            uif = min((basic + travel * 0.8 + pension_employer) * 0.01, 177.12)
+            paye = calc_monthly_paye(basic + other_allow, _emp_age, pension, provident, _medical_members, travel)
+            # UIF base = basic + other allowance + 80% travel + employer provident (fringe) — Sage
+            uif = min((basic + other_allow + travel * 0.8 + pension_employer) * 0.01, 177.12)
             
             total_ded = paye + uif + medical + union_fees + pension + provident + other + rma_funeral
             net = gross - total_ded
@@ -1102,16 +1107,18 @@ def register_payroll_routes(app, db, login_required, Auth, render_page,
         council_levy = safe_float(emp.get("council_levy", 0))
         pension_employer = safe_float(emp.get("pension_employer", 0))
         
-        gross = basic + travel
+        other_allow = safe_float(emp.get("other_allowance", 0))
+        gross = basic + travel + other_allow
         
         # PAYE — SARS 2026/27 (Section 11F retirement deduction +
-        # Section 6A medical credit + 80% travel inclusion inside the helper)
+        # Section 6A medical credit + 80% travel inclusion inside the helper).
+        # Other Allowance is a fully-taxable cash allowance — 100% in the base.
         _emp_age = safe_float(emp.get("age", 0))
         _medical_members = safe_float(emp.get("medical_members", 0))
-        paye = calc_monthly_paye(basic, _emp_age, pension, provident, _medical_members, travel)
+        paye = calc_monthly_paye(basic + other_allow, _emp_age, pension, provident, _medical_members, travel)
         
-        # UIF base = basic + 80% travel + employer provident (fringe) — Sage
-        uif = min((basic + travel * 0.8 + pension_employer) * 0.01, 177.12)
+        # UIF base = basic + other allowance + 80% travel + employer provident (fringe) — Sage
+        uif = min((basic + other_allow + travel * 0.8 + pension_employer) * 0.01, 177.12)
         total_ded = paye + uif + medical + union_fees + pension + provident + loan + other_ded + rma_funeral
         net = gross - total_ded
         
@@ -1125,8 +1132,8 @@ def register_payroll_routes(app, db, login_required, Auth, render_page,
         
         # Employer contributions (shown below the payslip as a check, not part of the payslip)
         uif_employer = uif
-        sdl = max(0.0, basic + travel * 0.8 - pension - provident) * 0.01
-        coida = basic * 0.01
+        sdl = max(0.0, basic + other_allow + travel * 0.8 - pension - provident) * 0.01
+        coida = (basic + other_allow) * 0.01
         total_employer = uif_employer + sdl + coida + pension_employer + sick_fund + council_levy
         total_cost = gross + total_employer
 
@@ -1319,6 +1326,7 @@ def register_payroll_routes(app, db, login_required, Auth, render_page,
                         {earnings_first_row}
                         {f'<tr style="border-bottom:1px solid #eee;"><td style="padding:6px 0;color:#666;">Hours Off / Late ({hours_off:g} hrs)</td><td style="padding:6px 0;text-align:right;color:#ef4444;">-{money(hours_off_amount)}</td></tr>' if hours_off_amount > 0 else ''}
                         {f'<tr style="border-bottom:1px solid #eee;"><td style="padding:6px 0;color:#666;">Travel Allowance</td><td style="padding:6px 0;text-align:right;color:#333;">{money(travel)}</td></tr>' if travel > 0 else ''}
+                        {f'<tr style="border-bottom:1px solid #eee;"><td style="padding:6px 0;color:#666;">Other Allowance</td><td style="padding:6px 0;text-align:right;color:#333;">{money(other_allow)}</td></tr>' if other_allow > 0 else ''}
                         <tr style="border-bottom:2px solid #333;background:#f9f9f9;">
                             <td style="padding:7px 0;color:#333;font-weight:bold;">TOTAL EARNINGS</td>
                             <td style="padding:7px 0;text-align:right;color:#333;font-weight:bold;">{money(gross)}</td>
@@ -1417,27 +1425,29 @@ def register_payroll_routes(app, db, login_required, Auth, render_page,
         sick_fund = safe_float(emp.get("sick_fund", 0))
         council_levy = safe_float(emp.get("council_levy", 0))
         
-        gross = basic + travel
+        other_allow = safe_float(emp.get("other_allowance", 0))
+        gross = basic + travel + other_allow
 
         # PAYE — SARS 2026/27 (Section 11F retirement deduction +
-        # Section 6A medical credit + 80% travel inclusion inside the helper)
+        # Section 6A medical credit + 80% travel inclusion inside the helper).
+        # Other Allowance is a fully-taxable cash allowance — 100% in the base.
         _emp_age = safe_float(emp.get("age", 0))
         _medical_members = safe_float(emp.get("medical_members", 0))
-        paye = calc_monthly_paye(basic, _emp_age, pension, provident, _medical_members, travel)
+        paye = calc_monthly_paye(basic + other_allow, _emp_age, pension, provident, _medical_members, travel)
 
         # UIF — 1% of remuneration capped at R177.12. Remuneration =
-        # basic + 80% travel + employer provident (fringe benefit) — Sage
-        uif = min((basic + travel * 0.8 + pension_employer) * 0.01, 177.12)
+        # basic + other allowance + 80% travel + employer provident (fringe benefit) — Sage
+        uif = min((basic + other_allow + travel * 0.8 + pension_employer) * 0.01, 177.12)
         uif_employer = uif
 
         # SDL — only if this business's total annual payroll exceeds R500k
         _all_emps = db.get("employees", {"business_id": biz_id}) if biz_id else []
         _total_annual_payroll = sum(safe_float(e.get("basic_salary", 0)) * 12 for e in _all_emps)
-        _sdl_base = max(0.0, basic + travel * 0.8 - pension - provident)
+        _sdl_base = max(0.0, basic + other_allow + travel * 0.8 - pension - provident)
         sdl = _sdl_base * 0.01 if _total_annual_payroll > 500000 else 0
 
         # COIDA — ~1% (employer only)
-        coida = basic * 0.01
+        coida = (basic + other_allow) * 0.01
 
         total_ded = paye + uif + medical + union_fees + pension + provident + loan + other_ded + rma_funeral
         net = gross - total_ded
@@ -1454,6 +1464,7 @@ def register_payroll_routes(app, db, login_required, Auth, render_page,
             "basic": basic,
             "gross": round(gross, 2),
             "travel_allowance": round(travel, 2),
+            "other_allowance": round(other_allow, 2),
             "paye": round(paye, 2),
             "uif": round(uif, 2),
             "uif_employee": round(uif, 2),
@@ -2233,6 +2244,7 @@ def register_payroll_routes(app, db, login_required, Auth, render_page,
         basic = safe_float(payslip.get("basic", 0))
         gross = safe_float(payslip.get("gross", 0)) or basic
         travel = safe_float(payslip.get("travel_allowance", 0))
+        other_allow = safe_float(payslip.get("other_allowance", 0))
 
         # Earnings rows: hourly workers (hours stored on the payslip) show a
         # Wages line with hours x rate; salaried workers show Basic Salary.
@@ -2240,7 +2252,7 @@ def register_payroll_routes(app, db, login_required, Auth, render_page,
         overtime_hours = safe_float(payslip.get("overtime_hours", 0))
         emp_rate = safe_float(_emp_fund.get("hourly_rate", 0)) if _emp_fund else 0.0
         if hours_worked > 0 or overtime_hours > 0:
-            _wage = round(gross - travel, 2)
+            _wage = round(gross - travel - other_allow, 2)
             _norm_amt = round(hours_worked * emp_rate, 2)
             _ot_amt = round(_wage - _norm_amt, 2)
             earnings_rows = (f'<tr style="border-bottom:1px solid #eee;"><td style="padding:6px 0;color:#666;">'
@@ -2419,6 +2431,7 @@ def register_payroll_routes(app, db, login_required, Auth, render_page,
                     <table style="width:100%;border-collapse:collapse;font-size:12px;">
                         {earnings_rows}
                         {f'<tr style="border-bottom:1px solid #eee;"><td style="padding:6px 0;color:#666;">Travel Allowance</td><td style="padding:6px 0;text-align:right;color:#333;">{money(travel)}</td></tr>' if travel > 0 else ''}
+                        {f'<tr style="border-bottom:1px solid #eee;"><td style="padding:6px 0;color:#666;">Other Allowance</td><td style="padding:6px 0;text-align:right;color:#333;">{money(other_allow)}</td></tr>' if other_allow > 0 else ''}
                         <tr style="border-bottom:2px solid #333;background:#f9f9f9;">
                             <td style="padding:7px 0;color:#333;font-weight:bold;">TOTAL EARNINGS</td>
                             <td style="padding:7px 0;text-align:right;color:#333;font-weight:bold;">{money(gross)}</td>
@@ -2490,7 +2503,8 @@ def register_payroll_routes(app, db, login_required, Auth, render_page,
             # Update payslip with form values
             basic = safe_float(request.form.get("basic", 0))
             travel = safe_float(request.form.get("travel_allowance", 0))
-            gross = safe_float(request.form.get("gross", 0)) or (basic + travel)
+            other_allow = safe_float(payslip.get("other_allowance", 0))
+            gross = safe_float(request.form.get("gross", 0)) or (basic + travel + other_allow)
             paye = safe_float(request.form.get("paye", 0))
             uif = safe_float(request.form.get("uif", 0))
             medical = safe_float(request.form.get("medical_aid", 0))
@@ -2507,6 +2521,7 @@ def register_payroll_routes(app, db, login_required, Auth, render_page,
             updates = {
                 "basic": basic,
                 "travel_allowance": travel,
+                "other_allowance": other_allow,
                 "gross": gross,
                 "paye": paye,
                 "uif": uif,
