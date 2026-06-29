@@ -5838,8 +5838,7 @@ Nothing else."""
                 nav, header, .header, .header-top, .nav-wrapper, .nav, .mobile-nav, .nav-tap-hint, .sidebar, .j-hero, .j-hud-wrap, .j-hud-pad, .j-tl {{ display: none !important; }}
                 body {{ background: white !important; color: black !important; }}
                 #printArea {{ display: block !important; }}
-                .stmt-page {{ page-break-after: always; }}
-                .stmt-page:last-child {{ page-break-after: auto; }}
+                .stmt-page + .stmt-page {{ page-break-before: always !important; }}
                 @page {{ size: A4; margin: 14mm; }}
             }}
             .stmt-page {{ background:white; color:#333; padding:20px; margin:0 auto 30px; max-width:760px; border:1px solid #ddd; }}
