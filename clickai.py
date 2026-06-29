@@ -2981,10 +2981,23 @@ Thank you for your business!
         transactions.sort(key=lambda x: (x.get("date") or "", x.get("type") or ""))
         # Close the statement at the selected month-end — exclude anything later
         transactions = [t for t in transactions if (t.get("date") or "")[:10] <= asat]
+        # Roll everything before the 1st of the statement month into an opening balance
+        _opening_balance, transactions, _period_start = _statement_split_opening(transactions, asat)
         
         # Calculate running balance and build ledger rows
-        running_balance = 0.0
+        running_balance = _opening_balance
         ledger_rows = ""
+        if abs(_opening_balance) > 0.005:
+            ledger_rows += f'''
+            <tr>
+                <td style="padding:5px 8px;border-bottom:1px solid #e5e7eb;font-size:11px;white-space:nowrap;">{safe(_period_start or "-")}</td>
+                <td style="padding:5px 8px;border-bottom:1px solid #e5e7eb;font-size:11px;font-weight:700;">Opening Balance</td>
+                <td style="padding:5px 8px;border-bottom:1px solid #e5e7eb;font-size:11px;">-</td>
+                <td style="padding:5px 8px;border-bottom:1px solid #e5e7eb;font-size:11px;text-align:right;">-</td>
+                <td style="padding:5px 8px;border-bottom:1px solid #e5e7eb;font-size:11px;text-align:right;color:#16a34a;">-</td>
+                <td style="padding:5px 8px;border-bottom:1px solid #e5e7eb;font-size:11px;text-align:right;font-weight:700;white-space:nowrap;">R{_opening_balance:,.2f}</td>
+            </tr>
+            '''
         for t in transactions:
             running_balance += t["debit"] - t["credit"]
             _debit_disp = f"R{t['debit']:,.2f}" if t["debit"] else "-"
@@ -3175,6 +3188,7 @@ Thank you for your business!
                 aging=aging,
                 final_balance=final_balance,
                 stmt_date=asat,
+                opening_balance=_opening_balance,
             )
             # Build a friendly filename: Statement_<CustomerName>_<YYYY-MM-DD>.pdf
             _safe_cust = "".join(c if c.isalnum() or c in "_- " else "_" for c in (customer.get("name") or "Customer")).strip().replace(" ", "_")[:50]
@@ -3752,7 +3766,8 @@ def render_document_pdf(doc_type: str, doc: dict, business: dict, party: dict = 
 
 
 def render_statement_pdf(customer: dict, business: dict, transactions: list,
-                          aging: dict, final_balance: float, stmt_date: str = None) -> bytes:
+                          aging: dict, final_balance: float, stmt_date: str = None,
+                          opening_balance: float = 0.0) -> bytes:
     """
     Render a professional PDF customer statement of account.
     
@@ -3890,7 +3905,17 @@ def render_statement_pdf(customer: dict, business: dict, transactions: list,
     # Header row
     ledger_data = [["Date", "Type", "Reference", "Debit", "Credit", "Balance"]]
     
-    running = 0.0
+    running = float(opening_balance or 0)
+    if abs(running) > 0.005:
+        _pstart = (stmt_date or "")[:7] + "-01" if (stmt_date or "")[:7] else "-"
+        ledger_data.append([
+            _pstart,
+            "Opening Balance",
+            "-",
+            "-",
+            "-",
+            _money(running),
+        ])
     for t in transactions:
         running += float(t.get("debit", 0) or 0) - float(t.get("credit", 0) or 0)
         debit_disp = _money(t["debit"]) if t.get("debit") else "-"
@@ -33932,6 +33957,26 @@ def _statement_asat(month_param: str = "", default_current: bool = False):
     return month_str, asat
 
 
+def _statement_split_opening(transactions, asat):
+    """Roll every transaction dated before the 1st of the statement month into a
+    single opening balance. Returns (opening_balance, current_month_transactions,
+    period_start). `transactions` must already be sorted and closed at `asat`.
+    When asat is missing/invalid, nothing is rolled up."""
+    _a = (asat or "")[:10]
+    if len(_a) < 7:
+        return 0.0, list(transactions), ""
+    period_start = _a[:7] + "-01"
+    opening_balance = 0.0
+    current = []
+    for t in transactions:
+        d = (t.get("date") or "")[:10]
+        if d < period_start:
+            opening_balance += float(t.get("debit", 0) or 0) - float(t.get("credit", 0) or 0)
+        else:
+            current.append(t)
+    return opening_balance, current, period_start
+
+
 def _statement_month_options(selected_month: str, count: int = 18) -> str:
     """Build <option> tags for the statement month picker (most recent first)."""
     import datetime as _dtm
@@ -34108,10 +34153,23 @@ def customer_statement(customer_id):
     transactions = sorted(transactions, key=lambda x: x.get("date", ""))
     # Close the statement at the selected month-end — exclude anything later
     transactions = [t for t in transactions if (t.get("date") or "")[:10] <= _asat]
+    # Roll everything before the 1st of the statement month into an opening balance
+    _opening_balance, transactions, _period_start = _statement_split_opening(transactions, _asat)
     
     # Calculate running balance
-    running_balance = 0
+    running_balance = _opening_balance
     rows = ""
+    if abs(_opening_balance) > 0.005:
+        rows += f'''
+        <tr>
+            <td>{_period_start or "-"}</td>
+            <td><strong>Opening Balance</strong></td>
+            <td>-</td>
+            <td style="text-align:right;">-</td>
+            <td style="text-align:right;color:var(--green);">-</td>
+            <td style="text-align:right;{"color:var(--red);" if running_balance > 0 else ""}">{money(running_balance)}</td>
+        </tr>
+        '''
     for t in transactions:
         running_balance += t["debit"] - t["credit"]
         _ref_display = t["reference"] or "-"
@@ -34661,8 +34719,20 @@ def customer_statement_print(customer_id):
     transactions = [t for t in transactions if (t.get("date") or "")[:10] <= _asat]
     
     # Calculate running balance and build rows
-    running_balance = 0
+    _opening_balance, transactions, _period_start = _statement_split_opening(transactions, _asat)
+    running_balance = _opening_balance
     rows_html = ""
+    if abs(_opening_balance) > 0.005:
+        rows_html += f'''
+        <tr>
+            <td class="date-cell">{_period_start or "-"}</td>
+            <td class="type-cell"><strong>Opening Balance</strong></td>
+            <td class="ref-cell">-</td>
+            <td class="amt-cell">-</td>
+            <td class="amt-cell credit-amt">-</td>
+            <td class="amt-cell bal-cell">{money(_opening_balance)}</td>
+        </tr>
+        '''
     for t in transactions:
         running_balance += t["debit"] - t["credit"]
         _style = ' style="color:#9ca3af;"' if t.get("void") else ''
@@ -35212,8 +35282,20 @@ def _build_statement_body_for_print(customer, business, biz_id, _asat):
     transactions = [t for t in transactions if (t.get("date") or "")[:10] <= _asat]
 
     # Calculate running balance and build rows
-    running_balance = 0
+    _opening_balance, transactions, _period_start = _statement_split_opening(transactions, _asat)
+    running_balance = _opening_balance
     rows_html = ""
+    if abs(_opening_balance) > 0.005:
+        rows_html += f'''
+        <tr>
+            <td class="date-cell">{_period_start or "-"}</td>
+            <td class="type-cell"><strong>Opening Balance</strong></td>
+            <td class="ref-cell">-</td>
+            <td class="amt-cell">-</td>
+            <td class="amt-cell credit-amt">-</td>
+            <td class="amt-cell bal-cell">{money(_opening_balance)}</td>
+        </tr>
+        '''
     for t in transactions:
         running_balance += t["debit"] - t["credit"]
         _style = ' style="color:#9ca3af;"' if t.get("void") else ''
