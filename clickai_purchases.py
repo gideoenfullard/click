@@ -802,6 +802,7 @@ def register_purchases_routes(app, db, login_required, Auth, render_page,
                 <a href="/supplier/{supplier_id}/edit" class="btn btn-secondary">✏️ Edit</a>
                 <a href="/purchase/new?supplier_id={supplier_id}" class="btn btn-secondary">New PO</a>
                 <a href="/ledger?q={safe_string(supplier.get('name', ''))}" class="btn btn-secondary" style="font-size:12px;">GL Trail</a>
+                <a href="/supplier-statement/{supplier_id}/print" class="btn btn-secondary">Statement</a>
                 <a href="/supplier-return/new?supplier_id={supplier_id}&mode=discount" class="btn btn-secondary">↩️ Discount Credit</a>
                 <button class="btn btn-primary" onclick="openCaptureInvoice()">📄 Capture Invoice</button>
                 {payment_button}
@@ -5584,170 +5585,138 @@ Nothing else."""
         '''
         return render_page("Remittance Advice", content, user, "suppliers")
 
-    @app.route("/supplier-statements/print")
-    @login_required
-    def supplier_statements_print():
-        """Bulk printable supplier statements — one statement per supplier with
-        an outstanding balance, each on its own page. Sage-style layout:
-        FROM/TO header, a Brought Forward line (all OPENING-* entries summed),
-        the transaction ledger, and an aging block at the foot.
-        Print only — no email."""
-        user = Auth.get_current_user()
-        business = Auth.get_current_business()
-        biz_id = business.get("id") if business else None
-        if not biz_id:
-            return redirect("/suppliers")
-        
-        # Business (FROM) details
+    # ── Supplier statement helpers (month-based opening balance + aging) ──
+    def _supplier_statement_period(month_param):
+        """Resolve a supplier statement month to (month_str 'YYYY-MM',
+        period_start 'YYYY-MM-01', asat last-day-of-month). Defaults to the
+        CURRENT month when month_param is blank/invalid."""
+        import clickai as _main
+        month_str, asat = _main._statement_asat(month_param or "", default_current=True)
+        return month_str, month_str + "-01", asat
+
+    def _build_supplier_statement_block(business, sup, s_invoices, s_payments, s_cns, period_start, asat):
+        """Build ONE supplier's printable statement page: FROM/TO header, an
+        Opening Balance line (net of everything before the 1st of the month),
+        that month's transactions, and an aging block (each outstanding invoice
+        aged by its term-derived due date vs the month-end). Returns
+        (block_html, amount_due)."""
+        sup_name = sup.get("name", "")
+
         biz_name = business.get("business_name") or business.get("name", "Business")
         biz_vat = business.get("vat_number", "") or ""
         biz_addr = safe_string(business.get("address", "") or "").replace("\n", "<br>")
         biz_phone = business.get("phone", "") or ""
-        
-        # Load all data once
-        suppliers = db.get("suppliers", {"business_id": biz_id}) or []
-        all_sinvoices = db.get("supplier_invoices", {"business_id": biz_id}) or []
-        all_payments = db.get("supplier_payments", {"business_id": biz_id}) or []
-        all_cns = db.get("supplier_credit_notes", {"business_id": biz_id}) or []
-        
-        today_str = today()
-        
-        def _is_opening(ref):
-            return (ref or "").upper().startswith("OPENING-")
-        
-        # Build one statement block per supplier with a balance
-        statements_html = ""
-        statement_count = 0
-        
-        for sup in sorted(suppliers, key=lambda x: (x.get("name") or "").upper()):
-            sup_id = sup.get("id", "")
-            sup_name = sup.get("name", "")
-            sup_name_upper = sup_name.upper().strip()
-            
-            # This supplier's documents
-            s_invoices = [si for si in all_sinvoices if si.get("supplier_id") == sup_id]
-            s_payments = [p for p in all_payments if
-                          p.get("supplier_id") == sup_id or
-                          (not p.get("supplier_id") and sup_name_upper and
-                           (p.get("supplier_name") or "").upper().strip() == sup_name_upper)]
-            s_cns = [c for c in all_cns if c.get("supplier_id") == sup_id
-                     and (c.get("status") or "active") == "active"]
-            
-            # ── Build ledger items (same logic as supplier_view) ──
-            ledger = []
-            for si in s_invoices:
-                if si.get("status") == "cancelled":
-                    continue
-                ledger.append({
-                    "date": si.get("date", ""),
-                    "type": "Invoice",
-                    "reference": si.get("invoice_number", "-"),
-                    "debit": 0.0,
-                    "credit": float(si.get("total", 0) or 0),
-                })
-            for p in s_payments:
-                ledger.append({
-                    "date": p.get("date", ""),
-                    "type": "Payment",
-                    "reference": p.get("reference", "") or p.get("payment_number", "-"),
-                    "debit": float(p.get("amount", 0) or 0),
-                    "credit": 0.0,
-                })
-            for c in s_cns:
-                ledger.append({
-                    "date": c.get("date", ""),
-                    "type": "Credit Note",
-                    "reference": c.get("cn_number", "-"),
-                    "debit": float(c.get("total", 0) or 0),
-                    "credit": 0.0,
-                })
-            
-            # ── Separate OPENING-* entries into a single Brought Forward ──
-            bf_credit = 0.0   # opening invoices = we owe more
-            bf_debit = 0.0    # opening payments/CNs = we owe less
-            bf_date = ""
-            normal = []
-            for item in ledger:
-                if _is_opening(item["reference"]):
-                    bf_credit += item["credit"]
-                    bf_debit += item["debit"]
-                    if not bf_date or (item["date"] and item["date"] < bf_date):
-                        bf_date = item["date"]
-                else:
-                    normal.append(item)
-            
-            brought_forward = round(bf_credit - bf_debit, 2)
-            normal.sort(key=lambda x: x.get("date", ""))
-            
-            # ── Running balance + aging buckets ──
-            running = brought_forward
-            rows_html = ""
-            if abs(brought_forward) > 0.001:
-                rows_html += f'''
-                <tr>
-                    <td>{bf_date or "-"}</td>
-                    <td></td>
-                    <td><em>Brought Forward</em></td>
-                    <td style="text-align:right;">-</td>
-                    <td style="text-align:right;">-</td>
-                    <td style="text-align:right;font-weight:bold;">{money(running)}</td>
-                </tr>
-                '''
-            
-            for item in normal:
-                running = round(running + item["credit"] - item["debit"], 2)
-                rows_html += f'''
-                <tr>
-                    <td>{item["date"] or "-"}</td>
-                    <td>{safe_string(item["type"])}</td>
-                    <td>{safe_string(item["reference"])}</td>
-                    <td style="text-align:right;">{money(item["debit"]) if item["debit"] else "-"}</td>
-                    <td style="text-align:right;">{money(item["credit"]) if item["credit"] else "-"}</td>
-                    <td style="text-align:right;font-weight:bold;">{money(running)}</td>
-                </tr>
-                '''
-            
-            amount_due = running
-            # Skip suppliers with no outstanding balance
-            if amount_due <= 0.009:
+
+        # Ledger items: invoices = we owe (credit), payments + credit notes reduce (debit)
+        ledger = []
+        for si in s_invoices:
+            if si.get("status") == "cancelled":
                 continue
-            
-            # ── Aging buckets (by age of each outstanding item's date) ──
-            # Simple approach: bucket the running outstanding by document date.
-            buckets = {"current": 0.0, "d30": 0.0, "d60": 0.0, "d90": 0.0, "d120": 0.0}
+            ledger.append({
+                "date": si.get("date", ""),
+                "type": "Invoice",
+                "reference": si.get("invoice_number", "-"),
+                "debit": 0.0,
+                "credit": float(si.get("total", 0) or 0),
+            })
+        for p in s_payments:
+            ledger.append({
+                "date": p.get("date", ""),
+                "type": "Payment",
+                "reference": p.get("reference", "") or p.get("payment_number", "-"),
+                "debit": float(p.get("amount", 0) or 0),
+                "credit": 0.0,
+            })
+        for c in s_cns:
+            ledger.append({
+                "date": c.get("date", ""),
+                "type": "Credit Note",
+                "reference": c.get("cn_number", "-"),
+                "debit": float(c.get("total", 0) or 0),
+                "credit": 0.0,
+            })
+
+        ledger.sort(key=lambda x: x.get("date", ""))
+        # Close the statement at the selected month-end
+        ledger = [it for it in ledger if (it.get("date") or "")[:10] <= asat]
+
+        # Opening balance = net of everything dated before the 1st of the month
+        opening_balance = 0.0
+        current = []
+        for it in ledger:
+            if (it.get("date") or "")[:10] < period_start:
+                opening_balance += it["credit"] - it["debit"]
+            else:
+                current.append(it)
+        opening_balance = round(opening_balance, 2)
+
+        running = opening_balance
+        rows_html = ""
+        if abs(opening_balance) > 0.005:
+            rows_html += f'''
+                <tr>
+                    <td>{period_start}</td>
+                    <td></td>
+                    <td><em>Opening Balance</em></td>
+                    <td style="text-align:right;">-</td>
+                    <td style="text-align:right;">-</td>
+                    <td style="text-align:right;font-weight:bold;">{money(running)}</td>
+                </tr>'''
+        for it in current:
+            running = round(running + it["credit"] - it["debit"], 2)
+            rows_html += f'''
+                <tr>
+                    <td>{it["date"] or "-"}</td>
+                    <td>{safe_string(it["type"])}</td>
+                    <td>{safe_string(it["reference"])}</td>
+                    <td style="text-align:right;">{money(it["debit"]) if it["debit"] else "-"}</td>
+                    <td style="text-align:right;">{money(it["credit"]) if it["credit"] else "-"}</td>
+                    <td style="text-align:right;font-weight:bold;">{money(running)}</td>
+                </tr>'''
+        amount_due = running
+
+        # Aging: each outstanding invoice aged by its term due date vs the month-end
+        buckets = {"current": 0.0, "d30": 0.0, "d60": 0.0, "d90": 0.0, "d120": 0.0}
+        try:
+            asat_d = datetime.strptime(asat, "%Y-%m-%d").date()
+        except Exception:
+            asat_d = datetime.now().date()
+        for si in s_invoices:
+            if si.get("status") == "cancelled":
+                continue
+            if (si.get("date") or "")[:10] > asat:
+                continue
             try:
-                today_d = datetime.strptime(today_str, "%Y-%m-%d").date()
+                outstanding = round(float(si.get("total", 0) or 0) - float(si.get("amount_paid", 0) or 0), 2)
             except Exception:
-                today_d = datetime.now().date()
-            # Net each document into buckets (credit = owed, debit = reduces)
-            for item in normal:
-                net = item["credit"] - item["debit"]
-                if abs(net) < 0.001:
-                    continue
-                try:
-                    d = datetime.strptime((item["date"] or today_str)[:10], "%Y-%m-%d").date()
-                    age = (today_d - d).days
-                except Exception:
-                    age = 0
-                if age <= 30:
-                    buckets["current"] += net
-                elif age <= 60:
-                    buckets["d30"] += net
-                elif age <= 90:
-                    buckets["d60"] += net
-                elif age <= 120:
-                    buckets["d90"] += net
-                else:
-                    buckets["d120"] += net
-            # Brought forward goes into the oldest bucket
-            buckets["d120"] += brought_forward
-            
-            statement_count += 1
-            sup_vat = sup.get("vat_number", "") or ""
-            sup_addr = safe_string(sup.get("address", "") or "").replace("\n", "<br>")
-            sup_terms = sup.get("payment_terms", "") or ""
-            
-            statements_html += f'''
+                outstanding = 0.0
+            if outstanding <= 0.01:
+                continue
+            age_ref = (si.get("due_date") or si.get("date") or "")[:10]
+            try:
+                age = (asat_d - datetime.strptime(age_ref, "%Y-%m-%d").date()).days
+            except Exception:
+                age = 0
+            if age <= 30:
+                buckets["current"] += outstanding
+            elif age <= 60:
+                buckets["d30"] += outstanding
+            elif age <= 90:
+                buckets["d60"] += outstanding
+            elif age <= 120:
+                buckets["d90"] += outstanding
+            else:
+                buckets["d120"] += outstanding
+
+        sup_vat = sup.get("vat_number", "") or ""
+        sup_addr = safe_string(sup.get("address", "") or "").replace("\n", "<br>")
+        sup_terms = sup.get("payment_terms", "") or ""
+        try:
+            _mlabel = datetime.strptime(period_start, "%Y-%m-%d").strftime("%B %Y")
+        except Exception:
+            _mlabel = period_start[:7]
+
+        block = f'''
             <div class="stmt-page">
                 <div style="display:flex;justify-content:space-between;margin-bottom:16px;">
                     <div style="width:48%;">
@@ -5765,10 +5734,8 @@ Nothing else."""
                         <div style="font-size:11px;color:#444;">{("Terms: " + safe_string(sup_terms)) if sup_terms else ""}</div>
                     </div>
                 </div>
-                
                 <div style="text-align:center;font-weight:bold;font-size:15px;margin-bottom:4px;">STATEMENT OF ACCOUNT</div>
-                <div style="text-align:center;font-size:11px;color:#666;margin-bottom:12px;">As at {today_str}</div>
-                
+                <div style="text-align:center;font-size:11px;color:#666;margin-bottom:12px;">{_mlabel} &middot; As at {asat}</div>
                 <table style="width:100%;border-collapse:collapse;font-size:11px;">
                     <thead>
                         <tr style="border-bottom:2px solid #333;">
@@ -5784,7 +5751,6 @@ Nothing else."""
                         {rows_html or '<tr><td colspan="6" style="text-align:center;color:#888;padding:10px;">No transactions</td></tr>'}
                     </tbody>
                 </table>
-                
                 <table style="width:100%;border-collapse:collapse;font-size:11px;margin-top:16px;border-top:2px solid #333;">
                     <thead>
                         <tr>
@@ -5807,11 +5773,63 @@ Nothing else."""
                         </tr>
                     </tbody>
                 </table>
-            </div>
-            '''
+            </div>'''
+        return block, amount_due
+
+
+    @app.route("/supplier-statements/print")
+    @login_required
+    def supplier_statements_print():
+        """Bulk printable supplier statements — one statement per supplier with
+        an outstanding balance, each on its own page. Sage-style layout:
+        FROM/TO header, an Opening Balance line (everything before the 1st of the
+        month), the month's transactions, and an aging block at the foot.
+        ?month=YYYY-MM opens any past month (default: current month). Print only."""
+        user = Auth.get_current_user()
+        business = Auth.get_current_business()
+        biz_id = business.get("id") if business else None
+        if not biz_id:
+            return redirect("/suppliers")
         
+        # Load all data once
+        suppliers = db.get("suppliers", {"business_id": biz_id}) or []
+        all_sinvoices = db.get("supplier_invoices", {"business_id": biz_id}) or []
+        all_payments = db.get("supplier_payments", {"business_id": biz_id}) or []
+        all_cns = db.get("supplier_credit_notes", {"business_id": biz_id}) or []
+        
+        _stmt_month, _period_start, _asat = _supplier_statement_period(request.args.get("month"))
+
+        # Build one statement block per supplier with an outstanding balance
+        statements_html = ""
+        statement_count = 0
+
+        for sup in sorted(suppliers, key=lambda x: (x.get("name") or "").upper()):
+            sup_id = sup.get("id", "")
+            sup_name_upper = (sup.get("name") or "").upper().strip()
+
+            s_invoices = [si for si in all_sinvoices if si.get("supplier_id") == sup_id]
+            s_payments = [p for p in all_payments if
+                          p.get("supplier_id") == sup_id or
+                          (not p.get("supplier_id") and sup_name_upper and
+                           (p.get("supplier_name") or "").upper().strip() == sup_name_upper)]
+            s_cns = [c for c in all_cns if c.get("supplier_id") == sup_id
+                     and (c.get("status") or "active") == "active"]
+
+            block, amount_due = _build_supplier_statement_block(
+                business, sup, s_invoices, s_payments, s_cns, _period_start, _asat)
+
+            # Skip suppliers with no outstanding balance for this period
+            if amount_due <= 0.009:
+                continue
+
+            statement_count += 1
+            statements_html += block
+
         if statement_count == 0:
             statements_html = '<div style="text-align:center;padding:40px;color:#888;">No suppliers with an outstanding balance.</div>'
+        
+        import clickai as _main
+        _month_options = _main._statement_month_options(_stmt_month)
         
         content = f'''
         <style>
@@ -5828,8 +5846,9 @@ Nothing else."""
         </style>
         <div class="no-print" style="display:flex;justify-content:space-between;align-items:center;margin-bottom:20px;">
             <a href="/suppliers" style="color:var(--text-muted);">← Back to Suppliers</a>
-            <div>
-                <span style="color:var(--text-muted);font-size:13px;margin-right:12px;">{statement_count} statement(s)</span>
+            <div style="display:flex;align-items:center;gap:10px;">
+                <select onchange="if(this.value)window.location='/supplier-statements/print?month='+this.value;" style="padding:6px 10px;border-radius:6px;border:1px solid var(--border);background:var(--card);color:var(--text);">{_month_options}</select>
+                <span style="color:var(--text-muted);font-size:13px;">{statement_count} statement(s)</span>
                 <button class="btn btn-secondary" onclick="window.print();">🖨️ Print All</button>
             </div>
         </div>
@@ -5838,6 +5857,70 @@ Nothing else."""
         </div>
         '''
         return render_page("Supplier Statements", content, user, "suppliers")
+
+    @app.route("/supplier-statement/<supplier_id>/print")
+    @login_required
+    def supplier_statement_print(supplier_id):
+        """Printable statement of account for ONE supplier: opening balance on the
+        1st of the selected month, that month's transactions, and an aging block.
+        ?month=YYYY-MM opens any past month (default: current month)."""
+        user = Auth.get_current_user()
+        business = Auth.get_current_business()
+        biz_id = business.get("id") if business else None
+        if not biz_id:
+            return redirect("/suppliers")
+
+        supplier = db.get_one("suppliers", supplier_id)
+        if not supplier:
+            return redirect("/suppliers")
+
+        _stmt_month, _period_start, _asat = _supplier_statement_period(request.args.get("month"))
+
+        sup_name_upper = (supplier.get("name") or "").upper().strip()
+        all_sinvoices = db.get("supplier_invoices", {"business_id": biz_id}) or []
+        all_payments = db.get("supplier_payments", {"business_id": biz_id}) or []
+        all_cns = db.get("supplier_credit_notes", {"business_id": biz_id}) or []
+
+        s_invoices = [si for si in all_sinvoices if si.get("supplier_id") == supplier_id]
+        s_payments = [p for p in all_payments if
+                      p.get("supplier_id") == supplier_id or
+                      (not p.get("supplier_id") and sup_name_upper and
+                       (p.get("supplier_name") or "").upper().strip() == sup_name_upper)]
+        s_cns = [c for c in all_cns if c.get("supplier_id") == supplier_id
+                 and (c.get("status") or "active") == "active"]
+
+        block, amount_due = _build_supplier_statement_block(
+            business, supplier, s_invoices, s_payments, s_cns, _period_start, _asat)
+
+        import clickai as _main
+        _month_options = _main._statement_month_options(_stmt_month)
+
+        content = f'''
+        <style>
+            @media print {{
+                .no-print {{ display: none !important; }}
+                nav, header, .header, .header-top, .nav-wrapper, .nav, .mobile-nav, .nav-tap-hint, .sidebar, .j-hero, .j-hud-wrap, .j-hud-pad, .j-tl {{ display: none !important; }}
+                body {{ background: white !important; color: black !important; }}
+                #printArea {{ display: block !important; }}
+                .stmt-page {{ page-break-after: always; }}
+                .stmt-page:last-child {{ page-break-after: auto; }}
+                @page {{ size: A4; margin: 14mm; }}
+            }}
+            .stmt-page {{ background:white; color:#333; padding:20px; margin:0 auto 30px; max-width:760px; border:1px solid #ddd; }}
+        </style>
+        <div class="no-print" style="display:flex;justify-content:space-between;align-items:center;margin-bottom:20px;">
+            <a href="/supplier/{supplier_id}" style="color:var(--text-muted);">&larr; Back to Supplier</a>
+            <div style="display:flex;align-items:center;gap:10px;">
+                <select onchange="if(this.value)window.location='/supplier-statement/{supplier_id}/print?month='+this.value;" style="padding:6px 10px;border-radius:6px;border:1px solid var(--border);background:var(--card);color:var(--text);">{_month_options}</select>
+                <button class="btn btn-secondary" onclick="window.print();">Print</button>
+            </div>
+        </div>
+        <div id="printArea">
+            {block}
+        </div>
+        '''
+        return render_page("Supplier Statement", content, user, "suppliers")
+
 
     @app.route("/supplier-return/new")
     @login_required
