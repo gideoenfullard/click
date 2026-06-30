@@ -21429,6 +21429,14 @@ select.form-input optgroup {
         overflow: visible !important;
         height: auto !important;
     }
+
+    /* Blank trailing page fix: body has min-height:100vh, which height:auto
+       does NOT override (min-height is a separate property), forcing a full
+       blank page on every print. Collapse min-height on the shell containers. */
+    html, body, .container, .main-scroll, main,
+    .nav-wrapper, #appRoot, .app-shell, .screen, .page-wrap, #mainScroll {
+        min-height: 0 !important;
+    }
     
     /* Remove dark theme */
     :root {
