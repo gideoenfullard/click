@@ -1254,7 +1254,7 @@ def register_payroll_routes(app, db, login_required, Auth, render_page,
                 body * {{ visibility: hidden !important; }}
                 .print-area, .print-area * {{ visibility: visible !important; }}
                 .print-area .print-only {{ display: block !important; }}
-                .print-area {{ position: absolute; left: 0; top: -15mm; width: 100%; }}
+                .print-area {{ position: absolute; left: 0; top: 0; width: 100%; }}
             }}
         </style>
         <div class="no-print" style="display:flex;justify-content:space-between;align-items:center;margin-bottom:15px;">
@@ -2389,7 +2389,7 @@ def register_payroll_routes(app, db, login_required, Auth, render_page,
                 body * {{ visibility: hidden !important; }}
                 .print-area, .print-area * {{ visibility: visible !important; }}
                 .print-area .print-only {{ display: block !important; }}
-                .print-area {{ position: absolute; left: 0; top: -15mm; width: 100%; }}
+                .print-area {{ position: absolute; left: 0; top: 0; width: 100%; }}
             }}
         </style>
         
