@@ -1,0 +1,196 @@
+--- /mnt/user-data/uploads/clickai_payroll.py	2026-06-30 10:42:08.655230000 +0000
++++ /mnt/user-data/outputs/clickai_payroll.py	2026-06-30 11:14:26.137993967 +0000
+@@ -335,6 +335,10 @@
+                 other_allowance = float(request.form.get("other_allowance", 0) or 0)
+             except:
+                 other_allowance = 0
++            try:
++                non_taxable_allowance = float(request.form.get("non_taxable_allowance", 0) or 0)
++            except:
++                non_taxable_allowance = 0
+             
+             # Deductions
+             try:
+@@ -447,6 +451,7 @@
+                 employee["rma_funeral"] = rma_funeral
+                 employee["sick_fund"] = sick_fund
+                 employee["council_levy"] = council_levy
++                employee["non_taxable_allowance"] = non_taxable_allowance
+                 employee["employee_code"] = request.form.get("employee_code", "").strip()
+                 employee["leave_balance"] = safe_float(request.form.get("leave_balance", 0))
+                 emp_id = employee["id"]
+@@ -550,6 +555,14 @@
+                         <input type="number" name="other_allowance" step="0.01" value="0" style="width:100%;padding:10px;border-radius:6px;border:1px solid var(--border);background:var(--card);color:var(--text);">
+                     </div>
+                 </div>
++                <div style="display:grid;grid-template-columns:1fr 1fr;gap:15px;margin-bottom:15px;">
++                    <div>
++                        <label style="display:block;margin-bottom:5px;font-weight:500;">Non-Taxable Allowance (R)</label>
++                        <input type="number" name="non_taxable_allowance" step="0.01" value="0" style="width:100%;padding:10px;border-radius:6px;border:1px solid var(--border);background:var(--card);color:var(--text);">
++                        <small style="color:var(--text-muted);font-size:11px;">Paid out but excluded from PAYE, UIF, SDL and COIDA</small>
++                    </div>
++                    <div></div>
++                </div>
+                 
+                 <h3 style="margin:25px 0 15px 0;padding-top:15px;border-top:1px solid var(--border);color:var(--text-muted);font-size:14px;">DEDUCTIONS</h3>
+                 <div style="display:grid;grid-template-columns:1fr 1fr;gap:15px;margin-bottom:15px;">
+@@ -810,7 +823,8 @@
+                 council_levy = safe_float(emp.get("council_levy", 0))
+                 
+                 other_allow = safe_float(emp.get("other_allowance", 0))
+-                gross = basic + travel + other_allow
++                non_taxable_allow = safe_float(emp.get("non_taxable_allowance", 0))
++                gross = basic + travel + other_allow + non_taxable_allow
+                 
+                 # PAYE — SARS 2026/27 (Section 11F retirement deduction +
+                 # Section 6A medical credit + 80% travel inclusion inside the helper).
+@@ -852,6 +866,7 @@
+                     "gross": round(gross, 2),
+                     "travel_allowance": round(travel, 2),
+                     "other_allowance": round(other_allow, 2),
++                    "non_taxable_allowance": round(non_taxable_allow, 2),
+                     "paye": round(paye, 2),
+                     "uif": round(uif, 2),
+                     "uif_employee": round(uif, 2),
+@@ -969,8 +984,9 @@
+             rma_funeral = safe_float(emp.get("rma_funeral", 0))
+             other = safe_float(emp.get("loan_deduction", 0)) + safe_float(emp.get("other_deduction", 0))
+             other_allow = safe_float(emp.get("other_allowance", 0))
++            non_taxable_allow = safe_float(emp.get("non_taxable_allowance", 0))
+             
+-            gross = basic + travel + other_allow
++            gross = basic + travel + other_allow + non_taxable_allow
+ 
+             # PAYE — SARS 2026/27 (Section 11F retirement deduction +
+             # Section 6A medical credit + 80% travel inclusion inside the helper).
+@@ -1108,7 +1124,8 @@
+         pension_employer = safe_float(emp.get("pension_employer", 0))
+         
+         other_allow = safe_float(emp.get("other_allowance", 0))
+-        gross = basic + travel + other_allow
++        non_taxable_allow = safe_float(emp.get("non_taxable_allowance", 0))
++        gross = basic + travel + other_allow + non_taxable_allow
+         
+         # PAYE — SARS 2026/27 (Section 11F retirement deduction +
+         # Section 6A medical credit + 80% travel inclusion inside the helper).
+@@ -1327,6 +1344,7 @@
+                         {f'<tr style="border-bottom:1px solid #eee;"><td style="padding:6px 0;color:#666;">Hours Off / Late ({hours_off:g} hrs)</td><td style="padding:6px 0;text-align:right;color:#ef4444;">-{money(hours_off_amount)}</td></tr>' if hours_off_amount > 0 else ''}
+                         {f'<tr style="border-bottom:1px solid #eee;"><td style="padding:6px 0;color:#666;">Travel Allowance</td><td style="padding:6px 0;text-align:right;color:#333;">{money(travel)}</td></tr>' if travel > 0 else ''}
+                         {f'<tr style="border-bottom:1px solid #eee;"><td style="padding:6px 0;color:#666;">Other Allowance</td><td style="padding:6px 0;text-align:right;color:#333;">{money(other_allow)}</td></tr>' if other_allow > 0 else ''}
++                        {f'<tr style="border-bottom:1px solid #eee;"><td style="padding:6px 0;color:#666;">Non-Taxable Allowance</td><td style="padding:6px 0;text-align:right;color:#333;">{money(non_taxable_allow)}</td></tr>' if non_taxable_allow > 0 else ''}
+                         <tr style="border-bottom:2px solid #333;background:#f9f9f9;">
+                             <td style="padding:7px 0;color:#333;font-weight:bold;">TOTAL EARNINGS</td>
+                             <td style="padding:7px 0;text-align:right;color:#333;font-weight:bold;">{money(gross)}</td>
+@@ -1426,7 +1444,8 @@
+         council_levy = safe_float(emp.get("council_levy", 0))
+         
+         other_allow = safe_float(emp.get("other_allowance", 0))
+-        gross = basic + travel + other_allow
++        non_taxable_allow = safe_float(emp.get("non_taxable_allowance", 0))
++        gross = basic + travel + other_allow + non_taxable_allow
+ 
+         # PAYE — SARS 2026/27 (Section 11F retirement deduction +
+         # Section 6A medical credit + 80% travel inclusion inside the helper).
+@@ -1465,6 +1484,7 @@
+             "gross": round(gross, 2),
+             "travel_allowance": round(travel, 2),
+             "other_allowance": round(other_allow, 2),
++            "non_taxable_allowance": round(non_taxable_allow, 2),
+             "paye": round(paye, 2),
+             "uif": round(uif, 2),
+             "uif_employee": round(uif, 2),
+@@ -1619,6 +1639,7 @@
+             employee_data = employees_data[i] if i < len(employees_data) else {"days": days}
+             result = build_payslip_gross(emp, employee_data, pay_month, business=business)
+             gross = safe_float(result.get("gross", 0))
++            non_taxable_allow = safe_float(emp.get("non_taxable_allowance", 0))
+             if gross <= 0:
+                 skipped += 1
+                 continue
+@@ -1642,9 +1663,9 @@
+             coida = gross * 0.01
+ 
+             total_ded = paye + uif + medical + union_fees + pension + provident + loan + other_ded
+-            net = gross - total_ded
++            net = (gross + non_taxable_allow) - total_ded
+             total_employer = uif_employer + sdl + coida + pension_employer
+-            total_cost = gross + total_employer
++            total_cost = gross + non_taxable_allow + total_employer
+ 
+             payslip_id = generate_id()
+             payslip = {
+@@ -1655,7 +1676,8 @@
+                 "date": pay_date,
+                 "period": pay_month,
+                 "basic": round(gross, 2),
+-                "gross": round(gross, 2),
++                "gross": round(gross + non_taxable_allow, 2),
++                "non_taxable_allowance": round(non_taxable_allow, 2),
+                 "hours_worked": round(safe_float(result.get("normal_hours", 0)), 2),
+                 "overtime_hours": round(safe_float(result.get("overtime_hours", 0)), 2),
+                 "paye": round(paye, 2),
+@@ -1912,6 +1934,7 @@
+             
+             travel_allowance = safe_float(request.form.get("travel_allowance", 0))
+             other_allowance = safe_float(request.form.get("other_allowance", 0))
++            non_taxable_allowance = safe_float(request.form.get("non_taxable_allowance", 0))
+             
+             medical_aid = safe_float(request.form.get("medical_aid", 0))
+             union_fees = safe_float(request.form.get("union_fees", 0))
+@@ -1957,6 +1980,7 @@
+                 "hourly_rate": hourly_rate,
+                 "travel_allowance": travel_allowance,
+                 "other_allowance": other_allowance,
++                "non_taxable_allowance": non_taxable_allowance,
+                 "medical_aid": medical_aid,
+                 "medical_members": int(safe_float(request.form.get("medical_members", 0))),
+                 "union_fees": union_fees,
+@@ -2061,6 +2085,14 @@
+                         <input type="number" name="other_allowance" step="0.01" value="{safe_float(employee.get('other_allowance', 0))}" style="width:100%;padding:10px;border-radius:6px;border:1px solid var(--border);background:var(--card);color:var(--text);">
+                     </div>
+                 </div>
++                <div style="display:grid;grid-template-columns:1fr 1fr;gap:15px;margin-bottom:15px;">
++                    <div>
++                        <label style="display:block;margin-bottom:5px;font-weight:500;">Non-Taxable Allowance (R)</label>
++                        <input type="number" name="non_taxable_allowance" step="0.01" value="{safe_float(employee.get('non_taxable_allowance', 0))}" style="width:100%;padding:10px;border-radius:6px;border:1px solid var(--border);background:var(--card);color:var(--text);">
++                        <small style="color:var(--text-muted);font-size:11px;">Paid out but excluded from PAYE, UIF, SDL and COIDA</small>
++                    </div>
++                    <div></div>
++                </div>
+                 
+                 <h3 style="margin:25px 0 15px 0;padding-top:15px;border-top:1px solid var(--border);color:var(--text-muted);font-size:14px;">DEDUCTIONS</h3>
+                 <div style="display:grid;grid-template-columns:repeat(auto-fit, minmax(150px, 1fr));gap:15px;margin-bottom:15px;">
+@@ -2245,6 +2277,7 @@
+         gross = safe_float(payslip.get("gross", 0)) or basic
+         travel = safe_float(payslip.get("travel_allowance", 0))
+         other_allow = safe_float(payslip.get("other_allowance", 0))
++        non_taxable_allow = safe_float(payslip.get("non_taxable_allowance", 0))
+ 
+         # Earnings rows: hourly workers (hours stored on the payslip) show a
+         # Wages line with hours x rate; salaried workers show Basic Salary.
+@@ -2432,6 +2465,7 @@
+                         {earnings_rows}
+                         {f'<tr style="border-bottom:1px solid #eee;"><td style="padding:6px 0;color:#666;">Travel Allowance</td><td style="padding:6px 0;text-align:right;color:#333;">{money(travel)}</td></tr>' if travel > 0 else ''}
+                         {f'<tr style="border-bottom:1px solid #eee;"><td style="padding:6px 0;color:#666;">Other Allowance</td><td style="padding:6px 0;text-align:right;color:#333;">{money(other_allow)}</td></tr>' if other_allow > 0 else ''}
++                        {f'<tr style="border-bottom:1px solid #eee;"><td style="padding:6px 0;color:#666;">Non-Taxable Allowance</td><td style="padding:6px 0;text-align:right;color:#333;">{money(non_taxable_allow)}</td></tr>' if non_taxable_allow > 0 else ''}
+                         <tr style="border-bottom:2px solid #333;background:#f9f9f9;">
+                             <td style="padding:7px 0;color:#333;font-weight:bold;">TOTAL EARNINGS</td>
+                             <td style="padding:7px 0;text-align:right;color:#333;font-weight:bold;">{money(gross)}</td>
+@@ -2504,7 +2538,8 @@
+             basic = safe_float(request.form.get("basic", 0))
+             travel = safe_float(request.form.get("travel_allowance", 0))
+             other_allow = safe_float(payslip.get("other_allowance", 0))
+-            gross = safe_float(request.form.get("gross", 0)) or (basic + travel + other_allow)
++            non_taxable_allow = safe_float(payslip.get("non_taxable_allowance", 0))
++            gross = safe_float(request.form.get("gross", 0)) or (basic + travel + other_allow + non_taxable_allow)
+             paye = safe_float(request.form.get("paye", 0))
+             uif = safe_float(request.form.get("uif", 0))
+             medical = safe_float(request.form.get("medical_aid", 0))
+@@ -2522,6 +2557,7 @@
+                 "basic": basic,
+                 "travel_allowance": travel,
+                 "other_allowance": other_allow,
++                "non_taxable_allowance": non_taxable_allow,
+                 "gross": gross,
+                 "paye": paye,
+                 "uif": uif,
