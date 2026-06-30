@@ -2945,13 +2945,17 @@ def register_payroll_routes(app, db, login_required, Auth, render_page,
                 </select>
             </form>'''
 
+        print_all_btn = f'<a href="/payroll/payslips/print?month={selected}" class="btn btn-primary" target="_blank">🖨️ Print All</a>' if slips else ''
         content = f'''
         <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:20px;flex-wrap:wrap;gap:10px;">
             <div>
                 <h2 style="margin:0;">Payslips by Month</h2>
                 <p style="color:var(--text-muted);margin:5px 0 0 0;">All payslips for a selected pay-run</p>
             </div>
-            <a href="/payroll" class="btn btn-secondary">← Back to Payroll</a>
+            <div style="display:flex;gap:10px;">
+                {print_all_btn}
+                <a href="/payroll" class="btn btn-secondary">← Back to Payroll</a>
+            </div>
         </div>
 
         <div class="card" style="margin-bottom:20px;">
@@ -2979,5 +2983,216 @@ def register_payroll_routes(app, db, login_required, Auth, render_page,
         '''
 
         return render_page("Payslips by Month", content, user, "payroll")
+
+    def _payslip_print_card(payslip, business):
+        """Render one payslip as a print-ready Sage-style card (used by Print All).
+        Mirrors the single-payslip layout in payslip_view."""
+        biz_name = business.get("name", "Business") if business else "Business"
+        biz_addr = business.get("address", "") if business else ""
+        _emp = db.get_one("employees", payslip.get("employee_id")) if payslip.get("employee_id") else None
+        _emp = _emp or {}
+        fund_label = _industry_fund_label(_emp.get("provident_fund"))
+
+        basic = safe_float(payslip.get("basic", 0))
+        gross = safe_float(payslip.get("gross", 0)) or basic
+        travel = safe_float(payslip.get("travel_allowance", 0))
+        other_allow = safe_float(payslip.get("other_allowance", 0))
+        non_taxable_allow = safe_float(payslip.get("non_taxable_allowance", 0))
+
+        hours_worked = safe_float(payslip.get("hours_worked", 0))
+        overtime_hours = safe_float(payslip.get("overtime_hours", 0))
+        emp_rate = safe_float(_emp.get("hourly_rate", 0))
+        if hours_worked > 0 or overtime_hours > 0:
+            _wage = round(gross - travel - other_allow - non_taxable_allow, 2)
+            _norm_amt = round(hours_worked * emp_rate, 2)
+            _ot_amt = round(_wage - _norm_amt, 2)
+            earnings_rows = (f'<tr style="border-bottom:1px solid #eee;"><td style="padding:6px 0;color:#666;">'
+                             f'Wages ({hours_worked:.2f} hrs @ {money(emp_rate)}/h)</td>'
+                             f'<td style="padding:6px 0;text-align:right;color:#333;">{money(_norm_amt)}</td></tr>')
+            if _ot_amt > 0.005:
+                earnings_rows += (f'<tr style="border-bottom:1px solid #eee;"><td style="padding:6px 0;color:#666;">'
+                                  f'Overtime / premium ({overtime_hours:.2f} hrs)</td>'
+                                  f'<td style="padding:6px 0;text-align:right;color:#333;">{money(_ot_amt)}</td></tr>')
+        else:
+            earnings_rows = ('<tr style="border-bottom:1px solid #eee;"><td style="padding:6px 0;color:#666;">'
+                             f'Basic Salary</td><td style="padding:6px 0;text-align:right;color:#333;">{money(basic)}</td></tr>')
+
+        paye = safe_float(payslip.get("paye", 0))
+        uif = safe_float(payslip.get("uif", 0)) or safe_float(payslip.get("uif_employee", 0))
+        medical = safe_float(payslip.get("medical_aid", 0))
+        union_fees = safe_float(payslip.get("union_fees", 0))
+        pension = safe_float(payslip.get("pension", 0)) or safe_float(payslip.get("pension_employee", 0))
+        provident = safe_float(payslip.get("provident_fund", 0))
+        rma_funeral = safe_float(payslip.get("rma_funeral", 0))
+        loan = safe_float(payslip.get("loan_deduction", 0))
+        other_ded = safe_float(payslip.get("other_deduction", 0))
+        total_ded = paye + uif + medical + union_fees + pension + provident + loan + other_ded + rma_funeral
+        net = safe_float(payslip.get("net", 0)) or (gross - total_ded)
+
+        deduction_rows = (
+            f'<tr style="border-bottom:1px solid #eee;"><td style="padding:8px 0;color:#666;">PAYE (Tax)</td>'
+            f'<td style="padding:8px 0;text-align:right;color:#ef4444;">-{money(paye)}</td></tr>'
+            f'<tr style="border-bottom:1px solid #eee;"><td style="padding:8px 0;color:#666;">UIF (1%)</td>'
+            f'<td style="padding:8px 0;text-align:right;color:#ef4444;">-{money(uif)}</td></tr>'
+        )
+        if medical > 0:
+            deduction_rows += f'<tr style="border-bottom:1px solid #eee;"><td style="padding:8px 0;color:#666;">Medical Aid</td><td style="padding:8px 0;text-align:right;color:#ef4444;">-{money(medical)}</td></tr>'
+        if union_fees > 0:
+            deduction_rows += f'<tr style="border-bottom:1px solid #eee;"><td style="padding:8px 0;color:#666;">Union Fees</td><td style="padding:8px 0;text-align:right;color:#ef4444;">-{money(union_fees)}</td></tr>'
+        if pension > 0:
+            deduction_rows += f'<tr style="border-bottom:1px solid #eee;"><td style="padding:8px 0;color:#666;">{fund_label} (Employee)</td><td style="padding:8px 0;text-align:right;color:#ef4444;">-{money(pension)}</td></tr>'
+        if provident > 0:
+            deduction_rows += f'<tr style="border-bottom:1px solid #eee;"><td style="padding:8px 0;color:#666;">Provident Fund</td><td style="padding:8px 0;text-align:right;color:#ef4444;">-{money(provident)}</td></tr>'
+        if rma_funeral > 0:
+            deduction_rows += f'<tr style="border-bottom:1px solid #eee;"><td style="padding:8px 0;color:#666;">RMA Funeral Benefit</td><td style="padding:8px 0;text-align:right;color:#ef4444;">-{money(rma_funeral)}</td></tr>'
+        if loan > 0:
+            deduction_rows += f'<tr style="border-bottom:1px solid #eee;"><td style="padding:8px 0;color:#666;">Loan Repayment</td><td style="padding:8px 0;text-align:right;color:#ef4444;">-{money(loan)}</td></tr>'
+        if other_ded > 0:
+            deduction_rows += f'<tr style="border-bottom:1px solid #eee;"><td style="padding:8px 0;color:#666;">Other Deductions</td><td style="padding:8px 0;text-align:right;color:#ef4444;">-{money(other_ded)}</td></tr>'
+
+        emp_code = _emp.get("employee_code", "") or _emp.get("code", "") or "-"
+        emp_id_num = _emp.get("id_number", "-")
+        emp_position = _emp.get("position", "") or payslip.get("position", "")
+        emp_started = _emp.get("start_date", "") or _emp.get("employed_from", "") or "-"
+        leave_balance = safe_float(_emp.get("leave_balance", 0))
+
+        travel_row = f'<tr style="border-bottom:1px solid #eee;"><td style="padding:6px 0;color:#666;">Travel Allowance</td><td style="padding:6px 0;text-align:right;color:#333;">{money(travel)}</td></tr>' if travel > 0 else ''
+        other_row = f'<tr style="border-bottom:1px solid #eee;"><td style="padding:6px 0;color:#666;">Other Allowance</td><td style="padding:6px 0;text-align:right;color:#333;">{money(other_allow)}</td></tr>' if other_allow > 0 else ''
+        nontax_row = f'<tr style="border-bottom:1px solid #eee;"><td style="padding:6px 0;color:#666;">Non-Taxable Allowance</td><td style="padding:6px 0;text-align:right;color:#333;">{money(non_taxable_allow)}</td></tr>' if non_taxable_allow > 0 else ''
+
+        return f'''
+        <div class="payslip-sheet" style="background:white;color:#333;max-width:720px;margin:0 auto 24px;padding:30px;border:1px solid #ddd;border-radius:8px;">
+            <div style="display:flex;justify-content:space-between;margin-bottom:20px;padding-bottom:12px;border-bottom:2px solid #333;">
+                <div>
+                    <h2 style="color:#333;margin:0;font-size:17px;">{safe_string(biz_name)}</h2>
+                    <p style="color:#666;margin:4px 0 0;font-size:12px;">{safe_string(biz_addr)}</p>
+                </div>
+                <div style="text-align:right;">
+                    <h1 style="color:#333;margin:0;font-size:20px;">PAYSLIP</h1>
+                    <p style="color:#666;margin:4px 0 0;font-size:12px;">Pay Date: {payslip.get("date", "-")}</p>
+                </div>
+            </div>
+            <table style="width:100%;font-size:12px;color:#444;margin-bottom:20px;">
+                <tr>
+                    <td style="padding:3px 0;width:50%;"><strong>Employee:</strong> {safe_string(payslip.get("employee_name", "-"))}</td>
+                    <td style="padding:3px 0;"><strong>Employee Code:</strong> {safe_string(emp_code)}</td>
+                </tr>
+                <tr>
+                    <td style="padding:3px 0;"><strong>Job Title:</strong> {safe_string(emp_position) or "-"}</td>
+                    <td style="padding:3px 0;"><strong>ID Number:</strong> {safe_string(emp_id_num)}</td>
+                </tr>
+                <tr>
+                    <td style="padding:3px 0;"><strong>Employed From:</strong> {safe_string(emp_started)}</td>
+                    <td style="padding:3px 0;"><strong>Rate per Hour:</strong> {money(emp_rate) if emp_rate > 0 else "-"}</td>
+                </tr>
+            </table>
+            <div style="display:flex;gap:20px;flex-wrap:wrap;">
+                <div style="flex:1;min-width:260px;">
+                    <h4 style="color:#333;margin:10px 0 6px;font-size:12px;border-bottom:1px solid #ccc;padding-bottom:3px;">EARNINGS</h4>
+                    <table style="width:100%;border-collapse:collapse;font-size:12px;">
+                        {earnings_rows}
+                        {travel_row}
+                        {other_row}
+                        {nontax_row}
+                        <tr style="border-bottom:2px solid #333;background:#f9f9f9;">
+                            <td style="padding:7px 0;color:#333;font-weight:bold;">TOTAL EARNINGS</td>
+                            <td style="padding:7px 0;text-align:right;color:#333;font-weight:bold;">{money(gross)}</td>
+                        </tr>
+                    </table>
+                </div>
+                <div style="flex:1;min-width:260px;">
+                    <h4 style="color:#333;margin:10px 0 6px;font-size:12px;border-bottom:1px solid #ccc;padding-bottom:3px;">DEDUCTIONS</h4>
+                    <table style="width:100%;border-collapse:collapse;font-size:12px;">
+                        {deduction_rows}
+                        <tr style="border-bottom:2px solid #333;background:#fef2f2;">
+                            <td style="padding:7px 0;color:#333;font-weight:bold;">TOTAL DEDUCTIONS</td>
+                            <td style="padding:7px 0;text-align:right;color:#ef4444;font-weight:bold;">-{money(total_ded)}</td>
+                        </tr>
+                    </table>
+                </div>
+            </div>
+            <div style="display:flex;justify-content:space-between;align-items:center;padding:14px 18px;background:#10b981;border-radius:8px;color:white;margin-top:18px;">
+                <span style="font-size:16px;font-weight:bold;">NETT PAY</span>
+                <span style="font-size:24px;font-weight:bold;">{money(net)}</span>
+            </div>
+            <div style="margin-top:14px;padding:10px 14px;background:#f5f5f5;border-radius:8px;font-size:12px;color:#555;">
+                <strong>Leave Type:</strong> Annual Leave &nbsp;&middot;&nbsp; <strong>Closing Balance:</strong> {leave_balance:.4f} days
+            </div>
+            <div style="margin-top:20px;text-align:center;color:#999;font-size:10px;">
+                Generated by ClickAI &middot; Computer-generated payslip &middot; {payslip.get("date", "-")}
+            </div>
+        </div>'''
+
+    @app.route("/payroll/payslips/print")
+    @login_required
+    def payroll_payslips_print():
+        """Print all payslips for a selected month / pay-run, one slip per page."""
+        business = Auth.get_current_business()
+        biz_id = business.get("id") if business else None
+
+        payslips = db.get("payslips", {"business_id": biz_id}) if biz_id else []
+
+        by_month = defaultdict(list)
+        for p in payslips:
+            period = str(p.get("date") or p.get("created_at") or "")[:7]  # YYYY-MM
+            if period and len(period) >= 7:
+                by_month[period].append(p)
+
+        available_months = sorted(by_month.keys(), reverse=True)
+        selected = request.args.get("month", "")
+        if selected not in by_month:
+            selected = available_months[0] if available_months else ""
+
+        slips = sorted(by_month.get(selected, []), key=lambda x: safe_string(x.get("employee_name", "")).lower())
+
+        try:
+            label = datetime.strptime(selected, "%Y-%m").strftime("%B %Y") if selected else ""
+        except Exception:
+            label = selected
+
+        biz_name = business.get("name", "Business") if business else "Business"
+
+        if not slips:
+            cards = '<p style="max-width:720px;margin:0 auto;color:#666;text-align:center;">No payslips for this month.</p>'
+        else:
+            cards = "".join(_payslip_print_card(p, business) for p in slips)
+
+        return f'''<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Payslips &mdash; {safe_string(label)}</title>
+<style>
+    body {{ margin:0; background:#e9eaed; font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Arial,sans-serif; padding:20px 0; }}
+    .toolbar {{ max-width:720px; margin:0 auto 20px; display:flex; justify-content:space-between; align-items:center; gap:10px; }}
+    .toolbar a, .toolbar button {{ padding:10px 16px; border-radius:6px; cursor:pointer; font-size:14px; text-decoration:none; }}
+    .btn-back {{ background:#fff; color:#333; border:1px solid #ccc; }}
+    .btn-print {{ background:#2563eb; color:#fff; border:none; }}
+    @media print {{
+        body {{ background:#fff; padding:0; }}
+        .no-print {{ display:none !important; }}
+        .payslip-sheet {{ border:none !important; border-radius:0 !important; page-break-after:always; }}
+        .payslip-sheet:last-child {{ page-break-after:auto; }}
+    }}
+</style>
+</head>
+<body>
+    <div class="toolbar no-print">
+        <div>
+            <div style="font-weight:700;font-size:16px;color:#222;">{safe_string(biz_name)} &mdash; Payslips</div>
+            <div style="color:#666;font-size:13px;">{safe_string(label)} &middot; {len(slips)} payslip(s)</div>
+        </div>
+        <div style="display:flex;gap:10px;">
+            <a class="btn-back" href="/payroll/payslips?month={selected}">&larr; Back</a>
+            <button class="btn-print" onclick="window.print();">Print</button>
+        </div>
+    </div>
+    {cards}
+    <script>
+        window.addEventListener('load', function() {{ setTimeout(function() {{ window.print(); }}, 400); }});
+    </script>
+</body>
+</html>'''
 
     logger.info("[PAYROLL] All payroll routes registered ✓")
