@@ -296,6 +296,12 @@ def register_settings_routes(app, db, login_required, Auth, render_page,
                 </div>
                 
                 <div class="form-group">
+                    <label class="form-label">From / Sender Email</label>
+                    <input type="text" name="email_from" class="form-input" value="{safe_string((business.get("email_from") or business.get("smtp_user", "")) if business else "")}">
+                    <p style="color:var(--text-muted);font-size:12px;margin-top:5px;">The address recipients see. Must be a verified sender on your mail provider (e.g. a Brevo verified sender). The SMTP Username above stays your provider login.</p>
+                </div>
+                
+                <div class="form-group">
                     <label class="form-label">SMTP Password</label>
                     <input type="password" name="smtp_pass" class="form-input" autocomplete="new-password" placeholder="{'Saved - leave blank to keep, or type a new password' if (business and business.get('smtp_pass')) else 'Enter SMTP / app password'}">
                 </div>
@@ -2208,6 +2214,7 @@ def register_settings_routes(app, db, login_required, Auth, render_page,
                 "smtp_host": request.form.get("smtp_host", ""),
                 "smtp_port": request.form.get("smtp_port", ""),
                 "smtp_user": request.form.get("smtp_user", ""),
+                "email_from": request.form.get("email_from", ""),
                 "smtp_pass": request.form.get("smtp_pass", ""),
             }
             

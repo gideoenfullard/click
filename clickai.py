@@ -2628,7 +2628,7 @@ class Email:
                 smtp_user = biz_smtp_user
                 smtp_pass = biz_smtp_pass
                 smtp_port = int(biz_smtp_port) if biz_smtp_port else 587
-                from_email = biz_smtp_user  # Use SMTP user as from email
+                from_email = business.get("email_from") or biz_smtp_user  # verified sender; SMTP login is auth only
                 logger.info(f"[EMAIL] Using business SMTP: {smtp_host}")
         
         # If no business provided and global not set, try to get current business from session
@@ -2646,7 +2646,7 @@ class Email:
                         smtp_user = biz_smtp_user
                         smtp_pass = biz_smtp_pass
                         smtp_port = int(biz_smtp_port) if biz_smtp_port else 587
-                        from_email = biz_smtp_user
+                        from_email = current_biz.get("email_from") or biz_smtp_user
                         logger.info(f"[EMAIL] Using current business SMTP: {smtp_host}")
             except Exception as e:
                 logger.warning(f"[EMAIL] Could not get business context: {e}")
@@ -60383,7 +60383,7 @@ def api_email_test_smtp():
                 smtp_user = biz_smtp_user
                 smtp_pass = biz_smtp_pass
                 smtp_port = int(biz_smtp_port) if biz_smtp_port else 587
-                from_email = biz_smtp_user
+                from_email = business.get("email_from") or biz_smtp_user
                 source = "Business Settings (Database)"
         
         # Check if we have any credentials
