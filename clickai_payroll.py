@@ -759,6 +759,182 @@ def register_payroll_routes(app, db, login_required, Auth, render_page,
         return render_page("Add Employee", content, user, "payroll")
     
     
+    # ── Hourly-employee payroll support (Option B) ──────────────────────────────
+    # Hourly employees have no basic_salary; their pay is worked-hours x rate,
+    # captured on scanned timesheets. These helpers let the monthly Run Payroll
+    # (and the preview) build an hourly payslip the SAME way posting a timesheet
+    # batch does (clickai_pay_conditions.build_payslip_gross -> identical
+    # deductions / GL). Hours are pulled from pending/approved timesheet_batches,
+    # matched by employee_id or name, and aggregated. Consumed batches are marked
+    # processed by the run so the same hours are never paid twice across months.
+    def _load_hourly_batch_map(biz_id):
+        """Return (days_map, batch_ids). days_map is keyed by both employee_id and
+        lower-cased name -> aggregated list of timesheet days. batch_ids = the
+        batches that contributed (to mark processed after paying)."""
+        days_map, batch_ids = {}, set()
+        if not biz_id:
+            return days_map, batch_ids
+        batches = []
+        for _st in ("pending", "approved"):
+            try:
+                batches += db.get("timesheet_batches", {"business_id": biz_id, "status": _st}) or []
+            except Exception:
+                pass
+        for b in batches:
+            raw = b.get("data", "{}")
+            try:
+                parsed = json.loads(raw) if isinstance(raw, str) else raw
+            except Exception:
+                continue
+            entries = parsed if isinstance(parsed, list) else parsed.get("employees", [])
+            used = False
+            for e in entries:
+                if not isinstance(e, dict):
+                    continue
+                d = e.get("days", [])
+                if not isinstance(d, list) or not d:
+                    continue
+                for k in (e.get("employee_id"), (e.get("name") or "").strip().lower()):
+                    if k:
+                        days_map.setdefault(k, []).extend(d)
+                used = True
+            if used and b.get("id"):
+                batch_ids.add(b.get("id"))
+        return days_map, batch_ids
+
+    def _hourly_days_for_employee(emp, biz_id):
+        """Aggregated timesheet days for one (hourly) employee from unposted batches."""
+        days_map, _ = _load_hourly_batch_map(biz_id)
+        return days_map.get(emp.get("id")) or days_map.get((emp.get("name") or "").strip().lower()) or []
+
+    def _compute_hourly_figures(emp, days, pay_month, business, sdl_applies):
+        """Gross + deductions for an hourly employee (no save). Mirrors the
+        timesheet-batch post exactly. Returns None if there is no payable gross."""
+        try:
+            from clickai_pay_conditions import build_payslip_gross
+        except Exception as e:
+            logger.error(f"[PAYROLL HOURLY] pay conditions module not available: {e}")
+            return None
+        result = build_payslip_gross(emp, {"days": days}, pay_month, business=business)
+        gross = safe_float(result.get("gross", 0))
+        if gross <= 0:
+            return None
+        non_taxable_allow = safe_float(emp.get("non_taxable_allowance", 0))
+        medical = safe_float(emp.get("medical_aid", 0))
+        union_fees = safe_float(emp.get("union_fees", 0))
+        pension = safe_float(emp.get("pension", 0))
+        loan = safe_float(emp.get("loan_deduction", 0))
+        other_ded = safe_float(emp.get("other_deduction", 0))
+        pension_employer = safe_float(emp.get("pension_employer", 0))
+        provident = safe_float(emp.get("provident_fund_amount", 0))
+        _emp_age = safe_float(emp.get("age", 0))
+        _medical_members = safe_float(emp.get("medical_members", 0))
+        paye = calc_monthly_paye(gross, _emp_age, pension, provident, _medical_members)
+        uif = min(gross * 0.01, 177.12)
+        uif_employer = uif
+        sdl = gross * 0.01 if sdl_applies else 0
+        coida = gross * 0.01
+        total_ded = paye + uif + medical + union_fees + pension + provident + loan + other_ded
+        net = (gross + non_taxable_allow) - total_ded
+        total_employer = uif_employer + sdl + coida + pension_employer
+        total_cost = gross + non_taxable_allow + total_employer
+        return {
+            "gross": gross, "non_taxable_allow": non_taxable_allow,
+            "medical": medical, "union_fees": union_fees, "pension": pension,
+            "loan": loan, "other_ded": other_ded, "pension_employer": pension_employer,
+            "provident": provident, "paye": paye, "uif": uif, "uif_employer": uif_employer,
+            "sdl": sdl, "coida": coida, "total_ded": total_ded, "net": net,
+            "total_employer": total_employer, "total_cost": total_cost,
+            "normal_hours": safe_float(result.get("normal_hours", 0)),
+            "overtime_hours": safe_float(result.get("overtime_hours", 0)),
+        }
+
+    def _save_hourly_payslip(emp, figs, pay_date, pay_month, biz_id):
+        """Persist an hourly payslip (figs from _compute_hourly_figures) + GL journal.
+        Mirrors the timesheet-batch post. Returns True on success."""
+        gross = figs["gross"]; non_taxable_allow = figs["non_taxable_allow"]
+        medical = figs["medical"]; union_fees = figs["union_fees"]; pension = figs["pension"]
+        loan = figs["loan"]; other_ded = figs["other_ded"]; pension_employer = figs["pension_employer"]
+        provident = figs["provident"]; paye = figs["paye"]; uif = figs["uif"]
+        uif_employer = figs["uif_employer"]; sdl = figs["sdl"]; coida = figs["coida"]
+        total_ded = figs["total_ded"]; net = figs["net"]
+        total_employer = figs["total_employer"]; total_cost = figs["total_cost"]
+        payslip_id = generate_id()
+        payslip = {
+            "id": payslip_id,
+            "business_id": biz_id,
+            "employee_id": emp.get("id"),
+            "employee_name": emp.get("name"),
+            "date": pay_date,
+            "period": pay_month,
+            "basic": round(gross, 2),
+            "gross": round(gross + non_taxable_allow, 2),
+            "non_taxable_allowance": round(non_taxable_allow, 2),
+            "hours_worked": round(figs["normal_hours"], 2),
+            "overtime_hours": round(figs["overtime_hours"], 2),
+            "paye": round(paye, 2),
+            "uif": round(uif, 2),
+            "uif_employee": round(uif, 2),
+            "uif_employer": round(uif_employer, 2),
+            "medical_aid": round(medical, 2),
+            "union_fees": round(union_fees, 2),
+            "pension": round(pension, 2),
+            "pension_employee": round(pension, 2),
+            "pension_employer": round(pension_employer, 2),
+            "provident_fund": round(provident, 2),
+            "loan_deduction": round(loan, 2),
+            "other_deduction": round(other_ded, 2),
+            "sdl": round(sdl, 2),
+            "coida": round(coida, 2),
+            "total_deductions": round(total_ded, 2),
+            "total_employer": round(total_employer, 2),
+            "total_cost": round(total_cost, 2),
+            "net": round(net, 2)
+        }
+        try:
+            url = f"{db.url}/rest/v1/payslips"
+            response = requests.post(
+                url,
+                headers={**db.headers, "Prefer": "return=representation"},
+                json=payslip,
+                timeout=30
+            )
+            if response.status_code not in (200, 201):
+                logger.error(f"[PAYROLL HOURLY] Payslip save failed for {emp.get('name')}: {response.text[:200]}")
+                return False
+        except Exception as e:
+            logger.error(f"[PAYROLL HOURLY] Payslip error for {emp.get('name')}: {e}")
+            return False
+        if loan > 0 and emp.get("loan_balance"):
+            new_balance = max(0, safe_float(emp.get("loan_balance", 0)) - loan)
+            try:
+                db.update("employees", emp["id"], {"loan_balance": round(new_balance, 2)})
+            except Exception:
+                pass
+        payroll_entries = [
+            {"account_code": gl(biz_id, "salaries"), "debit": round(gross, 2), "credit": 0},
+        ]
+        employer_uif_amount = round(uif_employer, 2) if uif_employer > 0 else 0
+        employer_sdl_amount = round(sdl, 2) if sdl > 0 else 0
+        total_employer_expense = employer_uif_amount + employer_sdl_amount
+        if total_employer_expense > 0:
+            payroll_entries.append({"account_code": "6210", "debit": round(total_employer_expense, 2), "credit": 0})
+        if paye > 0:
+            payroll_entries.append({"account_code": gl(biz_id, "paye"), "debit": 0, "credit": round(paye, 2)})
+        if uif > 0 or employer_uif_amount > 0:
+            payroll_entries.append({"account_code": "2210", "debit": 0, "credit": round(uif + employer_uif_amount, 2)})
+        if employer_sdl_amount > 0:
+            payroll_entries.append({"account_code": "2220", "debit": 0, "credit": round(employer_sdl_amount, 2)})
+        other_deduction_total = round(medical + union_fees + pension + provident + loan + other_ded, 2)
+        if other_deduction_total > 0:
+            payroll_entries.append({"account_code": gl(biz_id, "loan"), "debit": 0, "credit": other_deduction_total})
+        payroll_entries.append({"account_code": gl(biz_id, "bank"), "debit": 0, "credit": round(net, 2)})
+        try:
+            create_journal_entry(biz_id, pay_date, f"Salary - {emp.get('name')}", f"PAY-{payslip_id[:8]}", payroll_entries)
+        except Exception as e:
+            logger.error(f"[PAYROLL HOURLY] Journal entry failed for {emp.get('name')}: {e}")
+        return True
+
     @app.route("/payroll/run", methods=["GET", "POST"])
     @login_required
     def payroll_run():
@@ -794,6 +970,9 @@ def register_payroll_routes(app, db, login_required, Auth, render_page,
             # Below that threshold the employer is exempt — SDL must be R0.
             _total_annual_payroll = sum(safe_float(e.get("basic_salary", 0)) * 12 for e in employees)
             _sdl_applies = _total_annual_payroll > 500000
+
+            # Option B: pull hourly employees' timesheet hours for this run
+            _hourly_map, _hourly_batch_ids = _load_hourly_batch_map(biz_id)
             
             for emp in employees:
                 # Skip if payslip already exists for this employee + date
@@ -803,6 +982,13 @@ def register_payroll_routes(app, db, login_required, Auth, render_page,
                 
                 basic = safe_float(emp.get("basic_salary", 0))
                 if basic <= 0:
+                    # Hourly employee: build from timesheet hours (same engine/rules
+                    # as posting a timesheet batch). Salaried path below is skipped.
+                    _h_days = _hourly_map.get(emp.get("id")) or _hourly_map.get((emp.get("name") or "").strip().lower()) or []
+                    if _h_days:
+                        _h_figs = _compute_hourly_figures(emp, _h_days, pay_date[:7], business, _sdl_applies)
+                        if _h_figs and _save_hourly_payslip(emp, _h_figs, pay_date, pay_date[:7], biz_id):
+                            payslips_created += 1
                     continue
                 
                 # Get deductions from employee
@@ -948,6 +1134,14 @@ def register_payroll_routes(app, db, login_required, Auth, render_page,
                 except Exception as e:
                     logger.error(f"[PAYROLL] Payslip error: {e}")
             
+            # Mark the timesheet batches we just paid from as processed so the
+            # same hours are not paid again on next month's run.
+            for _bid in _hourly_batch_ids:
+                try:
+                    db.save("timesheet_batches", {"id": _bid, "status": "processed"})
+                except Exception:
+                    pass
+
             if skipped > 0:
                 flash(f"Created {payslips_created} payslips. Skipped {skipped} (already exist for {pay_date})", "success")
             else:
@@ -967,6 +1161,30 @@ def register_payroll_routes(app, db, login_required, Auth, render_page,
         for emp in employees:
             basic = safe_float(emp.get("basic_salary", 0))
             if basic <= 0:
+                # Hourly employee: show a preview row from timesheet hours (Option B).
+                # SDL is employer-side and not shown here, so sdl_applies=False is fine.
+                already_exists = emp.get("id") in today_emp_ids
+                if already_exists:
+                    existing_count += 1
+                _h_days = _hourly_days_for_employee(emp, biz_id)
+                _h_figs = _compute_hourly_figures(emp, _h_days, today()[:7], business, False) if _h_days else None
+                if _h_figs:
+                    total_gross += _h_figs["gross"]
+                    total_net += _h_figs["net"]
+                    _row_style = "opacity:0.5;" if already_exists else ""
+                    _skip_badge = '<span style="background:#f59e0b;color:white;padding:2px 6px;border-radius:4px;font-size:10px;margin-left:5px;">EXISTS</span>' if already_exists else ""
+                    _h_other = _h_figs["medical"] + _h_figs["union_fees"] + _h_figs["pension"] + _h_figs["provident"] + _h_figs["loan"] + _h_figs["other_ded"]
+                    preview_rows += f'''
+            <tr style="{_row_style}">
+                <td>{safe_string(emp.get("name", "-"))}<span style="background:#3b82f6;color:white;padding:2px 6px;border-radius:4px;font-size:10px;margin-left:5px;">HOURLY</span>{_skip_badge}</td>
+                <td>{money(_h_figs["gross"])}</td>
+                <td style="color:var(--red);">-{money(_h_figs["paye"])}</td>
+                <td style="color:var(--red);">-{money(_h_figs["uif"])}</td>
+                <td style="color:var(--red);">-{money(_h_other)}</td>
+                <td style="color:var(--green);font-weight:bold;">{money(_h_figs["net"])}</td>
+                <td><a href="/payroll/payslip-preview/{emp.get("id")}" target="_blank" style="color:var(--accent);text-decoration:none;">View</a></td>
+            </tr>
+            '''
                 continue
             
             # Check if already has payslip today
@@ -1427,8 +1645,10 @@ def register_payroll_routes(app, db, login_required, Auth, render_page,
 
         basic = safe_float(emp.get("basic_salary", 0))
         if basic <= 0:
-            flash(f"{emp.get('name')} has no basic salary set", "error")
-            return redirect(f"/employee/{emp_id}/edit")
+            # Hourly employee: paid from timesheet hours via Run Payroll (which now
+            # includes hourly staff) or by posting their timesheet batch.
+            flash(f"{emp.get('name')} is hourly - use Run Payroll or post their timesheet batch to pay worked hours", "error")
+            return redirect("/payroll")
 
         # Deductions from employee
         medical = safe_float(emp.get("medical_aid", 0))
