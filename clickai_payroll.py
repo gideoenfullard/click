@@ -1370,11 +1370,11 @@ def register_payroll_routes(app, db, login_required, Auth, render_page,
         # Timesheet hours for the current month (a check, not used in the calculation).
         # Hourly staff: hours come from timesheet BATCHES (same as the wages above).
         # Salaried staff: hours come from timesheet_entries.
+        ts_month = today()[:7]
         if is_hourly:
             ts_normal = hourly_normal
             ts_ot = hourly_ot
         else:
-            ts_month = today()[:7]
             entries = db.get("timesheet_entries", {"business_id": biz_id, "employee_id": emp_id}) if biz_id else []
             month_entries = [e for e in entries if str(e.get("date", "")).startswith(ts_month)]
             ts_normal = sum(safe_float(e.get("normal_hours", e.get("hours", 0))) for e in month_entries)
@@ -1466,7 +1466,7 @@ def register_payroll_routes(app, db, login_required, Auth, render_page,
             '''
 
         ts_note = ""
-        if month_entries:
+        if ts_total > 0:
             ts_note = f'''
             <div class="card" style="margin-top:15px;">
                 <h3 style="margin-bottom:10px;">Timesheet Hours — {ts_month}</h3>
