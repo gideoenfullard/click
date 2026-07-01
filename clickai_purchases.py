@@ -490,6 +490,7 @@ def register_purchases_routes(app, db, login_required, Auth, render_page,
         # Open = not paid/credited/cancelled and still has an outstanding amount
         # (total minus what is already allocated to it).
         _open_sinvoices = []
+        _sup_disc_pct = round(float(supplier.get("discount_percentage", 0) or 0), 2)
         if can_see_balances:
             for _si in supplier_invoices:
                 _sist = (_si.get("status") or "").lower()
@@ -502,24 +503,39 @@ def register_purchases_routes(app, db, login_required, Auth, render_page,
                 _si_outstanding = round(_si_tot - _si_already, 2)
                 if _si_outstanding <= 0:
                     continue
+                _si_cap_disc = round(float(_si.get("discount_amount", 0) or 0), 2)
+                _si_settle_disc = round(_si_outstanding * _sup_disc_pct / 100, 2) if (_sup_disc_pct > 0 and _si_cap_disc == 0) else 0.0
                 _open_sinvoices.append({
                     "id": _si.get("id", ""),
                     "number": _si.get("invoice_number", "-"),
                     "date": _si.get("date", "-"),
-                    "outstanding": _si_outstanding
+                    "outstanding": _si_outstanding,
+                    "discount": _si_settle_disc,
+                    "net_to_pay": round(_si_outstanding - _si_settle_disc, 2)
                 })
             _open_sinvoices.sort(key=lambda x: x["date"])
         
         _sp_alloc_rows_html = ""
         for _osi in _open_sinvoices:
+            if _osi.get("discount", 0) > 0:
+                _disc_line = (f'<div style="color:var(--green);font-size:11px;margin-top:3px;">'
+                              f'<label style="cursor:pointer;"><input type="checkbox" class="spDiscChk" data-invid="{_osi["id"]}" '
+                              f'onchange="spToggleDisc(this)" checked style="vertical-align:middle;margin-right:4px;">'
+                              f'Take {_sup_disc_pct:g}% discount (-{money(_osi["discount"])}) &rarr; pay {money(_osi["net_to_pay"])}</label></div>')
+                _prefill = f'{_osi["net_to_pay"]:.2f}'
+            else:
+                _disc_line = ""
+                _prefill = ""
             _sp_alloc_rows_html += f'''
             <div style="display:flex;align-items:center;gap:10px;padding:8px 0;border-bottom:1px solid var(--border);">
                 <div style="flex:1;font-size:13px;">
                     <strong>{safe_string(_osi["number"])}</strong>
                     <span style="color:var(--text-muted);"> · {_osi["date"]}</span><br>
                     <span style="color:var(--text-muted);font-size:12px;">Outstanding: {money(_osi["outstanding"])}</span>
+                    {_disc_line}
                 </div>
                 <input type="number" class="spAllocAmt" data-invid="{_osi["id"]}" data-outstanding="{_osi["outstanding"]}"
+                       data-disc="{_osi["discount"]}" data-nettopay="{_osi["net_to_pay"]}" value="{_prefill}"
                        placeholder="0.00" step="0.01" min="0" max="{_osi["outstanding"]}"
                        style="width:110px;padding:8px;border:1px solid var(--border);border-radius:6px;background:var(--bg);color:var(--text);text-align:right;">
             </div>
@@ -1403,6 +1419,21 @@ def register_purchases_routes(app, db, login_required, Auth, render_page,
         <script>
         document.getElementById('payDate').value = new Date().toISOString().split('T')[0];
         
+        function spSyncPayAmount() {{
+            let total = 0;
+            document.querySelectorAll('.spAllocAmt').forEach(function(inp) {{ total += parseFloat(inp.value) || 0; }});
+            total = Math.round(total * 100) / 100;
+            const pa = document.getElementById('payAmount');
+            if (pa && total > 0) pa.value = total.toFixed(2);
+        }}
+        function spToggleDisc(chk) {{
+            const inp = document.querySelector('.spAllocAmt[data-invid="' + chk.dataset.invid + '"]');
+            if (!inp) return;
+            inp.value = chk.checked ? (parseFloat(inp.dataset.nettopay) || 0).toFixed(2) : (parseFloat(inp.dataset.outstanding) || 0).toFixed(2);
+            spSyncPayAmount();
+            if (typeof spUpdateAllocSummary === 'function') spUpdateAllocSummary();
+        }}
+        
         document.getElementById('paymentModal').addEventListener('click', function(e) {{
             if (e.target === this) this.style.display = 'none';
         }});
@@ -1412,8 +1443,11 @@ def register_purchases_routes(app, db, login_required, Auth, render_page,
             const out = [];
             document.querySelectorAll('.spAllocAmt').forEach(function(inp) {{
                 const amt = parseFloat(inp.value) || 0;
-                if (amt > 0) {{
-                    out.push({{ supplier_invoice_id: inp.dataset.invid, amount: Math.round(amt * 100) / 100 }});
+                const chk = document.querySelector('.spDiscChk[data-invid="' + inp.dataset.invid + '"]');
+                let disc = 0;
+                if (chk && chk.checked) {{ disc = parseFloat(inp.dataset.disc) || 0; }}
+                if (amt > 0 || disc > 0) {{
+                    out.push({{ supplier_invoice_id: inp.dataset.invid, amount: Math.round(amt * 100) / 100, discount: Math.round(disc * 100) / 100 }});
                 }}
             }});
             return out;
@@ -1423,9 +1457,10 @@ def register_purchases_routes(app, db, login_required, Auth, render_page,
         function spAutoAllocate() {{
             let remaining = parseFloat(document.getElementById('payAmount').value) || 0;
             document.querySelectorAll('.spAllocAmt').forEach(function(inp) {{
-                const outstanding = parseFloat(inp.dataset.outstanding) || 0;
+                const chk = document.querySelector('.spDiscChk[data-invid="' + inp.dataset.invid + '"]');
+                const target = (chk && chk.checked) ? (parseFloat(inp.dataset.nettopay) || 0) : (parseFloat(inp.dataset.outstanding) || 0);
                 if (remaining <= 0) {{ inp.value = ''; return; }}
-                const give = Math.min(remaining, outstanding);
+                const give = Math.min(remaining, target);
                 inp.value = give > 0 ? give.toFixed(2) : '';
                 remaining = Math.round((remaining - give) * 100) / 100;
             }});
@@ -1458,6 +1493,8 @@ def register_purchases_routes(app, db, login_required, Auth, render_page,
         document.querySelectorAll('.spAllocAmt').forEach(function(inp) {{
             inp.addEventListener('input', spUpdateAllocSummary);
         }});
+        spSyncPayAmount();
+        spUpdateAllocSummary();
         
         function tryZanePayment() {{
             const amount = document.getElementById('payAmount').value || '';
@@ -5347,6 +5384,48 @@ Nothing else."""
             if amount <= 0:
                 return jsonify({"success": False, "error": "Amount must be greater than zero"})
             
+            # ── First pass: validate allocations, split any settlement discount ──
+            # Each allocation: {supplier_invoice_id, amount (cash), discount (taken)}.
+            # A discount is honoured only on an invoice booked at FULL value at capture
+            # (discount_amount == 0), so we never double-discount. It is split into net +
+            # VAT by the invoice's own net:VAT ratio; the VAT portion reverses the
+            # over-claimed input VAT — same treatment as the capture-time discount.
+            allocations = data.get("allocations", []) or []
+            _processed = []
+            total_disc = 0.0
+            total_disc_net = 0.0
+            total_disc_vat = 0.0
+            for _alloc in allocations:
+                _sid = (_alloc.get("supplier_invoice_id", "") or "").strip()
+                try:
+                    _cash = round(float(_alloc.get("amount", 0) or 0), 2)
+                except Exception:
+                    _cash = 0.0
+                try:
+                    _disc = round(float(_alloc.get("discount", 0) or 0), 2)
+                except Exception:
+                    _disc = 0.0
+                if not _sid or (_cash <= 0 and _disc <= 0):
+                    continue
+                _sinv = db.get_one("supplier_invoices", _sid)
+                if not _sinv or _sinv.get("business_id") != biz_id:
+                    continue
+                if _disc > 0 and round(float(_sinv.get("discount_amount", 0) or 0), 2) > 0:
+                    _disc = 0.0   # already discounted at capture — never discount twice
+                _dnet = 0.0
+                _dvat = 0.0
+                if _disc > 0:
+                    _itot = round(float(_sinv.get("total", 0) or 0), 2)
+                    _ivat = round(float(_sinv.get("vat", 0) or 0), 2)
+                    if _itot > 0 and _ivat > 0:
+                        _dvat = round(_disc * _ivat / _itot, 2)
+                    _dnet = round(_disc - _dvat, 2)
+                _processed.append({"id": _sid, "inv": _sinv, "cash": _cash, "disc": _disc,
+                                   "disc_net": _dnet, "disc_vat": _dvat, "settled": round(_cash + _disc, 2)})
+                total_disc = round(total_disc + _disc, 2)
+                total_disc_net = round(total_disc_net + _dnet, 2)
+                total_disc_vat = round(total_disc_vat + _dvat, 2)
+            
             # Save supplier payment record
             payment = {
                 "id": generate_id(),
@@ -5354,6 +5433,7 @@ Nothing else."""
                 "supplier_id": supplier_id,
                 "supplier_name": supplier_name,
                 "amount": round(amount, 2),
+                "discount_total": round(total_disc, 2),
                 "date": pay_date,
                 "method": method,
                 "reference": reference,
@@ -5367,24 +5447,33 @@ Nothing else."""
             
             # Supplier balance is now calculated dynamically — no manual update needed
             
-            # GL journal: Debit Creditors, Credit Bank
+            # GL journal. Without discount: DR Creditors / CR Bank (cash).
+            # With settlement discount: DR Creditors (cash + discount settled),
+            # CR Bank (cash), CR Discount Received (net), CR VAT Input (discount VAT).
+            rounded = round(amount, 2)
+            ref_label = reference or f"PAY-{payment['id'][:8]}"
+            if method == "cash":
+                bank_code = gl(biz_id, "cash")
+            else:
+                bank_code = gl(biz_id, "bank")
+            _disc_recv_code = None
+            if total_disc_net > 0:
+                try:
+                    import clickai as _main
+                    _disc_recv_code = _main.ensure_gl_account(biz_id, "discount_received", "Discount Received", "income", "Other Income")
+                except Exception:
+                    _disc_recv_code = gl(biz_id, "discount_received")
+            _gl_lines = [
+                {"account_code": gl(biz_id, "creditors"), "debit": round(rounded + total_disc, 2), "credit": 0},
+                {"account_code": bank_code, "debit": 0, "credit": rounded},
+            ]
+            if total_disc_net > 0:
+                _gl_lines.append({"account_code": _disc_recv_code, "debit": 0, "credit": round(total_disc_net, 2)})
+            if total_disc_vat > 0:
+                _gl_lines.append({"account_code": gl(biz_id, "vat_input"), "debit": 0, "credit": round(total_disc_vat, 2)})
             try:
-                rounded = round(amount, 2)
-                ref_label = reference or f"PAY-{payment['id'][:8]}"
-                
-                # Choose bank account based on method
-                if method == "cash":
-                    bank_code = gl(biz_id, "cash")
-                elif method == "card":
-                    bank_code = gl(biz_id, "bank")
-                else:
-                    bank_code = gl(biz_id, "bank")
-                
-                create_journal_entry(biz_id, pay_date, f"Payment to {supplier_name}", ref_label, [
-                    {"account_code": gl(biz_id, "creditors"), "debit": rounded, "credit": 0},
-                    {"account_code": bank_code, "debit": 0, "credit": rounded},
-                ])
-                logger.info(f"[PAY] GL entry: Creditors DR:{rounded}, Bank CR:{rounded} for {supplier_name}")
+                create_journal_entry(biz_id, pay_date, f"Payment to {supplier_name}", ref_label, _gl_lines)
+                logger.info(f"[PAY] GL: Creditors DR:{round(rounded + total_disc, 2)}, Bank CR:{rounded}, disc_net:{total_disc_net}, disc_vat:{total_disc_vat} for {supplier_name}")
             except Exception as e:
                 logger.error(f"[PAY] GL entry error (payment still saved): {e}")
             
@@ -5395,10 +5484,7 @@ Nothing else."""
                         business_id=biz_id, allocation_type="supplier_payment", source_table="supplier_payments", source_id=payment["id"],
                         description=f"Payment to {supplier_name}",
                         amount=round(amount, 2),
-                        gl_entries=[
-                            {"account_code": gl(biz_id, "creditors"), "debit": rounded, "credit": 0},
-                            {"account_code": bank_code, "debit": 0, "credit": rounded},
-                        ],
+                        gl_entries=_gl_lines,
                         category="Supplier Payment", category_code=gl(biz_id, "creditors"),
                         supplier_name=supplier_name, payment_method=method,
                         reference=reference or ref_label, transaction_date=pay_date,
@@ -5407,50 +5493,42 @@ Nothing else."""
             except Exception:
                 pass
             
-            # ── Supplier invoice allocations ──────────────────────────────
-            # data["allocations"] is a list of {"supplier_invoice_id": x, "amount": y}.
-            # Each becomes a supplier_payment_allocations row; the supplier
-            # invoice is then recalculated from its allocations. Any unallocated
-            # remainder simply stays on the supplier's account as a credit.
-            allocations = data.get("allocations", []) or []
-            allocated_total = 0.0
+            # ── Save invoice allocations. Each invoice is settled by cash + discount
+            # (so it clears in full); the discount was booked in the journal above. ──
+            allocated_cash = 0.0
             allocated_count = 0
-            for alloc in allocations:
-                sinv_id = (alloc.get("supplier_invoice_id", "") or "").strip()
-                try:
-                    alloc_amt = round(float(alloc.get("amount", 0) or 0), 2)
-                except Exception:
-                    alloc_amt = 0.0
-                if not sinv_id or alloc_amt <= 0:
-                    continue
-                _sinv = db.get_one("supplier_invoices", sinv_id)
-                if not _sinv or _sinv.get("business_id") != biz_id:
+            for _p in _processed:
+                if _p["settled"] <= 0:
                     continue
                 alloc_row = {
                     "id": generate_id(),
                     "business_id": biz_id,
                     "supplier_payment_id": payment["id"],
-                    "supplier_invoice_id": sinv_id,
-                    "invoice_number": _sinv.get("invoice_number", ""),
+                    "supplier_invoice_id": _p["id"],
+                    "invoice_number": _p["inv"].get("invoice_number", ""),
                     "supplier_id": supplier_id,
                     "supplier_name": supplier_name,
-                    "amount": alloc_amt,
+                    "amount": _p["settled"],
+                    "cash_amount": _p["cash"],
+                    "discount": _p["disc"],
                     "date": pay_date,
                     "created_at": now()
                 }
                 ok_alloc, alloc_err = db.save("supplier_payment_allocations", alloc_row)
                 if not ok_alloc:
-                    logger.error(f"[PAY] Allocation save failed for {sinv_id}: {alloc_err}")
+                    logger.error(f"[PAY] Allocation save failed for {_p['id']}: {alloc_err}")
                     continue
-                allocated_total += alloc_amt
+                allocated_cash += _p["cash"]
                 allocated_count += 1
-                recalc_supplier_invoice_status(biz_id, sinv_id)
+                recalc_supplier_invoice_status(biz_id, _p["id"])
             
-            unallocated = round(rounded - allocated_total, 2)
+            unallocated = round(rounded - allocated_cash, 2)
             if allocated_count > 0:
                 _msg = (f"Payment of R{amount:,.2f} to {supplier_name} recorded "
                         f"({method.upper()}) — allocated to {allocated_count} invoice(s)")
-                if unallocated > 0:
+                if total_disc > 0.005:
+                    _msg += f", R{total_disc:,.2f} settlement discount taken"
+                if unallocated > 0.005:
                     _msg += f", R{unallocated:,.2f} left on account"
             else:
                 _msg = (f"Payment of R{amount:,.2f} to {supplier_name} recorded "
