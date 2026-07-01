@@ -1313,12 +1313,22 @@ def register_payroll_routes(app, db, login_required, Auth, render_page,
         is_hourly = basic_full <= 0 and _emp_rate > 0
         hourly_normal = hourly_ot = 0.0
         if is_hourly:
-            _wmonth = today()[:7]
-            _wentries = db.get("timesheet_entries", {"business_id": biz_id, "employee_id": emp_id}) if biz_id else []
-            _wme = [e for e in _wentries if str(e.get("date", "")).startswith(_wmonth)]
-            hourly_normal = sum(safe_float(e.get("normal_hours", e.get("hours", 0))) for e in _wme)
-            hourly_ot = sum(safe_float(e.get("overtime", 0)) for e in _wme)
-            basic = round((hourly_normal + hourly_ot) * _emp_rate, 2)
+            # Hourly hours live on scanned/pending timesheet BATCHES, not in
+            # timesheet_entries. Use the SAME source and gross engine that Run
+            # Payroll uses (_hourly_days_for_employee -> build_payslip_gross) so the
+            # preview shows the real hours and the exact gross the run will pay.
+            _h_days = _hourly_days_for_employee(emp, biz_id)
+            _gross_h = 0.0
+            if _h_days:
+                try:
+                    from clickai_pay_conditions import build_payslip_gross
+                    _hres = build_payslip_gross(emp, {"days": _h_days}, today()[:7], business=business)
+                    _gross_h = safe_float(_hres.get("gross", 0))
+                    hourly_normal = safe_float(_hres.get("normal_hours", 0))
+                    hourly_ot = safe_float(_hres.get("overtime_hours", 0))
+                except Exception as _he:
+                    logger.error(f"[PAYSLIP-PREVIEW] hourly gross failed for {emp.get('name')}: {_he}")
+            basic = round(_gross_h, 2)
             basic_full = basic
             hours_off_amount = 0.0
             earnings_first_row = (f'<tr style="border-bottom:1px solid #eee;"><td style="padding:6px 0;color:#666;">'
@@ -1357,12 +1367,18 @@ def register_payroll_routes(app, db, login_required, Auth, render_page,
         total_ded = paye + uif + medical + union_fees + pension + provident + loan + other_ded + rma_funeral
         net = gross - total_ded
         
-        # Timesheet hours for the current month (a check, not used in the calculation)
-        ts_month = today()[:7]
-        entries = db.get("timesheet_entries", {"business_id": biz_id, "employee_id": emp_id}) if biz_id else []
-        month_entries = [e for e in entries if str(e.get("date", "")).startswith(ts_month)]
-        ts_normal = sum(safe_float(e.get("normal_hours", e.get("hours", 0))) for e in month_entries)
-        ts_ot = sum(safe_float(e.get("overtime", 0)) for e in month_entries)
+        # Timesheet hours for the current month (a check, not used in the calculation).
+        # Hourly staff: hours come from timesheet BATCHES (same as the wages above).
+        # Salaried staff: hours come from timesheet_entries.
+        if is_hourly:
+            ts_normal = hourly_normal
+            ts_ot = hourly_ot
+        else:
+            ts_month = today()[:7]
+            entries = db.get("timesheet_entries", {"business_id": biz_id, "employee_id": emp_id}) if biz_id else []
+            month_entries = [e for e in entries if str(e.get("date", "")).startswith(ts_month)]
+            ts_normal = sum(safe_float(e.get("normal_hours", e.get("hours", 0))) for e in month_entries)
+            ts_ot = sum(safe_float(e.get("overtime", 0)) for e in month_entries)
         ts_total = ts_normal + ts_ot
         
         # Employer contributions (shown below the payslip as a check, not part of the payslip)
