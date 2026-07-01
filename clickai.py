@@ -17523,8 +17523,21 @@ class IndustryKnowledge:
                             if cat_lower in acc_name or acc_name in cat_lower:
                                 return acc_code
                     
-                    # Word overlap — "Cleaning & Hygiene" vs "Cleaning"
-                    cat_words = set(w for w in cat_lower.replace("&", "").replace("/", " ").replace("_and_", " ").split() if len(w) >= 3)
+                    # Word overlap — "Cleaning & Hygiene" vs "Cleaning".
+                    # Generic tokens like "staff" carry no expense meaning; if they count
+                    # as a match, "Wages — Staff" wrongly overlaps "Staff Welfare &
+                    # Training" on the single word "staff". They are ignored here, and a
+                    # wage/salary/payroll category may never land on a non-payroll staff
+                    # account (welfare, training, uniforms, etc.).
+                    _generic_words = {"staff", "general", "other", "misc", "sundry",
+                                      "costs", "cost", "expense", "expenses", "and", "the", "for"}
+                    _payroll_tokens = ("salary", "salaries", "salaris", "wage", "wages",
+                                       "payroll", "remuneration", "loon", "lone")
+                    _non_payroll_staff = ("welfare", "training", "entertainment",
+                                          "recruitment", "uniform", "protective", "canteen", "refreshment")
+                    _cat_is_payroll = any(t in cat_lower for t in _payroll_tokens)
+                    cat_words = set(w for w in cat_lower.replace("&", "").replace("/", " ").replace("_and_", " ").split()
+                                    if len(w) >= 3 and w not in _generic_words)
                     if cat_words:
                         best_score = 0
                         best_code = None
@@ -17537,7 +17550,11 @@ class IndustryKnowledge:
                             _acc_cat = str(acc.get("category", "") or acc.get("account_type", "") or "").lower()
                             if any(_k in _acc_cat for _k in ("asset", "liabilit", "equity", "bank")):
                                 continue
-                            acc_words = set(w for w in acc_name.replace("&", "").replace("/", " ").replace("_and_", " ").split() if len(w) >= 3)
+                            if _cat_is_payroll and any(t in acc_name for t in _non_payroll_staff) \
+                                    and not any(t in acc_name for t in _payroll_tokens):
+                                continue
+                            acc_words = set(w for w in acc_name.replace("&", "").replace("/", " ").replace("_and_", " ").split()
+                                            if len(w) >= 3 and w not in _generic_words)
                             overlap = len(cat_words & acc_words)
                             if overlap > best_score:
                                 best_score = overlap
