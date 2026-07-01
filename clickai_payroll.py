@@ -1312,6 +1312,7 @@ def register_payroll_routes(app, db, login_required, Auth, render_page,
         _emp_rate = safe_float(emp.get("hourly_rate", 0))
         is_hourly = basic_full <= 0 and _emp_rate > 0
         hourly_normal = hourly_ot = 0.0
+        _ps_debug = ""
         if is_hourly:
             # Hourly hours can sit in two places depending on timesheet state:
             #   (1) an unprocessed pending/approved BATCH (paid by Run Payroll), or
@@ -1320,20 +1321,24 @@ def register_payroll_routes(app, db, login_required, Auth, render_page,
             # Check both so the payslip shows the real hours + amount.
             _h_days = _hourly_days_for_employee(emp, biz_id)
 
-            # --- TEMP DIAGNOSTIC: locate this hourly employee's hours (remove later) ---
+            # --- TEMP DIAGNOSTIC: gather where this hourly employee's hours live ---
+            _diag = {}
             try:
-                _diag_dm, _ = _load_hourly_batch_map(biz_id)
-                _diag_tse = db.get("timesheet_entries", {"business_id": biz_id, "employee_id": emp_id}) if biz_id else []
-                _diag_months = sorted({str(e.get("date", ""))[:7] for e in _diag_tse if e.get("date")})
-                logger.info(
-                    "[PS-PREVIEW DIAG] id=%s name=%r rate=%s batch_matched=%s batch_keys=%s "
-                    "tse_total=%s tse_months=%s tse_hours=%s tse_ot=%s",
-                    emp_id, emp.get("name"), _emp_rate, len(_h_days), list(_diag_dm.keys())[:25],
-                    len(_diag_tse), _diag_months,
-                    sum(safe_float(e.get("hours", e.get("normal_hours", 0))) for e in _diag_tse),
-                    sum(safe_float(e.get("overtime", 0)) for e in _diag_tse),
-                )
+                _dm, _bids = _load_hourly_batch_map(biz_id)
+                _all_tse = db.get("timesheet_entries", {"business_id": biz_id, "employee_id": emp_id}) if biz_id else []
+                _diag = {
+                    "batch_matched": len(_h_days),
+                    "batch_count": len(_bids),
+                    "batch_keys": list(_dm.keys())[:30],
+                    "tse_total": len(_all_tse),
+                    "tse_months": sorted({str(e.get("date", ""))[:7] for e in _all_tse if e.get("date")}),
+                    "tse_sample": [{"date": e.get("date"), "hours": e.get("hours"),
+                                    "normal_hours": e.get("normal_hours"), "overtime": e.get("overtime"),
+                                    "sunday": e.get("sunday_hours")} for e in _all_tse[:6]],
+                }
+                logger.info("[PS-PREVIEW DIAG] id=%s name=%r %s", emp_id, emp.get("name"), _diag)
             except Exception as _de:
+                _diag = {"error": str(_de)}
                 logger.error(f"[PS-PREVIEW DIAG] failed: {_de}")
             # --- end diagnostic ---
 
@@ -1362,6 +1367,21 @@ def register_payroll_routes(app, db, login_required, Auth, render_page,
             basic = round(_gross_h, 2)
             basic_full = basic
             hours_off_amount = 0.0
+            import html as _html
+            _ps_debug = (
+                '<div style="background:#fde68a;color:#111;padding:12px;border:2px solid #d97706;'
+                'border-radius:8px;margin:10px 0;font-family:monospace;font-size:12px;white-space:pre-wrap;">'
+                '<b>DEBUG - hourly hours lookup (temporary)</b>\n'
+                'employee: ' + _html.escape(str(emp.get("name"))) + '  id=' + str(emp_id) + '  rate=R' + str(_emp_rate) + '\n'
+                'pay month checked: ' + today()[:7] + '\n'
+                'batch_matched_days=' + str(_diag.get("batch_matched")) + '  pending/approved_batches=' + str(_diag.get("batch_count")) + '\n'
+                'batch_map_keys=' + _html.escape(str(_diag.get("batch_keys"))) + '\n'
+                'timesheet_entries_total=' + str(_diag.get("tse_total")) + '  months=' + _html.escape(str(_diag.get("tse_months"))) + '\n'
+                'entries_sample=' + _html.escape(str(_diag.get("tse_sample"))) + '\n'
+                'computed gross=R' + str(_gross_h) + '\n'
+                + ('error=' + _html.escape(str(_diag.get("error"))) + '\n' if _diag.get("error") else '')
+                + '</div>'
+            )
             earnings_first_row = (f'<tr style="border-bottom:1px solid #eee;"><td style="padding:6px 0;color:#666;">'
                                   f'Wages ({hourly_normal + hourly_ot:.2f} hrs @ {money(_emp_rate)}/h)</td>'
                                   f'<td style="padding:6px 0;text-align:right;color:#333;">{money(basic_full)}</td></tr>')
@@ -1662,6 +1682,7 @@ def register_payroll_routes(app, db, login_required, Auth, render_page,
         {ts_note}
         '''
         
+        content = _ps_debug + content
         return render_page("Payslip Preview", content, user, "payroll")
     
     
