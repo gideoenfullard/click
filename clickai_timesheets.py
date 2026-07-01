@@ -8,6 +8,7 @@
 #           Timesheet log/delete APIs
 # ==============================================================================
 
+import base64
 import json
 import time
 import logging
