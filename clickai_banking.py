@@ -3083,8 +3083,8 @@ Return ONLY the JSON array. No markdown, no explanation."""
                                             "content-type": "application/json"
                                         },
                                         json={
-                                            "model": "claude-haiku-4-5-20251001",
-                                            "max_tokens": 8000,
+                                            "model": "claude-sonnet-5",
+                                            "max_tokens": 11000,
                                             "messages": [{
                                                 "role": "user",
                                                 "content": [
@@ -3607,11 +3607,16 @@ Return ONLY the JSON array. No markdown, no explanation."""
             # ═══════════════════════════════════════════════════════════════
             existing_txns = db.get("bank_transactions", {"business_id": biz_id}) or []
             existing_fingerprints = set()
+            from collections import Counter as _Counter
+            existing_counts = _Counter()   # balance-less key -> copies already in the books
             for et in existing_txns:
-                existing_fingerprints.add(_bank_fingerprint(
+                _efp = _bank_fingerprint(
                     et.get("date", ""), et.get("description"),
                     et.get("amount", 0), et.get("debit", 0), et.get("credit", 0),
-                    et.get("balance", 0)))
+                    et.get("balance", 0))
+                existing_fingerprints.add(_efp)
+                existing_counts[_efp[:3]] += 1   # (date, description, signed amount) — ignores balance
+            seen_in_file = _Counter()          # same key -> copies seen so far in THIS import
             
             logger.info(f"[BANK IMPORT] Dedup: {len(existing_fingerprints)} signed fingerprints loaded")
             
@@ -3767,18 +3772,30 @@ Return ONLY the JSON array. No markdown, no explanation."""
                         continue
                     
                     # ═══════════════════════════════════════════════════════════════
-                    # DEDUP CHECK: Skip if this transaction already exists.
-                    # Fingerprint = date + full description + signed amount + running
-                    # balance. The balance makes two genuinely different transactions
-                    # on the same day with the same description+amount (e.g. two R4.90
-                    # card fees with different running balances) distinct, so neither
-                    # is silently dropped. A re-import of the same statement has
-                    # identical balances and is still deduped.
+                    # DEDUP CHECK.
+                    #  • Statement WITH a running balance: the balance uniquely marks
+                    #    each line, so an exact re-import is caught while two genuine
+                    #    same-day/same-amount charges (e.g. two R4.90 card fees, which
+                    #    have different running balances) are BOTH kept.
+                    #  • Statement WITHOUT a running balance: fall back to a COUNT-based
+                    #    merge — keep every genuine repeat (several R4.90 fees on a day)
+                    #    but still dedupe a re-import, by skipping only as many identical
+                    #    lines as the books already hold.
+                    # Erring toward keeping a line is safe (visible, removable); silently
+                    # dropping one corrupts the bank balance.
                     # ═══════════════════════════════════════════════════════════════
                     fingerprint = _bank_fingerprint(txn_date, description, amount, debit, credit, running_balance)
-                    if fingerprint in existing_fingerprints:
-                        skipped_dupes += 1
-                        continue
+                    _dedup_key = fingerprint[:3]   # (date, description, signed amount)
+                    seen_in_file[_dedup_key] += 1
+                    if running_balance is not None:
+                        if fingerprint in existing_fingerprints:
+                            skipped_dupes += 1
+                            continue
+                        existing_fingerprints.add(fingerprint)
+                    else:
+                        if seen_in_file[_dedup_key] <= existing_counts[_dedup_key]:
+                            skipped_dupes += 1
+                            continue
                     
                     # A transaction is only a duplicate when its date, full description
                     # AND signed amount all match an existing one (the exact check above).
@@ -3788,9 +3805,6 @@ Return ONLY the JSON array. No markdown, no explanation."""
                     # happened to have the same amount on a busy day. Erring toward keeping
                     # a transaction is safe (visible, removable); silently dropping income
                     # is not (invisible, and it corrupts the bank balance).
-                    
-                    # Add this new one to prevent exact dupes within the same import file
-                    existing_fingerprints.add(fingerprint)
                     
                     # ═══════════════════════════════════════════════════════════════
                     # SMART MATCHING LOGIC
@@ -4227,8 +4241,21 @@ Return ONLY the JSON array. No markdown, no explanation."""
                         for t in group:
                             desc = (t.get("description") or "").upper()
                             core = _re_bc.sub(r'[0-9#:@%\-\.\s]+', '', desc)[:20]
-                            if core in seen_cores:
-                                # This is a duplicate — delete it
+                            # A TRUE OCR duplicate shares the SAME running balance.
+                            # Genuine repeated charges (several R4.90 fees in a day)
+                            # step the balance down each time, so their balances differ
+                            # and must be kept. With no running balance we cannot tell
+                            # them apart, so we keep everything (never silently drop).
+                            _bal = t.get("balance", None)
+                            try:
+                                _bal = round(float(_bal), 2) if _bal not in (None, "") else None
+                            except (ValueError, TypeError):
+                                _bal = None
+                            if _bal is None:
+                                continue
+                            _ck = (core, _bal)
+                            if _ck in seen_cores:
+                                # Same core text AND same balance — a real OCR double-up
                                 try:
                                     db.delete("bank_transactions", t["id"])
                                     balance_removed += 1
@@ -4236,7 +4263,7 @@ Return ONLY the JSON array. No markdown, no explanation."""
                                 except Exception:
                                     pass
                             else:
-                                seen_cores[core] = t
+                                seen_cores[_ck] = t
                     
                     if balance_removed > 0:
                         imported -= balance_removed
@@ -5110,6 +5137,11 @@ Return ONLY the JSON array. No markdown, no explanation."""
     {all_categories_for_ai}
     
     {f"Learned patterns from this business:{chr(10)}{pattern_examples}" if pattern_examples else ""}
+    
+    HARD RULES (never break these):
+    - The "category" you return MUST be copied EXACTLY, word-for-word, from the Categories list above. Never invent, translate, shorten or reword a category name.
+    - Respect DIRECTION. On a MONEY IN line pick ONLY an income/deposit category, never an expense one. On a MONEY OUT line pick ONLY an expense category, never income. If the only fitting categories are on the wrong side, do NOT force one — use the clarification path.
+    - When you are not clearly confident which ONE category is right, use the clarification path (needs_clarification=true). A wrong allocation is worse than asking.
     
     Two paths:
     1. You KNOW (Telkom=Telephone, Engen=Fuel, bank fees, etc): say it directly

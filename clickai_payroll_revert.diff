@@ -1,0 +1,20 @@
+--- /mnt/user-data/uploads/clickai_payroll.py	2026-06-30 14:00:12.911630000 +0000
++++ /mnt/user-data/outputs/clickai_payroll.py	2026-06-30 14:05:34.831828016 +0000
+@@ -1254,7 +1254,7 @@
+                 body * {{ visibility: hidden !important; }}
+                 .print-area, .print-area * {{ visibility: visible !important; }}
+                 .print-area .print-only {{ display: block !important; }}
+-                .print-area {{ position: absolute; left: 0; top: -15mm; width: 100%; }}
++                .print-area {{ position: absolute; left: 0; top: 0; width: 100%; }}
+             }}
+         </style>
+         <div class="no-print" style="display:flex;justify-content:space-between;align-items:center;margin-bottom:15px;">
+@@ -2389,7 +2389,7 @@
+                 body * {{ visibility: hidden !important; }}
+                 .print-area, .print-area * {{ visibility: visible !important; }}
+                 .print-area .print-only {{ display: block !important; }}
+-                .print-area {{ position: absolute; left: 0; top: -15mm; width: 100%; }}
++                .print-area {{ position: absolute; left: 0; top: 0; width: 100%; }}
+             }}
+         </style>
+         

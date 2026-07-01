@@ -1658,7 +1658,7 @@ TAKE YOUR TIME. ACCURACY > SPEED. Read every number, every word carefully!"""
             ]
             
             response = client.messages.create(
-                model="claude-sonnet-4-6",
+                model="claude-sonnet-5",
                 max_tokens=2500,
                 messages=[{"role": "user", "content": message_content}]
             )
@@ -1705,7 +1705,7 @@ TAKE YOUR TIME. ACCURACY > SPEED. Read every number, every word carefully!"""
                             "ONLY read times - DO NOT calculate hours. Extract ALL employees."
                         )
                         ts_msg = client.messages.create(
-                            model="claude-sonnet-4-6",
+                            model="claude-sonnet-5",
                             max_tokens=4000,
                             messages=[{
                                 "role": "user",
@@ -2578,7 +2578,7 @@ def _track_ai_usage(message_response, biz_id, tool_name, user_id=None, metadata=
         app._ai_usage_tracker.log_usage(
             business_id=biz_id,
             tool=tool_name,
-            model=getattr(message_response, "model", "claude-sonnet-4-6"),
+            model=getattr(message_response, "model", "claude-sonnet-5"),
             input_tokens=int(getattr(usage, "input_tokens", 0) or 0),
             output_tokens=int(getattr(usage, "output_tokens", 0) or 0),
             cache_read_tokens=int(getattr(usage, "cache_read_input_tokens", 0) or 0),
@@ -10858,7 +10858,7 @@ Respond in the same language the user uses.
 
 
 def call_zane_with_tools(system_prompt, user_message, tool_handler, chat_history=None,
-                         model="claude-sonnet-4-6", api_key="", max_turns=8):
+                         model="claude-sonnet-5", api_key="", max_turns=8):
     """Call Zane with tool loop. Returns final text response."""
     messages = []
     if chat_history:
@@ -10937,7 +10937,7 @@ class Brain:
     Zane understands intent, gathers context, executes actions, responds.
     """
     
-    MODEL_SONNET = "claude-sonnet-4-6"    # All Zane queries - Sonnet 4.6 (latest)
+    MODEL_SONNET = "claude-sonnet-5"    # All Zane queries - Sonnet 5 (latest)
     MAX_TOKENS = 3500
     
     @classmethod
@@ -16590,8 +16590,8 @@ class ReportEngine:
     This produces reports that are both intelligent AND readable.
     """
     
-    MODEL_OPUS = "claude-sonnet-4-6"    # All reports now use Sonnet 4.6 - fast and accurate
-    MODEL_PRESENTER = "claude-sonnet-4-6"  # Same model for consistency
+    MODEL_OPUS = "claude-sonnet-5"    # All reports now use Sonnet 5 - fast and accurate
+    MODEL_PRESENTER = "claude-sonnet-5"  # Same model for consistency
     
     @classmethod
     def generate(cls, report_type: str, context: dict, custom_request: str = None) -> dict:
@@ -16727,7 +16727,7 @@ Write the full {report_title} now."""
         try:
             client = _anthropic_client
             response = client.messages.create(
-                model="claude-sonnet-4-6",
+                model="claude-sonnet-5",
                 max_tokens=32000,
                 system=system_prompt,
                 messages=[{"role": "user", "content": user_prompt}]
@@ -16743,7 +16743,7 @@ Write the full {report_title} now."""
                         app._ai_usage_tracker.log_usage(
                             business_id=_biz_id,
                             tool="smart_report",
-                            model=getattr(response, "model", "claude-sonnet-4-6"),
+                            model=getattr(response, "model", "claude-sonnet-5"),
                             input_tokens=int(getattr(_usage, "input_tokens", 0) or 0),
                             output_tokens=int(getattr(_usage, "output_tokens", 0) or 0),
                             cache_read_tokens=int(getattr(_usage, "cache_read_input_tokens", 0) or 0),
@@ -24520,7 +24520,7 @@ BUSINESS PROFILE FOR {biz_name}:
             
             client = _anthropic_client
             message = client.messages.create(
-                model="claude-sonnet-4-6",
+                model="claude-sonnet-5",
                 max_tokens=16000,
                 messages=[{
                     "role": "user",
@@ -31020,7 +31020,7 @@ Return valid JSON only, no other text."""
         try:
             client = _anthropic_client
             response = client.messages.create(
-                model="claude-sonnet-4-6",
+                model="claude-sonnet-5",
                 max_tokens=500,
                 messages=[{
                     "role": "user",
@@ -31578,7 +31578,7 @@ Extract the recurring amount. Return valid JSON only."""
         try:
             client = _anthropic_client
             response = client.messages.create(
-                model="claude-sonnet-4-6",
+                model="claude-sonnet-5",
                 max_tokens=500,
                 messages=[{
                     "role": "user",
@@ -41287,7 +41287,7 @@ Return ONLY the JSON, nothing else."""
             client = _anthropic_client
             
             response = client.messages.create(
-                model="claude-sonnet-4-6",
+                model="claude-sonnet-5",
                 max_tokens=1000,
                 messages=[{"role": "user", "content": opus_prompt}]
             )
@@ -44560,7 +44560,7 @@ ONLY return the JSON object, nothing else."""
                         "Content-Type": "application/json"
                     },
                     json={
-                        "model": "claude-sonnet-4-6",
+                        "model": "claude-sonnet-5",
                         "max_tokens": 500,
                         "messages": [{"role": "user", "content": ai_map_prompt}]
                     },
@@ -44967,7 +44967,7 @@ Rules:
 
                 client = _anthropic_client
                 response = client.messages.create(
-                    model="claude-sonnet-4-6",
+                    model="claude-sonnet-5",
                     max_tokens=500,
                     messages=[{"role": "user", "content": ai_prompt}]
                 )
@@ -45944,7 +45944,7 @@ IMPORTANT: Only set true for actions the user EXPLICITLY asked for.
                     "anthropic-version": "2023-06-01"
                 },
                 json={
-                    "model": "claude-sonnet-4-6",
+                    "model": "claude-sonnet-5",
                     "max_tokens": 300,
                     "messages": [{"role": "user", "content": understand_prompt}]
                 },
@@ -56524,8 +56524,8 @@ For original_invoice_ref: only fill it when document_type is "credit_note" AND y
                     logger.info(f"[SCAN] Sending bank statement {part_name} half ({len(part_data)/1024:.0f}KB)")
                     
                     part_message = client.messages.create(
-                        model="claude-sonnet-4-6",
-                        max_tokens=6000,
+                        model="claude-sonnet-5",
+                        max_tokens=8000,
                         messages=[{
                             "role": "user",
                             "content": [
@@ -56541,7 +56541,7 @@ For original_invoice_ref: only fill it when document_type is "credit_note" AND y
                             app._ai_usage_tracker.log_usage(
                                 business_id=biz_id,
                                 tool="scan_bank",
-                                model=getattr(part_message, "model", "claude-sonnet-4-6"),
+                                model=getattr(part_message, "model", "claude-sonnet-5"),
                                 input_tokens=int(getattr(_u, "input_tokens", 0) or 0),
                                 output_tokens=int(getattr(_u, "output_tokens", 0) or 0),
                                 cache_read_tokens=int(getattr(_u, "cache_read_input_tokens", 0) or 0),
@@ -56593,8 +56593,8 @@ For original_invoice_ref: only fill it when document_type is "credit_note" AND y
                 logger.warning(f"[SCAN] Split failed ({split_err}), falling back to single image")
                 # Fallback to single image
                 message = client.messages.create(
-                    model="claude-sonnet-4-6",
-                    max_tokens=6000,
+                    model="claude-sonnet-5",
+                    max_tokens=8000,
                     messages=[{
                         "role": "user",
                         "content": [
@@ -56610,7 +56610,7 @@ For original_invoice_ref: only fill it when document_type is "credit_note" AND y
                         app._ai_usage_tracker.log_usage(
                             business_id=biz_id,
                             tool="scan_bank",
-                            model=getattr(message, "model", "claude-sonnet-4-6"),
+                            model=getattr(message, "model", "claude-sonnet-5"),
                             input_tokens=int(getattr(_u, "input_tokens", 0) or 0),
                             output_tokens=int(getattr(_u, "output_tokens", 0) or 0),
                             cache_read_tokens=int(getattr(_u, "cache_read_input_tokens", 0) or 0),
@@ -56628,8 +56628,8 @@ For original_invoice_ref: only fill it when document_type is "credit_note" AND y
                 extracted["ai_source"] = "Claude Sonnet"
         else:
             message = client.messages.create(
-                model="claude-sonnet-4-6",
-                max_tokens=4000,
+                model="claude-sonnet-5",
+                max_tokens=5500,
                 messages=[{
                     "role": "user",
                     "content": [
@@ -56645,7 +56645,7 @@ For original_invoice_ref: only fill it when document_type is "credit_note" AND y
                     app._ai_usage_tracker.log_usage(
                         business_id=biz_id,
                         tool="scan_doc",
-                        model=getattr(message, "model", "claude-sonnet-4-6"),
+                        model=getattr(message, "model", "claude-sonnet-5"),
                         input_tokens=int(getattr(_u, "input_tokens", 0) or 0),
                         output_tokens=int(getattr(_u, "output_tokens", 0) or 0),
                         cache_read_tokens=int(getattr(_u, "cache_read_input_tokens", 0) or 0),
@@ -56712,8 +56712,8 @@ IMPORTANT: Read ALL numbers exactly as printed on the document. Do NOT calculate
                 
                 try:
                     retry_message = client.messages.create(
-                        model="claude-sonnet-4-6",
-                        max_tokens=4000,
+                        model="claude-sonnet-5",
+                        max_tokens=5500,
                         messages=[{
                             "role": "user",
                             "content": [
@@ -57326,6 +57326,18 @@ def api_scan_check_duplicate():
             date = data.get("date") or extracted.get("date") or ""
             
             logger.info(f"[DUPLICATE CHECK] Checking: inv={invoice_num}, supplier={supplier}, total={total}, date={date}")
+
+            def _names_conflict(a, b):
+                """True only when BOTH supplier names are present and neither is a
+                substring of the other — i.e. clearly different businesses. Stops a
+                shared invoice-number/amount coincidence from flagging two unrelated
+                suppliers (e.g. Captain Liquor vs Industrial Clothing) as the same
+                document. Empty/unknown names are never treated as a conflict."""
+                a = (a or "").strip().lower()
+                b = (b or "").strip().lower()
+                if not a or not b:
+                    return False
+                return not (a in b or b in a)
             
             # ============================================
             # CHECK 1: Other items in scan_queue
@@ -57352,6 +57364,10 @@ def api_scan_check_duplicate():
                     sq_total = float(sq_total_raw) if sq_total_raw else 0
                 except:
                     sq_total = 0
+                
+                # Clearly different-named suppliers are never the same document.
+                if _names_conflict(supplier, sq_supplier):
+                    continue
                 
                 match_score = 0
                 match_reasons = []
@@ -57389,6 +57405,9 @@ def api_scan_check_duplicate():
             # ============================================
             expenses = db.get("expenses", {"business_id": biz_id}) or []
             for exp in expenses:
+                # Clearly different-named suppliers are never the same document.
+                if _names_conflict(supplier, exp.get("supplier_name", "")):
+                    continue
                 match_score = 0
                 match_reasons = []
                 
@@ -57434,6 +57453,9 @@ def api_scan_check_duplicate():
             # ============================================
             supplier_invs = db.get("supplier_invoices", {"business_id": biz_id}) or []
             for inv in supplier_invs:
+                # Clearly different-named suppliers are never the same document.
+                if _names_conflict(supplier, inv.get("supplier_name", "")):
+                    continue
                 match_score = 0
                 match_reasons = []
                 
@@ -62482,7 +62504,7 @@ def api_smart_scan():
         client = _anthropic_client
         
         message = client.messages.create(
-            model="claude-sonnet-4-6",
+            model="claude-sonnet-5",
             max_tokens=2000,
             messages=[{
                 "role": "user",
