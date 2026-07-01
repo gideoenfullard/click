@@ -1313,13 +1313,33 @@ def register_payroll_routes(app, db, login_required, Auth, render_page,
         is_hourly = basic_full <= 0 and _emp_rate > 0
         hourly_normal = hourly_ot = 0.0
         if is_hourly:
-            # Hourly hours live on scanned/pending timesheet BATCHES, not in
-            # timesheet_entries. Use the SAME source and gross engine that Run
-            # Payroll uses (_hourly_days_for_employee -> build_payslip_gross) so the
-            # preview shows the real hours and the exact gross the run will pay.
+            # Hourly hours can sit in two places depending on timesheet state:
+            #   (1) an unprocessed pending/approved BATCH (paid by Run Payroll), or
+            #   (2) already posted to timesheet_entries when the batch was reviewed
+            #       (batch marked 'processed'; paid from this preview via Create & Post).
+            # Check both so the payslip shows the real hours + amount.
             _h_days = _hourly_days_for_employee(emp, biz_id)
+
+            # --- TEMP DIAGNOSTIC: locate this hourly employee's hours (remove later) ---
+            try:
+                _diag_dm, _ = _load_hourly_batch_map(biz_id)
+                _diag_tse = db.get("timesheet_entries", {"business_id": biz_id, "employee_id": emp_id}) if biz_id else []
+                _diag_months = sorted({str(e.get("date", ""))[:7] for e in _diag_tse if e.get("date")})
+                logger.info(
+                    "[PS-PREVIEW DIAG] id=%s name=%r rate=%s batch_matched=%s batch_keys=%s "
+                    "tse_total=%s tse_months=%s tse_hours=%s tse_ot=%s",
+                    emp_id, emp.get("name"), _emp_rate, len(_h_days), list(_diag_dm.keys())[:25],
+                    len(_diag_tse), _diag_months,
+                    sum(safe_float(e.get("hours", e.get("normal_hours", 0))) for e in _diag_tse),
+                    sum(safe_float(e.get("overtime", 0)) for e in _diag_tse),
+                )
+            except Exception as _de:
+                logger.error(f"[PS-PREVIEW DIAG] failed: {_de}")
+            # --- end diagnostic ---
+
             _gross_h = 0.0
             if _h_days:
+                # (1) Unprocessed batch — use the run's exact gross engine
                 try:
                     from clickai_pay_conditions import build_payslip_gross
                     _hres = build_payslip_gross(emp, {"days": _h_days}, today()[:7], business=business)
@@ -1328,6 +1348,17 @@ def register_payroll_routes(app, db, login_required, Auth, render_page,
                     hourly_ot = safe_float(_hres.get("overtime_hours", 0))
                 except Exception as _he:
                     logger.error(f"[PAYSLIP-PREVIEW] hourly gross failed for {emp.get('name')}: {_he}")
+            if _gross_h <= 0:
+                # (2) Processed hours posted to timesheet_entries for THIS pay month.
+                # Field is 'hours' (normal) + 'overtime' + 'sunday_hours'; system rates
+                # are OT x1.5 and Sunday x2 (matches the timesheet posting).
+                _pm = today()[:7]
+                _tse = db.get("timesheet_entries", {"business_id": biz_id, "employee_id": emp_id}) if biz_id else []
+                _tse = [e for e in _tse if str(e.get("date", "")).startswith(_pm)]
+                hourly_normal = sum(safe_float(e.get("hours", e.get("normal_hours", 0))) for e in _tse)
+                hourly_ot = sum(safe_float(e.get("overtime", 0)) for e in _tse)
+                _sun = sum(safe_float(e.get("sunday_hours", 0)) for e in _tse)
+                _gross_h = round(hourly_normal * _emp_rate + hourly_ot * _emp_rate * 1.5 + _sun * _emp_rate * 2, 2)
             basic = round(_gross_h, 2)
             basic_full = basic
             hours_off_amount = 0.0
