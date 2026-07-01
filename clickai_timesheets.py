@@ -1297,15 +1297,28 @@ def register_timesheet_routes(app, db, login_required, Auth, render_page,
                 return jsonify({"success": False, "error": "No file uploaded"})
             
             file_data = file.read()
+            if not file_data:
+                return jsonify({"success": False, "error": "The uploaded file is empty — please try again"})
             base64_data = base64.b64encode(file_data).decode('utf-8')
             
-            filename = file.filename.lower()
-            if filename.endswith('.png'):
+            # Detect the real file type from its magic bytes. The filename extension is
+            # unreliable — phone photos and "saved as" files are often mislabelled, which
+            # makes the vision API reject them with "Could not process image".
+            _head = file_data[:16]
+            if _head[:4] == b"%PDF":
+                media_type = "application/pdf"
+            elif _head[:8] == b"\x89PNG\r\n\x1a\n":
                 media_type = "image/png"
-            elif filename.endswith('.gif'):
-                media_type = "image/gif"
-            else:
+            elif _head[:3] == b"\xff\xd8\xff":
                 media_type = "image/jpeg"
+            elif _head[:4] == b"GIF8":
+                media_type = "image/gif"
+            elif _head[:4] == b"RIFF" and file_data[8:12] == b"WEBP":
+                media_type = "image/webp"
+            elif _head[4:8] == b"ftyp" and file_data[8:12] in (b"heic", b"heif", b"heix", b"mif1"):
+                return jsonify({"success": False, "error": "HEIC photos aren't supported. On your phone, save or share the timesheet as JPG (or take a screenshot), then upload that."})
+            else:
+                return jsonify({"success": False, "error": "Unsupported file type. Please upload a JPG, PNG, or PDF of the timesheet."})
             
             # Get employees for context
             business = Auth.get_current_business()

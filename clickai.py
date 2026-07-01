@@ -1157,6 +1157,27 @@ def safe(text: str) -> str:
     return html.escape(str(text))
 
 
+def _ai_text(response) -> str:
+    """Return the first text block from an Anthropic API response.
+
+    Sonnet 5 can return a ThinkingBlock as the first content block. A thinking
+    block has no text attribute, so reading the first block's text directly
+    crashes with "'ThinkingBlock' object has no attribute 'text'". This walks the
+    blocks and returns the first real text block, or "" if there is none.
+    """
+    try:
+        for _blk in (getattr(response, "content", None) or []):
+            if getattr(_blk, "type", None) == "text":
+                return getattr(_blk, "text", "") or ""
+        for _blk in (getattr(response, "content", None) or []):
+            _t = getattr(_blk, "text", None)
+            if isinstance(_t, str):
+                return _t
+    except Exception:
+        pass
+    return ""
+
+
 def extract_json_from_text(text: str) -> dict:
     """
     Robustly extract JSON from AI response text.
@@ -1665,7 +1686,7 @@ TAKE YOUR TIME. ACCURACY > SPEED. Read every number, every word carefully!"""
             
             _track_ai_usage(response, _biz_id, "email_scan", metadata={"filename": filename[:80]})
             
-            ai_response = response.content[0].text
+            ai_response = _ai_text(response)
             logger.info(f"[EMAIL] Claude Sonnet raw response: {ai_response[:500]}")
             extracted = extract_json_from_text(ai_response)
             
@@ -1716,7 +1737,7 @@ TAKE YOUR TIME. ACCURACY > SPEED. Read every number, every word carefully!"""
                             }]
                         )
                         _track_ai_usage(ts_msg, _biz_id, "email_scan_timesheet", metadata={"filename": filename[:80]})
-                        ts_data = extract_json_from_text(ts_msg.content[0].text)
+                        ts_data = extract_json_from_text(_ai_text(ts_msg))
                         if ts_data and ts_data.get("employees"):
                             ts_data["ai_source"] = "Claude Sonnet (timesheet)"
                             result["extracted_data"] = ts_data
@@ -16556,7 +16577,7 @@ Write with confidence - you KNOW what you're talking about. Sign off with "- Zan
                 if message.content:
                     logger.info("[BRIEFING] Claude Haiku 4.5 success")
                     import re as _re
-                    briefing_text = message.content[0].text
+                    briefing_text = _ai_text(message)
                     briefing_text = _re.sub(r'[\U0001F300-\U0001F9FF\U0001FA00-\U0001FA6F\U0001FA70-\U0001FAFF\u2600-\u27BF\u2B50\u2B55\u26A0\u2705\u274C\u274E\u2714\u2716\u2728\u2753\u2754\u2755\u2757\u2763\u2764\u203C\u2049\u200D\u20E3\uFE0F]', '', briefing_text)
                     return briefing_text
             except Exception as e:
@@ -16756,7 +16777,7 @@ Write the full {report_title} now."""
                 logger.error(f"[AI-USAGE] smart_report tracking skipped: {_track_err}")
             # ─── END TRACKING ───
             
-            return response.content[0].text
+            return _ai_text(response)
                 
         except Exception as e:
             logger.error(f"[REPORT] Sonnet exception: {e}")
@@ -24587,7 +24608,7 @@ Be direct. Be specific. Use actual numbers from both the document AND the busine
             
             _track_ai_usage(message, biz_id, "zane_analyze_pdf", metadata={"filename": (file.filename or "")[:80]})
             
-            analysis_html = message.content[0].text.strip()
+            analysis_html = _ai_text(message).strip()
             analysis_html = analysis_html.replace("```html", "").replace("```", "").strip()
             
             return jsonify({
@@ -31082,7 +31103,7 @@ Return valid JSON only, no other text."""
                 }]
             )
             
-            result_text = response.content[0].text.strip()
+            result_text = _ai_text(response).strip()
             
             # Parse JSON from response
             import re
@@ -31646,7 +31667,7 @@ Extract the recurring amount. Return valid JSON only."""
             except Exception:
                 pass
             
-            result_text = response.content[0].text.strip()
+            result_text = _ai_text(response).strip()
             
             import re
             json_match = re.search(r'\{[^}]+\}', result_text, re.DOTALL)
@@ -41349,7 +41370,7 @@ Return ONLY the JSON, nothing else."""
             except Exception:
                 pass
             
-            opus_response = response.content[0].text.strip()
+            opus_response = _ai_text(response).strip()
             
             # Clean response
             if '```' in opus_response:
@@ -45029,7 +45050,7 @@ Rules:
                 except Exception:
                     pass
                 
-                ai_text = response.content[0].text.strip()
+                ai_text = _ai_text(response).strip()
                 # Extract JSON from response
                 if "{" in ai_text:
                     json_start = ai_text.index("{")
@@ -56649,7 +56670,7 @@ For original_invoice_ref: only fill it when document_type is "credit_note" AND y
                         logger.error(f"[AI-USAGE] scan tracking skipped: {_track_err}")
                     # ─── END TRACKING ───
                     
-                    part_text = part_message.content[0].text.strip()
+                    part_text = _ai_text(part_message).strip()
                     part_data_json = extract_json_from_text(part_text)
                     
                     if part_data_json:
@@ -56717,7 +56738,7 @@ For original_invoice_ref: only fill it when document_type is "credit_note" AND y
                 except Exception as _track_err:
                     logger.error(f"[AI-USAGE] scan tracking skipped: {_track_err}")
                 # ─── END TRACKING ───
-                response_text = message.content[0].text.strip()
+                response_text = _ai_text(message).strip()
                 extracted = extract_json_from_text(response_text)
                 if not extracted:
                     return jsonify({"success": False, "error": "Could not read bank statement"})
@@ -56753,7 +56774,7 @@ For original_invoice_ref: only fill it when document_type is "credit_note" AND y
                 logger.error(f"[AI-USAGE] scan tracking skipped: {_track_err}")
             # ─── END TRACKING ───
         
-            response_text = message.content[0].text.strip()
+            response_text = _ai_text(message).strip()
             extracted = extract_json_from_text(response_text)
             
             if not extracted:
@@ -56821,7 +56842,7 @@ IMPORTANT: Read ALL numbers exactly as printed on the document. Do NOT calculate
                     
                     _track_ai_usage(retry_message, biz_id, "scan_document_retry", metadata={"scan_type": scan_type, "missing": missing_critical})
                     
-                    retry_text = retry_message.content[0].text.strip()
+                    retry_text = _ai_text(retry_message).strip()
                     retry_extracted = extract_json_from_text(retry_text)
                     
                     if retry_extracted:
@@ -57231,7 +57252,7 @@ Return ONLY the JSON array, no explanation."""
                                 max_tokens=2000,
                                 messages=[{"role": "user", "content": _match_prompt}]
                             )
-                            _haiku_text = _haiku_resp.content[0].text.strip() if _haiku_resp.content else ""
+                            _haiku_text = _ai_text(_haiku_resp).strip() if _haiku_resp.content else ""
                             # Strip code fences if any
                             if _haiku_text.startswith("```"):
                                 _haiku_text = _haiku_text.split("```")[1]
@@ -61141,7 +61162,7 @@ po_qty = qty from PO. qty_diff = invoice_qty - po_qty. stock_code = PO item's co
                     max_tokens=2000,
                     messages=[{"role": "user", "content": match_prompt}]
                 )
-                ht = hk.content[0].text.strip() if hk.content else ""
+                ht = _ai_text(hk).strip() if hk.content else ""
                 if ht.startswith("```"):
                     ht = ht.split("```")[1]
                     if ht.startswith("json"):
@@ -62135,7 +62156,7 @@ JSON only:
         except Exception:
             pass
         
-        ai_response = response.content[0].text
+        ai_response = _ai_text(response)
         suggestion = extract_json_from_text(ai_response)
         
         if suggestion:
@@ -62644,7 +62665,7 @@ Return ONLY JSON."""}
         except Exception:
             pass
         
-        response_text = message.content[0].text.strip()
+        response_text = _ai_text(message).strip()
         if response_text.startswith("```"):
             response_text = response_text.split("```")[1]
             if response_text.startswith("json"): response_text = response_text[4:]
