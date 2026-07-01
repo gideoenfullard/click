@@ -28596,6 +28596,7 @@ def customer_view(customer_id):
     # An invoice is "open" if it is not paid/credited/reversed and still has
     # an outstanding amount (total minus what is already allocated to it).
     _open_invoices = []
+    _cust_disc_pct = round(float(customer.get("discount_percentage", 0) or 0), 2)
     for _inv in invoices:
         _st = (_inv.get("status") or "").lower()
         if _st in ("paid", "credited", "reversed"):
@@ -28607,31 +28608,51 @@ def customer_view(customer_id):
         _outstanding = round(_inv_total - _already, 2)
         if _outstanding <= 0:
             continue
+        _inv_cap_disc = round(float(_inv.get("discount_amount", 0) or 0), 2)
+        _settle_disc = round(_outstanding * _cust_disc_pct / 100, 2) if (_cust_disc_pct > 0 and _inv_cap_disc == 0) else 0.0
         _open_invoices.append({
             "id": _inv.get("id", ""),
             "number": _inv.get("invoice_number", "-"),
             "date": _inv.get("date", "-"),
-            "outstanding": _outstanding
+            "outstanding": _outstanding,
+            "discount": _settle_disc,
+            "net_to_pay": round(_outstanding - _settle_disc, 2)
         })
     # Oldest first — auto-allocate works through them in age order
     _open_invoices.sort(key=lambda x: x["date"])
     
     _alloc_rows_html = ""
     for _oi in _open_invoices:
+        if _oi.get("discount", 0) > 0:
+            _disc_line = (f'<div style="color:var(--green);font-size:11px;margin-top:3px;">'
+                          f'<label style="cursor:pointer;"><input type="checkbox" class="cpDiscChk" data-invid="{_oi["id"]}" '
+                          f'onchange="cpToggleDisc(this)" checked style="vertical-align:middle;margin-right:4px;">'
+                          f'Take {_cust_disc_pct:g}% discount (-{money(_oi["discount"])}) &rarr; receive {money(_oi["net_to_pay"])}</label></div>')
+            _prefill = f'{_oi["net_to_pay"]:.2f}'
+        else:
+            _disc_line = ""
+            _prefill = ""
         _alloc_rows_html += f'''
         <div style="display:flex;align-items:center;gap:10px;padding:8px 0;border-bottom:1px solid var(--border);">
             <div style="flex:1;font-size:13px;">
                 <strong>{safe_string(_oi["number"])}</strong>
                 <span style="color:var(--text-muted);"> · {_oi["date"]}</span><br>
                 <span style="color:var(--text-muted);font-size:12px;">Outstanding: {money(_oi["outstanding"])}</span>
+                {_disc_line}
             </div>
             <input type="number" class="cpAllocAmt" data-invid="{_oi["id"]}" data-outstanding="{_oi["outstanding"]}"
+                   data-disc="{_oi["discount"]}" data-nettopay="{_oi["net_to_pay"]}" value="{_prefill}"
                    placeholder="0.00" step="0.01" min="0" max="{_oi["outstanding"]}"
                    style="width:110px;padding:8px;border:1px solid var(--border);border-radius:6px;background:var(--bg);color:var(--text);text-align:right;">
         </div>
         '''
     if not _alloc_rows_html:
         _alloc_rows_html = '<p style="color:var(--text-muted);font-size:13px;padding:8px 0;">No open invoices — this payment will go on account.</p>'
+    
+    _cp_disc_all_html = ""
+    if any(o.get("discount", 0) > 0 for o in _open_invoices):
+        _cp_disc_all_html = ('<a href="javascript:void(0)" onclick="cpToggleAllDisc(true)" style="font-size:11px;color:var(--green);margin-right:8px;">Discount: all</a>'
+                             '<a href="javascript:void(0)" onclick="cpToggleAllDisc(false)" style="font-size:11px;color:var(--text-muted);margin-right:10px;">none</a>')
     
     content = f'''
     <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:20px;">
@@ -29164,20 +29185,48 @@ def customer_view(customer_id):
         const out = [];
         document.querySelectorAll('.cpAllocAmt').forEach(function(inp) {{
             const amt = parseFloat(inp.value) || 0;
-            if (amt > 0) {{
-                out.push({{ invoice_id: inp.dataset.invid, amount: Math.round(amt * 100) / 100 }});
+            const chk = document.querySelector('.cpDiscChk[data-invid="' + inp.dataset.invid + '"]');
+            let disc = 0;
+            if (chk && chk.checked) {{ disc = parseFloat(inp.dataset.disc) || 0; }}
+            if (amt > 0 || disc > 0) {{
+                out.push({{ invoice_id: inp.dataset.invid, amount: Math.round(amt * 100) / 100, discount: Math.round(disc * 100) / 100 }});
             }}
         }});
         return out;
+    }}
+    
+    function cpSyncPayAmount() {{
+        let total = 0;
+        document.querySelectorAll('.cpAllocAmt').forEach(function(inp) {{ total += parseFloat(inp.value) || 0; }});
+        total = Math.round(total * 100) / 100;
+        const pa = document.getElementById('cpAmount');
+        if (pa && total > 0) pa.value = total.toFixed(2);
+    }}
+    function cpToggleDisc(chk) {{
+        const inp = document.querySelector('.cpAllocAmt[data-invid="' + chk.dataset.invid + '"]');
+        if (!inp) return;
+        inp.value = chk.checked ? (parseFloat(inp.dataset.nettopay) || 0).toFixed(2) : (parseFloat(inp.dataset.outstanding) || 0).toFixed(2);
+        cpSyncPayAmount();
+        if (typeof cpUpdateAllocSummary === 'function') cpUpdateAllocSummary();
+    }}
+    function cpToggleAllDisc(on) {{
+        document.querySelectorAll('.cpDiscChk').forEach(function(chk) {{
+            chk.checked = on;
+            const inp = document.querySelector('.cpAllocAmt[data-invid="' + chk.dataset.invid + '"]');
+            if (inp) inp.value = on ? (parseFloat(inp.dataset.nettopay) || 0).toFixed(2) : (parseFloat(inp.dataset.outstanding) || 0).toFixed(2);
+        }});
+        cpSyncPayAmount();
+        if (typeof cpUpdateAllocSummary === 'function') cpUpdateAllocSummary();
     }}
     
     // Auto-allocate: spread the entered amount across open invoices, oldest first
     function cpAutoAllocate() {{
         let remaining = parseFloat(document.getElementById('cpAmount').value) || 0;
         document.querySelectorAll('.cpAllocAmt').forEach(function(inp) {{
-            const outstanding = parseFloat(inp.dataset.outstanding) || 0;
+            const chk = document.querySelector('.cpDiscChk[data-invid="' + inp.dataset.invid + '"]');
+            const target = (chk && chk.checked) ? (parseFloat(inp.dataset.nettopay) || 0) : (parseFloat(inp.dataset.outstanding) || 0);
             if (remaining <= 0) {{ inp.value = ''; return; }}
-            const give = Math.min(remaining, outstanding);
+            const give = Math.min(remaining, target);
             inp.value = give > 0 ? give.toFixed(2) : '';
             remaining = Math.round((remaining - give) * 100) / 100;
         }});
@@ -29210,6 +29259,8 @@ def customer_view(customer_id):
     document.querySelectorAll('.cpAllocAmt').forEach(function(inp) {{
         inp.addEventListener('input', cpUpdateAllocSummary);
     }});
+    cpSyncPayAmount();
+    cpUpdateAllocSummary();
     
     // Set today's date when page loads (if modal exists)
     if (document.getElementById('cpDate')) {{
@@ -29256,7 +29307,7 @@ def customer_view(customer_id):
                 <div>
                     <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;">
                         <label style="font-weight:600;font-size:13px;">Allocate to Invoices</label>
-                        <button type="button" onclick="cpAutoAllocate()" style="padding:5px 10px;font-size:12px;background:var(--bg);color:var(--text);border:1px solid var(--border);border-radius:6px;cursor:pointer;">Auto-allocate</button>
+                        <div>{_cp_disc_all_html}<button type="button" onclick="cpAutoAllocate()" style="padding:5px 10px;font-size:12px;background:var(--bg);color:var(--text);border:1px solid var(--border);border-radius:6px;cursor:pointer;">Auto-allocate</button></div>
                     </div>
                     <div style="background:var(--bg);border:1px solid var(--border);border-radius:6px;padding:4px 12px;">
                         {_alloc_rows_html}
@@ -54928,6 +54979,48 @@ def api_customer_record_payment():
         if amount <= 0:
             return jsonify({"success": False, "error": "Amount must be greater than zero"})
         
+        # ── First pass: validate allocations, split any settlement discount ──
+        # Each allocation: {invoice_id, amount (cash), discount (taken)}. A discount is
+        # honoured only on an invoice booked at FULL value (discount_amount == 0), so we
+        # never double-discount. It is split into net + VAT by the invoice's own net:VAT
+        # ratio; the VAT portion reverses the over-declared output VAT — the mirror of the
+        # supplier settlement discount (Discount Allowed instead of Discount Received).
+        _alloc_in = data.get("allocations", []) or []
+        _processed = []
+        total_disc = 0.0
+        total_disc_net = 0.0
+        total_disc_vat = 0.0
+        for _alloc in _alloc_in:
+            _iid = (_alloc.get("invoice_id", "") or "").strip()
+            try:
+                _cash = round(float(_alloc.get("amount", 0) or 0), 2)
+            except Exception:
+                _cash = 0.0
+            try:
+                _disc = round(float(_alloc.get("discount", 0) or 0), 2)
+            except Exception:
+                _disc = 0.0
+            if not _iid or (_cash <= 0 and _disc <= 0):
+                continue
+            _inv = db.get_one("invoices", _iid)
+            if not _inv or _inv.get("business_id") != biz_id:
+                continue
+            if _disc > 0 and round(float(_inv.get("discount_amount", 0) or 0), 2) > 0:
+                _disc = 0.0   # already discounted at capture — never discount twice
+            _dnet = 0.0
+            _dvat = 0.0
+            if _disc > 0:
+                _itot = round(float(_inv.get("total", 0) or 0), 2)
+                _ivat = round(float(_inv.get("vat", 0) or 0), 2)
+                if _itot > 0 and _ivat > 0:
+                    _dvat = round(_disc * _ivat / _itot, 2)
+                _dnet = round(_disc - _dvat, 2)
+            _processed.append({"id": _iid, "inv": _inv, "cash": _cash, "disc": _disc,
+                               "disc_net": _dnet, "disc_vat": _dvat, "settled": round(_cash + _disc, 2)})
+            total_disc = round(total_disc + _disc, 2)
+            total_disc_net = round(total_disc_net + _dnet, 2)
+            total_disc_vat = round(total_disc_vat + _dvat, 2)
+        
         # Save receipt record
         # NOTE: receipts schema uses 'method' not 'payment_method'.
         # Adding both causes Supabase to reject the whole record on installs
@@ -54939,6 +55032,7 @@ def api_customer_record_payment():
             "customer_id": customer_id,
             "customer_name": customer_name,
             "amount": round(amount, 2),
+            "discount_total": round(total_disc, 2),
             "date": pay_date,
             "method": method,
             "reference": reference,
@@ -54963,15 +55057,25 @@ def api_customer_record_payment():
         else:
             bank_code = gl(biz_id, "bank")
         
+        _disc_allow_code = None
+        if total_disc_net > 0:
+            try:
+                _disc_allow_code = ensure_gl_account(biz_id, "discount_allowed", "Discount Allowed", "expense", "Expenses")
+            except Exception:
+                _disc_allow_code = gl(biz_id, "discount_allowed")
         gl_entries = [
             {"account_code": bank_code,             "debit": rounded, "credit": 0},
-            {"account_code": gl(biz_id, "debtors"), "debit": 0,       "credit": rounded},
+            {"account_code": gl(biz_id, "debtors"), "debit": 0,       "credit": round(rounded + total_disc, 2)},
         ]
+        if total_disc_net > 0:
+            gl_entries.append({"account_code": _disc_allow_code, "debit": round(total_disc_net, 2), "credit": 0})
+        if total_disc_vat > 0:
+            gl_entries.append({"account_code": gl(biz_id, "vat_output"), "debit": round(total_disc_vat, 2), "credit": 0})
         try:
             create_journal_entry(biz_id, pay_date,
                                  f"Payment from {customer_name}",
                                  ref_label, gl_entries)
-            logger.info(f"[CUST PAY] GL: Bank DR:{rounded}, Debtors CR:{rounded} for {customer_name}")
+            logger.info(f"[CUST PAY] GL: Bank DR:{rounded}, Debtors CR:{round(rounded + total_disc, 2)}, disc_net:{total_disc_net}, disc_vat:{total_disc_vat} for {customer_name}")
         except Exception as je_err:
             logger.error(f"[CUST PAY] GL entry error (payment still saved): {je_err}")
         
@@ -54992,51 +55096,43 @@ def api_customer_record_payment():
         except Exception:
             pass
         
-        # ── Invoice allocations ───────────────────────────────────────────
-        # data["allocations"] is a list of {"invoice_id": x, "amount": y}.
-        # Each becomes a payment_allocations row; the invoice is then
-        # recalculated from its allocations. Any unallocated remainder
-        # simply stays on the customer's account as a credit.
-        allocations = data.get("allocations", []) or []
-        allocated_total = 0.0
+        # ── Save invoice allocations. Each invoice is settled by cash + discount
+        # (so it clears in full); the discount was booked in the journal above. ──
+        allocated_cash = 0.0
         allocated_count = 0
-        for alloc in allocations:
-            inv_id = (alloc.get("invoice_id", "") or "").strip()
-            try:
-                alloc_amt = round(float(alloc.get("amount", 0) or 0), 2)
-            except Exception:
-                alloc_amt = 0.0
-            if not inv_id or alloc_amt <= 0:
-                continue
-            _inv = db.get_one("invoices", inv_id)
-            if not _inv or _inv.get("business_id") != biz_id:
+        for _p in _processed:
+            if _p["settled"] <= 0:
                 continue
             alloc_row = {
                 "id": generate_id(),
                 "business_id": biz_id,
                 "receipt_id": receipt_id,
-                "invoice_id": inv_id,
-                "invoice_number": _inv.get("invoice_number", ""),
+                "invoice_id": _p["id"],
+                "invoice_number": _p["inv"].get("invoice_number", ""),
                 "customer_id": customer_id,
                 "customer_name": customer_name,
-                "amount": alloc_amt,
+                "amount": _p["settled"],
+                "cash_amount": _p["cash"],
+                "discount": _p["disc"],
                 "date": pay_date,
                 "created_at": now()
             }
             ok_alloc, alloc_err = db.save("payment_allocations", alloc_row)
             if not ok_alloc:
-                logger.error(f"[CUST PAY] Allocation save failed for {inv_id}: {alloc_err}")
+                logger.error(f"[CUST PAY] Allocation save failed for {_p['id']}: {alloc_err}")
                 continue
-            allocated_total += alloc_amt
+            allocated_cash += _p["cash"]
             allocated_count += 1
             # Recalculate that invoice's status from its allocations
-            recalc_invoice_status(biz_id, inv_id)
+            recalc_invoice_status(biz_id, _p["id"])
         
-        unallocated = round(rounded - allocated_total, 2)
+        unallocated = round(rounded - allocated_cash, 2)
         if allocated_count > 0:
             _msg = (f"Payment of R{amount:,.2f} from {customer_name} recorded "
                     f"({method.upper()}) — allocated to {allocated_count} invoice(s)")
-            if unallocated > 0:
+            if total_disc > 0.005:
+                _msg += f", R{total_disc:,.2f} settlement discount taken"
+            if unallocated > 0.005:
                 _msg += f", R{unallocated:,.2f} left on account"
         else:
             _msg = (f"Payment of R{amount:,.2f} from {customer_name} recorded "
