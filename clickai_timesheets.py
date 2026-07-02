@@ -647,6 +647,7 @@ def register_timesheet_routes(app, db, login_required, Auth, render_page,
                             <th>Hours</th>
                             <th style="color:#f59e0b;">OT</th>
                             <th style="color:#3b82f6;">Sun</th>
+                            <th>Status</th>
                         </tr>
                     </thead>
                     <tbody>
@@ -672,23 +673,34 @@ def register_timesheet_routes(app, db, login_required, Auth, render_page,
                     in_border = "1px solid var(--border)" if _cell_is_time(d_in) else "2px solid #f59e0b"
                     out_border = "1px solid var(--border)" if _cell_is_time(d_out) else "2px solid #f59e0b"
                     
+                    _sun_flag = "1" if is_sun else "0"
                     days_html += f'''
                     <tr style="{row_style}">
                         <td style="white-space:nowrap;">{d_date} {"☀️" if is_sun else ""}</td>
-                        <td><input type="text" name="in_{i}_{j}" value="{safe_string(str(d_in))}" style="width:78px;padding:5px;border-radius:5px;border:{in_border};background:#1a1a2e;color:var(--text);"></td>
-                        <td><input type="text" name="out_{i}_{j}" value="{safe_string(str(d_out))}" style="width:78px;padding:5px;border-radius:5px;border:{out_border};background:#1a1a2e;color:var(--text);"></td>
-                        <td>{d_hours if d_hours > 0 else "-"}</td>
-                        <td style="color:#f59e0b;font-weight:bold;">{d_ot if d_ot > 0 else "-"}</td>
-                        <td style="color:#3b82f6;font-weight:bold;">{d_sunday if d_sunday > 0 else "-"}</td>
+                        <td><input type="text" name="in_{i}_{j}" value="{safe_string(str(d_in))}" data-sun="{_sun_flag}" oninput="tsRecalc({i})" style="width:78px;padding:5px;border-radius:5px;border:{in_border};background:#1a1a2e;color:var(--text);"></td>
+                        <td><input type="text" name="out_{i}_{j}" value="{safe_string(str(d_out))}" oninput="tsRecalc({i})" style="width:78px;padding:5px;border-radius:5px;border:{out_border};background:#1a1a2e;color:var(--text);"></td>
+                        <td id="h_{i}_{j}">{d_hours if d_hours > 0 else "-"}</td>
+                        <td id="ot_{i}_{j}" style="color:#f59e0b;font-weight:bold;">{d_ot if d_ot > 0 else "-"}</td>
+                        <td id="su_{i}_{j}" style="color:#3b82f6;font-weight:bold;">{d_sunday if d_sunday > 0 else "-"}</td>
+                        <td style="white-space:nowrap;">
+                            <select name="status_{i}_{j}" onchange="tsRecalc({i})" style="padding:4px;border-radius:5px;border:1px solid var(--border);background:#1a1a2e;color:var(--text);font-size:12px;">
+                                <option value="">Worked</option>
+                                <option value="SICK">Sick (paid)</option>
+                                <option value="AWP">AWP</option>
+                                <option value="AWOL">AWOL</option>
+                            </select>
+                            <input type="number" name="stathrs_{i}_{j}" value="8" step="0.5" min="0" oninput="tsRecalc({i})" style="width:52px;padding:4px;border-radius:5px;border:1px solid var(--border);background:#1a1a2e;color:var(--text);display:none;">
+                        </td>
                     </tr>
                     '''
                 
                 days_html += f'''
                     <tr style="background:rgba(34,197,94,0.15); font-weight:bold;">
                         <td colspan="3">CALCULATED BY FLASK</td>
-                        <td>{calc_hours}</td>
-                        <td style="color:#f59e0b;">{calc_ot}</td>
-                        <td style="color:#3b82f6;">{calc_sunday}</td>
+                        <td id="tot_h_{i}">{calc_hours}</td>
+                        <td id="tot_ot_{i}" style="color:#f59e0b;">{calc_ot}</td>
+                        <td id="tot_su_{i}" style="color:#3b82f6;">{calc_sunday}</td>
+                        <td></td>
                     </tr>
                 </tbody></table>
                 <input type="hidden" name="daycount_{i}" value="{len(days)}">
@@ -761,6 +773,7 @@ def register_timesheet_routes(app, db, login_required, Auth, render_page,
             ai_badge = '<span style="background:#6366f1;color:white;padding:4px 10px;border-radius:4px;font-size:12px;margin-left:10px;">AI</span>'
         
         _pay_month_default = _guess_pay_month(period, today())
+        _split_ot_js = "true" if (business and business.get("split_overtime")) else "false"
         content = f'''
         <div style="margin-bottom:20px;">
             <a href="/timesheets" style="color:var(--text-muted);">← Timesheets</a>
@@ -792,6 +805,72 @@ def register_timesheet_routes(app, db, login_required, Auth, render_page,
             <input type="hidden" name="count" value="{len(employees_data)}">
         </form>
         '''
+        content += r"""
+        <script>
+        (function(){
+          var TS_SPLIT_OT = __SPLIT_OT__;
+          var TS_LUNCH = 30;
+          function tsParse(t){
+            if(!t) return null;
+            t = String(t).trim().toLowerCase().replace(/\./g,':').replace(/,/g,':').replace(/h/g,':');
+            if(t==='' || t==='-') return null;
+            var h,m;
+            if(t.indexOf(':')>=0){ var pp=t.split(':'); h=parseInt(pp[0],10); m=(pp.length>1 && pp[1]!=='')?parseInt(pp[1],10):0; }
+            else { h=parseInt(t,10); m=0; }
+            if(isNaN(h)||isNaN(m)) return null;
+            return h*60+m;
+          }
+          function tsDay(inStr,outStr){
+            var ti=tsParse(inStr), to=tsParse(outStr);
+            if(ti===null||to===null) return [0,0];
+            if(to<ti) to+=1440;
+            var w=to-ti;
+            if(w>300) w-=TS_LUNCH;
+            if(w<0) w=0;
+            var wh=w/60;
+            if(TS_SPLIT_OT) return [Math.min(wh,8), Math.max(0,wh-8)];
+            return [wh,0];
+          }
+          function tsFmt(x){ return String(Math.round(x*100)/100); }
+          window.tsRecalc=function(i){
+            var dcEl=document.getElementsByName('daycount_'+i)[0];
+            var dc=dcEl?parseInt(dcEl.value,10):0;
+            var th=0,tot=0,tsu=0;
+            for(var j=0;j<dc;j++){
+              var inp=document.getElementsByName('in_'+i+'_'+j)[0];
+              var outp=document.getElementsByName('out_'+i+'_'+j)[0];
+              var stEl=document.getElementsByName('status_'+i+'_'+j)[0];
+              var shEl=document.getElementsByName('stathrs_'+i+'_'+j)[0];
+              var isSun=inp && inp.getAttribute('data-sun')==='1';
+              var status=stEl?stEl.value:'';
+              if(shEl) shEl.style.display=(status==='SICK'||status==='AWP')?'':'none';
+              var nh=0,oth=0,suh=0;
+              if(status==='SICK'||status==='AWP'){ nh=shEl?(parseFloat(shEl.value)||0):0; }
+              else if(status==='AWOL'){ nh=0; }
+              else {
+                var r=tsDay(inp?inp.value:'', outp?outp.value:'');
+                if(isSun){ suh=r[0]+r[1]; } else { nh=r[0]; oth=r[1]; }
+              }
+              var hc=document.getElementById('h_'+i+'_'+j);
+              var oc=document.getElementById('ot_'+i+'_'+j);
+              var sc=document.getElementById('su_'+i+'_'+j);
+              if(hc) hc.textContent=nh>0?tsFmt(nh):'-';
+              if(oc) oc.textContent=oth>0?tsFmt(oth):'-';
+              if(sc) sc.textContent=suh>0?tsFmt(suh):'-';
+              th+=nh; tot+=oth; tsu+=suh;
+            }
+            th=Math.round(th*100)/100; tot=Math.round(tot*100)/100; tsu=Math.round(tsu*100)/100;
+            var e;
+            e=document.getElementById('tot_h_'+i); if(e) e.textContent=tsFmt(th);
+            e=document.getElementById('tot_ot_'+i); if(e) e.textContent=tsFmt(tot);
+            e=document.getElementById('tot_su_'+i); if(e) e.textContent=tsFmt(tsu);
+            e=document.getElementsByName('hours_'+i)[0]; if(e) e.value=th;
+            e=document.getElementsByName('overtime_'+i)[0]; if(e) e.value=tot;
+            e=document.getElementsByName('sunday_'+i)[0]; if(e) e.value=tsu;
+          };
+        })();
+        </script>
+""".replace("__SPLIT_OT__", _split_ot_js)
         
         return render_page("Review Timesheet", content, user, "timesheets")
     
