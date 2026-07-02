@@ -585,8 +585,8 @@ def register_timesheet_routes(app, db, login_required, Auth, render_page,
         
         for i, emp in enumerate(employees_data):
             scanned_name = emp.get("name", "Unknown")
-            total_hours = emp.get("total_hours", 0)
-            total_overtime = emp.get("total_overtime", 0)
+            total_hours = round(float(emp.get("total_hours", 0) or 0), 2)
+            total_overtime = round(float(emp.get("total_overtime", 0) or 0), 2)
             total_sunday = emp.get("total_sunday", 0)
             days = emp.get("days", [])
             
@@ -744,12 +744,12 @@ def register_timesheet_routes(app, db, login_required, Auth, render_page,
                     </div>
                     <div>
                         <label class="form-label">Normal</label>
-                        <input type="number" name="hours_{i}" value="{total_hours}" class="form-input" style="width:80px;background:#1a1a2e;border:1px solid #22c55e;" step="0.25">
+                        <input type="number" name="hours_{i}" value="{total_hours}" class="form-input" style="width:80px;background:#1a1a2e;border:1px solid #22c55e;" step="any">
                         <input type="hidden" name="hours_orig_{i}" value="{total_hours}">
                     </div>
                     <div>
                         <label class="form-label" style="color:#f59e0b;">OT</label>
-                        <input type="number" name="overtime_{i}" value="{total_overtime}" class="form-input" style="width:80px;background:#1a1a2e;border:1px solid #f59e0b;" step="0.25">
+                        <input type="number" name="overtime_{i}" value="{total_overtime}" class="form-input" style="width:80px;background:#1a1a2e;border:1px solid #f59e0b;" step="any">
                         <input type="hidden" name="ot_orig_{i}" value="{total_overtime}">
                     </div>
                     <div>
