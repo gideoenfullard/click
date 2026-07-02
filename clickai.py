@@ -21969,6 +21969,39 @@ def render_page(title: str, content: str, user: dict = None, active: str = "") -
     """Render a full page - FAST: uses session cache, minimal DB calls"""
     _t("render_start")
     
+    # Excel/Sage-style Enter: in a data field, Enter confirms and moves to the NEXT
+    # form control instead of submitting/closing the transaction. Textareas keep their
+    # newline; a focused button still submits on Enter. Skipped on the POS so the
+    # barcode scanner (which sends Enter after each scan) keeps working.
+    _enter_nav_js = "" if active == "pos" else r"""<script>
+(function(){
+  document.addEventListener('keydown', function(e){
+    if (e.key !== 'Enter' || e.shiftKey || e.ctrlKey || e.altKey || e.metaKey || e.isComposing) return;
+    if (e.defaultPrevented) return;
+    var t = e.target;
+    var tag = (t.tagName || '').toUpperCase();
+    if (tag === 'TEXTAREA') return;
+    if (tag !== 'INPUT' && tag !== 'SELECT') return;
+    if (tag === 'INPUT') {
+      var ty = (t.type || 'text').toLowerCase();
+      if (ty==='submit'||ty==='button'||ty==='reset'||ty==='checkbox'||ty==='radio'||ty==='file') return;
+    }
+    var form = t.form || (t.closest ? t.closest('form') : null);
+    if (!form) return;
+    e.preventDefault();
+    var els = Array.prototype.slice.call(
+      form.querySelectorAll('input:not([type=hidden]):not([disabled]):not([readonly]), select:not([disabled]), textarea:not([disabled]):not([readonly]), button:not([disabled])')
+    ).filter(function(el){ return el.offsetParent !== null; });
+    var i = els.indexOf(t);
+    if (i > -1 && i < els.length - 1) {
+      var nx = els[i+1];
+      try { nx.focus(); } catch(_e) {}
+      if (nx.select) { try { nx.select(); } catch(_e2) {} }
+    }
+  });
+})();
+</script>"""
+    
     # Check for ?onboard=1 force flag on any page
     if request.args.get("onboard") == "1":
         session["force_onboard"] = True
@@ -22970,6 +23003,7 @@ def render_page(title: str, content: str, user: dict = None, active: str = "") -
         setTimeout(function(){{ _t.classList.add('toast-out'); setTimeout(function(){{ _t.remove(); }}, 250); }}, duration);
     }}
     </script>
+    {_enter_nav_js}
 </body>
 </html>'''
 
