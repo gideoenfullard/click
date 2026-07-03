@@ -243,8 +243,9 @@ def register_invoicing_routes(app, db, login_required, Auth, render_page,
                 # Try to create journal entries (won't crash if tables don't exist)
                 try:
                     if payment_method == "account":
-                        # Debit Debtors, Credit Sales + VAT
-                        create_journal_entry(biz_id, today(), f"Invoice {inv_num} - {customer_name}", inv_num, [
+                        # Debit Debtors, Credit Sales + VAT — dated on the
+                        # invoice date so the GL lands in the right month
+                        create_journal_entry(biz_id, invoice_date, f"Invoice {inv_num} - {customer_name}", inv_num, [
                             {"account_code": gl(biz_id, "debtors"), "debit": float(total), "credit": 0},
                             {"account_code": gl(biz_id, "sales"), "debit": 0, "credit": float(subtotal)},
                             {"account_code": gl(biz_id, "vat_output"), "debit": 0, "credit": float(vat)},
@@ -253,11 +254,42 @@ def register_invoicing_routes(app, db, login_required, Auth, render_page,
                     else:
                         # Cash/Card/EFT - Debit Bank/Cash, Credit Sales + VAT
                         bank_account = "1050" if payment_method == "cash" else ("1010" if payment_method == "card" else "1000")
-                        create_journal_entry(biz_id, today(), f"Invoice {inv_num} - {customer_name} ({payment_method.upper()})", inv_num, [
+                        create_journal_entry(biz_id, invoice_date, f"Invoice {inv_num} - {customer_name} ({payment_method.upper()})", inv_num, [
                             {"account_code": bank_account, "debit": float(total), "credit": 0},
                             {"account_code": gl(biz_id, "sales"), "debit": 0, "credit": float(subtotal)},
                             {"account_code": gl(biz_id, "vat_output"), "debit": 0, "credit": float(vat)},
                         ])
+                        # Paid at creation: record a receipt + allocation so the
+                        # customer balance and statement see the settlement
+                        # (invoices are counted as debits regardless of method)
+                        try:
+                            _rc_id = generate_id()
+                            db.save("receipts", {
+                                "id": _rc_id,
+                                "business_id": biz_id,
+                                "customer_id": safe_uuid(customer_id),
+                                "customer_name": customer_name,
+                                "amount": float(total),
+                                "date": invoice_date,
+                                "method": payment_method,
+                                "reference": inv_num,
+                                "source": "invoice_paid",
+                                "created_at": now()
+                            })
+                            db.save("payment_allocations", {
+                                "id": generate_id(),
+                                "business_id": biz_id,
+                                "receipt_id": _rc_id,
+                                "invoice_id": invoice_id,
+                                "invoice_number": inv_num,
+                                "customer_id": safe_uuid(customer_id),
+                                "customer_name": customer_name,
+                                "amount": float(total),
+                                "date": invoice_date,
+                                "created_at": now()
+                            })
+                        except Exception as _rc_err:
+                            logger.error(f"[INVOICE] Paid-at-creation receipt failed (invoice still saved): {_rc_err}")
                 except Exception as e:
                     logger.error(f"GL entry failed (non-critical): {e}")
                 
@@ -266,7 +298,7 @@ def register_invoicing_routes(app, db, login_required, Auth, render_page,
                     if log_allocation:
                         _bank = "1050" if payment_method == "cash" else ("1010" if payment_method == "card" else "1000")
                         _gl = [
-                            {"account_code": _bank if payment_method != "account" else "1200", "debit": float(total), "credit": 0},
+                            {"account_code": _bank if payment_method != "account" else gl(biz_id, "debtors"), "debit": float(total), "credit": 0},
                             {"account_code": gl(biz_id, "sales"), "debit": 0, "credit": float(subtotal)},
                             {"account_code": gl(biz_id, "vat_output"), "debit": 0, "credit": float(vat)},
                         ]
@@ -275,7 +307,7 @@ def register_invoicing_routes(app, db, login_required, Auth, render_page,
                             description=f"Invoice {inv_num} - {customer_name}",
                             amount=float(total), gl_entries=_gl,
                             customer_name=customer_name, payment_method=payment_method, reference=inv_num,
-                            transaction_date=today(),
+                            transaction_date=invoice_date,
                             created_by=user.get("id") if user else "", created_by_name=user.get("name", "") if user else ""
                         )
                 except Exception:
@@ -1535,6 +1567,25 @@ def register_invoicing_routes(app, db, login_required, Auth, render_page,
                 created_by=user.get("id", "") if user else ""
             )
             db.save("payments", payment)
+            
+            # Mirror into receipts — the source-of-truth table that customer
+            # balances and statements are calculated from. Same id as the
+            # payment so the allocation's receipt_id points to a real receipt.
+            try:
+                db.save("receipts", {
+                    "id": payment.get("id", ""),
+                    "business_id": biz_id,
+                    "customer_id": customer_id or "",
+                    "customer_name": customer_name,
+                    "amount": round(total, 2),
+                    "date": today(),
+                    "method": payment_method,
+                    "reference": f"PAY-{inv_number}",
+                    "source": "invoice_paid",
+                    "created_at": now()
+                })
+            except Exception as _rc_err:
+                logger.error(f"[PAYMENT] Receipt mirror failed (payment still saved): {_rc_err}")
             
             # ── Payment allocation ────────────────────────────────────────
             # Link this payment to this invoice in the payment_allocations

@@ -472,8 +472,9 @@ def register_purchases_routes(app, db, login_required, Auth, render_page,
         
         # Calculate balance from source documents
         # (supplier_invoices - payments - active supplier credit notes)
+        # A payment settles cash + any settlement discount taken
         _si_total = sum(float(si.get("total", 0)) for si in supplier_invoices if si.get("status") != "cancelled")
-        _pay_total = sum(float(p.get("amount", 0)) for p in payments)
+        _pay_total = sum(float(p.get("amount", 0)) + float(p.get("discount_total", 0) or 0) for p in payments)
         # Active supplier credit notes reduce what we owe
         _scn_total = 0.0
         if can_see_balances:
@@ -675,6 +676,18 @@ def register_purchases_routes(app, db, login_required, Auth, render_page,
                     "link": "",
                     "source": p.get("source", "")
                 })
+                # Settlement discount taken with this payment — its own debit line
+                _p_disc = float(p.get("discount_total", 0) or 0)
+                if _p_disc > 0.005:
+                    _sup_ledger_items.append({
+                        "date": p.get("date", ""),
+                        "type": "Settlement Discount",
+                        "reference": p.get("reference", "-"),
+                        "debit": _p_disc,
+                        "credit": 0,
+                        "link": "",
+                        "source": p.get("source", "")
+                    })
             # Include supplier credit notes (they reduce what we owe — show as debits)
             try:
                 _sup_cns = db.get("supplier_credit_notes", {"business_id": biz_id}) if biz_id else []
@@ -3578,7 +3591,9 @@ def register_purchases_routes(app, db, login_required, Auth, render_page,
                 
                 if success:
                     try:
-                        create_journal_entry(biz_id, today(), f"Supplier Invoice {inv_number} - {po.get('supplier_name')}", inv_number, [
+                        # Dated on the invoice date so the GL lands in the
+                        # right month — same as the main capture flow
+                        create_journal_entry(biz_id, inv_date, f"Supplier Invoice {inv_number} - {po.get('supplier_name')}", inv_number, [
                             {"account_code": gl(biz_id, "purchases"), "debit": float(subtotal), "credit": 0},  # Cost of Sales/Purchases
                             {"account_code": gl(biz_id, "vat_input"), "debit": float(vat), "credit": 0},
                             {"account_code": gl(biz_id, "creditors"), "debit": 0, "credit": float(total)},
@@ -5412,6 +5427,23 @@ Nothing else."""
                     continue
                 if _disc > 0 and round(float(_sinv.get("discount_amount", 0) or 0), 2) > 0:
                     _disc = 0.0   # already discounted at capture — never discount twice
+                if _disc > 0:
+                    # A settlement discount may only be taken once per invoice —
+                    # block a second discounted payment against the same invoice
+                    try:
+                        _prev_allocs = db.get("supplier_payment_allocations", {"business_id": biz_id, "supplier_invoice_id": _sid}) or []
+                        if any(float(_pa.get("discount", 0) or 0) > 0 for _pa in _prev_allocs):
+                            _disc = 0.0
+                    except Exception:
+                        pass
+                if _disc > 0:
+                    # Cash + discount may never settle more than the invoice's
+                    # outstanding amount — cap the discount, never the cash
+                    try:
+                        _outst = round(float(_sinv.get("total", 0) or 0) - float(_sinv.get("amount_paid", 0) or 0), 2)
+                        _disc = min(_disc, max(0.0, round(_outst - _cash, 2)))
+                    except Exception:
+                        pass
                 _dnet = 0.0
                 _dvat = 0.0
                 if _disc > 0:
@@ -5582,7 +5614,17 @@ Nothing else."""
             </tr>
             '''
         allocated_total = round(allocated_total, 2)
-        on_account = round(pay_amount - allocated_total, 2)
+        # Allocations settle cash + settlement discount; show the discount as
+        # its own line so the cash paid reconciles to the allocations
+        _rem_disc = round(sum(float(a.get("discount", 0) or 0) for a in allocs), 2)
+        if _rem_disc > 0.005:
+            alloc_rows += f'''
+            <tr style="border-bottom:1px solid #eee;">
+                <td style="padding:8px 0;color:#444;font-style:italic;">Less: settlement discount</td>
+                <td style="padding:8px 0;text-align:right;color:#444;font-style:italic;">-{money(_rem_disc)}</td>
+            </tr>
+            '''
+        on_account = round(pay_amount + _rem_disc - allocated_total, 2)
         
         if not alloc_rows:
             alloc_rows = '<tr><td colspan="2" style="padding:8px 0;color:#888;text-align:center;">This payment was not allocated to specific invoices — it is on the supplier account.</td></tr>'
@@ -5705,6 +5747,16 @@ Nothing else."""
                 "debit": float(p.get("amount", 0) or 0),
                 "credit": 0.0,
             })
+            # Settlement discount taken with this payment — its own debit line
+            _p_disc = float(p.get("discount_total", 0) or 0)
+            if _p_disc > 0.005:
+                ledger.append({
+                    "date": p.get("date", ""),
+                    "type": "Settlement Discount",
+                    "reference": p.get("reference", "") or p.get("payment_number", "-"),
+                    "debit": _p_disc,
+                    "credit": 0.0,
+                })
         for c in s_cns:
             ledger.append({
                 "date": c.get("date", ""),

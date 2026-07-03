@@ -2218,7 +2218,29 @@ def calc_customer_balance(biz_id: str, customer_id: str) -> float:
     try:
         # Debits: what customer owes
         invoices = db.get("invoices", {"business_id": biz_id, "customer_id": customer_id}) or []
-        inv_total = sum(float(i.get("total", 0)) for i in invoices if i.get("status") != "credited")
+        # Exclude reversed invoices — same rule as calc_all_customer_balances.
+        # The status stamp can lag, so also derive reversals from allocation_log.
+        _reversed_inv_ids = set()
+        try:
+            _alog = db.get("allocation_log", {"business_id": biz_id}, select="source_id,source_table,extra") or []
+            for _al in _alog:
+                _x_raw = _al.get("extra", "{}")
+                if isinstance(_x_raw, str):
+                    try:
+                        _x = json.loads(_x_raw) if _x_raw else {}
+                    except Exception:
+                        _x = {}
+                elif isinstance(_x_raw, dict):
+                    _x = _x_raw
+                else:
+                    _x = {}
+                if _x.get("action") == "invoice_reverse" and _al.get("source_table") == "invoices":
+                    _reversed_inv_ids.add(_al.get("source_id", ""))
+        except Exception:
+            pass
+        inv_total = sum(float(i.get("total", 0)) for i in invoices
+                        if i.get("status") not in ("credited", "reversed")
+                        and i.get("id") not in _reversed_inv_ids)
 
         # Account sales (POS on-account)
         sales = db.get("sales", {"business_id": biz_id, "customer_id": customer_id}) or []
@@ -2239,11 +2261,15 @@ def calc_customer_balance(biz_id: str, customer_id: str) -> float:
         # Exclude payments whose ledger allocation was reversed
         _rev_pay_refs = _reversed_customer_payment_refs(biz_id)
         all_cust_receipts = [r for r in all_cust_receipts if (r.get("reference") or "").strip() not in _rev_pay_refs]
-        rec_total = sum(float(r.get("amount", 0)) for r in all_cust_receipts)
+        # A receipt settles cash + any settlement discount taken — both reduce
+        # what the customer owes (the discount was booked to Discount Allowed)
+        rec_total = sum(float(r.get("amount", 0)) + float(r.get("discount_total", 0) or 0)
+                        for r in all_cust_receipts)
 
         credit_notes = db.get("credit_notes", {"business_id": biz_id, "customer_id": customer_id}) or []
         # Exclude credit notes whose linked invoice is fully credited (both cancel out)
-        _credited_inv_nums = {i.get("invoice_number") for i in invoices if i.get("status") == "credited"}
+        _credited_inv_nums = {i.get("invoice_number") for i in invoices
+                              if i.get("status") == "credited" and i.get("invoice_number")}
         cn_total = sum(float(cn.get("total", 0)) for cn in credit_notes
                        if cn.get("invoice_number", "") not in _credited_inv_nums)
 
@@ -2271,7 +2297,10 @@ def calc_supplier_balance(biz_id: str, supplier_id: str) -> float:
                     p.get("supplier_id") == supplier_id or
                     (not p.get("supplier_id") and _sup_name_upper and
                      (p.get("supplier_name") or "").upper().strip() == _sup_name_upper)]
-        pay_total = sum(float(p.get("amount", 0)) for p in payments)
+        # A payment settles cash + any settlement discount taken — both reduce
+        # what we owe (the discount was booked to Discount Received)
+        pay_total = sum(float(p.get("amount", 0)) + float(p.get("discount_total", 0) or 0)
+                        for p in payments)
 
         # Active supplier credit notes also reduce what we owe
         cn_total = 0.0
@@ -2293,10 +2322,10 @@ def calc_all_customer_balances(biz_id: str, customers=None) -> dict:
     Excludes reversed invoices and refunded sales (derived from allocation_log).
     """
     try:
-        all_invoices = db.get("invoices", {"business_id": biz_id}, select="id,customer_id,status,total") or []
+        all_invoices = db.get("invoices", {"business_id": biz_id}, select="id,customer_id,status,total,invoice_number") or []
         all_sales = db.get("sales", {"business_id": biz_id}, select="id,customer_id,payment_method,status,total") or []
-        all_receipts = db.get("receipts", {"business_id": biz_id}, select="customer_id,customer_name,amount,reference") or []
-        all_credit_notes = db.get("credit_notes", {"business_id": biz_id}, select="customer_id,total") or []
+        all_receipts = db.get("receipts", {"business_id": biz_id}, select="customer_id,customer_name,amount,reference,discount_total") or []
+        all_credit_notes = db.get("credit_notes", {"business_id": biz_id}, select="customer_id,total,invoice_number") or []
         all_customers = customers if customers is not None else (db.get("customers", {"business_id": biz_id}) or [])
 
         # ── Derive reversed invoice IDs and refunded sale IDs from allocation_log ──
@@ -2348,7 +2377,8 @@ def calc_all_customer_balances(biz_id: str, customers=None) -> dict:
                 if cid:
                     balances[cid] = balances.get(cid, 0) + float(s.get("total", 0))
 
-        # Credits: receipts (skip payments whose ledger allocation was reversed)
+        # Credits: receipts (skip payments whose ledger allocation was reversed).
+        # A receipt settles cash + any settlement discount taken.
         _rev_pay_refs = _reversed_customer_payment_refs(biz_id)
         for r in all_receipts:
             if (r.get("reference") or "").strip() in _rev_pay_refs:
@@ -2359,13 +2389,21 @@ def calc_all_customer_balances(biz_id: str, customers=None) -> dict:
                 _rname = (r.get("customer_name") or "").upper().strip()
                 cid = _name_to_id.get(_rname, "")
             if cid:
-                balances[cid] = balances.get(cid, 0) - float(r.get("amount", 0))
+                balances[cid] = balances.get(cid, 0) - float(r.get("amount", 0)) - float(r.get("discount_total", 0) or 0)
 
-        # Credits: credit notes
+        # Credits: credit notes. A credit note linked to a credited invoice is
+        # excluded — that invoice is already excluded above, so subtracting its
+        # CN too would reduce the balance twice (same rule as calc_customer_balance)
+        _credited_nums = {(inv.get("customer_id", ""), inv.get("invoice_number", ""))
+                          for inv in all_invoices
+                          if inv.get("status") == "credited" and inv.get("invoice_number")}
         for cn in all_credit_notes:
             cid = cn.get("customer_id", "")
-            if cid:
-                balances[cid] = balances.get(cid, 0) - float(cn.get("total", 0))
+            if not cid:
+                continue
+            if cn.get("invoice_number") and (cid, cn.get("invoice_number", "")) in _credited_nums:
+                continue
+            balances[cid] = balances.get(cid, 0) - float(cn.get("total", 0))
 
         return {k: round(v, 2) for k, v in balances.items()}
     except Exception as e:
@@ -2397,14 +2435,14 @@ def calc_all_supplier_balances(biz_id: str) -> dict:
             if sid and si.get("status") != "cancelled":
                 balances[sid] = balances.get(sid, 0) + float(si.get("total", 0))
 
-        # Credits: supplier payments
+        # Credits: supplier payments (cash + any settlement discount taken)
         for p in all_s_payments:
             sid = p.get("supplier_id", "")
             if not sid:
                 _pname = (p.get("supplier_name") or "").upper().strip()
                 sid = _name_to_id.get(_pname, "")
             if sid:
-                balances[sid] = balances.get(sid, 0) - float(p.get("amount", 0))
+                balances[sid] = balances.get(sid, 0) - float(p.get("amount", 0)) - float(p.get("discount_total", 0) or 0)
 
         # Credits: active supplier credit notes also reduce what we owe
         try:
@@ -28226,7 +28264,7 @@ def customer_view(customer_id):
     # Calculate balance from source documents (invoices + account sales - receipts - credit notes)
     _inv_total = sum(float(i.get("total", 0)) for i in invoices if i.get("status") not in ("credited", "reversed"))
     _acc_sales = sum(float(s.get("total", 0)) for s in sales if s.get("payment_method") == "account" and (s.get("status") or "").lower() not in ("refunded", "reversed"))
-    _rec_total = sum(float(r.get("amount", 0)) for r in receipts)
+    _rec_total = sum(float(r.get("amount", 0)) + float(r.get("discount_total", 0) or 0) for r in receipts)
     # Exclude credit notes whose linked invoice is fully credited (both cancel out)
     _credited_inv_nums = {i.get("invoice_number") for i in invoices if i.get("status") == "credited"}
     _cn_total = sum(float(cn.get("total", 0)) for cn in credit_notes
@@ -28308,6 +28346,19 @@ def customer_view(customer_id):
             "link": "",
             "source": r.get("source", "")
         })
+        # Settlement discount taken with this payment — its own credit line
+        # (Sage presentation: cash and discount shown separately)
+        _r_disc = float(r.get("discount_total", 0) or 0)
+        if _r_disc > 0.005:
+            _ledger_items.append({
+                "date": r.get("date", ""),
+                "type": "Settlement Discount",
+                "reference": r.get("reference", r.get("receipt_number", "-")),
+                "debit": 0,
+                "credit": _r_disc,
+                "link": "",
+                "source": r.get("source", "")
+            })
     for cn in credit_notes:
         # If the CN's linked invoice is fully credited and excluded from the statement,
         # then exclude the CN too — they cancel each other out (net zero)
@@ -34270,6 +34321,17 @@ def customer_statement(customer_id):
             "credit": float(r.get("amount", 0)),
             "link": ""
         })
+        # Settlement discount taken with this payment — its own credit line
+        _r_disc = float(r.get("discount_total", 0) or 0)
+        if _r_disc > 0.005:
+            transactions.append({
+                "date": r.get("date"),
+                "type": "Settlement Discount",
+                "reference": r.get("receipt_number") or r.get("reference", "-"),
+                "debit": 0,
+                "credit": _r_disc,
+                "link": ""
+            })
     
     for cn in credit_notes:
         transactions.append({
@@ -34814,6 +34876,16 @@ def customer_statement_print(customer_id):
             "debit": 0,
             "credit": float(r.get("amount", 0) or 0),
         })
+        # Settlement discount taken with this payment — its own credit line
+        _r_disc = float(r.get("discount_total", 0) or 0)
+        if _r_disc > 0.005:
+            transactions.append({
+                "date": r.get("date"),
+                "type": "Settlement Discount",
+                "reference": r.get("receipt_number") or r.get("reference") or "",
+                "debit": 0,
+                "credit": _r_disc,
+            })
     
     for cn in credit_notes:
         transactions.append({
@@ -35377,6 +35449,16 @@ def _build_statement_body_for_print(customer, business, biz_id, _asat):
             "debit": 0,
             "credit": float(r.get("amount", 0) or 0),
         })
+        # Settlement discount taken with this payment — its own credit line
+        _r_disc = float(r.get("discount_total", 0) or 0)
+        if _r_disc > 0.005:
+            transactions.append({
+                "date": r.get("date"),
+                "type": "Settlement Discount",
+                "reference": r.get("receipt_number") or r.get("reference") or "",
+                "debit": 0,
+                "credit": _r_disc,
+            })
 
     for cn in credit_notes:
         transactions.append({
@@ -55079,6 +55161,23 @@ def api_customer_record_payment():
                 continue
             if _disc > 0 and round(float(_inv.get("discount_amount", 0) or 0), 2) > 0:
                 _disc = 0.0   # already discounted at capture — never discount twice
+            if _disc > 0:
+                # A settlement discount may only be taken once per invoice —
+                # block a second discounted payment against the same invoice
+                try:
+                    _prev_allocs = db.get("payment_allocations", {"business_id": biz_id, "invoice_id": _iid}) or []
+                    if any(float(_pa.get("discount", 0) or 0) > 0 for _pa in _prev_allocs):
+                        _disc = 0.0
+                except Exception:
+                    pass
+            if _disc > 0:
+                # Cash + discount may never settle more than the invoice's
+                # outstanding amount — cap the discount, never the cash
+                try:
+                    _outst = round(float(_inv.get("total", 0) or 0) - float(_inv.get("amount_paid", 0) or 0), 2)
+                    _disc = min(_disc, max(0.0, round(_outst - _cash, 2)))
+                except Exception:
+                    pass
             _dnet = 0.0
             _dvat = 0.0
             if _disc > 0:
