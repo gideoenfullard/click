@@ -1248,15 +1248,18 @@ def register_timesheet_routes(app, db, login_required, Auth, render_page,
             else:
                 logger.info(f"[TIMESHEET PROCESS] Skipping row {i} - no emp_id or zero hours")
         
-        # Mark batch as processed
-        db.save("timesheet_batches", {"id": batch_id, "status": "processed"})
+        # Mark batch as approved (NOT processed) — the hours are saved to
+        # timesheet entries / job cards, but the batch stays available so
+        # Run Payroll or a batch post can still create the payslips. It is
+        # only marked processed once payslips have actually been created.
+        db.save("timesheet_batches", {"id": batch_id, "status": "approved"})
         
         logger.info(f"[TIMESHEET PROCESS] Done: saved {saved}, job_logged {job_logged}, errors: {len(errors)}")
         
         if errors:
             flash(f"Saved {saved} entries ({job_logged} linked to job cards). Errors: {', '.join(errors)}", "error")
         else:
-            flash(f"Saved {saved} timesheet entries ({job_logged} linked to job cards)", "success")
+            flash(f"Saved {saved} timesheet entries ({job_logged} linked to job cards) — batch remains available for payroll", "success")
         
         return redirect("/payroll")
     

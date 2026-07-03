@@ -212,6 +212,53 @@ def _agreed_hours(cond, period):
     return agreed_per_date, total_agreed
 
 
+def _easter_sunday(year):
+    """Easter Sunday for a year (Meeus/Jones/Butcher Gregorian algorithm)."""
+    a = year % 19
+    b = year // 100
+    c = year % 100
+    d = b // 4
+    e = b % 4
+    f = (b + 8) // 25
+    g = (b - f + 1) // 3
+    h = (19 * a + b - d - g + 15) % 30
+    i = c // 4
+    k = c % 4
+    l = (32 + 2 * e + 2 * i - h - k) % 7
+    m = (a + 11 * h + 22 * l) // 451
+    month = (h + l - 7 * m + 114) // 31
+    day = ((h + l - 7 * m + 114) % 31) + 1
+    return datetime(year, month, day)
+
+
+def sa_public_holidays(year):
+    """South African public holidays (Public Holidays Act 36 of 1994) for a
+    year, as a set of 'YYYY-MM-DD' strings. Includes Good Friday and Family
+    Day (Easter-derived) and applies the Act's rule that when a public
+    holiday falls on a Sunday, the following Monday is also a public holiday.
+    Tenant-agnostic — no business-specific dates."""
+    fixed = [(1, 1),    # New Year's Day
+             (3, 21),   # Human Rights Day
+             (4, 27),   # Freedom Day
+             (5, 1),    # Workers' Day
+             (6, 16),   # Youth Day
+             (8, 9),    # National Women's Day
+             (9, 24),   # Heritage Day
+             (12, 16),  # Day of Reconciliation
+             (12, 25),  # Christmas Day
+             (12, 26)]  # Day of Goodwill
+    easter = _easter_sunday(year)
+    dates = [datetime(year, m, d) for m, d in fixed]
+    dates.append(easter - timedelta(days=2))   # Good Friday
+    dates.append(easter + timedelta(days=1))   # Family Day
+    out = set()
+    for dt in dates:
+        out.add(dt.strftime("%Y-%m-%d"))
+        if dt.weekday() == 6:  # falls on a Sunday -> Monday is also a holiday
+            out.add((dt + timedelta(days=1)).strftime("%Y-%m-%d"))
+    return out
+
+
 # --------------------------------------------------------------- the engine --
 
 def calculate_pay_from_timesheet(emp, entries, period, public_holidays=None):
@@ -231,7 +278,15 @@ def calculate_pay_from_timesheet(emp, entries, period, public_holidays=None):
       }
     'kind' is one of: base, ot, late, early, premium, holiday.
     """
-    public_holidays = set(public_holidays or [])
+    if public_holidays is None:
+        # Default to the SA public holiday calendar for the pay-month's year
+        # so a blank cell on a public holiday is never deducted as absent.
+        try:
+            public_holidays = sa_public_holidays(int(str(period)[:4]))
+        except Exception:
+            public_holidays = set()
+    else:
+        public_holidays = set(public_holidays)
     cond = get_conditions(emp)
 
     # ---- agreed hours for every working day in the period --------------
@@ -268,10 +323,12 @@ def calculate_pay_from_timesheet(emp, entries, period, public_holidays=None):
         sched_in, sched_out = _day_schedule(cond, wd)
 
         # Classify the scanned day from its In/Out cells (handles Absent /
-        # Sick / Holiday / blank / In-with-no-Out). A holiday passed in via
-        # public_holidays overrides whatever the cell said.
+        # Sick / Holiday / blank / In-with-no-Out). The public holiday
+        # calendar rescues a blank/absent/sick cell into a paid holiday so it
+        # is never deducted — but a day actually WORKED on a public holiday
+        # keeps its worked treatment (times, late/early/OT) unchanged.
         status, in_m, out_m = _day_status(e.get("in"), e.get("out"))
-        if date_str in public_holidays:
+        if date_str in public_holidays and status in ("absent", "sick"):
             status = "holiday"
 
         # --- Sunday, or a worked Saturday with no Saturday agreement ----
