@@ -1,14 +1,14 @@
 # -*- coding: utf-8 -*-
 # ==============================================================================
-# CLICK AI - TIMESHEETS MODULE
+# CLICK AI - SETTINGS MODULE
 # ==============================================================================
 # Extracted from clickai.py for maintainability
-# Contains: Timesheets scan, template, review, process, discard, add,
-#           Timesheet API (scan, save), Timesheets page, detail, report,
-#           Timesheet log/delete APIs
+# Contains: Settings page, Business Groups settings, Invoice Template,
+#           Business/PayFast/Email/Scan-inbox/WhatsApp settings APIs,
+#           GL migrate, Debug GL, Switch/Create business
 # ==============================================================================
 
-import base64
+import os
 import json
 import time
 import logging
@@ -18,2328 +18,2289 @@ from flask import request, jsonify, session, redirect, flash
 
 logger = logging.getLogger(__name__)
 
-
-def _guess_pay_month(period_text, today_str):
-    """Best-effort YYYY-MM from a free-text scanned period (e.g.
-    'Week of 6-12 Jan 2026'). Falls back to the current month."""
-    import re as _re
-    s = str(period_text or "")
-    ym = _re.search(r"(20\d{2})[-/](\d{1,2})", s)
-    if ym:
-        return f"{int(ym.group(1)):04d}-{int(ym.group(2)):02d}"
-    months = {
-        "jan": 1, "feb": 2, "mar": 3, "apr": 4, "may": 5, "jun": 6,
-        "jul": 7, "aug": 8, "sep": 9, "oct": 10, "nov": 11, "dec": 12,
-        "mrt": 3, "mei": 5, "okt": 10, "des": 12,
-    }
-    yr = _re.search(r"(20\d{2})", s)
-    low = s.lower()
-    mo = None
-    for k, v in months.items():
-        if k in low:
-            mo = v
-            break
-    if yr and mo:
-        return f"{int(yr.group(1)):04d}-{mo:02d}"
-    return str(today_str)[:7]
+# ── Account limits ──────────────────────────────────────────────────────────
+# Maximum businesses a single account may create. Central constant so the
+# limit lives in ONE place. When plan-based limits are built later, this
+# becomes the default/free-tier value and higher plans override it.
+MAX_BUSINESSES_PER_ACCOUNT = 3
 
 
-def _cell_is_time(v):
-    """True when a scanned In/Out cell holds an actual clock time (not
-    'Absent' / 'LATE' / 'HOLIDAY' / blank)."""
-    try:
-        from clickai_pay_conditions import _cell_marker
-        return _cell_marker(v) == "time"
-    except Exception:
-        import re as _re
-        s = str(v or "").strip()
-        return bool(_re.match(r"^\d{1,2}\s*[:.h]\s*\d{2}$", s, _re.I)) or s.isdigit()
+# Environment variables used by settings
+SMTP_HOST = os.environ.get("SMTP_HOST", "smtp.gmail.com")
+SMTP_PORT = int(os.environ.get("SMTP_PORT", "587"))
+SMTP_USER = os.environ.get("SMTP_USER", "")
+SMTP_PASS = os.environ.get("SMTP_PASS", "")
+IMAP_HOST = os.environ.get("IMAP_HOST", "imap.gmail.com")
+IMAP_USER = os.environ.get("IMAP_USER", "")
+IMAP_PASS = os.environ.get("IMAP_PASS", "")
+PAYFAST_MERCHANT_ID = os.environ.get("PAYFAST_MERCHANT_ID", "")
+PAYFAST_SANDBOX = os.environ.get("PAYFAST_SANDBOX", "false").lower() == "true"
 
 
-def _apply_review_edits(form, employees_data, count):
-    """Overlay the edited per-day In/Out times from the review form onto the
-    scanned batch data, then recompute each employee's worked-hour totals.
+def register_settings_routes(app, db, login_required, Auth, render_page,
+                              generate_id, safe_string, now,
+                              gl, build_gl_map, CLICKAI_DEFAULTS,
+                              has_reactor_hud, jarvis_hud_header, jarvis_techline,
+                              JARVIS_HUD_CSS, THEME_REACTOR_SKINS):
+    """Register all Settings routes with the Flask app."""
 
-    Returns the updated employees_data list. Days the reviewer did not touch
-    keep their scanned value. This is what makes a Jacqo misread (or a blank
-    Out time) fixable and stick — the corrected times are written back to the
-    batch and used by both pay models.
-    """
-    try:
-        from clickai_pay_conditions import compute_worked_hours
-    except Exception:
-        compute_worked_hours = None
-
-    for i in range(count):
-        if i >= len(employees_data):
-            break
-        emp = employees_data[i]
-        days = emp.get("days", []) or []
-        try:
-            daycount = int(form.get(f"daycount_{i}", len(days)) or len(days))
-        except Exception:
-            daycount = len(days)
-        for j in range(min(daycount, len(days))):
-            in_v = form.get(f"in_{i}_{j}", None)
-            out_v = form.get(f"out_{i}_{j}", None)
-            if in_v is not None:
-                days[j]["in"] = in_v.strip()
-            if out_v is not None:
-                days[j]["out"] = out_v.strip()
-        # Recompute worked totals from the (possibly edited) times so the
-        # hourly model and the saved entries reflect the corrections.
-        if compute_worked_hours:
-            worked = compute_worked_hours(days)
-            emp["days"] = worked["days"]
-            emp["total_hours"] = worked["total_hours"]
-            emp["total_overtime"] = worked["total_overtime"]
-            emp["total_sunday"] = worked["total_sunday"]
-        else:
-            emp["days"] = days
-
-        # Manual total override: if the reviewer changed a total box (its value
-        # differs from the hidden original that was rendered), use the typed
-        # total and flag it so the payslip honours it. Untouched totals keep
-        # tracking the daily times.
-        overridden = False
-        def _ovr(field, orig_field, fallback):
-            nonlocal overridden
-            try:
-                sub = form.get(field, None)
-                orig = form.get(orig_field, None)
-                if sub is None or orig is None:
-                    return fallback
-                if abs(float(sub) - float(orig)) > 0.001:
-                    overridden = True
-                    return round(float(sub), 2)
-            except Exception:
-                pass
-            return fallback
-        emp["total_hours"] = _ovr(f"hours_{i}", f"hours_orig_{i}", emp.get("total_hours", 0))
-        emp["total_overtime"] = _ovr(f"overtime_{i}", f"ot_orig_{i}", emp.get("total_overtime", 0))
-        emp["total_sunday"] = _ovr(f"sunday_{i}", f"sun_orig_{i}", emp.get("total_sunday", 0))
-        emp["totals_overridden"] = overridden
-    return employees_data
-
-
-def register_timesheet_routes(app, db, login_required, Auth, render_page,
-                              generate_id, money, safe_string, now, today,
-                              _anthropic_client):
-    """Register all Timesheet routes with the Flask app."""
-
-    # === TIMESHEET SCANNING & MANAGEMENT ===
-
-    @app.route("/timesheets/scan")
+    @app.route("/settings")
     @login_required
-    def timesheets_scan():
-        """Scan handwritten timesheet with AI vision - shows full daily breakdown"""
+    def settings_page():
+        """Business Settings"""
         
         user = Auth.get_current_user()
-        business = Auth.get_current_business()
         
-        content = '''
-        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:20px;">
-            <a href="/timesheets" style="color:var(--text-muted);">← Back to Timesheets</a>
-            <a href="/timesheets/template" target="_blank" class="btn btn-secondary" style="padding:8px 16px;">Download Template</a>
+        # ALWAYS clear cache and reload fresh from DB for settings page
+        Auth.clear_cache()
+        session.pop("_biz_cache", None)
+        session.pop("businesses_cache", None)
+        session.pop("business_name", None)
+        
+        # Get business DIRECTLY from DB (not cached)
+        biz_id = session.get("business_id")
+        business = None
+        if biz_id:
+            business = db.get_one("businesses", biz_id)
+            logger.info(f"[SETTINGS PAGE] Loaded business from DB: id={biz_id}, name={business.get('name') if business else 'None'}")
+        
+        if not business:
+            # Fallback to Auth method
+            business = Auth.get_current_business()
+            logger.info(f"[SETTINGS PAGE] Fallback to Auth: {business.get('name') if business else 'None'}")
+        
+        # Check if action=new to create new business
+        if request.args.get("action") == "new":
+            content = '''
+            <div class="card">
+                <h2 style="margin-bottom:20px;">Create New Business</h2>
+                <p style="color:var(--text-muted);margin-bottom:20px;">Add another business to manage with Click AI</p>
+                
+                <form action="/api/settings/business" method="POST">
+                    <input type="hidden" name="is_new" value="true">
+                    
+                    <div class="form-group">
+                        <label class="form-label">Business Name *</label>
+                        <input type="text" name="name" class="form-input" required placeholder="e.g. My Company (Pty) Ltd">
+                    </div>
+                    
+                    <div class="form-group">
+                        <label class="form-label">Registration Number</label>
+                        <input type="text" name="reg_number" class="form-input" placeholder="e.g. 2024/123456/07">
+                    </div>
+                    
+                    <div class="form-group">
+                        <label class="form-label">VAT Number</label>
+                        <input type="text" name="vat_number" class="form-input" placeholder="e.g. 4123456789">
+                    </div>
+                    
+                    <div style="display:flex;gap:10px;">
+                        <button type="submit" class="btn btn-primary">Create Business</button>
+                        <a href="/settings" class="btn btn-secondary">Cancel</a>
+                    </div>
+                </form>
+            </div>
+            '''
+            return render_page("New Business", content, user, "settings")
+        
+        # If no business, show setup page
+        if not business:
+            content = '''
+            <div class="card" style="max-width:500px;margin:50px auto;text-align:center;">
+                <h2 style="margin-bottom:20px;">Welcome to Click AI!</h2>
+                <p style="color:var(--text-muted);margin-bottom:30px;">Let's set up your first business to get started.</p>
+                
+                <form action="/api/settings/business" method="POST">
+                    <div class="form-group" style="text-align:left;">
+                        <label class="form-label">Business Name *</label>
+                        <input type="text" name="name" class="form-input" required placeholder="e.g. My Company (Pty) Ltd" autofocus>
+                    </div>
+                    
+                    <div class="form-group" style="text-align:left;">
+                        <label class="form-label">VAT Number (optional)</label>
+                        <input type="text" name="vat_number" class="form-input" placeholder="e.g. 4123456789">
+                    </div>
+                    
+                    <button type="submit" class="btn btn-primary" style="width:100%;padding:15px;font-size:16px;">
+                        Create Business & Get Started
+                    </button>
+                </form>
+            </div>
+            '''
+            return render_page("Setup", content, user, "settings")
+        
+        content = f'''
+        <div class="card">
+            <h2 style="margin-bottom:20px;">Business Settings</h2>
+            
+            {f'<div style="background:#10b981;color:white;padding:15px;border-radius:8px;margin-bottom:20px;font-weight:bold;">GOOD: Settings saved successfully!</div>' if request.args.get("saved") else ""}
+            {f'<div style="background:#ef4444;color:white;padding:15px;border-radius:8px;margin-bottom:20px;">❌ Error saving: {safe_string(request.args.get("error", ""))}</div>' if request.args.get("error") else ""}
+            
+            <!-- DEBUG INFO -->
+            <details style="background:var(--card);border:1px solid var(--border);padding:10px;border-radius:8px;margin-bottom:20px;">
+                <summary style="cursor:pointer;font-weight:bold;color:var(--text-muted);">🔧 Debug Info (click to expand)</summary>
+                <div style="margin-top:10px;font-size:12px;font-family:monospace;white-space:pre-wrap;">
+    Business ID: {business.get("id") if business else "None"}
+    Business Name: {business.get("name") if business else "None"}
+    Session biz_id: {session.get("business_id")}
+    VAT: {business.get("vat_number") if business else "None"}
+    Phone: {business.get("phone") if business else "None"}
+    Address: {business.get("address")[:50] if business and business.get("address") else "None"}
+                </div>
+            </details>
+            
+            <form action="/api/settings/business" method="POST">
+                <div class="form-group">
+                    <label class="form-label">Business Name</label>
+                    <input type="text" name="name" class="form-input" value="{safe_string(business.get("name", "") if business else "")}" required>
+                </div>
+                
+                <div class="form-group">
+                    <label class="form-label">Industry Type</label>
+                    <select name="industry_type" class="form-input">
+                        <option value="retail_general" {"selected" if business and business.get("industry_type") == "retail_general" else ""}>General Retail</option>
+                        <option value="steel_supplier" {"selected" if business and business.get("industry_type") == "steel_supplier" else ""}>Steel & Metal Supplier</option>
+                        <option value="hardware_store" {"selected" if business and business.get("industry_type") == "hardware_store" else ""}>Hardware Store</option>
+                        <option value="restaurant" {"selected" if business and business.get("industry_type") == "restaurant" else ""}>Restaurant / Pub</option>
+                        <option value="guest_house" {"selected" if business and business.get("industry_type") == "guest_house" else ""}>Guest House / B&B</option>
+                        <option value="professional_services" {"selected" if business and business.get("industry_type") == "professional_services" else ""}>Professional Services</option>
+                    </select>
+                    <small style="color:var(--text-muted);">This helps Zane understand your business better - expense categories, terminology, and insights.</small>
+                </div>
+                
+                <div class="form-group">
+                    <label class="form-label">Registration Number</label>
+                    <input type="text" name="reg_number" class="form-input" value="{safe_string(business.get("reg_number", "") if business else "")}">
+                </div>
+                
+                <div class="form-group">
+                    <label class="form-label">VAT Number</label>
+                    <input type="text" name="vat_number" class="form-input" value="{safe_string(business.get("vat_number", "") if business else "")}" placeholder="4XXXXXXXXX">
+                </div>
+                
+                <div class="form-group">
+                    <label class="form-label">Phone</label>
+                    <input type="text" name="phone" class="form-input" value="{safe_string(business.get("phone", "") if business else "")}">
+                </div>
+                
+                <div class="form-group">
+                    <label class="form-label">Email</label>
+                    <input type="email" name="email" class="form-input" value="{safe_string(business.get("email", "") if business else "")}">
+                </div>
+                
+                <div class="form-group">
+                    <label class="form-label">Address</label>
+                    <textarea name="address" class="form-input" rows="3">{safe_string(business.get("address", "") if business else "")}</textarea>
+                </div>
+                
+                <div class="form-group">
+                    <label class="form-label">Bank Name</label>
+                    <input type="text" name="bank_name" class="form-input" value="{safe_string(business.get("bank_name", "") if business else "")}">
+                </div>
+                
+                <div class="form-group">
+                    <label class="form-label">Bank Account Number</label>
+                    <input type="text" name="bank_account" class="form-input" value="{safe_string(business.get("bank_account", "") if business else "")}">
+                </div>
+                
+                <div class="form-group">
+                    <label class="form-label">Bank Branch Code</label>
+                    <input type="text" name="bank_branch" class="form-input" value="{safe_string(business.get("bank_branch", "") if business else "")}">
+                </div>
+                
+                <button type="submit" class="btn btn-primary">Save Settings</button>
+            </form>
         </div>
         
-        <div class="card">
-            <h2 style="margin-bottom:15px;">📷 Scan Timesheet</h2>
-            <p style="color:var(--text-muted);margin-bottom:20px;">
-                Take a photo of your handwritten timesheet or clock card. AI reads the clock in/out times, Flask calculates the hours.
-            </p>
+        <!-- EMAIL STATUS DIAGNOSTIC PANEL -->
+        <div class="card" style="margin-top:20px; border-left: 4px solid {'var(--green)' if (business and business.get('smtp_user') and business.get('smtp_pass')) or (SMTP_USER and SMTP_PASS) else 'var(--red)'};">
+            <h3 style="margin-bottom:15px;">👁️ Email Status - Diagnostic</h3>
             
-            <div id="uploadArea" style="border:2px dashed var(--border);border-radius:12px;padding:40px;text-align:center;cursor:pointer;transition:all 0.2s;" 
-                 onclick="document.getElementById('fileInput').click()">
-                <div style="font-size:48px;margin-bottom:15px;">[FORM]</div>
-                <p style="font-size:18px;margin-bottom:10px;">Drop timesheet here or click to upload</p>
-                <p style="color:var(--text-muted);font-size:14px;">Or use camera on mobile</p>
-                <input type="file" id="fileInput" accept="image/*" capture="environment" style="display:none;" onchange="handleFile(this.files[0])">
-            </div>
-            
-            <div id="preview" style="display:none;margin-top:20px;">
-                <img id="previewImg" style="max-width:100%;max-height:400px;border-radius:8px;margin-bottom:15px;">
-                <div style="display:flex;gap:10px;">
-                    <button class="btn btn-primary" onclick="scanTimesheet()">🔍 Extract Hours</button>
-                    <button class="btn btn-secondary" onclick="resetScan()">🔄 Different Image</button>
+            <div style="display:grid; grid-template-columns:1fr 1fr; gap:20px;">
+                <!-- SMTP (Outgoing) Status -->
+                <div style="background:var(--card-bg); padding:15px; border-radius:8px; border:1px solid var(--border);">
+                    <h4 style="margin:0 0 10px 0;">📤 SMTP (Uitgaande Email)</h4>
+                    {'<p style="color:var(--green);font-weight:bold;">CONFIGURED</p>' if (business and business.get('smtp_user') and business.get('smtp_pass')) or (SMTP_USER and SMTP_PASS) else '<p style="color:var(--red);font-weight:bold;">NOT CONFIGURED</p>'}
+                    
+                    <table style="width:100%;font-size:13px;margin-top:10px;">
+                        <tr>
+                            <td style="color:var(--text-muted);padding:3px 0;">Bron:</td>
+                            <td style="padding:3px 0;"><strong>{'Business Settings' if (business and business.get('smtp_user') and business.get('smtp_pass')) else ('Global Env Vars' if SMTP_USER and SMTP_PASS else 'GEEN')}</strong></td>
+                        </tr>
+                        <tr>
+                            <td style="color:var(--text-muted);padding:3px 0;">Host:</td>
+                            <td style="padding:3px 0;">{safe_string(business.get('smtp_host') if (business and business.get('smtp_host')) else SMTP_HOST) or '<span style="color:var(--red);">Nie gestel</span>'}</td>
+                        </tr>
+                        <tr>
+                            <td style="color:var(--text-muted);padding:3px 0;">Port:</td>
+                            <td style="padding:3px 0;">{safe_string(business.get('smtp_port') if (business and business.get('smtp_port')) else SMTP_PORT) or '587'}</td>
+                        </tr>
+                        <tr>
+                            <td style="color:var(--text-muted);padding:3px 0;">User:</td>
+                            <td style="padding:3px 0;">{safe_string(business.get('smtp_user') if (business and business.get('smtp_user')) else SMTP_USER) or '<span style="color:var(--red);">Nie gestel</span>'}</td>
+                        </tr>
+                        <tr>
+                            <td style="color:var(--text-muted);padding:3px 0;">Password:</td>
+                            <td style="padding:3px 0;">{'<span style="color:var(--green);">******* ✓</span>' if (business and business.get('smtp_pass')) or SMTP_PASS else '<span style="color:var(--red);">Nie gestel</span>'}</td>
+                        </tr>
+                    </table>
+                </div>
+                
+                <!-- IMAP (Incoming) Status -->
+                <div style="background:var(--card-bg); padding:15px; border-radius:8px; border:1px solid var(--border);">
+                    <h4 style="margin:0 0 10px 0;">IMAP (Scanner Inbox)</h4>
+                    {'<p style="color:var(--green);font-weight:bold;">CONFIGURED</p>' if (business and business.get('imap_user') and business.get('imap_pass')) or (IMAP_USER and IMAP_PASS) else '<p style="color:var(--text-muted);font-weight:bold;">Not configured (opsioneel)</p>'}
+                    
+                    <table style="width:100%;font-size:13px;margin-top:10px;">
+                        <tr>
+                            <td style="color:var(--text-muted);padding:3px 0;">Host:</td>
+                            <td style="padding:3px 0;">{safe_string(business.get('imap_host') if (business and business.get('imap_host')) else IMAP_HOST) or 'imap.gmail.com'}</td>
+                        </tr>
+                        <tr>
+                            <td style="color:var(--text-muted);padding:3px 0;">User:</td>
+                            <td style="padding:3px 0;">{safe_string(business.get('imap_user') if (business and business.get('imap_user')) else IMAP_USER) or '<span style="color:var(--text-muted);">Nie gestel</span>'}</td>
+                        </tr>
+                        <tr>
+                            <td style="color:var(--text-muted);padding:3px 0;">Password:</td>
+                            <td style="padding:3px 0;">{'<span style="color:var(--green);">******* ✓</span>' if (business and business.get('imap_pass')) or IMAP_PASS else '<span style="color:var(--text-muted);">Nie gestel</span>'}</td>
+                        </tr>
+                    </table>
                 </div>
             </div>
             
-            <div id="scanning" style="display:none;text-align:center;padding:40px;">
-                <div style="font-size:48px;animation:pulse 1s infinite;">👀</div>
-                <p style="margin-top:15px;">AI is reading clock in/out times...</p>
-                <p style="font-size:12px;color:var(--text-muted);">Flask will calculate the hours</p>
+            <div style="margin-top:15px; padding:10px; background:var(--bg); border-radius:6px; font-size:12px; color:var(--text-muted);">
+                <strong>Note:</strong> Invites, payment reminders, en invoice emails vereis SMTP. Scanner inbox (IMAP) is slegs nodig as jy dokumente per email wil scan.
+                {'<br><span style="color:var(--orange);">Warning: SMTP is nie gekonfigureer nie - emails sal nie gestuur word nie!</span>' if not ((business and business.get('smtp_user') and business.get('smtp_pass')) or (SMTP_USER and SMTP_PASS)) else ''}
             </div>
         </div>
         
+        <div class="card" style="margin-top:20px;">
+            <h3 style="margin-bottom:15px;">Email Settings</h3>
+            <p style="color:var(--text-muted);margin-bottom:15px;">Configure SMTP to send emails to customers</p>
+            
+            <form action="/api/settings/email" method="POST">
+                <div style="display:grid;grid-template-columns:1fr 1fr;gap:15px;">
+                    <div class="form-group">
+                        <label class="form-label">SMTP Host</label>
+                        <input type="text" name="smtp_host" id="smtpHost" class="form-input" value="{safe_string(business.get("smtp_host", "smtp.gmail.com") if business else "smtp.gmail.com")}">
+                    </div>
+                    <div class="form-group">
+                        <label class="form-label">SMTP Port</label>
+                        <input type="text" name="smtp_port" id="smtpPort" class="form-input" value="{safe_string(business.get("smtp_port", "587") if business else "587")}">
+                    </div>
+                </div>
+                
+                <div class="form-group">
+                    <label class="form-label">SMTP Username</label>
+                    <input type="text" name="smtp_user" id="smtpUser" oninput="autofillSmtp()" class="form-input" value="{safe_string(business.get("smtp_user", "") if business else "")}">
+                </div>
+                
+                <div class="form-group">
+                    <label class="form-label">From / Sender Email</label>
+                    <input type="text" name="email_from" class="form-input" value="{safe_string((business.get("email_from") or business.get("smtp_user", "")) if business else "")}">
+                    <p style="color:var(--text-muted);font-size:12px;margin-top:5px;">The address recipients see. Must be a verified sender on your mail provider (e.g. a Brevo verified sender). The SMTP Username above stays your provider login.</p>
+                </div>
+                
+                <div class="form-group">
+                    <label class="form-label">SMTP Password</label>
+                    <input type="password" name="smtp_pass" class="form-input" autocomplete="new-password" placeholder="{'Saved - leave blank to keep, or type a new password' if (business and business.get('smtp_pass')) else 'Enter SMTP / app password'}">
+                </div>
+                
+                <div style="display:flex;gap:10px;align-items:center;">
+                    <button type="submit" class="btn btn-secondary"> Save Email Settings</button>
+                    <button type="button" class="btn btn-primary" onclick="testSmtp()" id="testSmtpBtn">📧 Test SMTP</button>
+                    <span id="smtpTestResult" style="margin-left:10px;"></span>
+                </div>
+            </form>
+
+            <!-- App Password / 2-Step Verification help -->
+            <div style="margin-top:18px;padding:16px 18px;background:#f8fafc;border:1px solid #e5e7eb;border-left:4px solid var(--primary);border-radius:8px;">
+                <h4 style="margin:0 0 8px 0;font-size:15px;">Gmail needs an App Password (not your normal password)</h4>
+                <p style="margin:0 0 10px 0;color:var(--text-muted);font-size:13px;">Google no longer lets apps sign in with your everyday password. You switch on 2-Step Verification, then create a 16-character App Password and paste it into the SMTP Password field above. It takes about 3 minutes.</p>
+                <ol style="margin:0 0 10px 18px;padding:0;color:#334155;font-size:13px;line-height:1.7;">
+                    <li><strong>Turn on 2-Step Verification first.</strong> Copy this link, paste it into your browser, and follow the steps (you confirm with your phone once):
+                        <div style="display:flex;gap:6px;align-items:center;margin:6px 0 4px;">
+                            <code style="flex:1;font-family:monospace;font-size:12px;background:#fff;border:1px solid #e5e7eb;border-radius:5px;padding:6px 8px;word-break:break-all;">https://myaccount.google.com/security</code>
+                            <button type="button" onclick="copyText(this,'https://myaccount.google.com/security')" style="flex-shrink:0;background:var(--primary);color:#fff;border:none;border-radius:5px;padding:6px 12px;font-size:12px;cursor:pointer;">Copy</button>
+                        </div>
+                    </li>
+                    <li><strong>Then open the App Passwords page.</strong> Copy this link and paste it into your browser:
+                        <div style="display:flex;gap:6px;align-items:center;margin:6px 0 4px;">
+                            <code style="flex:1;font-family:monospace;font-size:12px;background:#fff;border:1px solid #e5e7eb;border-radius:5px;padding:6px 8px;word-break:break-all;">https://myaccount.google.com/apppasswords</code>
+                            <button type="button" onclick="copyText(this,'https://myaccount.google.com/apppasswords')" style="flex-shrink:0;background:var(--primary);color:#fff;border:none;border-radius:5px;padding:6px 12px;font-size:12px;cursor:pointer;">Copy</button>
+                        </div>
+                    </li>
+                    <li>Type a name like <strong>ClickAI</strong> and click <strong>Create</strong>.</li>
+                    <li>Google opens a box with the password in four groups of four letters (like <code style="font-family:monospace;background:#fff;border:1px solid #e5e7eb;border-radius:4px;padding:1px 5px;">abcd efgh ijkl mnop</code>). Click the password to copy it, and enter it <strong>without the spaces</strong>. Google shows it only once, so paste it here straight away &mdash; if you lose it, just create a new one.</li>
+                    <li>Paste it into <strong>SMTP Password</strong> above and click <strong>Save Email Settings</strong>.</li>
+                </ol>
+                <p style="margin:0;color:var(--text-muted);font-size:12px;">The Host and Port fill in automatically once you enter your email address. Using Outlook, Hotmail or Yahoo? The steps are similar: turn on 2-step verification in your account, then create an app password and paste it above.</p>
+            </div>
+
+            <script>
+            function copyText(btn, txt) {{
+                navigator.clipboard.writeText(txt).then(function() {{
+                    const old = btn.textContent;
+                    btn.textContent = 'Copied!';
+                    setTimeout(function() {{ btn.textContent = old; }}, 1500);
+                }});
+            }}
+            const SMTP_PROVIDERS = {{
+                'gmail.com':      {{ host: 'smtp.gmail.com',        port: '587' }},
+                'googlemail.com': {{ host: 'smtp.gmail.com',        port: '587' }},
+                'outlook.com':    {{ host: 'smtp-mail.outlook.com', port: '587' }},
+                'hotmail.com':    {{ host: 'smtp-mail.outlook.com', port: '587' }},
+                'live.com':       {{ host: 'smtp-mail.outlook.com', port: '587' }},
+                'msn.com':        {{ host: 'smtp-mail.outlook.com', port: '587' }},
+                'yahoo.com':      {{ host: 'smtp.mail.yahoo.com',   port: '587' }},
+                'yahoo.co.za':    {{ host: 'smtp.mail.yahoo.com',   port: '587' }},
+                'icloud.com':     {{ host: 'smtp.mail.me.com',      port: '587' }},
+                'me.com':         {{ host: 'smtp.mail.me.com',      port: '587' }}
+            }};
+            function autofillSmtp() {{
+                const el = document.getElementById('smtpUser');
+                if (!el) return;
+                const u = (el.value || '').trim().toLowerCase();
+                const at = u.lastIndexOf('@');
+                if (at < 0) return;
+                const domain = u.slice(at + 1);
+                const p = SMTP_PROVIDERS[domain];
+                if (!p) return;
+                const h = document.getElementById('smtpHost');
+                const pt = document.getElementById('smtpPort');
+                if (h) h.value = p.host;
+                if (pt) pt.value = p.port;
+            }}
+            async function testSmtp() {{
+                const btn = document.getElementById('testSmtpBtn');
+                const result = document.getElementById('smtpTestResult');
+                btn.disabled = true;
+                btn.textContent = 'Testing...';
+                result.innerHTML = '';
+                
+                try {{
+                    const res = await fetch('/api/email/test-smtp', {{ method: 'POST' }});
+                    const data = await res.json();
+                    
+                    if (data.success) {{
+                        result.innerHTML = '<span style="color:var(--green);">' + data.message + '</span>';
+                    }} else {{
+                        result.innerHTML = '<span style="color:var(--red);">' + data.error + '</span>';
+                    }}
+                }} catch (e) {{
+                    result.innerHTML = '<span style="color:var(--red);">Error: ' + e.message + '</span>';
+                }}
+                
+                btn.disabled = false;
+                btn.textContent = '📧 Test SMTP';
+            }}
+            </script>
+        </div>
+        
+        <div class="card" style="margin-top:20px;">
+            <h3 style="margin-bottom:15px;">Scanner Inbox Settings</h3>
+            <p style="color:var(--text-muted);margin-bottom:15px;">Set up an email address where your printer/scanner sends scanned documents. Click AI will automatically check this inbox and process invoices.</p>
+            
+            <form action="/api/settings/scan-inbox" method="POST">
+                <div style="display:grid;grid-template-columns:1fr 1fr;gap:15px;">
+                    <div class="form-group">
+                        <label class="form-label">IMAP Host</label>
+                        <input type="text" name="imap_host" class="form-input" value="{safe_string(business.get("imap_host", "imap.gmail.com") if business else "imap.gmail.com")}" placeholder="imap.gmail.com">
+                    </div>
+                    <div class="form-group">
+                        <label class="form-label">IMAP Port</label>
+                        <input type="text" name="imap_port" class="form-input" value="{safe_string(business.get("imap_port", "993") if business else "993")}" placeholder="993">
+                    </div>
+                </div>
+                
+                <div class="form-group">
+                    <label class="form-label">Scanner Email Address</label>
+                    <input type="email" name="imap_user" class="form-input" value="{safe_string(business.get("imap_user", "") if business else "")}" placeholder="scanner@yourbusiness.com">
+                    <small style="color:var(--text-muted);">Create a dedicated email for your scanner to send to</small>
+                </div>
+                
+                <div class="form-group">
+                    <label class="form-label">Email Password / App Password</label>
+                    <input type="password" name="imap_pass" class="form-input" placeholder="{'••••••••' if business and business.get('imap_pass') else 'Enter app password'}">
+                    <small style="color:var(--text-muted);">For Gmail, use an <a href="https://myaccount.google.com/apppasswords" target="_blank" style="color:var(--primary);">App Password</a></small>
+                </div>
+                
+                <button type="submit" class="btn btn-secondary">💾 Save Scanner Inbox</button>
+                <button type="button" class="btn btn-secondary" onclick="testScannerConnection()" style="margin-left:10px;">🔌 Test Connection</button>
+                {f'<span id="scanner-status" style="color:var(--green);margin-left:15px;">GOOD: Connected</span>' if business and business.get('imap_user') else '<span id="scanner-status"></span>'}
+            </form>
+            
+            <script>
+            async function testScannerConnection() {{
+                const status = document.getElementById('scanner-status');
+                status.innerHTML = '<span style="color:var(--text-muted);">Testing...</span>';
+                try {{
+                    const res = await fetch('/api/email/test');
+                    const data = await res.json();
+                    if (data.success) {{
+                        status.innerHTML = '<span style="color:var(--green);">GOOD: ' + data.message + '</span>';
+                    }} else {{
+                        status.innerHTML = '<span style="color:var(--red);">✗ ' + data.error + '</span>';
+                    }}
+                }} catch(e) {{
+                    status.innerHTML = '<span style="color:var(--red);">✗ Connection failed</span>';
+                }}
+            }}
+            </script>
+        </div>
+        
+        <div class="card" style="margin-top:20px;">
+            <h3 style="margin-bottom:15px;">💬 WhatsApp Settings</h3>
+            <p style="color:var(--text-muted);margin-bottom:15px;">Connect WhatsApp to send invoices and messages to customers</p>
+            
+            <form action="/api/settings/whatsapp" method="POST">
+                <div class="form-group">
+                    <label class="form-label">WhatsApp Business Phone Number</label>
+                    <input type="text" name="whatsapp_phone" class="form-input" value="{safe_string(business.get("whatsapp_phone", "") if business else "")}" placeholder="+27821234567">
+                </div>
+                
+                <div class="form-group">
+                    <label class="form-label">WhatsApp API Token</label>
+                    <input type="password" name="whatsapp_token" class="form-input" placeholder="{'••••••••' if business and business.get('whatsapp_token') else 'From Meta Business Suite'}">
+                    <small style="color:var(--text-muted);">Get from <a href="https://business.facebook.com/settings/whatsapp-business-accounts" target="_blank" style="color:var(--primary);">Meta Business Suite</a></small>
+                </div>
+                
+                <div class="form-group">
+                    <label class="form-label">WhatsApp Business Account ID</label>
+                    <input type="text" name="whatsapp_account_id" class="form-input" value="{safe_string(business.get("whatsapp_account_id", "") if business else "")}" placeholder="From Meta Business Suite">
+                </div>
+                
+                <button type="submit" class="btn btn-secondary">💾 Save WhatsApp Settings</button>
+                {f'<span style="color:var(--green);margin-left:15px;">GOOD: Connected</span>' if business and business.get('whatsapp_token') else ''}
+            </form>
+        </div>
+        
+        <!-- Safety File Settings -->
+        <div class="card" style="margin-top:20px;border-left:4px solid var(--primary);">
+            <div style="display:flex;justify-content:space-between;align-items:center;">
+                <div>
+                    <h3 style="margin-bottom:5px;">🛡️ AI Safety File Generator</h3>
+                    <p style="color:var(--text-muted);margin:0;">Generate OHS Act-compliant safety files for your business</p>
+                </div>
+                <a href="/settings/safety-files" class="btn btn-primary">⚙️ Configure</a>
+            </div>
+        </div>
+        
+        <!-- POS Settings -->
+        <div class="card" style="margin-top:20px;">
+            <h3 style="margin-bottom:15px;">🖨️ POS Print Settings</h3>
+            <p style="color:var(--text-muted);margin-bottom:15px;">Configure how slips print at Point of Sale</p>
+            
+            <form action="/api/settings/pos" method="POST">
+                <div style="display:grid;gap:15px;">
+                    <label style="display:flex;align-items:center;gap:10px;cursor:pointer;padding:10px;background:var(--bg);border-radius:8px;">
+                        <input type="checkbox" name="pos_auto_print" value="1" style="width:20px;height:20px;" {"checked" if business and business.get("pos_auto_print") else ""}>
+                        <div>
+                            <strong>Auto-print after sale</strong>
+                            <div style="color:var(--text-muted);font-size:12px;">Automatically show print dialog when sale completes</div>
+                        </div>
+                    </label>
+                    
+                    <label style="display:flex;align-items:center;gap:10px;cursor:pointer;padding:10px;background:var(--bg);border-radius:8px;">
+                        <input type="checkbox" name="pos_print_duplicates" value="1" style="width:20px;height:20px;" {"checked" if business and business.get("pos_print_duplicates") else ""}>
+                        <div>
+                            <strong>🖨️ Print 2 copies (auto)</strong>
+                            <div style="color:var(--text-muted);font-size:12px;">Automatically prints customer copy + store copy</div>
+                        </div>
+                    </label>
+                    
+                    <div class="form-group" style="margin-bottom:0;">
+                        <label class="form-label">Default Print Format</label>
+                        <select name="pos_print_format" class="form-input" style="max-width:300px;">
+                            <option value="thermal" {"selected" if business and business.get("pos_print_format") == "thermal" else ""}>80mm Thermal (Receipt Printer)</option>
+                            <option value="a4" {"selected" if business and business.get("pos_print_format") == "a4" else ""}>A4 (Standard Printer)</option>
+                            <option value="ask" {"selected" if not business or not business.get("pos_print_format") or business.get("pos_print_format") == "ask" else ""}>Ask each time</option>
+                        </select>
+                    </div>
+                    
+                    <div class="form-group" style="margin-bottom:0;">
+                        <label class="form-label">Business Footer on Slip</label>
+                        <input type="text" name="pos_slip_footer" class="form-input" value="{safe_string(business.get("pos_slip_footer", "Thank you for your purchase!") if business else "Thank you for your purchase!")}" placeholder="e.g. Thank you! Visit again!">
+                    </div>
+                </div>
+                
+                <button type="submit" class="btn btn-secondary" style="margin-top:15px;">💾 Save POS Settings</button>
+            </form>
+        </div>
+        
+        <div class="card" style="margin-top:20px;">
+            <h3 style="margin-bottom:15px;">Payroll Settings</h3>
+            <p style="color:var(--text-muted);margin-bottom:15px;">Configure how timesheet hours are calculated</p>
+            
+            <form action="/api/settings/payroll" method="POST">
+                <div style="display:grid;gap:15px;">
+                    <label style="display:flex;align-items:center;gap:10px;cursor:pointer;padding:10px;background:var(--bg);border-radius:8px;">
+                        <input type="checkbox" name="split_overtime" value="1" style="width:20px;height:20px;" {"checked" if business and business.get("split_overtime") else ""}>
+                        <div>
+                            <strong>Split overtime on timesheets</strong>
+                            <div style="color:var(--text-muted);font-size:12px;">When on, hours worked over 8 per day are recorded as overtime. When off, all hours worked count as normal hours.</div>
+                        </div>
+                    </label>
+                </div>
+                <button type="submit" class="btn btn-secondary" style="margin-top:15px;">💾 Save Payroll Settings</button>
+            </form>
+        </div>
+        
+        <h3 style="margin:30px 0 15px 0;">More Settings</h3>
+        <div class="stats-grid">
+            <div class="card" style="cursor:pointer;border-left:4px solid var(--primary);" onclick="window.location='/settings/invoice-template'">
+                <h3>Invoice Template</h3>
+                <p style="color:var(--text-muted)">Customize your invoice look</p>
+            </div>
+            <div class="card" style="cursor:pointer" onclick="window.location='/setup'">
+                <h3> Setup Wizard</h3>
+                <p style="color:var(--text-muted)">Quick setup checklist</p>
+            </div>
+            <div class="card" style="cursor:pointer" onclick="window.location='/settings/opening-balances'">
+                <h3>Opening Balances</h3>
+                <p style="color:var(--text-muted)">Import historical balances</p>
+            </div>
+            <div class="card" style="cursor:pointer" onclick="window.location='/settings/team'">
+                <h3>Team Members</h3>
+                <p style="color:var(--text-muted)">Invite staff & set roles</p>
+            </div>
+            <div class="card" style="cursor:pointer" onclick="window.location='/settings/categories'">
+                <h3>Stock Categories</h3>
+                <p style="color:var(--text-muted)">Organize stock items</p>
+            </div>
+            <div class="card" style="cursor:pointer" onclick="window.location='/staging'">
+                <h3>Review Queue</h3>
+                <p style="color:var(--text-muted)">Approve scanned items</p>
+            </div>
+            <div class="card" style="cursor:pointer" onclick="window.location='/import'">
+                <h3>Import Data</h3>
+                <p style="color:var(--text-muted)">Import from CSV/Excel</p>
+            </div>
+            <div class="card" style="cursor:pointer;background:linear-gradient(135deg, rgba(99,102,241,0.2), rgba(139,92,246,0.1));" onclick="window.location='/welcome'">
+                <h3>Meet the Team</h3>
+                <p style="color:var(--text-muted)">Zane, Diane, Jayden & Jacqo</p>
+            </div>
+        </div>
+        
+        <!-- PayFast Online Payments Setup -->
+        <div class="card" style="margin-top:20px;">
+            <h3 style="margin-bottom:15px;">💳 Online Payments (PayFast)</h3>
+            <p style="color:var(--text-muted);font-size:13px;margin-bottom:15px;">
+                Enable "Pay Now" buttons on your invoices. Customers can pay with card, EFT, SnapScan, Zapper, or Capitec Pay.
+                Register at <a href="https://www.payfast.co.za" target="_blank" style="color:#4F46E5;">payfast.co.za</a> to get your credentials.
+            </p>
+            ''' + (f'''
+            <div style="padding:10px;background:rgba(16,185,129,0.1);border-radius:8px;margin-bottom:15px;">
+                <strong style="color:var(--green);">✅ PayFast Configured</strong>
+                <span style="color:var(--text-muted);font-size:12px;margin-left:10px;">{"SANDBOX MODE" if PAYFAST_SANDBOX else "LIVE"}</span>
+            </div>
+            ''' if (PAYFAST_MERCHANT_ID or (business and business.get("payfast_merchant_id"))) else '''
+            <div style="padding:10px;background:rgba(239,68,68,0.1);border-radius:8px;margin-bottom:15px;">
+                <strong style="color:var(--red);">Not configured</strong>
+                <span style="color:var(--text-muted);font-size:12px;margin-left:10px;">Set up PayFast to enable online payments</span>
+            </div>
+            ''') + '''
+            <form action="/api/settings/payfast" method="POST">
+                <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;">
+                    <div class="form-group">
+                        <label class="form-label">Merchant ID</label>
+                        <input type="text" name="payfast_merchant_id" class="form-input" 
+                            value="''' + safe_string(business.get("payfast_merchant_id", "") if business else "") + '''"
+                            placeholder="e.g. 10000100">
+                    </div>
+                    <div class="form-group">
+                        <label class="form-label">Merchant Key</label>
+                        <input type="text" name="payfast_merchant_key" class="form-input" 
+                            value="''' + safe_string(business.get("payfast_merchant_key", "") if business else "") + '''"
+                            placeholder="e.g. 46f0cd694581a">
+                    </div>
+                </div>
+                <div class="form-group">
+                    <label class="form-label">Passphrase <span style="color:var(--text-muted);font-size:12px;">(set this in your PayFast dashboard under Settings → Security)</span></label>
+                    <input type="text" name="payfast_passphrase" class="form-input" 
+                        value="''' + safe_string(business.get("payfast_passphrase", "") if business else "") + '''"
+                        placeholder="Your PayFast passphrase">
+                </div>
+                <button type="submit" class="btn btn-primary">💳 Save PayFast Settings</button>
+            </form>
+        </div>
+        
+        <div class="card">
+            <h2 style="margin-bottom:10px;">🏢 Business Groups</h2>
+            <p style="color:var(--text-muted);margin-bottom:15px;">Link multiple businesses to see cross-business insights, comparisons, and find opportunities.</p>
+            <a href="/settings/business-groups" class="btn btn-primary">Manage Business Groups →</a>
+        </div>
+        
+        <!-- DANGER ZONE: Wipe all transactional data (owner only) -->
+        ''' + ((f'''
+        <div class="card" style="margin-top:20px;border:2px solid #ef4444;">
+            <h2 style="margin-bottom:10px;color:#ef4444;">⚠️ Danger Zone</h2>
+            <p style="color:var(--text-muted);margin-bottom:15px;">
+                Wipe ALL transactional data for <strong>{safe_string(business.get("name", "this business"))}</strong>.
+                This is intended for re-importing a clean dataset from Sage (or similar) after testing.
+            </p>
+            <div style="background:rgba(239,68,68,0.08);padding:15px;border-radius:8px;margin-bottom:15px;font-size:13px;">
+                <div style="font-weight:bold;margin-bottom:8px;">Will be permanently deleted:</div>
+                <div style="color:var(--text-muted);line-height:1.7;">
+                    Invoices, sales, POS sales, quotes, credit notes, delivery notes, payments, receipts &bull;
+                    Supplier invoices, supplier payments, purchase orders, GRVs &bull;
+                    Expenses, scanned documents, scan inbox/queue &bull;
+                    Bank transactions, bank patterns &bull;
+                    Journal entries, allocation log &bull;
+                    Stock movements &bull;
+                    Cash-ups, bar tabs &bull;
+                    Timesheets, payslips &bull;
+                    Jobs, rentals, travel log &bull;
+                    Daily briefings, reminders, todos, notes, Zane memory &bull;
+                    Audit log, AI usage log, WhatsApp log &bull;
+                    Assets, budgets, year-ends
+                </div>
+                <div style="font-weight:bold;margin-top:12px;margin-bottom:8px;color:#10b981;">Will be preserved:</div>
+                <div style="color:var(--text-muted);line-height:1.7;">
+                    Chart of accounts (GL codes) &bull;
+                    Employees, employment contracts, HR documents &bull;
+                    Bank account setup &bull;
+                    Stock categories &bull;
+                    Safety files &bull;
+                    Business record, users, team members, subscriptions &bull;
+                    All settings on this page
+                </div>
+            </div>
+            <button onclick="confirmWipeBusinessData(event)" class="btn"
+                style="background:#ef4444;color:white;font-weight:bold;">
+                🗑️ Wipe All Transactional Data
+            </button>
+        </div>
+        
         <script>
-        let currentFile = null;
-        
-        function handleFile(file) {
-            if (!file) return;
-            currentFile = file;
+        async function confirmWipeBusinessData(ev) {{
+            if (!confirm("⚠️ WIPE ALL TRANSACTIONAL DATA\\n\\n" +
+                         "This will permanently delete EVERY invoice, sale, payment, " +
+                         "expense, bank transaction, journal entry, timesheet, payslip, " +
+                         "and related record for this business.\\n\\n" +
+                         "Chart of accounts, employees, bank account setup, stock categories, " +
+                         "and settings will be kept.\\n\\n" +
+                         "This cannot be undone. Continue?")) return;
             
-            const reader = new FileReader();
-            reader.onload = function(e) {
-                document.getElementById('previewImg').src = e.target.result;
-                document.getElementById('uploadArea').style.display = 'none';
-                document.getElementById('preview').style.display = 'block';
-            };
-            reader.readAsDataURL(file);
-        }
-        
-        async function scanTimesheet() {
-            if (!currentFile) return;
+            const phrase = prompt("To confirm, type exactly: WIPE ALL DATA");
+            if ((phrase || "").trim() !== "WIPE ALL DATA") {{
+                alert("Confirmation phrase did not match. Nothing was deleted.");
+                return;
+            }}
             
-            document.getElementById('preview').style.display = 'none';
-            document.getElementById('scanning').style.display = 'block';
+            const btn = (ev && ev.target) ? ev.target : null;
+            let oldText = "";
+            if (btn) {{
+                oldText = btn.innerHTML;
+                btn.disabled = true;
+                btn.innerHTML = "⏳ Wiping... please wait";
+            }}
             
-            const formData = new FormData();
-            formData.append('file', currentFile);
-            
-            try {
-                const response = await fetch('/api/scan/timesheet', {
-                    method: 'POST',
-                    body: formData
-                });
+            try {{
+                const resp = await fetch("/api/business/wipe-transactions", {{
+                    method: "POST",
+                    headers: {{"Content-Type": "application/json"}},
+                    body: JSON.stringify({{confirm: "WIPE ALL DATA"}})
+                }});
+                const data = await resp.json();
                 
-                const data = await response.json();
+                if (data.success) {{
+                    let summary = "✅ Wipe complete.\\n\\n" +
+                                  "Total records deleted: " + data.deleted + "\\n" +
+                                  "Failed: " + (data.failed || 0) + "\\n\\n" +
+                                  "Per-table breakdown:\\n";
+                    if (data.tables) {{
+                        for (const [tbl, info] of Object.entries(data.tables)) {{
+                            if (info.before > 0) {{
+                                summary += "  " + tbl + ": " + info.deleted + "/" + info.before;
+                                if (info.failed) summary += " (failed " + info.failed + ")";
+                                if (info.error) summary += " — error: " + info.error;
+                                summary += "\\n";
+                            }}
+                        }}
+                    }}
+                    alert(summary);
+                    window.location.href = "/dashboard";
+                }} else {{
+                    if (btn) {{
+                        btn.disabled = false;
+                        btn.innerHTML = oldText;
+                    }}
+                    alert("❌ " + (data.error || "Wipe failed"));
+                }}
+            }} catch (e) {{
+                if (btn) {{
+                    btn.disabled = false;
+                    btn.innerHTML = oldText;
+                }}
+                alert("❌ Network error: " + e.message);
+            }}
+        }}
+        </script>
+        ''') if (business and user and business.get("user_id") == user.get("id")) else "") + '''
+        '''
+        
+        # -- JARVIS: Settings HUD header --
+        if has_reactor_hud():
+            _hud = jarvis_hud_header(
+                page_name="SETTINGS",
+                page_count="SYSTEM CONFIGURATION",
+                left_items=[
+                    ("BUSINESS", "ACTIVE", "g", "g", ""),
+                    ("TEAM", "MANAGE", "c", "", ""),
+                    ("THEME", "JARVIS", "c", "", ""),
+                    ("SECURITY", "ON", "g", "g", "g"),
+                ],
+                right_items=[
+                    ("API", "CONNECTED", "g", "g", ""),
+                    ("IMPORT", "READY", "c", "", ""),
+                    ("EXPORT", "READY", "c", "", ""),
+                    ("BACKUP", "AUTO", "p", "", ""),
+                ],
+                reactor_size="page",
+                alert_html=""
+            )
+            content = JARVIS_HUD_CSS + THEME_REACTOR_SKINS + _hud + content + jarvis_techline("SETTINGS <b>LOADED</b>")
+        
+        return render_page("Settings", content, user, "settings")
+    
+    
+    @app.route("/api/settings/payroll", methods=["POST"])
+    @login_required
+    def api_settings_payroll():
+        """Save payroll settings (timesheet overtime handling)"""
+        user = Auth.get_current_user()
+        biz_id = session.get("business_id")
+        user_id = user.get("id", "") if user else ""
+        if biz_id:
+            db.update_business(biz_id, user_id, {
+                "split_overtime": request.form.get("split_overtime") == "1"
+            })
+        return redirect("/settings")
+    
+    
+    @app.route("/settings/business-groups")
+    @login_required
+    def settings_business_groups():
+        """Business Groups - Cross-business management"""
+        user = Auth.get_current_user()
+        
+        # === Build business list SERVER-SIDE (same source as business switcher) ===
+        import json as _json
+        user_id = user.get("id", "") if user else ""
+        biz_list = []  # [{id, name}, ...]
+        
+        try:
+            # STRATEGY: Read from the SAME cache render_page uses, or do full lookup
+            _bc = Auth._mem.get(f"bizlist:{user_id}") if user_id else None
+            businesses_raw = []
+            
+            if _bc and (time.time() - _bc.get("t", 0)) < 300:
+                businesses_raw = _bc["d"]
+                logger.info(f"[BIZ-GROUP] Using cached bizlist: {len(businesses_raw)}")
+            else:
+                # Full lookup — all 3 methods
+                seen_ids = set()
+                user_email = (user.get("email", "") or "").lower() if user else ""
                 
-                if (data.success && data.batch_id) {
-                    // Redirect to review page
-                    window.location.href = '/timesheets/review/' + data.batch_id;
-                } else {
-                    alert('Could not read timesheet: ' + (data.error || 'Unknown error'));
-                    resetScan();
+                owned = db.get("businesses", {"user_id": user_id}) if user_id else []
+                for b in (owned or []):
+                    bid = b.get("id")
+                    if bid and bid not in seen_ids:
+                        seen_ids.add(bid)
+                        businesses_raw.append(b)
+                
+                if user_email:
+                    try:
+                        for tm in (db.get("team_members", {"email": user_email}) or []):
+                            mbid = tm.get("business_id")
+                            if mbid and mbid not in seen_ids:
+                                biz = db.get_one("businesses", mbid)
+                                if biz:
+                                    seen_ids.add(mbid)
+                                    businesses_raw.append(biz)
+                    except Exception:
+                        pass
+                
+                if user_id:
+                    try:
+                        for tm in (db.get("team_members", {"user_id": user_id}) or []):
+                            mbid = tm.get("business_id")
+                            if mbid and mbid not in seen_ids:
+                                biz = db.get_one("businesses", mbid)
+                                if biz:
+                                    seen_ids.add(mbid)
+                                    businesses_raw.append(biz)
+                    except Exception:
+                        pass
+                
+                logger.info(f"[BIZ-GROUP] Fresh lookup: {len(businesses_raw)} businesses for {user_id}")
+            
+            for b in businesses_raw:
+                bid = b.get("id")
+                bname = b.get("name") or b.get("business_name", "Unknown")
+                if bid:
+                    biz_list.append({"id": bid, "name": bname})
+        except Exception as e:
+            logger.error(f"[BIZ-GROUP] Biz fetch error: {e}")
+        
+        # Build <option> tags directly in Python
+        biz_options_html = '<option value="">-- Select Business --</option>'
+        for b in biz_list:
+            safe_name = (b["name"] or "").replace("'", "&#39;").replace('"', "&quot;")
+            biz_options_html += f'<option value="{b["id"]}">{safe_name}</option>'
+        
+        biz_json = _json.dumps(biz_list)
+        logger.info(f"[BIZ-GROUP] Page: {len(biz_list)} businesses: {[b['name'] for b in biz_list]}")
+        
+        content = '''
+        <script>var SERVER_BUSINESSES = ''' + biz_json + ''';</script>
+        <div class="card" style="margin-bottom:20px;">
+            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:20px;">
+                <div>
+                    <h2 style="margin:0;">🏢 Business Groups</h2>
+                    <p style="color:var(--text-muted);margin:5px 0 0;">Link your businesses together for cross-business insights</p>
+                </div>
+                <button onclick="showCreateGroup()" class="btn btn-primary">+ New Group</button>
+            </div>
+    
+            <!-- Create Group Form (hidden by default) -->
+            <div id="createGroupForm" style="display:none;background:var(--bg);padding:20px;border-radius:12px;border:1px solid var(--border);margin-bottom:20px;">
+                <h3 style="margin:0 0 15px;">Create New Group</h3>
+                <div style="display:flex;gap:10px;">
+                    <input type="text" id="newGroupName" class="form-input" placeholder="e.g. My Businesses" style="flex:1;">
+                    <button onclick="createGroup()" class="btn btn-primary">Create</button>
+                    <button onclick="hideCreateGroup()" class="btn btn-secondary">Cancel</button>
+                </div>
+            </div>
+    
+            <!-- Groups List -->
+            <div id="groupsList">
+                <div style="text-align:center;padding:40px;color:var(--text-muted);">
+                    Loading...
+                </div>
+            </div>
+        </div>
+    
+        <!-- Group Detail Modal -->
+        <div id="groupDetail" style="display:none;" class="card">
+            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:20px;">
+                <h2 id="groupDetailTitle" style="margin:0;">Group</h2>
+                <button onclick="hideGroupDetail()" class="btn btn-secondary">← Back</button>
+            </div>
+            
+            <!-- Add Business -->
+            <div style="background:var(--bg);padding:15px;border-radius:12px;border:1px solid var(--border);margin-bottom:20px;">
+                <h3 style="margin:0 0 10px;">Add Business to Group</h3>
+                <div style="display:flex;gap:10px;">
+                    <select id="addBizSelect" class="form-input" style="flex:1;">
+                        ''' + biz_options_html + '''
+                    </select>
+                    <button onclick="addBizToGroup()" class="btn btn-primary">Add</button>
+                </div>
+            </div>
+    
+            <!-- Businesses in Group -->
+            <div id="groupBusinesses" style="margin-bottom:20px;"></div>
+            
+            <!-- Cross-Business Overview -->
+            <div id="groupOverview" style="margin-bottom:20px;"></div>
+    
+            <!-- Comparison Insights -->
+            <div id="groupInsights"></div>
+        </div>
+    
+        <style>
+            .group-card {
+                background: var(--bg);
+                border: 1px solid var(--border);
+                border-radius: 12px;
+                padding: 20px;
+                margin-bottom: 12px;
+                cursor: pointer;
+                transition: all 0.2s;
+            }
+            .group-card:hover {
+                border-color: var(--primary);
+                transform: translateY(-1px);
+            }
+            .biz-item {
+                display: flex;
+                justify-content: space-between;
+                align-items: center;
+                background: var(--bg);
+                border: 1px solid var(--border);
+                border-radius: 8px;
+                padding: 12px 16px;
+                margin-bottom: 8px;
+            }
+            .stat-grid {
+                display: grid;
+                grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+                gap: 12px;
+                margin-bottom: 20px;
+            }
+            .stat-box {
+                background: var(--bg);
+                border: 1px solid var(--border);
+                border-radius: 10px;
+                padding: 16px;
+                text-align: center;
+            }
+            .stat-box .stat-value {
+                font-size: 1.5em;
+                font-weight: 700;
+                color: var(--text);
+            }
+            .stat-box .stat-label {
+                font-size: 0.85em;
+                color: var(--text-muted);
+                margin-top: 4px;
+            }
+            .insight-card {
+                background: var(--bg);
+                border-left: 4px solid var(--primary);
+                border-radius: 8px;
+                padding: 14px 16px;
+                margin-bottom: 10px;
+            }
+            .insight-card.critical { border-left-color: #ef4444; }
+            .insight-card.warning { border-left-color: #f59e0b; }
+            .insight-card.info { border-left-color: #3b82f6; }
+            .biz-overview-card {
+                background: var(--bg);
+                border: 1px solid var(--border);
+                border-radius: 10px;
+                padding: 16px;
+                margin-bottom: 10px;
+            }
+        </style>
+    
+        <script>
+        let currentGroupId = null;
+        let allBusinesses = [];
+    
+        // Load on page start
+        document.addEventListener('DOMContentLoaded', async () => {
+            await loadMyBusinesses();
+            loadGroups();
+        });
+    
+        async function loadMyBusinesses() {
+            // Businesses already loaded server-side into SERVER_BUSINESSES and into the <select> options
+            if (typeof SERVER_BUSINESSES !== 'undefined' && SERVER_BUSINESSES.length > 0) {
+                allBusinesses = SERVER_BUSINESSES;
+            } else {
+                // Fallback: read from business switcher in nav
+                const select = document.getElementById('businessSelect');
+                if (select) {
+                    for (let opt of select.options) {
+                        if (opt.value) allBusinesses.push({ id: opt.value, name: opt.text });
+                    }
                 }
-            } catch (err) {
-                alert('Error scanning timesheet: ' + err.message);
-                resetScan();
+            }
+            console.log('[BIZ-GROUP] allBusinesses:', allBusinesses.length, allBusinesses);
+        }
+    
+        async function loadGroups() {
+            try {
+                const resp = await fetch('/api/business-groups');
+                const data = await resp.json();
+                
+                if (!data.success) {
+                    document.getElementById('groupsList').innerHTML = '<p style="color:#ef4444;">Error loading groups</p>';
+                    return;
+                }
+    
+                if (data.groups.length === 0) {
+                    document.getElementById('groupsList').innerHTML = `
+                        <div style="text-align:center;padding:40px;color:var(--text-muted);">
+                            <div style="font-size:3em;margin-bottom:10px;">🏢</div>
+                            <p>No business groups yet.</p>
+                            <p>Create a group to link your businesses and see cross-business insights.</p>
+                            <button onclick="showCreateGroup()" class="btn btn-primary" style="margin-top:15px;">+ Create First Group</button>
+                        </div>`;
+                    return;
+                }
+    
+                let html = '';
+                for (const group of data.groups) {
+                    const count = group.business_count || 0;
+                    html += `
+                        <div class="group-card" onclick="openGroup('${group.id}', '${group.name.replace(/'/g, "\\'")}')">
+                            <div style="display:flex;justify-content:space-between;align-items:center;">
+                                <div>
+                                    <h3 style="margin:0;">${group.name}</h3>
+                                    <p style="color:var(--text-muted);margin:5px 0 0;">${count} business${count !== 1 ? 'es' : ''} linked</p>
+                                </div>
+                                <div style="display:flex;gap:8px;align-items:center;">
+                                    <span style="font-size:1.5em;">→</span>
+                                    <button onclick="event.stopPropagation();deleteGroup('${group.id}','${group.name.replace(/'/g, "\\'")}')" 
+                                        class="btn btn-secondary" style="padding:6px 10px;font-size:12px;">🗑️</button>
+                                </div>
+                            </div>
+                        </div>`;
+                }
+                document.getElementById('groupsList').innerHTML = html;
+            } catch (e) {
+                document.getElementById('groupsList').innerHTML = '<p style="color:#ef4444;">Error: ' + e.message + '</p>';
             }
         }
-        
-        function resetScan() {
-            currentFile = null;
-            document.getElementById('uploadArea').style.display = 'block';
-            document.getElementById('preview').style.display = 'none';
-            document.getElementById('scanning').style.display = 'none';
-            document.getElementById('fileInput').value = '';
+    
+        function showCreateGroup() {
+            document.getElementById('createGroupForm').style.display = 'block';
+            document.getElementById('newGroupName').focus();
+        }
+    
+        function hideCreateGroup() {
+            document.getElementById('createGroupForm').style.display = 'none';
+            document.getElementById('newGroupName').value = '';
+        }
+    
+        async function createGroup() {
+            const name = document.getElementById('newGroupName').value.trim();
+            if (!name) return alert('Enter a group name');
+    
+            const resp = await fetch('/api/business-groups', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({ name })
+            });
+            const data = await resp.json();
+            
+            if (data.success) {
+                hideCreateGroup();
+                loadGroups();
+            } else {
+                alert('Error: ' + (data.error || 'Failed'));
+            }
+        }
+    
+        async function deleteGroup(id, name) {
+            if (!confirm('Delete group "' + name + '"? This will unlink all businesses (businesses are NOT deleted).')) return;
+            
+            const resp = await fetch('/api/business-groups/' + id, { method: 'DELETE' });
+            const data = await resp.json();
+            
+            if (data.success) {
+                loadGroups();
+                document.getElementById('groupDetail').style.display = 'none';
+            } else {
+                alert('Error: ' + (data.error || 'Failed'));
+            }
+        }
+    
+        async function openGroup(groupId, groupName) {
+            currentGroupId = groupId;
+            document.getElementById('groupDetailTitle').textContent = '📊 ' + groupName;
+            document.getElementById('groupDetail').style.display = 'block';
+            document.getElementById('groupsList').parentElement.querySelector('.card:first-child').style.display = 'none';
+            
+            // Populate add-business dropdown
+            await loadGroupBusinesses(groupId);
+            await loadGroupOverview(groupId);
+            await loadGroupInsights(groupId);
+        }
+    
+        function hideGroupDetail() {
+            document.getElementById('groupDetail').style.display = 'none';
+            document.getElementById('groupsList').parentElement.querySelector('.card:first-child').style.display = 'block';
+            currentGroupId = null;
+        }
+    
+        async function loadGroupBusinesses(groupId) {
+            const resp = await fetch('/api/business-groups/' + groupId + '/businesses');
+            const data = await resp.json();
+            
+            const inGroup = data.businesses || [];
+            const inGroupIds = inGroup.map(b => b.id);
+    
+            // SAFETY: If allBusinesses is empty, recover from current <select> options or SERVER_BUSINESSES
+            if (allBusinesses.length === 0) {
+                // Try SERVER_BUSINESSES first
+                if (typeof SERVER_BUSINESSES !== 'undefined' && SERVER_BUSINESSES.length > 0) {
+                    allBusinesses = SERVER_BUSINESSES;
+                } else {
+                    // Read from the dropdown BEFORE we overwrite it
+                    const sel = document.getElementById('addBizSelect');
+                    if (sel) {
+                        for (let opt of sel.options) {
+                            if (opt.value) allBusinesses.push({ id: opt.value, name: opt.text });
+                        }
+                    }
+                    // Last resort: read from business switcher in nav
+                    if (allBusinesses.length === 0) {
+                        const navSel = document.getElementById('businessSelect');
+                        if (navSel) {
+                            for (let opt of navSel.options) {
+                                if (opt.value) allBusinesses.push({ id: opt.value, name: opt.text });
+                            }
+                        }
+                    }
+                }
+                console.log('[BIZ-GROUP] Recovered allBusinesses:', allBusinesses.length, allBusinesses);
+            }
+    
+            // Update add dropdown — only show businesses NOT already in the group
+            let opts = '<option value="">-- Select Business --</option>';
+            for (const biz of allBusinesses) {
+                if (!inGroupIds.includes(biz.id)) {
+                    opts += '<option value="' + biz.id + '">' + biz.name + '</option>';
+                }
+            }
+            document.getElementById('addBizSelect').innerHTML = opts;
+    
+            // Show businesses in group
+            if (inGroup.length === 0) {
+                document.getElementById('groupBusinesses').innerHTML = `
+                    <p style="color:var(--text-muted);text-align:center;padding:20px;">
+                        No businesses linked yet. Add one above.
+                    </p>`;
+                return;
+            }
+    
+            let html = '<h3>Linked Businesses</h3>';
+            for (const biz of inGroup) {
+                const btype = biz.business_type || biz.industry || '';
+                html += `
+                    <div class="biz-item">
+                        <div>
+                            <strong>${biz.name || 'Unknown'}</strong>
+                            ${btype ? '<span style="color:var(--text-muted);margin-left:8px;">' + btype + '</span>' : ''}
+                        </div>
+                        <button onclick="removeBiz('${biz.id}','${(biz.name||'').replace(/'/g, "\\'")}')" 
+                            class="btn btn-secondary" style="padding:5px 10px;font-size:12px;">Remove</button>
+                    </div>`;
+            }
+            document.getElementById('groupBusinesses').innerHTML = html;
+        }
+    
+        async function addBizToGroup() {
+            const bizId = document.getElementById('addBizSelect').value;
+            if (!bizId || !currentGroupId) return alert('Select a business');
+    
+            const resp = await fetch('/api/business-groups/' + currentGroupId + '/add', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({ business_id: bizId })
+            });
+            const data = await resp.json();
+            
+            if (data.success) {
+                await loadGroupBusinesses(currentGroupId);
+                await loadGroupOverview(currentGroupId);
+                await loadGroupInsights(currentGroupId);
+            } else {
+                alert('Error: ' + (data.error || 'Failed'));
+            }
+        }
+    
+        async function removeBiz(bizId, bizName) {
+            if (!confirm('Remove "' + bizName + '" from this group?')) return;
+            
+            const resp = await fetch('/api/business-groups/' + currentGroupId + '/remove/' + bizId, {
+                method: 'DELETE'
+            });
+            const data = await resp.json();
+            
+            if (data.success) {
+                await loadGroupBusinesses(currentGroupId);
+                await loadGroupOverview(currentGroupId);
+                await loadGroupInsights(currentGroupId);
+            } else {
+                alert('Error: ' + (data.error || 'Failed'));
+            }
+        }
+    
+        async function loadGroupOverview(groupId) {
+            document.getElementById('groupOverview').innerHTML = '<p style="color:var(--text-muted);">Loading overview...</p>';
+            
+            try {
+                const resp = await fetch('/api/business-groups/' + groupId + '/overview');
+                const data = await resp.json();
+                
+                if (!data.success || !data.businesses || data.businesses.length === 0) {
+                    document.getElementById('groupOverview').innerHTML = '';
+                    return;
+                }
+    
+                const t = data.totals;
+                const fmt = (n) => 'R ' + (n || 0).toLocaleString('en-ZA', {minimumFractionDigits: 0, maximumFractionDigits: 0});
+    
+                let html = '<h3>📊 Group Overview</h3>';
+                
+                // Totals grid
+                html += '<div class="stat-grid">';
+                html += `<div class="stat-box"><div class="stat-value">${fmt(t.revenue_this_month)}</div><div class="stat-label">Revenue (this month)</div></div>`;
+                html += `<div class="stat-box"><div class="stat-value">${fmt(t.total_debtors)}</div><div class="stat-label">Total Debtors</div></div>`;
+                html += `<div class="stat-box"><div class="stat-value">${fmt(t.total_creditors)}</div><div class="stat-label">Total Creditors</div></div>`;
+                html += `<div class="stat-box"><div class="stat-value">${fmt(t.total_stock_value)}</div><div class="stat-label">Total Stock Value</div></div>`;
+                html += `<div class="stat-box"><div class="stat-value">${fmt(t.total_bank_balance)}</div><div class="stat-label">Combined Bank</div></div>`;
+                html += `<div class="stat-box"><div class="stat-value">${data.business_count}</div><div class="stat-label">Businesses</div></div>`;
+                html += '</div>';
+    
+                // Per business breakdown
+                html += '<h3>Per Business</h3>';
+                for (const biz of data.businesses) {
+                    const rev = biz.revenue_this_month || 0;
+                    const totalRev = t.revenue_this_month || 1;
+                    const pct = ((rev / totalRev) * 100).toFixed(0);
+                    
+                    html += `
+                        <div class="biz-overview-card">
+                            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">
+                                <strong>${biz.name}</strong>
+                                <span style="color:var(--text-muted);">${pct}% of revenue</span>
+                            </div>
+                            <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:8px;font-size:0.85em;">
+                                <div>Revenue<br><strong>${fmt(biz.revenue_this_month)}</strong></div>
+                                <div>Debtors<br><strong>${fmt(biz.total_debtors)}</strong></div>
+                                <div>Creditors<br><strong>${fmt(biz.total_creditors)}</strong></div>
+                                <div>Stock<br><strong>${fmt(biz.total_stock_value)}</strong></div>
+                            </div>
+                            <div style="background:var(--border);border-radius:4px;height:6px;margin-top:10px;">
+                                <div style="background:var(--primary);border-radius:4px;height:6px;width:${pct}%;"></div>
+                            </div>
+                        </div>`;
+                }
+    
+                document.getElementById('groupOverview').innerHTML = html;
+            } catch (e) {
+                document.getElementById('groupOverview').innerHTML = '<p style="color:#ef4444;">Error loading overview</p>';
+            }
+        }
+    
+        async function loadGroupInsights(groupId) {
+            document.getElementById('groupInsights').innerHTML = '';
+            
+            try {
+                const resp = await fetch('/api/business-groups/' + groupId + '/comparison');
+                const data = await resp.json();
+                
+                if (!data.success || !data.insights || data.insights.length === 0) {
+                    return;
+                }
+    
+                let html = '<h3>💡 Cross-Business Insights</h3>';
+                for (const insight of data.insights) {
+                    html += `
+                        <div class="insight-card ${insight.severity || 'info'}">
+                            <div style="display:flex;gap:8px;align-items:flex-start;">
+                                <span style="font-size:1.3em;">${insight.icon || '💡'}</span>
+                                <div>
+                                    <strong>${insight.title}</strong>
+                                    <p style="margin:4px 0 0;color:var(--text-muted);">${insight.message}</p>
+                                </div>
+                            </div>
+                        </div>`;
+                }
+    
+                document.getElementById('groupInsights').innerHTML = html;
+            } catch (e) {
+                // Silently fail
+            }
         }
         </script>
         '''
         
-        return render_page("Scan Timesheet", content, user, "timesheets")
+        return render_page("Business Groups", content, user, "settings")
     
     
-    @app.route("/timesheets/template")
+    @app.route("/settings/invoice-template", methods=["GET", "POST"])
     @login_required
-    def timesheets_template():
-        """Generate printable timesheet template PDF with active job numbers"""
-        
-        business = Auth.get_current_business()
-        biz_id = business.get("id") if business else None
-        biz_name = business.get("business_name", business.get("name", "Company")) if business else "Company"
-        
-        # Get active jobs
-        jobs = db.get("jobs", {"business_id": biz_id}) if biz_id else []
-        active_jobs = [j for j in jobs if j.get("status") not in ["completed", "invoiced"]]
-        
-        # Build job list HTML
-        jobs_list = ""
-        for j in active_jobs[:8]:  # Max 8 jobs on template
-            jobs_list += f'<div style="display:flex;align-items:center;gap:8px;margin-bottom:4px;"><div style="width:14px;height:14px;border:1px solid #333;"></div><span style="font-size:11px;">{j.get("job_number", "")} - {safe_string(j.get("title", "")[:25])}</span></div>'
-        
-        if not jobs_list:
-            jobs_list = '<div style="font-size:11px;color:#666;">No active jobs</div>'
-        
-        # Generate HTML that will be converted to PDF-like display
-        html = f'''
-        <!DOCTYPE html>
-        <html>
-        <head>
-            <title>Timesheet - {biz_name}</title>
-            <style>
-                @media print {{
-                    body {{ margin: 0; padding: 20px; }}
-                    .no-print {{ display: none !important; }}
-                }}
-                body {{
-                    font-family: Arial, sans-serif;
-                    max-width: 800px;
-                    margin: 0 auto;
-                    padding: 20px;
-                    background: white;
-                    color: #000;
-                }}
-                .header {{
-                    display: flex;
-                    justify-content: space-between;
-                    align-items: flex-start;
-                    border-bottom: 3px solid #333;
-                    padding-bottom: 15px;
-                    margin-bottom: 20px;
-                }}
-                .title {{
-                    font-size: 24px;
-                    font-weight: bold;
-                    margin: 0;
-                }}
-                .subtitle {{
-                    font-size: 14px;
-                    color: #666;
-                    margin: 5px 0 0 0;
-                }}
-                .info-grid {{
-                    display: grid;
-                    grid-template-columns: 1fr 1fr;
-                    gap: 20px;
-                    margin-bottom: 20px;
-                }}
-                .info-box {{
-                    border: 1px solid #ccc;
-                    padding: 12px;
-                    border-radius: 4px;
-                }}
-                .info-label {{
-                    font-size: 11px;
-                    color: #666;
-                    text-transform: uppercase;
-                    margin-bottom: 5px;
-                }}
-                .info-value {{
-                    border-bottom: 1px solid #333;
-                    min-height: 24px;
-                    padding: 4px 0;
-                }}
-                table {{
-                    width: 100%;
-                    border-collapse: collapse;
-                    margin-bottom: 20px;
-                }}
-                th, td {{
-                    border: 1px solid #333;
-                    padding: 10px 8px;
-                    text-align: center;
-                    font-size: 13px;
-                }}
-                th {{
-                    background: #f0f0f0;
-                    font-weight: bold;
-                    font-size: 12px;
-                }}
-                .day-cell {{
-                    text-align: left;
-                    font-weight: bold;
-                }}
-                .write-line {{
-                    border-bottom: 1px solid #999;
-                    min-height: 22px;
-                }}
-                .totals-row {{
-                    background: #f5f5f5;
-                    font-weight: bold;
-                }}
-                .signature-section {{
-                    display: grid;
-                    grid-template-columns: 1fr 1fr;
-                    gap: 40px;
-                    margin-top: 30px;
-                    padding-top: 20px;
-                    border-top: 1px solid #ccc;
-                }}
-                .sig-line {{
-                    border-bottom: 1px solid #333;
-                    height: 40px;
-                    margin-bottom: 5px;
-                }}
-                .sig-label {{
-                    font-size: 11px;
-                    color: #666;
-                }}
-                .jobs-box {{
-                    border: 1px solid #ccc;
-                    padding: 12px;
-                    border-radius: 4px;
-                    margin-bottom: 20px;
-                }}
-                .jobs-title {{
-                    font-size: 12px;
-                    font-weight: bold;
-                    margin-bottom: 10px;
-                    color: #333;
-                }}
-                .print-btn {{
-                    background: #6366f1;
-                    color: white;
-                    border: none;
-                    padding: 12px 24px;
-                    font-size: 16px;
-                    border-radius: 8px;
-                    cursor: pointer;
-                    margin-bottom: 20px;
-                }}
-                .print-btn:hover {{
-                    background: #4f46e5;
-                }}
-            </style>
-        </head>
-        <body>
-            <button class="print-btn no-print" onclick="window.print()">🖨️ Print Timesheet</button>
-            
-            <div class="header">
-                <div>
-                    <h1 class="title">WEEKLY TIMESHEET</h1>
-                    <p class="subtitle">{safe_string(biz_name)}</p>
-                </div>
-                <div style="text-align:right;">
-                    <div class="info-label">Week Ending</div>
-                    <div class="info-value" style="width:150px;"></div>
-                </div>
-            </div>
-            
-            <div class="info-grid">
-                <div class="info-box">
-                    <div class="info-label">Employee Name</div>
-                    <div class="info-value"></div>
-                </div>
-                <div class="info-box">
-                    <div class="info-label">Employee ID / Code</div>
-                    <div class="info-value"></div>
-                </div>
-            </div>
-            
-            <div class="jobs-box">
-                <div class="jobs-title">📌 ACTIVE JOB CARDS (tick which job you worked on)</div>
-                <div style="display:grid;grid-template-columns:1fr 1fr;gap:5px;">
-                    {jobs_list}
-                    <div style="display:flex;align-items:center;gap:8px;margin-bottom:4px;">
-                        <div style="width:14px;height:14px;border:1px solid #333;"></div>
-                        <span style="font-size:11px;">Other: _______________</span>
-                    </div>
-                </div>
-            </div>
-            
-            <table>
-                <thead>
-                    <tr>
-                        <th style="width:80px;">DAY</th>
-                        <th style="width:80px;">DATE</th>
-                        <th style="width:100px;">JOB #</th>
-                        <th style="width:70px;">IN</th>
-                        <th style="width:70px;">OUT</th>
-                        <th style="width:70px;">IN</th>
-                        <th style="width:70px;">OUT</th>
-                        <th style="width:60px;">HOURS</th>
-                        <th>NOTES</th>
-                    </tr>
-                </thead>
-                <tbody>
-                    <tr>
-                        <td class="day-cell">Mon</td>
-                        <td><div class="write-line"></div></td>
-                        <td><div class="write-line"></div></td>
-                        <td><div class="write-line"></div></td>
-                        <td><div class="write-line"></div></td>
-                        <td><div class="write-line"></div></td>
-                        <td><div class="write-line"></div></td>
-                        <td><div class="write-line"></div></td>
-                        <td><div class="write-line"></div></td>
-                    </tr>
-                    <tr>
-                        <td class="day-cell">Tue</td>
-                        <td><div class="write-line"></div></td>
-                        <td><div class="write-line"></div></td>
-                        <td><div class="write-line"></div></td>
-                        <td><div class="write-line"></div></td>
-                        <td><div class="write-line"></div></td>
-                        <td><div class="write-line"></div></td>
-                        <td><div class="write-line"></div></td>
-                        <td><div class="write-line"></div></td>
-                    </tr>
-                    <tr>
-                        <td class="day-cell">Wed</td>
-                        <td><div class="write-line"></div></td>
-                        <td><div class="write-line"></div></td>
-                        <td><div class="write-line"></div></td>
-                        <td><div class="write-line"></div></td>
-                        <td><div class="write-line"></div></td>
-                        <td><div class="write-line"></div></td>
-                        <td><div class="write-line"></div></td>
-                        <td><div class="write-line"></div></td>
-                    </tr>
-                    <tr>
-                        <td class="day-cell">Thu</td>
-                        <td><div class="write-line"></div></td>
-                        <td><div class="write-line"></div></td>
-                        <td><div class="write-line"></div></td>
-                        <td><div class="write-line"></div></td>
-                        <td><div class="write-line"></div></td>
-                        <td><div class="write-line"></div></td>
-                        <td><div class="write-line"></div></td>
-                        <td><div class="write-line"></div></td>
-                    </tr>
-                    <tr>
-                        <td class="day-cell">Fri</td>
-                        <td><div class="write-line"></div></td>
-                        <td><div class="write-line"></div></td>
-                        <td><div class="write-line"></div></td>
-                        <td><div class="write-line"></div></td>
-                        <td><div class="write-line"></div></td>
-                        <td><div class="write-line"></div></td>
-                        <td><div class="write-line"></div></td>
-                        <td><div class="write-line"></div></td>
-                    </tr>
-                    <tr>
-                        <td class="day-cell">Sat</td>
-                        <td><div class="write-line"></div></td>
-                        <td><div class="write-line"></div></td>
-                        <td><div class="write-line"></div></td>
-                        <td><div class="write-line"></div></td>
-                        <td><div class="write-line"></div></td>
-                        <td><div class="write-line"></div></td>
-                        <td><div class="write-line"></div></td>
-                        <td><div class="write-line"></div></td>
-                    </tr>
-                    <tr>
-                        <td class="day-cell" style="color:#c00;">Sun</td>
-                        <td><div class="write-line"></div></td>
-                        <td><div class="write-line"></div></td>
-                        <td><div class="write-line"></div></td>
-                        <td><div class="write-line"></div></td>
-                        <td><div class="write-line"></div></td>
-                        <td><div class="write-line"></div></td>
-                        <td><div class="write-line"></div></td>
-                        <td><div class="write-line"></div></td>
-                    </tr>
-                    <tr class="totals-row">
-                        <td colspan="7" style="text-align:right;">TOTAL HOURS:</td>
-                        <td><div class="write-line"></div></td>
-                        <td></td>
-                    </tr>
-                </tbody>
-            </table>
-            
-            <div style="font-size:11px;color:#666;margin-bottom:20px;">
-                <strong>Instructions:</strong> Write job number (e.g. JC-2026-001) for each day. 
-                Use 24hr time format (07:00, 16:30). Two IN/OUT columns for split shifts.
-            </div>
-            
-            <div class="signature-section">
-                <div>
-                    <div class="sig-line"></div>
-                    <div class="sig-label">Employee Signature & Date</div>
-                </div>
-                <div>
-                    <div class="sig-line"></div>
-                    <div class="sig-label">Supervisor Signature & Date</div>
-                </div>
-            </div>
-            
-            <div style="text-align:center;margin-top:30px;font-size:10px;color:#999;" class="no-print">
-                Generated by Click AI - {today()}
-            </div>
-        </body>
-        </html>
-        '''
-        
-        return html
-    
-    
-    @app.route("/timesheets/review/<batch_id>")
-    @login_required
-    def timesheets_review(batch_id):
-        """Review scanned timesheet with full daily breakdown before saving"""
+    def settings_invoice_template():
+        """Invoice Template Customization"""
         
         user = Auth.get_current_user()
         business = Auth.get_current_business()
         biz_id = business.get("id") if business else None
         
-        # Get batch
-        batch = db.get_one("timesheet_batches", batch_id)
-        if not batch:
-            return redirect("/timesheets")
+        if not business:
+            flash("Please set up your business first", "error")
+            return redirect("/settings")
         
-        # Parse data
-        raw_data = batch.get("data", "{}")
-        parsed = json.loads(raw_data) if isinstance(raw_data, str) else raw_data
+        if request.method == "POST":
+            # Save template settings
+            template_settings = {
+                "template_style": request.form.get("template_style", "modern"),
+                "primary_color": request.form.get("primary_color", "#2563eb"),
+                "show_logo": request.form.get("show_logo") == "on",
+                "logo_url": request.form.get("logo_url", ""),
+                "show_bank_details": request.form.get("show_bank_details") == "on",
+                "show_payment_terms": request.form.get("show_payment_terms") == "on",
+                "payment_terms": request.form.get("payment_terms", "Payment due within 30 days"),
+                "footer_text": request.form.get("footer_text", ""),
+                "show_vat_breakdown": request.form.get("show_vat_breakdown") == "on",
+                "invoice_title": request.form.get("invoice_title", "INVOICE"),
+                "quote_title": request.form.get("quote_title", "QUOTATION"),
+                "table_lines": request.form.get("table_lines", "horizontal"),
+            }
+            
+            user_id = user.get("id", "") if user else ""
+            ok, result = db.update_business(biz_id, user_id, {
+                "invoice_template": json.dumps(template_settings),
+                "updated_at": now(),
+            })
+            
+            if ok:
+                flash("Invoice template updated!", "success")
+            else:
+                flash(f"Could not save template: {result}", "error")
+            return redirect("/settings/invoice-template")
         
-        if isinstance(parsed, list):
-            employees_data = parsed
-            period = batch.get("period", "")
-        else:
-            employees_data = parsed.get("employees", [])
-            period = parsed.get("period", "") or batch.get("period", "")
+        # GET - Load existing settings
+        try:
+            template = json.loads(business.get("invoice_template", "{}"))
+        except:
+            template = {}
         
-        # Get employees for matching
-        all_employees = db.get("employees", {"business_id": biz_id}) if biz_id else []
-        logger.info(f"[TIMESHEET REVIEW] Found {len(all_employees)} employees for business {biz_id}")
-        for e in all_employees:
-            logger.info(f"[TIMESHEET REVIEW] Employee: {e.get('name')} ({e.get('id')})")
+        # Default values
+        template_style = template.get("template_style", "modern")
+        primary_color = template.get("primary_color", "#2563eb")
+        show_logo = template.get("show_logo", True)
+        logo_url = template.get("logo_url", "")
+        show_bank_details = template.get("show_bank_details", True)
+        show_payment_terms = template.get("show_payment_terms", True)
+        payment_terms = template.get("payment_terms", "Payment due within 30 days")
+        footer_text = template.get("footer_text", "Thank you for your business!")
+        show_vat_breakdown = template.get("show_vat_breakdown", True)
+        invoice_title = template.get("invoice_title", "INVOICE")
+        quote_title = template.get("quote_title", "QUOTATION")
+        table_lines = template.get("table_lines", "horizontal")
+        sel_h = "selected" if table_lines == "horizontal" else ""
+        sel_g = "selected" if table_lines == "grid" else ""
+        sel_b = "selected" if table_lines == "boxed" else ""
+        sel_n = "selected" if table_lines == "none" else ""
         
-        # Build cards for each scanned employee
-        cards_html = ""
+        # Template style options with previews
+        style_options = {
+            "modern": {"name": "Modern", "desc": "Clean and minimal with accent colors"},
+            "classic": {"name": "Classic", "desc": "Traditional professional look"},
+            "bold": {"name": "Bold", "desc": "Strong headers with colored background"},
+            "minimal": {"name": "Minimal", "desc": "Ultra-clean with lots of white space"},
+        }
         
-        # Get active jobs for dropdown
-        jobs = db.get("jobs", {"business_id": biz_id}) if biz_id else []
-        active_jobs = [j for j in jobs if j.get("status") not in ["completed", "invoiced"]]
+        # Mini visual preview shown on each style card (replaces the generic icon)
+        def _style_thumb(key):
+            c = primary_color
+            if key == "modern":
+                head = (f'<div style="border-left:3px solid {c};padding-left:6px;">'
+                        f'<div style="height:7px;width:60%;background:{c};border-radius:2px;"></div>'
+                        f'<div style="height:4px;width:35%;background:#cbd5e1;border-radius:2px;margin-top:3px;"></div></div>')
+            elif key == "classic":
+                head = ('<div style="border-bottom:2px solid #333;padding-bottom:4px;">'
+                        '<div style="height:7px;width:55%;background:#333;border-radius:1px;"></div>'
+                        '<div style="height:4px;width:30%;background:#cbd5e1;border-radius:1px;margin-top:3px;"></div></div>')
+            elif key == "bold":
+                head = (f'<div style="background:{c};border-radius:3px;padding:5px 6px;">'
+                        f'<div style="height:7px;width:55%;background:#fff;border-radius:2px;"></div></div>')
+            else:  # minimal
+                head = ('<div style="text-align:center;">'
+                        '<div style="height:6px;width:45%;background:#94a3b8;border-radius:2px;margin:0 auto;"></div></div>')
+            return (
+                '<div style="background:#fff;border:1px solid #e5e7eb;border-radius:6px;padding:8px;'
+                'margin-bottom:10px;box-shadow:0 1px 3px rgba(0,0,0,0.08);text-align:left;">'
+                f'{head}'
+                '<div style="margin-top:6px;display:flex;flex-direction:column;gap:3px;">'
+                '<div style="height:3px;width:100%;background:#eef2f7;border-radius:1px;"></div>'
+                '<div style="height:3px;width:100%;background:#eef2f7;border-radius:1px;"></div>'
+                '<div style="height:3px;width:80%;background:#eef2f7;border-radius:1px;"></div></div>'
+                '<div style="margin-top:6px;display:flex;justify-content:flex-end;">'
+                f'<div style="height:6px;width:40%;background:{c};border-radius:2px;opacity:0.85;"></div></div>'
+                '</div>'
+            )
+
+        style_html = ""
+        for key, val in style_options.items():
+            selected = "border-color: var(--primary); background: rgba(99,102,241,0.1);" if key == template_style else ""
+            style_html += f'''
+            <label style="cursor: pointer;">
+                <input type="radio" name="template_style" value="{key}" {"checked" if key == template_style else ""} style="display: none;">
+                <div style="border: 2px solid var(--border); border-radius: 12px; padding: 20px; text-align: center; transition: all 0.2s; {selected}" 
+                     onmouseover="this.style.borderColor='var(--primary)'" 
+                     onmouseout="this.style.borderColor='{f"var(--primary)" if key == template_style else "var(--border)"}'">
+                    {_style_thumb(key)}
+                    <div style="font-weight: bold;">{val["name"]}</div>
+                    <div style="font-size: 12px; color: var(--text-muted);">{val["desc"]}</div>
+                </div>
+            </label>
+            '''
         
-        for i, emp in enumerate(employees_data):
-            scanned_name = emp.get("name", "Unknown")
-            total_hours = emp.get("total_hours", 0)
-            total_overtime = emp.get("total_overtime", 0)
-            total_sunday = emp.get("total_sunday", 0)
-            days = emp.get("days", [])
+        content = f'''
+        <div style="margin-bottom: 20px;">
+            <a href="/settings" style="color:var(--text-muted);">← Back to Settings</a>
+        </div>
+        
+        <div class="card" style="margin-bottom: 20px;">
+            <h2 style="margin: 0 0 5px 0;">Invoice Template</h2>
+            <p style="color: var(--text-muted); margin: 0;">Customize how your invoices and quotes look</p>
+        </div>
+        
+        <form method="POST">
+            <div class="card" style="margin-bottom: 20px;">
+                <h3 style="margin: 0 0 20px 0;">Template Style</h3>
+                <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 15px;">
+                    {style_html}
+                </div>
+            </div>
             
-            # Job card info from scan
-            scanned_job_number = emp.get("job_number", "")
-            scanned_job_id = emp.get("job_id", "")
-            scanned_job_title = emp.get("job_title", "")
+            <div class="card" style="margin-bottom: 20px;">
+                <h3 style="margin: 0 0 20px 0;">Branding</h3>
+                
+                <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 20px;">
+                    <div>
+                        <label style="display: block; margin-bottom: 5px; font-weight: 500;">Primary Color</label>
+                        <div style="display: flex; gap: 10px; align-items: center;">
+                            <input type="color" name="primary_color" value="{primary_color}" style="width: 60px; height: 40px; border: none; cursor: pointer;">
+                            <input type="text" value="{primary_color}" class="form-input" style="width: 120px;" 
+                                   onchange="this.previousElementSibling.value=this.value" readonly>
+                        </div>
+                    </div>
+                    <div>
+                        <label style="display: block; margin-bottom: 5px; font-weight: 500;">
+                            <input type="checkbox" name="show_logo" {"checked" if show_logo else ""} style="margin-right: 8px;">
+                            Show Logo
+                        </label>
+                        <div style="display:flex; align-items:center; gap:10px; margin-bottom:8px;">
+                            <img id="logoPreview" src="{safe_string(logo_url, 5000000)}" alt=""
+                                 style="height:48px; max-width:160px; object-fit:contain; border:1px solid var(--border); border-radius:6px; padding:4px; background:#fff; {'' if logo_url else 'display:none;'}">
+                            <div>
+                                <input type="file" id="logoFile" accept="image/png,image/jpeg" onchange="handleLogoUpload(this)" style="display:none;">
+                                <button type="button" class="btn btn-secondary" onclick="document.getElementById('logoFile').click();">Choose Logo File</button>
+                                <button type="button" class="btn btn-secondary" id="logoClearBtn" onclick="clearLogo()" style="{'' if logo_url else 'display:none;'}">Remove</button>
+                            </div>
+                        </div>
+                        <input type="text" name="logo_url" id="logoUrl" class="form-input" value="{safe_string(logo_url, 5000000)}" 
+                               placeholder="https://yourdomain.com/logo.png">
+                        <small style="color: var(--text-muted);">Choose a PNG or JPG from your device, or paste an image URL.</small>
+                    </div>
+                </div>
+                <script>
+                function handleLogoUpload(input) {{
+                    var file = input.files && input.files[0];
+                    if (!file) return;
+                    if (file.type !== 'image/png' && file.type !== 'image/jpeg' && file.type !== 'image/jpg') {{
+                        alert('Please choose a PNG or JPG image.');
+                        input.value = '';
+                        return;
+                    }}
+                    if (file.size > 500 * 1024) {{
+                        alert('That image is ' + Math.round(file.size/1024) + 'KB. Please use a logo under 500KB so documents stay fast.');
+                        input.value = '';
+                        return;
+                    }}
+                    var reader = new FileReader();
+                    reader.onload = function(e) {{
+                        var dataUrl = e.target.result;
+                        document.getElementById('logoUrl').value = dataUrl;
+                        var img = document.getElementById('logoPreview');
+                        img.src = dataUrl;
+                        img.style.display = '';
+                        document.getElementById('logoClearBtn').style.display = '';
+                    }};
+                    reader.readAsDataURL(file);
+                }}
+                function clearLogo() {{
+                    document.getElementById('logoUrl').value = '';
+                    document.getElementById('logoFile').value = '';
+                    var img = document.getElementById('logoPreview');
+                    img.src = '';
+                    img.style.display = 'none';
+                    document.getElementById('logoClearBtn').style.display = 'none';
+                }}
+                </script>
+            </div>
             
-            logger.info(f"[TIMESHEET REVIEW] Scanned employee: '{scanned_name}' job: '{scanned_job_number}'")
+            <div class="card" style="margin-bottom: 20px;">
+                <h3 style="margin: 0 0 20px 0;">Document Titles</h3>
+                
+                <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 20px;">
+                    <div>
+                        <label style="display: block; margin-bottom: 5px; font-weight: 500;">Invoice Title</label>
+                        <input type="text" name="invoice_title" class="form-input" value="{safe_string(invoice_title)}" 
+                               placeholder="INVOICE">
+                    </div>
+                    <div>
+                        <label style="display: block; margin-bottom: 5px; font-weight: 500;">Quote Title</label>
+                        <input type="text" name="quote_title" class="form-input" value="{safe_string(quote_title)}" 
+                               placeholder="QUOTATION">
+                    </div>
+                </div>
+            </div>
             
-            # Try to match to existing employee - fuzzy match
-            matched_id = ""
-            for db_emp in all_employees:
-                db_name = db_emp.get("name", "").lower().strip()
-                scan_name = scanned_name.lower().strip()
-                # Match if exact, or if one contains the other, or first name matches
-                first_name_db = db_name.split()[0] if db_name.split() else ""
-                first_name_scan = scan_name.split()[0] if scan_name.split() else ""
-                if (db_name == scan_name or 
-                    scan_name in db_name or 
-                    db_name in scan_name or
-                    (first_name_db and first_name_db == first_name_scan) or
-                    (first_name_scan and first_name_scan == first_name_db)):
-                    matched_id = db_emp.get("id", "")
-                    logger.info(f"[TIMESHEET REVIEW] Matched '{scanned_name}' to '{db_emp.get('name')}'")
-                    break
+            <div class="card" style="margin-bottom: 20px;">
+                <h3 style="margin: 0 0 20px 0;">Content Options</h3>
+                
+                <div style="display: grid; gap: 15px;">
+                    <label style="display: flex; align-items: center; gap: 10px; cursor: pointer;">
+                        <input type="checkbox" name="show_bank_details" {"checked" if show_bank_details else ""} style="width: 18px; height: 18px;">
+                        <span><strong>Show Bank Details</strong> - Display your banking info for EFT payments</span>
+                    </label>
+                    
+                    <label style="display: flex; align-items: center; gap: 10px; cursor: pointer;">
+                        <input type="checkbox" name="show_vat_breakdown" {"checked" if show_vat_breakdown else ""} style="width: 18px; height: 18px;">
+                        <span><strong>Show VAT Breakdown</strong> - Display Subtotal, VAT, and Total separately</span>
+                    </label>
+                    
+                    <label style="display: flex; align-items: center; gap: 10px; cursor: pointer;">
+                        <input type="checkbox" name="show_payment_terms" {"checked" if show_payment_terms else ""} style="width: 18px; height: 18px;">
+                        <span><strong>Show Payment Terms</strong> - Include payment due terms on invoice</span>
+                    </label>
+                </div>
+                
+                <div style="margin-top: 20px;">
+                    <label style="display: block; margin-bottom: 5px; font-weight: 500;">Payment Terms Text</label>
+                    <input type="text" name="payment_terms" class="form-input" value="{safe_string(payment_terms)}" 
+                           placeholder="Payment due within 30 days">
+                </div>
+                
+                <div style="margin-top: 15px;">
+                    <label style="display: block; margin-bottom: 5px; font-weight: 500;">Footer Text</label>
+                    <textarea name="footer_text" class="form-input" rows="2" 
+                              placeholder="Thank you for your business!">{safe_string(footer_text)}</textarea>
+                    <small style="color: var(--text-muted);">Appears at the bottom of every invoice</small>
+                </div>
+            </div>
             
-            # Dropdown of employees
-            emp_options = '<option value="">-- Select Employee --</option>'
-            for db_emp in all_employees:
-                selected = "selected" if db_emp.get("id") == matched_id else ""
-                emp_options += f'<option value="{db_emp.get("id", "")}" {selected}>{safe_string(db_emp.get("name", ""))}</option>'
+            <div class="card" style="margin-bottom: 20px;">
+                <h3 style="margin: 0 0 20px 0;">Items Table</h3>
+                <label style="display: block; margin-bottom: 5px; font-weight: 500;">Table Lines</label>
+                <select name="table_lines" class="form-input" style="max-width: 340px;">
+                    <option value="horizontal" {sel_h}>Horizontal lines (under each row)</option>
+                    <option value="grid" {sel_g}>Full grid (lines around every cell)</option>
+                    <option value="boxed" {sel_b}>Boxed (outer frame only)</option>
+                    <option value="none" {sel_n}>None (clean, no lines)</option>
+                </select>
+                <small style="color: var(--text-muted); display: block; margin-top: 6px;">Choose how the lines around your invoice items table look. Click Preview to see it.</small>
+            </div>
             
-            # Dropdown of jobs
-            job_options = '<option value="">-- No Job Card --</option>'
-            for job in active_jobs:
-                selected = "selected" if job.get("id") == scanned_job_id else ""
-                job_options += f'<option value="{job.get("id", "")}" {selected}>{job.get("job_number", "")} - {safe_string(job.get("title", "")[:30])}</option>'
+            <div style="display: flex; gap: 10px;">
+                <button type="submit" class="btn btn-primary" style="padding: 12px 30px;">GOOD: Save Template</button>
+                <a href="/settings" class="btn btn-secondary">Cancel</a>
+                <button type="button" class="btn btn-secondary" onclick="previewInvoice()" style="margin-left: auto;">👁️ Preview</button>
+            </div>
+        </form>
+        
+        <!-- Preview Modal -->
+        <div id="previewModal" style="display: none; position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(0,0,0,0.8); z-index: 1000; align-items: center; justify-content: center; overflow-y: auto; padding: 20px;">
+            <div style="background: white; max-width: 800px; width: 100%; border-radius: 12px; position: relative;">
+                <button onclick="document.getElementById('previewModal').style.display='none'" 
+                        style="position: absolute; top: 10px; right: 10px; background: #333; color: white; border: none; border-radius: 50%; width: 30px; height: 30px; cursor: pointer; font-size: 18px;">×</button>
+                <div id="previewContent" style="padding: 40px;"></div>
+            </div>
+        </div>
+        
+        <script>
+        // Update style selection visually
+        document.querySelectorAll('input[name="template_style"]').forEach(radio => {{
+            radio.addEventListener('change', function() {{
+                document.querySelectorAll('input[name="template_style"]').forEach(r => {{
+                    const div = r.parentElement.querySelector('div');
+                    if (r.checked) {{
+                        div.style.borderColor = 'var(--primary)';
+                        div.style.background = 'rgba(99,102,241,0.1)';
+                    }} else {{
+                        div.style.borderColor = 'var(--border)';
+                        div.style.background = 'transparent';
+                    }}
+                }});
+            }});
+        }});
+        
+        function previewInvoice() {{
+            const style = document.querySelector('input[name="template_style"]:checked').value;
+            const color = document.querySelector('input[name="primary_color"]').value;
+            const showLogo = document.querySelector('input[name="show_logo"]').checked;
+            const showBank = document.querySelector('input[name="show_bank_details"]').checked;
+            const showVat = document.querySelector('input[name="show_vat_breakdown"]').checked;
+            const showTerms = document.querySelector('input[name="show_payment_terms"]').checked;
+            const terms = document.querySelector('input[name="payment_terms"]').value;
+            const footer = document.querySelector('textarea[name="footer_text"]').value;
+            const invTitle = document.querySelector('input[name="invoice_title"]').value || 'INVOICE';
+            const tableLines = (document.querySelector('select[name="table_lines"]') || {{}}).value || 'horizontal';
             
-            # Job match indicator
-            job_match_html = ""
-            if scanned_job_number:
-                if scanned_job_id:
-                    job_match_html = f'<span style="color:#22c55e;font-size:12px;">GOOD: {scanned_job_number}</span>'
-                else:
-                    job_match_html = f'<span style="color:#f59e0b;font-size:12px;">Warning: {scanned_job_number} (not matched)</span>'
+            // Generate preview HTML
+            const preview = generatePreview(style, color, showLogo, showBank, showVat, showTerms, terms, footer, invTitle, tableLines);
+            document.getElementById('previewContent').innerHTML = preview;
+            document.getElementById('previewModal').style.display = 'flex';
+        }}
+        
+        function generatePreview(style, color, showLogo, showBank, showVat, showTerms, terms, footer, invTitle, tableLines) {{
+            const biz = "{safe_string(business.get('name', 'Your Business'))}";
+            const addr = "{safe_string(business.get('address', '123 Main Street'))}";
+            const vat = "{safe_string(business.get('vat_number', ''))}";
+            const bank = "{safe_string(business.get('bank_name', 'FNB'))}";
+            const acc = "{safe_string(business.get('bank_account', '12345678'))}";
+            const branch = "{safe_string(business.get('bank_branch', '250655'))}";
             
-            # Build daily breakdown table
-            days_html = ""
-            if days:
-                days_html = '''
-                <table class="table" style="font-size:13px; margin-top:12px;">
+            let headerStyle = '';
+            let titleStyle = '';
+            
+            if (style === 'modern') {{
+                headerStyle = `border-left: 4px solid ${{color}}; padding-left: 20px;`;
+                titleStyle = `color: ${{color}}; font-size: 32px;`;
+            }} else if (style === 'classic') {{
+                headerStyle = `border-bottom: 2px solid #333;`;
+                titleStyle = `color: #333; font-size: 28px; font-family: Georgia, serif;`;
+            }} else if (style === 'bold') {{
+                headerStyle = `background: ${{color}}; color: white; padding: 20px; margin: -40px -40px 20px -40px; border-radius: 12px 12px 0 0;`;
+                titleStyle = `color: white; font-size: 36px;`;
+            }} else if (style === 'minimal') {{
+                headerStyle = ``;
+                titleStyle = `color: #333; font-size: 24px; font-weight: 300; letter-spacing: 4px;`;
+            }}
+            
+            // Items table line style
+            let tableBorder = '';
+            let thBorder = '';
+            let tdBorder = '';
+            if (tableLines === 'grid') {{
+                tableBorder = 'border: 1px solid #ddd;';
+                thBorder = 'border: 1px solid #ddd;';
+                tdBorder = 'border: 1px solid #eee;';
+            }} else if (tableLines === 'boxed') {{
+                tableBorder = 'border: 1px solid #ddd;';
+            }} else if (tableLines === 'none') {{
+                tableBorder = ''; thBorder = ''; tdBorder = '';
+            }} else {{
+                thBorder = 'border-bottom: 2px solid #ddd;';
+                tdBorder = 'border-bottom: 1px solid #eee;';
+            }}
+            
+            return `
+                <div style="${{headerStyle}}">
+                    <h1 style="${{titleStyle}}; margin: 0;">${{invTitle}}</h1>
+                    <p style="color: #666; margin: 5px 0;">INV0001</p>
+                </div>
+                
+                <div style="display: flex; justify-content: space-between; margin: 30px 0;">
+                    <div>
+                        <h4 style="color: #888; margin: 0 0 5px 0; font-size: 12px;">FROM</h4>
+                        <p style="margin: 0; font-weight: bold;">${{biz}}</p>
+                        <p style="color: #666; margin: 5px 0;">${{addr}}</p>
+                        ${{vat ? `<p style="color: #666; margin: 0;">VAT: ${{vat}}</p>` : ''}}
+                    </div>
+                    <div style="text-align: right;">
+                        <h4 style="color: #888; margin: 0 0 5px 0; font-size: 12px;">TO</h4>
+                        <p style="margin: 0; font-weight: bold;">Sample Customer</p>
+                        <p style="color: #666; margin: 5px 0;">customer@email.com</p>
+                        <p style="color: #666; margin: 0;">Date: ${{new Date().toLocaleDateString()}}</p>
+                    </div>
+                </div>
+                
+                <table style="width: 100%; border-collapse: collapse; margin: 20px 0; ${{tableBorder}}">
                     <thead>
-                        <tr style="background:rgba(255,255,255,0.05);">
-                            <th>Date</th>
-                            <th>In</th>
-                            <th>Out</th>
-                            <th>Hours</th>
-                            <th style="color:#f59e0b;">OT</th>
-                            <th style="color:#3b82f6;">Sun</th>
-                            <th>Status</th>
+                        <tr style="background: #f5f5f5;">
+                            <th style="padding: 12px; text-align: left; ${{thBorder}}">Description</th>
+                            <th style="padding: 12px; text-align: center; ${{thBorder}}">Qty</th>
+                            <th style="padding: 12px; text-align: right; ${{thBorder}}">Price</th>
+                            <th style="padding: 12px; text-align: right; ${{thBorder}}">Total</th>
                         </tr>
                     </thead>
                     <tbody>
-                '''
-                calc_hours = 0
-                calc_ot = 0
-                calc_sunday = 0
+                        <tr>
+                            <td style="padding: 12px; ${{tdBorder}}">Sample Product</td>
+                            <td style="padding: 12px; text-align: center; ${{tdBorder}}">2</td>
+                            <td style="padding: 12px; text-align: right; ${{tdBorder}}">R500.00</td>
+                            <td style="padding: 12px; text-align: right; ${{tdBorder}}">R1,000.00</td>
+                        </tr>
+                        <tr>
+                            <td style="padding: 12px; ${{tdBorder}}">Another Item</td>
+                            <td style="padding: 12px; text-align: center; ${{tdBorder}}">1</td>
+                            <td style="padding: 12px; text-align: right; ${{tdBorder}}">R750.00</td>
+                            <td style="padding: 12px; text-align: right; ${{tdBorder}}">R750.00</td>
+                        </tr>
+                    </tbody>
+                </table>
                 
-                for j, day in enumerate(days):
-                    d_date = day.get("date", "-")
-                    d_in = day.get("in", "-")
-                    d_out = day.get("out", "-")
-                    d_hours = day.get("hours", 0)
-                    d_ot = day.get("overtime", 0)
-                    d_sunday = day.get("sunday", 0)
-                    is_sun = day.get("is_sunday", False)
-                    
-                    calc_hours += d_hours
-                    calc_ot += d_ot
-                    calc_sunday += d_sunday
-                    
-                    row_style = "background:rgba(59,130,246,0.15);" if is_sun else ""
-                    in_border = "1px solid var(--border)" if _cell_is_time(d_in) else "2px solid #f59e0b"
-                    out_border = "1px solid var(--border)" if _cell_is_time(d_out) else "2px solid #f59e0b"
-                    
-                    _sun_flag = "1" if is_sun else "0"
-                    days_html += f'''
-                    <tr style="{row_style}">
-                        <td style="white-space:nowrap;">{d_date} {"☀️" if is_sun else ""}</td>
-                        <td><input type="text" name="in_{i}_{j}" value="{safe_string(str(d_in))}" data-sun="{_sun_flag}" oninput="tsRecalc({i})" style="width:78px;padding:5px;border-radius:5px;border:{in_border};background:#1a1a2e;color:var(--text);"></td>
-                        <td><input type="text" name="out_{i}_{j}" value="{safe_string(str(d_out))}" oninput="tsRecalc({i})" style="width:78px;padding:5px;border-radius:5px;border:{out_border};background:#1a1a2e;color:var(--text);"></td>
-                        <td id="h_{i}_{j}">{d_hours if d_hours > 0 else "-"}</td>
-                        <td id="ot_{i}_{j}" style="color:#f59e0b;font-weight:bold;">{d_ot if d_ot > 0 else "-"}</td>
-                        <td id="su_{i}_{j}" style="color:#3b82f6;font-weight:bold;">{d_sunday if d_sunday > 0 else "-"}</td>
-                        <td style="white-space:nowrap;">
-                            <select name="status_{i}_{j}" onchange="tsRecalc({i})" style="padding:4px;border-radius:5px;border:1px solid var(--border);background:#1a1a2e;color:var(--text);font-size:12px;">
-                                <option value="">Worked</option>
-                                <option value="SICK">Sick (paid)</option>
-                                <option value="AWP">AWP</option>
-                                <option value="AWOL">AWOL</option>
-                            </select>
-                            <input type="number" name="stathrs_{i}_{j}" value="8" step="0.5" min="0" oninput="tsRecalc({i})" style="width:52px;padding:4px;border-radius:5px;border:1px solid var(--border);background:#1a1a2e;color:var(--text);display:none;">
-                        </td>
-                    </tr>
-                    '''
-                
-                days_html += f'''
-                    <tr style="background:rgba(34,197,94,0.15); font-weight:bold;">
-                        <td colspan="3">CALCULATED BY FLASK</td>
-                        <td id="tot_h_{i}">{calc_hours}</td>
-                        <td id="tot_ot_{i}" style="color:#f59e0b;">{calc_ot}</td>
-                        <td id="tot_su_{i}" style="color:#3b82f6;">{calc_sunday}</td>
-                        <td></td>
-                    </tr>
-                </tbody></table>
-                <input type="hidden" name="daycount_{i}" value="{len(days)}">
-                '''
-            else:
-                days_html = '<p style="color:var(--text-muted);font-size:13px;">No daily breakdown available</p>'
-            
-            match_color = "#22c55e" if matched_id else "#f59e0b"
-            match_status = "GOOD: Matched" if matched_id else "[!] No match"
-            
-            cards_html += f'''
-            <div class="card" style="margin-bottom:16px; border-left: 4px solid {match_color};">
-                <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px;">
-                    <div>
-                        <h3 style="margin:0; font-size:18px;">👤 {safe_string(scanned_name)}</h3>
-                        <span style="color:{match_color}; font-size:12px;">{match_status}</span>
-                        {f' • {job_match_html}' if job_match_html else ''}
-                    </div>
-                    <div style="text-align:right;">
-                        <div style="font-size:24px; font-weight:bold; color:#22c55e;">{total_hours} hrs</div>
-                        <div style="display:flex; gap:12px; justify-content:flex-end;">
-                            <span style="font-size:14px; color:#f59e0b;">{total_overtime} OT</span>
-                            <span style="font-size:14px; color:#3b82f6;">{total_sunday} Sun</span>
+                <div style="display: flex; justify-content: flex-end;">
+                    <div style="width: 250px;">
+                        ${{showVat ? `
+                            <div style="display: flex; justify-content: space-between; padding: 8px 0; border-bottom: 1px solid #eee;">
+                                <span style="color: #666;">Subtotal</span>
+                                <span>R1,750.00</span>
+                            </div>
+                            <div style="display: flex; justify-content: space-between; padding: 8px 0; border-bottom: 1px solid #eee;">
+                                <span style="color: #666;">VAT (15%)</span>
+                                <span>R262.50</span>
+                            </div>
+                        ` : ''}}
+                        <div style="display: flex; justify-content: space-between; padding: 12px 0; font-size: 20px; font-weight: bold; color: ${{color}};">
+                            <span>TOTAL</span>
+                            <span>R2,012.50</span>
                         </div>
                     </div>
                 </div>
                 
-                <details open style="background:rgba(139,92,246,0.1); border-radius:8px; padding:12px; margin-bottom:16px;">
-                    <summary style="cursor:pointer; font-size:12px; color:#a78bfa;">DAILY BREAKDOWN (times read by AI, hours by Flask)</summary>
-                    {days_html}
-                </details>
+                ${{showBank ? `
+                    <div style="margin-top: 30px; padding: 15px; background: #f8f9fa; border-radius: 8px;">
+                        <h4 style="margin: 0 0 10px 0; font-size: 12px; color: #888;">BANK DETAILS</h4>
+                        <p style="margin: 0; font-size: 14px;">
+                            <strong>${{bank}}</strong> | Acc: ${{acc}} | Branch: ${{branch}}
+                        </p>
+                    </div>
+                ` : ''}}
                 
-                <div style="display:flex; gap:12px; align-items:center; background:rgba(34,197,94,0.1); padding:12px; border-radius:8px; flex-wrap:wrap;">
-                    <div style="flex:1; min-width:150px;">
-                        <label class="form-label">Match to Employee</label>
-                        <select name="emp_{i}" class="form-input">{emp_options}</select>
-                    </div>
-                    <div style="flex:1; min-width:180px;">
-                        <label class="form-label" style="color:#8b5cf6;">Link to Job Card</label>
-                        <select name="job_{i}" class="form-input" style="border:1px solid #8b5cf6;">{job_options}</select>
-                    </div>
-                    <div>
-                        <label class="form-label">Normal</label>
-                        <input type="number" name="hours_{i}" value="{total_hours}" class="form-input" style="width:80px;background:#1a1a2e;border:1px solid #22c55e;" step="0.5">
-                        <input type="hidden" name="hours_orig_{i}" value="{total_hours}">
-                    </div>
-                    <div>
-                        <label class="form-label" style="color:#f59e0b;">OT</label>
-                        <input type="number" name="overtime_{i}" value="{total_overtime}" class="form-input" style="width:80px;background:#1a1a2e;border:1px solid #f59e0b;" step="0.5">
-                        <input type="hidden" name="ot_orig_{i}" value="{total_overtime}">
-                    </div>
-                    <div>
-                        <label class="form-label" style="color:#3b82f6;">Sunday</label>
-                        <input type="number" name="sunday_{i}" value="{total_sunday}" class="form-input" style="width:80px;background:#1a1a2e;border:1px solid #3b82f6;" step="0.5">
-                        <input type="hidden" name="sun_orig_{i}" value="{total_sunday}">
-                    </div>
-                </div>
-            </div>
-            '''
-        
-        # Get AI source from parsed data
-        ai_source = parsed.get("ai_source", "") if isinstance(parsed, dict) else ""
-        if "haiku" in ai_source.lower():
-            ai_badge = '<span style="background:#22c55e;color:white;padding:4px 10px;border-radius:4px;font-size:12px;margin-left:10px;"> Google+Haiku</span>'
-        elif "google" in ai_source.lower():
-            ai_badge = '<span style="background:#22c55e;color:white;padding:4px 10px;border-radius:4px;font-size:12px;margin-left:10px;"> Google</span>'
-        elif "sonnet" in ai_source.lower():
-            ai_badge = '<span style="background:#8b5cf6;color:white;padding:4px 10px;border-radius:4px;font-size:12px;margin-left:10px;">🟣 Sonnet</span>'
-        else:
-            ai_badge = '<span style="background:#6366f1;color:white;padding:4px 10px;border-radius:4px;font-size:12px;margin-left:10px;">AI</span>'
-        
-        _pay_month_default = _guess_pay_month(period, today())
-        _split_ot_js = "true" if (business and business.get("split_overtime")) else "false"
-        content = f'''
-        <div style="margin-bottom:20px;">
-            <a href="/timesheets" style="color:var(--text-muted);">← Timesheets</a>
-            <h1 style="margin-top:8px;">Review Scanned Timesheet {ai_badge}</h1>
-            <p style="color:var(--text-muted);">Period: <strong>{period or "Not specified"}</strong> • {len(employees_data)} employees</p>
-        </div>
-        
-        <div style="background:rgba(139,92,246,0.1); border:1px solid #8b5cf6; border-radius:8px; padding:12px 16px; margin-bottom:20px;">
-            <strong>Edit before approving</strong><br>
-            <span style="color:var(--text-muted);">Fix any In/Out time Jacqo misread (orange boxes), and fill in any missing Out time. Hours recalculate from the times when you approve. Match each name from the dropdown, then approve.</span>
-        </div>
-        
-        <form method="POST" action="/timesheets/process/{batch_id}">
-            {cards_html}
-            
-            <div style="background:var(--card);border:1px solid var(--border);border-radius:8px;padding:12px 16px;margin-top:20px;">
-                <label style="display:block;font-weight:600;margin-bottom:6px;">Pay month</label>
-                <input type="month" name="pay_month" value="{_pay_month_default}" style="padding:10px;border-radius:6px;border:1px solid var(--border);background:var(--bg);color:var(--text);">
-                <div style="color:var(--text-muted);font-size:12px;margin-top:6px;">The month this timesheet is paid for. Used to work out overtime and late-coming against each employee's schedule.</div>
-            </div>
-            
-            <div style="display:flex;flex-wrap:wrap;gap:10px;margin-top:20px;padding-bottom:30px;">
-                <button type="submit" formaction="/timesheets/payslip-preview/{batch_id}" class="btn btn-primary" style="padding:14px 24px;flex:1;min-width:200px;">📄 Approve &amp; Build Payslips</button>
-                <button type="submit" class="btn btn-secondary" style="padding:14px 24px;">Approve &amp; Save (hours only)</button>
-                <a href="/timesheets" class="btn btn-secondary" style="padding:14px 20px;">← Back</a>
-                <a href="/timesheets/discard/{batch_id}" class="btn" style="background:var(--red);color:white;padding:14px 20px;" onclick="return confirm('Discard this timesheet scan?')">🗑</a>
-            </div>
-            
-            <input type="hidden" name="count" value="{len(employees_data)}">
-        </form>
-        '''
-        content += r"""
-        <script>
-        (function(){
-          var TS_SPLIT_OT = __SPLIT_OT__;
-          var TS_LUNCH = 30;
-          function tsParse(t){
-            if(!t) return null;
-            t = String(t).trim().toLowerCase().replace(/\./g,':').replace(/,/g,':').replace(/h/g,':');
-            if(t==='' || t==='-') return null;
-            var h,m;
-            if(t.indexOf(':')>=0){ var pp=t.split(':'); h=parseInt(pp[0],10); m=(pp.length>1 && pp[1]!=='')?parseInt(pp[1],10):0; }
-            else { h=parseInt(t,10); m=0; }
-            if(isNaN(h)||isNaN(m)) return null;
-            return h*60+m;
-          }
-          function tsDay(inStr,outStr){
-            var ti=tsParse(inStr), to=tsParse(outStr);
-            if(ti===null||to===null) return [0,0];
-            if(to<ti) to+=1440;
-            var w=to-ti;
-            if(w>300) w-=TS_LUNCH;
-            if(w<0) w=0;
-            var wh=w/60;
-            if(TS_SPLIT_OT) return [Math.min(wh,8), Math.max(0,wh-8)];
-            return [wh,0];
-          }
-          function tsFmt(x){ return String(Math.round(x*100)/100); }
-          window.tsRecalc=function(i){
-            var dcEl=document.getElementsByName('daycount_'+i)[0];
-            var dc=dcEl?parseInt(dcEl.value,10):0;
-            var th=0,tot=0,tsu=0;
-            for(var j=0;j<dc;j++){
-              var inp=document.getElementsByName('in_'+i+'_'+j)[0];
-              var outp=document.getElementsByName('out_'+i+'_'+j)[0];
-              var stEl=document.getElementsByName('status_'+i+'_'+j)[0];
-              var shEl=document.getElementsByName('stathrs_'+i+'_'+j)[0];
-              var isSun=inp && inp.getAttribute('data-sun')==='1';
-              var status=stEl?stEl.value:'';
-              if(shEl) shEl.style.display=(status==='SICK'||status==='AWP')?'':'none';
-              var nh=0,oth=0,suh=0;
-              if(status==='SICK'||status==='AWP'){ nh=shEl?(parseFloat(shEl.value)||0):0; }
-              else if(status==='AWOL'){ nh=0; }
-              else {
-                var r=tsDay(inp?inp.value:'', outp?outp.value:'');
-                if(isSun){ suh=r[0]+r[1]; } else { nh=r[0]; oth=r[1]; }
-              }
-              var hc=document.getElementById('h_'+i+'_'+j);
-              var oc=document.getElementById('ot_'+i+'_'+j);
-              var sc=document.getElementById('su_'+i+'_'+j);
-              if(hc) hc.textContent=nh>0?tsFmt(nh):'-';
-              if(oc) oc.textContent=oth>0?tsFmt(oth):'-';
-              if(sc) sc.textContent=suh>0?tsFmt(suh):'-';
-              th+=nh; tot+=oth; tsu+=suh;
-            }
-            th=Math.round(th*100)/100; tot=Math.round(tot*100)/100; tsu=Math.round(tsu*100)/100;
-            var e;
-            e=document.getElementById('tot_h_'+i); if(e) e.textContent=tsFmt(th);
-            e=document.getElementById('tot_ot_'+i); if(e) e.textContent=tsFmt(tot);
-            e=document.getElementById('tot_su_'+i); if(e) e.textContent=tsFmt(tsu);
-            e=document.getElementsByName('hours_'+i)[0]; if(e) e.value=th;
-            e=document.getElementsByName('overtime_'+i)[0]; if(e) e.value=tot;
-            e=document.getElementsByName('sunday_'+i)[0]; if(e) e.value=tsu;
-          };
-        })();
-        </script>
-""".replace("__SPLIT_OT__", _split_ot_js)
-        
-        return render_page("Review Timesheet", content, user, "timesheets")
-    
-    
-    @app.route("/timesheets/view/<batch_id>")
-    @login_required
-    def timesheets_view(batch_id):
-        """Read-only view of a scanned timesheet batch — works at any time,
-        including after the payslips were built (the batch is never deleted)."""
-        user = Auth.get_current_user()
-        business = Auth.get_current_business()
-        biz_id = business.get("id") if business else None
-
-        batch = db.get_one("timesheet_batches", batch_id)
-        if not batch:
-            flash("Timesheet not found", "error")
-            return redirect("/timesheets")
-
-        raw_data = batch.get("data", "{}")
-        parsed = json.loads(raw_data) if isinstance(raw_data, str) else raw_data
-        if isinstance(parsed, list):
-            employees_data = parsed
-            period = batch.get("period", "")
-        else:
-            employees_data = parsed.get("employees", [])
-            period = parsed.get("period", "") or batch.get("period", "")
-
-        status = batch.get("status", "")
-        created = str(batch.get("created_at", ""))[:16].replace("T", " ")
-
-        cards_html = ""
-        for emp in employees_data:
-            name = emp.get("name", "Unknown")
-            days = emp.get("days", [])
-            rows = ""
-            for day in days:
-                is_sun = day.get("is_sunday", False)
-                rows += f'''
-                <tr style="{'background:rgba(59,130,246,0.12);' if is_sun else ''}">
-                    <td style="padding:4px 8px;white-space:nowrap;">{day.get("date","-")}</td>
-                    <td style="padding:4px 8px;">{safe_string(str(day.get("in","-")))}</td>
-                    <td style="padding:4px 8px;">{safe_string(str(day.get("out","-")))}</td>
-                    <td style="padding:4px 8px;text-align:right;">{day.get("hours",0) or "-"}</td>
-                    <td style="padding:4px 8px;text-align:right;color:#f59e0b;">{day.get("overtime",0) or "-"}</td>
-                    <td style="padding:4px 8px;text-align:right;color:#3b82f6;">{day.get("sunday",0) or "-"}</td>
-                </tr>'''
-            cards_html += f'''
-            <div class="card" style="margin-bottom:14px;">
-                <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">
-                    <h3 style="margin:0;font-size:17px;">{safe_string(name)}</h3>
-                    <div style="font-size:13px;color:var(--text-muted);">
-                        {emp.get("total_hours",0)} hrs · {emp.get("total_overtime",0)} OT · {emp.get("total_sunday",0)} Sun
-                    </div>
-                </div>
-                <table style="width:100%;font-size:13px;">
-                    <thead><tr style="border-bottom:1px solid var(--border);">
-                        <th style="text-align:left;padding:4px 8px;">Date</th>
-                        <th style="text-align:left;padding:4px 8px;">In</th>
-                        <th style="text-align:left;padding:4px 8px;">Out</th>
-                        <th style="text-align:right;padding:4px 8px;">Hours</th>
-                        <th style="text-align:right;padding:4px 8px;">OT</th>
-                        <th style="text-align:right;padding:4px 8px;">Sun</th>
-                    </tr></thead>
-                    <tbody>{rows}</tbody>
-                </table>
-            </div>'''
-
-        reopen = ""
-        if status not in ("processed",):
-            reopen = f'<a href="/timesheets/review/{batch_id}" class="btn btn-primary" style="padding:10px 18px;">Open in review</a>'
-
-        content = f'''
-        <div style="margin-bottom:18px;">
-            <a href="/timesheets" style="color:var(--text-muted);">← Timesheets</a>
-            <h1 style="margin-top:8px;">Timesheet — {period or "Not specified"}</h1>
-            <p style="color:var(--text-muted);">Status: <strong>{status or "—"}</strong> · Scanned {created} · {len(employees_data)} employees (read-only)</p>
-        </div>
-        {cards_html or '<div class="card"><p style="color:var(--text-muted);">No data on this timesheet.</p></div>'}
-        <div style="display:flex;gap:10px;margin-top:6px;">
-            {reopen}
-            <a href="/timesheets" class="btn btn-secondary" style="padding:10px 18px;">← Back</a>
-        </div>
-        '''
-        return render_page("View Timesheet", content, user, "timesheets")
-    
-    
-    @app.route("/timesheets/payslip-preview/<batch_id>", methods=["POST"])
-    @login_required
-    def timesheets_payslip_preview(batch_id):
-        """Build payslip previews from a reviewed timesheet using each
-        employee's pay conditions. Shows the deviation lines before posting."""
-        user = Auth.get_current_user()
-        business = Auth.get_current_business()
-        biz_id = business.get("id") if business else None
-
-        batch = db.get_one("timesheet_batches", batch_id)
-        if not batch:
-            flash("Timesheet batch not found", "error")
-            return redirect("/timesheets")
-
-        # Pay-conditions engine (try/except so a missing module never crashes payroll)
-        try:
-            from clickai_pay_conditions import build_payslip_gross
-        except Exception as e:
-            logger.error(f"[TIMESHEET PREVIEW] pay conditions module not available: {e}")
-            flash("Pay conditions module not loaded — using Approve & Save instead", "error")
-            return redirect(f"/timesheets/review/{batch_id}")
-
-        raw_data = batch.get("data", "{}")
-        parsed = json.loads(raw_data) if isinstance(raw_data, str) else raw_data
-        if isinstance(parsed, list):
-            employees_data = parsed
-            wrapper = {"employees": employees_data}
-        else:
-            employees_data = parsed.get("employees", [])
-            wrapper = parsed
-        # Pay month (YYYY-MM) comes from the review screen; fall back to today.
-        period = request.form.get("pay_month", "") or today()[:7]
-        if len(period) < 7:
-            period = today()[:7]
-        period = period[:7]
-
-        count = int(request.form.get("count", 0))
-
-        # Apply the reviewer's In/Out edits, recompute, and persist back to the
-        # batch so the corrections stick and the post step reads the fixed data.
-        employees_data = _apply_review_edits(request.form, employees_data, count)
-        wrapper["employees"] = employees_data
-        wrapper["period"] = wrapper.get("period", "") or batch.get("period", "")
-        try:
-            db.save("timesheet_batches", {"id": batch_id, "data": json.dumps(wrapper), "status": "approved"})
-        except Exception as _se:
-            logger.error(f"[TIMESHEET PREVIEW] could not persist edits: {_se}")
-
-        cards = ""
-        hidden_emps = ""
-
-        for i in range(count):
-            emp_id = request.form.get(f"emp_{i}", "")
-            if not emp_id:
-                continue
-            emp = db.get_one("employees", emp_id)
-            if not emp:
-                continue
-
-            hidden_emps += f'<input type="hidden" name="emp_{i}" value="{emp_id}">'
-
-            employee_data = employees_data[i] if i < len(employees_data) else {"days": []}
-            result = build_payslip_gross(emp, employee_data, period, business=business)
-            model = result.get("pay_model", "salaried")
-
-            # Build the line rows
-            if not result["is_setup"]:
-                lines_html = ('<tr><td colspan="3" style="color:var(--text-muted);padding:8px 0;">'
-                              'No pay conditions set up — using basic salary. '
-                              f'<a href="/employee/{emp_id}/pay-conditions" style="color:var(--accent);">Set up now</a></td></tr>')
-            elif not result["lines"]:
-                lines_html = '<tr><td colspan="3" style="color:var(--text-muted);padding:8px 0;">No deviations — worked exactly to schedule.</td></tr>'
-            else:
-                lines_html = ""
-                for ln in result["lines"]:
-                    colour = "var(--green)" if ln["amount"] >= 0 else "var(--red)"
-                    sign = "+" if ln["amount"] >= 0 else "-"
-                    lines_html += f'''
-                    <tr>
-                        <td style="padding:6px 0;">{ln.get("date", "")}</td>
-                        <td>{safe_string(ln["label"])}</td>
-                        <td style="text-align:right;color:{colour};">{sign}{money(abs(ln["amount"]))}</td>
-                    </tr>'''
-
-            if model == "hourly":
-                rate_note = (f'Hourly · {money(result["hourly_rate"])}/h · '
-                             f'{result.get("normal_hours",0):.1f} normal + '
-                             f'{result.get("overtime_hours",0):.1f} OT + '
-                             f'{result.get("sunday_hours",0):.1f} Sun')
-            elif result["is_setup"]:
-                rate_note = (f'Salaried · {money(result["hourly_rate"])}/h · '
-                             f'{result["agreed_hours"]:.1f} agreed hours · '
-                             f'base {money(result["base_pay"])}')
-            else:
-                rate_note = ""
-
-            cards += f'''
-            <div class="card" style="margin-bottom:16px;">
-                <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">
-                    <div>
-                        <div style="font-size:18px;font-weight:bold;">{safe_string(emp.get("name", "-"))}</div>
-                        <div style="font-size:12px;color:var(--text-muted);">{rate_note}</div>
-                    </div>
-                    <div style="text-align:right;">
-                        <div style="font-size:12px;color:var(--text-muted);">GROSS</div>
-                        <div style="font-size:24px;font-weight:bold;color:var(--green);">{money(result["gross"])}</div>
-                    </div>
-                </div>
-                <table style="width:100%;font-size:13px;">
-                    <thead><tr style="border-bottom:1px solid var(--border);">
-                        <th style="text-align:left;padding:4px 0;">Date</th>
-                        <th style="text-align:left;">{"Item" if model == "hourly" else "Adjustment"}</th>
-                        <th style="text-align:right;">Amount</th>
-                    </tr></thead>
-                    <tbody>{lines_html}</tbody>
-                </table>
-                <div style="margin-top:12px;">
-                    <button type="submit" name="only" value="{emp_id}" class="btn btn-secondary" style="padding:8px 16px;font-size:13px;">Post this payslip</button>
-                </div>
-            </div>'''
-
-        if not cards:
-            flash("No employees matched — select employees on the review page first", "error")
-            return redirect(f"/timesheets/review/{batch_id}")
-
-        content = f'''
-        <div class="card">
-            <h2 style="margin-bottom:5px;">Payslip Preview — {period}</h2>
-            <p style="color:var(--text-muted);margin-bottom:10px;">Each adjustment is shown against the employee's agreed schedule. Check the figures, then post the payslips. Posting creates each payslip and its GL journal.</p>
-        </div>
-        <form method="POST" action="/payroll/post-batch/{batch_id}">
-            <input type="hidden" name="count" value="{count}">
-            <input type="hidden" name="pay_month" value="{period}">
-            {hidden_emps}
-            {cards}
-            <div class="card" style="display:flex;flex-wrap:wrap;gap:10px;align-items:center;">
-                <button type="submit" name="post_all" value="1" class="btn btn-primary" style="padding:12px 24px;">Create &amp; Post All Payslips</button>
-                <a href="/timesheets/review/{batch_id}" class="btn btn-secondary" style="padding:12px 20px;">← Back to review</a>
-            </div>
-        </form>
-        '''
-        return render_page("Payslip Preview", content, user, "timesheets")
-    
-    
-    @app.route("/timesheets/process/<batch_id>", methods=["POST"])
-    @login_required
-    def timesheets_process(batch_id):
-        """Process reviewed timesheet and save to payroll + job cards"""
-        
-        logger.info(f"[TIMESHEET PROCESS] Starting for batch {batch_id}")
-        
-        business = Auth.get_current_business()
-        biz_id = business.get("id") if business else None
-        
-        count = int(request.form.get("count", 0))
-        logger.info(f"[TIMESHEET PROCESS] Processing {count} employees")
-        saved = 0
-        job_logged = 0
-        errors = []
-
-        # Apply the reviewer's In/Out edits, recompute worked totals, and
-        # persist back to the batch so the saved hours reflect the fixes and
-        # the timesheet can be re-opened later.
-        batch = db.get_one("timesheet_batches", batch_id)
-        employees_data = []
-        if batch:
-            raw_data = batch.get("data", "{}")
-            parsed = json.loads(raw_data) if isinstance(raw_data, str) else raw_data
-            if isinstance(parsed, list):
-                employees_data = parsed
-                wrapper = {"employees": employees_data}
-            else:
-                employees_data = parsed.get("employees", [])
-                wrapper = parsed
-            employees_data = _apply_review_edits(request.form, employees_data, count)
-            wrapper["employees"] = employees_data
-            wrapper["period"] = wrapper.get("period", "") or batch.get("period", "")
-            try:
-                db.save("timesheet_batches", {"id": batch_id, "data": json.dumps(wrapper)})
-            except Exception as _se:
-                logger.error(f"[TIMESHEET PROCESS] could not persist edits: {_se}")
-        
-        for i in range(count):
-            emp_id = request.form.get(f"emp_{i}", "")
-            job_id = request.form.get(f"job_{i}", "")
-            # Use the recomputed totals from the (edited) times, not the
-            # read-only display boxes.
-            if i < len(employees_data):
-                hours = float(employees_data[i].get("total_hours", 0) or 0)
-                overtime = float(employees_data[i].get("total_overtime", 0) or 0)
-                sunday = float(employees_data[i].get("total_sunday", 0) or 0)
-            else:
-                hours = float(request.form.get(f"hours_{i}", 0) or 0)
-                overtime = float(request.form.get(f"overtime_{i}", 0) or 0)
-                sunday = float(request.form.get(f"sunday_{i}", 0) or 0)
-            
-            logger.info(f"[TIMESHEET PROCESS] Row {i}: emp_id={emp_id}, job_id={job_id}, hours={hours}, ot={overtime}, sun={sunday}")
-            
-            if emp_id and (hours > 0 or overtime > 0 or sunday > 0):
-                emp = db.get_one("employees", emp_id)
-                if emp:
-                    # Save timesheet entry
-                    entry = {
-                        "id": generate_id(),
-                        "business_id": biz_id,
-                        "employee_id": emp_id,
-                        "employee_name": emp.get("name"),
-                        "date": today(),
-                        "hours": hours,
-                        "overtime": overtime,
-                        "sunday_hours": sunday,
-                        "job_id": job_id if job_id else None,
-                        "batch_id": batch_id,
-                        "description": f"Scanned timesheet - {hours}h normal, {overtime}h OT, {sunday}h Sunday"
-                    }
-                    success, msg = db.save("timesheet_entries", entry)
-                    if success:
-                        saved += 1
-                        logger.info(f"[TIMESHEET PROCESS] Saved entry for {emp.get('name')}")
-                        
-                        # === LOG TO JOB CARD IF LINKED ===
-                        if job_id:
-                            job = db.get_one("jobs", job_id)
-                            if job:
-                                # Get employee hourly rate
-                                hourly_rate = float(emp.get("hourly_rate", 0))
-                                ot_rate = hourly_rate * 1.5
-                                sunday_rate = hourly_rate * 2
-                                
-                                total_hours_worked = hours + overtime + sunday
-                                total_labour_cost = (hours * hourly_rate) + (overtime * ot_rate) + (sunday * sunday_rate)
-                                
-                                # Get existing labour entries
-                                try:
-                                    labour_entries = json.loads(job.get("labour_entries", "[]"))
-                                except:
-                                    labour_entries = []
-                                
-                                # Add new entry
-                                labour_entry = {
-                                    "date": today(),
-                                    "employee": emp.get("name"),
-                                    "employee_id": emp_id,
-                                    "task": f"From timesheet scan",
-                                    "hours": total_hours_worked,
-                                    "normal_hours": hours,
-                                    "overtime_hours": overtime,
-                                    "sunday_hours": sunday,
-                                    "rate": hourly_rate,
-                                    "cost": total_labour_cost,
-                                    "source": "timesheet_scan",
-                                    "batch_id": batch_id,
-                                    "timestamp": now()
-                                }
-                                labour_entries.append(labour_entry)
-                                
-                                # Update job totals
-                                current_labour_cost = float(job.get("total_labour_cost", 0))
-                                current_hours = float(job.get("actual_hours", 0))
-                                new_labour_cost = current_labour_cost + total_labour_cost
-                                new_hours = current_hours + total_hours_worked
-                                
-                                total_actual_cost = float(job.get("total_material_cost", 0)) + new_labour_cost + float(job.get("total_additional_cost", 0))
-                                quote_value = float(job.get("quote_value", 0))
-                                profit_loss = quote_value - total_actual_cost
-                                
-                                # Update job card
-                                job_update = {
-                                    "labour_entries": json.dumps(labour_entries),
-                                    "total_labour_cost": new_labour_cost,
-                                    "actual_hours": new_hours,
-                                    "total_actual_cost": total_actual_cost,
-                                    "profit_loss": profit_loss
-                                }
-                                
-                                # Auto-start job if not started
-                                if job.get("status") == "not_started":
-                                    job_update["status"] = "in_progress"
-                                    job_update["started_at"] = now()
-                                
-                                db.update("jobs", job_id, job_update, biz_id)
-                                job_logged += 1
-                                logger.info(f"[TIMESHEET PROCESS] Logged {total_hours_worked}h to job {job.get('job_number')} for {emp.get('name')}")
-                    else:
-                        errors.append(f"{emp.get('name')}: {msg}")
-                        logger.error(f"[TIMESHEET PROCESS] Failed to save entry: {msg}")
-                else:
-                    logger.warning(f"[TIMESHEET PROCESS] Employee not found: {emp_id}")
-            else:
-                logger.info(f"[TIMESHEET PROCESS] Skipping row {i} - no emp_id or zero hours")
-        
-        # Mark batch as processed
-        db.save("timesheet_batches", {"id": batch_id, "status": "processed"})
-        
-        logger.info(f"[TIMESHEET PROCESS] Done: saved {saved}, job_logged {job_logged}, errors: {len(errors)}")
-        
-        if errors:
-            flash(f"Saved {saved} entries ({job_logged} linked to job cards). Errors: {', '.join(errors)}", "error")
-        else:
-            flash(f"Saved {saved} timesheet entries ({job_logged} linked to job cards)", "success")
-        
-        return redirect("/payroll")
-    
-    
-    @app.route("/timesheets/discard/<batch_id>")
-    @login_required
-    def timesheets_discard(batch_id):
-        """Discard a timesheet batch"""
-        db.save("timesheet_batches", {"id": batch_id, "status": "discarded"})
-        return redirect("/timesheets")
-    
-    
-    @app.route("/timesheets/add", methods=["GET", "POST"])
-    @login_required
-    def timesheets_add():
-        """Manual timesheet entry"""
-        
-        user = Auth.get_current_user()
-        business = Auth.get_current_business()
-        biz_id = business.get("id") if business else None
-        
-        employees = db.get("employees", {"business_id": biz_id}) if biz_id else []
-        
-        if request.method == "POST":
-            emp_id = request.form.get("employee_id")
-            period = request.form.get("period", "")
-            hours = float(request.form.get("hours", 0) or 0)
-            overtime = float(request.form.get("overtime", 0) or 0)
-            sunday = float(request.form.get("sunday_hours", 0) or 0)
-            description = request.form.get("description", "")
-            
-            # Get employee name
-            emp = next((e for e in employees if e.get("id") == emp_id), None)
-            emp_name = emp.get("name", "Unknown") if emp else "Unknown"
-            
-            entry = {
-                "id": generate_id(),
-                "business_id": biz_id,
-                "employee_id": emp_id,
-                "employee_name": emp_name,
-                "date": today(),
-                "period": period,
-                "hours": hours,
-                "overtime": overtime,
-                "sunday_hours": sunday,
-                "description": description or f"Manual entry - {hours}h normal, {overtime}h OT",
-                "processed": False,
-                "created_at": now()
-            }
-            
-            success, _ = db.save("timesheet_entries", entry)
-            if success:
-                flash(f"Timesheet added for {emp_name}", "success")
-            else:
-                flash("Failed to save timesheet", "error")
-            
-            return redirect("/payroll")
-        
-        # Build employee options
-        emp_options = '<option value="">-- Select Employee --</option>'
-        for e in employees:
-            emp_options += f'<option value="{e.get("id")}">{safe_string(e.get("name", "-"))}</option>'
-        
-        content = f'''
-        <div class="card">
-            <h2 style="margin-bottom:20px;">➕ Add Timesheet Entry</h2>
-            
-            <form method="POST">
-                <div style="display:grid;grid-template-columns:repeat(auto-fit, minmax(200px, 1fr));gap:15px;">
-                    <div>
-                        <label class="form-label">Employee *</label>
-                        <select name="employee_id" class="form-input" required>
-                            {emp_options}
-                        </select>
-                    </div>
-                    <div>
-                        <label class="form-label">Period (Month)</label>
-                        <input type="month" name="period" class="form-input" value="{today()[:7]}">
-                    </div>
-                    <div>
-                        <label class="form-label">Normal Hours</label>
-                        <input type="number" name="hours" value="0" class="form-input" step="0.5" min="0">
-                    </div>
-                    <div>
-                        <label class="form-label">Overtime Hours (1.5×)</label>
-                        <input type="number" name="overtime" value="0" class="form-input" step="0.5" min="0">
-                    </div>
-                    <div>
-                        <label class="form-label">Sunday Hours (2×)</label>
-                        <input type="number" name="sunday_hours" value="0" class="form-input" step="0.5" min="0">
-                    </div>
-                    <div>
-                        <label class="form-label">Description</label>
-                        <input type="text" name="description" class="form-input" placeholder="e.g. Week 1-4 January">
-                    </div>
-                </div>
+                ${{showTerms ? `<p style="margin-top: 20px; color: #666; font-size: 14px;"><strong>Terms:</strong> ${{terms}}</p>` : ''}}
                 
-                <div style="display:flex;gap:10px;margin-top:20px;">
-                    <button type="submit" class="btn btn-primary" style="padding:12px 30px;">💾 Save Timesheet</button>
-                    <a href="/payroll" class="btn btn-secondary" style="padding:12px 30px;">Cancel</a>
-                </div>
-            </form>
-        </div>
-        '''
-        
-        return render_page("Add Timesheet", content, user, "payroll")
-    
-    
-    @app.route("/api/scan/timesheet", methods=["POST"])
-    @login_required
-    def api_scan_timesheet():
-        """Scan timesheet with full daily breakdown - extracts in/out times, Flask calculates hours"""
-        
-        try:
-            file = request.files.get("file")
-            if not file:
-                return jsonify({"success": False, "error": "No file uploaded"})
-            
-            file_data = file.read()
-            if not file_data:
-                return jsonify({"success": False, "error": "The uploaded file is empty — please try again"})
-            base64_data = base64.b64encode(file_data).decode('utf-8')
-            
-            # Detect the real file type from its magic bytes. The filename extension is
-            # unreliable — phone photos and "saved as" files are often mislabelled, which
-            # makes the vision API reject them with "Could not process image".
-            _head = file_data[:16]
-            if _head[:4] == b"%PDF":
-                media_type = "application/pdf"
-            elif _head[:8] == b"\x89PNG\r\n\x1a\n":
-                media_type = "image/png"
-            elif _head[:3] == b"\xff\xd8\xff":
-                media_type = "image/jpeg"
-            elif _head[:4] == b"GIF8":
-                media_type = "image/gif"
-            elif _head[:4] == b"RIFF" and file_data[8:12] == b"WEBP":
-                media_type = "image/webp"
-            elif _head[4:8] == b"ftyp" and file_data[8:12] in (b"heic", b"heif", b"heix", b"mif1"):
-                return jsonify({"success": False, "error": "HEIC photos aren't supported. On your phone, save or share the timesheet as JPG (or take a screenshot), then upload that."})
-            else:
-                return jsonify({"success": False, "error": "Unsupported file type. Please upload a JPG, PNG, or PDF of the timesheet."})
-            
-            # Get employees for context
-            business = Auth.get_current_business()
-            biz_id = business.get("id") if business else None
-            employees = db.get("employees", {"business_id": biz_id}) if biz_id else []
-            emp_names = [e.get("name", "") for e in employees]
-            
-            # Get active jobs for context
-            jobs = db.get("jobs", {"business_id": biz_id}) if biz_id else []
-            active_jobs = [j for j in jobs if j.get("status") not in ["completed", "invoiced"]]
-            job_numbers = [j.get("job_number", "") for j in active_jobs]
-            
-            client = _anthropic_client
-            
-            # IMPORTANT: Only extract times - Flask calculates hours
-            prompt = f"""Analyze this handwritten timesheet/clockcard image carefully.
-    
-    READ ONLY - DO NOT CALCULATE ANYTHING. Just extract exactly what is written.
-    
-    Known employees: {', '.join(emp_names) if emp_names else 'Not specified'}
-    Active job numbers: {', '.join(job_numbers) if job_numbers else 'JC-2026-001, JC-2026-002, etc'}
-    
-    For EACH employee on the sheet, extract:
-    1. Employee name (read carefully, exactly as written)
-    2. For each day: the date/day AND the clock in time AND clock out time (exactly as written)
-    3. Job number/code if written (look for JC-XXX, JC XXX, Job XXX, or similar patterns)
-    
-    Return ONLY valid JSON in this exact format:
-    {{
-      "period": "Week of 6-12 Jan 2026",
-      "employees": [
-        {{
-          "name": "John Smith",
-          "job_number": "JC-2026-001",
-          "days": [
-            {{"date": "Mon 6", "in": "07:00", "out": "16:00"}},
-            {{"date": "Tue 7", "in": "07:00", "out": "17:30"}},
-            {{"date": "Wed 8", "in": "07:00", "out": "16:00"}},
-            {{"date": "Sat 11", "in": "08:00", "out": "13:00"}},
-            {{"date": "Sun 12", "in": "08:00", "out": "12:00"}}
-          ]
+                ${{footer ? `<p style="margin-top: 20px; text-align: center; color: #888; font-style: italic;">${{footer}}</p>` : ''}}
+            `;
         }}
-      ]
-    }}
+        
+        // Close modal on outside click
+        document.getElementById('previewModal').addEventListener('click', function(e) {{
+            if (e.target === this) this.style.display = 'none';
+        }});
+        </script>
+        '''
+        
+        return render_page("Invoice Template", content, user, "settings")
     
-    IMPORTANT:
-    - Only read what is written - DO NOT calculate hours
-    - Read times in 24hr format (07:00, 16:00, etc)
-    - If a time is unclear, make your best guess
-    - Read EVERY dated row that has clock times, including Saturdays and Sundays - never skip a weekend row that has times written
-    - Only skip a row when it is genuinely blank or marked off (no times written)
-    - Look for job numbers written as JC-001, JC 001, Job 001, J001, etc - normalize to JC-XXXX-XXX format
-    - If no job number is found for an employee, set job_number to null
-    - DO NOT add any hours or overtime fields - just in/out times"""
     
-            message = client.messages.create(
-                model="claude-sonnet-4-6",
-                max_tokens=4000,
-                temperature=0,
-                messages=[
-                    {
-                        "role": "user",
-                        "content": [
-                            ({"type": "document", "source": {"type": "base64", "media_type": media_type, "data": base64_data}} if media_type == "application/pdf" else {"type": "image", "source": {"type": "base64", "media_type": media_type, "data": base64_data}}),
-                            {"type": "text", "text": prompt}
-                        ]
-                    }
-                ]
-            )
+    @app.route("/api/settings/business", methods=["POST"])
+    @login_required
+    def api_settings_business():
+        """Save business settings"""
+        
+        try:
+            user = Auth.get_current_user()
+            business = Auth.get_current_business()
             
-            # ─── AI-USAGE TRACKING ───
-            try:
-                if hasattr(app, "_ai_usage_tracker") and biz_id:
-                    _usage = getattr(message, "usage", None)
-                    app._ai_usage_tracker.log_usage(
-                        business_id=biz_id,
-                        tool="timesheet_scan",
-                        model=getattr(message, "model", "claude-sonnet-4-6"),
-                        input_tokens=int(getattr(_usage, "input_tokens", 0) or 0),
-                        output_tokens=int(getattr(_usage, "output_tokens", 0) or 0),
-                        cache_read_tokens=int(getattr(_usage, "cache_read_input_tokens", 0) or 0),
-                        cache_write_tokens=int(getattr(_usage, "cache_creation_input_tokens", 0) or 0),
-                        success=True,
-                    )
-            except Exception as _track_err:
-                logger.error(f"[AI-USAGE] timesheet_scan tracking skipped: {_track_err}")
-            # ─── END TRACKING ───
+            # Check if this is a NEW business creation (from ?action=new page)
+            is_new = request.form.get("is_new", "") == "true" or request.referrer and "action=new" in request.referrer
             
-            response_text = message.content[0].text.strip()
+            # CREATE NEW BUSINESS (for 2nd company)
+            if is_new or not business:
+                # LIMIT: Check how many businesses this user already has
+                user_id = user.get("id")
+                existing_businesses = db.get("businesses", {"user_id": user_id}) or []
+                
+                # MAXIMUM BUSINESSES PER USER (central constant)
+                if len(existing_businesses) >= MAX_BUSINESSES_PER_ACCOUNT:
+                    # Return error - user already at the business limit
+                    return f'''
+                    <html>
+                    <head>
+                        <title>Limit Reached</title>
+                        <style>
+                            body {{ font-family: system-ui; max-width: 500px; margin: 100px auto; padding: 20px; text-align: center; }}
+                            .card {{ background: #fee; border: 2px solid #f44; border-radius: 12px; padding: 30px; }}
+                            h2 {{ color: #c00; margin-bottom: 20px; }}
+                            p {{ color: #666; line-height: 1.6; }}
+                            a {{ display: inline-block; margin-top: 20px; padding: 10px 20px; background: #6366f1; color: white; text-decoration: none; border-radius: 6px; }}
+                        </style>
+                    </head>
+                    <body>
+                        <div class="card">
+                            <h2>[!] Business Limit Reached</h2>
+                            <p>You can only create <strong>{MAX_BUSINESSES_PER_ACCOUNT} businesses</strong> per account.</p>
+                            <p>You already have:</p>
+                            <ul style="text-align:left;">
+                                {"".join(f"<li>{b.get('business_name', b.get('name', 'Unnamed'))}</li>" for b in existing_businesses)}
+                            </ul>
+                            <p>If you need to manage more businesses, please contact support to upgrade your plan.</p>
+                            <a href="/settings">← Back to Settings</a>
+                        </div>
+                    </body>
+                    </html>
+                    '''
+                
+                # Get user_id - CRITICAL for multi-tenant!
+                user_id = user.get("id") if user else session.get("user_id")
+                
+                if not user_id:
+                    app.logger.error("[BUSINESS] Cannot create business - no user_id!")
+                    return redirect("/settings?error=no_user")
+                
+                new_biz = {
+                    "id": generate_id(),
+                    "name": request.form.get("name", "My Business"),
+                    "industry_type": request.form.get("industry_type", "retail_general"),
+                    "reg_number": request.form.get("reg_number", ""),
+                    "vat_number": request.form.get("vat_number", ""),
+                    "phone": request.form.get("phone", ""),
+                    "email": request.form.get("email", ""),
+                    "address": request.form.get("address", ""),
+                    "bank_name": request.form.get("bank_name", ""),
+                    "bank_account": request.form.get("bank_account", ""),
+                    "bank_branch": request.form.get("bank_branch", ""),
+                    "currency": "ZAR",
+                    "tax_rate": 15,
+                    "active": True,
+                    "created_at": now(),
+                    "user_id": user_id,
+                    "owner_id": user_id,
+                    "business_name": request.form.get("name", "My Business"),
+                }
+                
+                success, result = db.save("businesses", new_biz)
+                
+                if not success:
+                    app.logger.error(f"[BUSINESS] Failed to create: {result}")
+                    return redirect("/settings?error=create_failed")
+                
+                # Switch to the new business
+                session["business_id"] = new_biz["id"]
+                
+                flash_msg = f"GOOD: New business '{new_biz['name']}' created successfully!"
+                return redirect("/settings")
             
-            if response_text.startswith("```"):
-                response_text = response_text.split("```")[1]
-                if response_text.startswith("json"):
-                    response_text = response_text[4:]
-            response_text = response_text.strip()
+            # UPDATE EXISTING BUSINESS
+            biz_id = business.get("id") if business else None
+            user_id = user.get("id") if user else session.get("user_id")
             
-            parsed = json.loads(response_text)
-            raw_employees = parsed.get("employees", [])
-            period = parsed.get("period", "")
+            # DEBUG: Log what we have
+            logger.info(f"[SETTINGS DEBUG] business object: {business}")
+            logger.info(f"[SETTINGS DEBUG] biz_id: {biz_id}")
+            logger.info(f"[SETTINGS DEBUG] user_id: {user_id}")
+            logger.info(f"[SETTINGS DEBUG] session business_id: {session.get('business_id')}")
             
-            # ═══════════════════════════════════════════════════════════════════════
-            # FLASK CALCULATES HOURS - Not Claude!
-            # ═══════════════════════════════════════════════════════════════════════
-            # Per-business setting: when off, all worked hours count as normal (no OT split)
-            split_overtime = bool(business.get("split_overtime")) if business else False
+            # If biz_id is None, try to get it from session
+            if not biz_id:
+                biz_id = session.get("business_id")
+                logger.info(f"[SETTINGS DEBUG] Got biz_id from session: {biz_id}")
             
-            def parse_time(t):
-                """Convert time string to minutes since midnight"""
-                if not t or t == "-":
-                    return None
-                t = str(t).strip().lower().replace(".", ":").replace(",", ":").replace("h", ":")
-                try:
-                    if ":" in t:
-                        parts = t.split(":")
-                        h = int(parts[0])
-                        m = int(parts[1]) if len(parts) > 1 and parts[1] != "" else 0
-                    else:
-                        h = int(t)
-                        m = 0
-                    return h * 60 + m
-                except:
-                    return None
+            if not biz_id:
+                logger.error("[SETTINGS] No business ID found!")
+                return redirect("/settings?error=No+business+ID+found")
             
-            # Use the same Sunday detection as the payslip recompute so the
-            # scan view and the payslip never disagree (parses a real ISO date
-            # when present, else falls back to the label text).
-            try:
-                from clickai_pay_conditions import _is_sunday as is_sunday
-            except Exception:
-                def is_sunday(date_str):
-                    sl = str(date_str or "").lower()
-                    return "sun" in sl or "son" in sl  # English or Afrikaans
+            updates = {
+                "name": request.form.get("name", ""),
+                "industry_type": request.form.get("industry_type", "retail_general"),
+                "reg_number": request.form.get("reg_number", ""),
+                "vat_number": request.form.get("vat_number", ""),
+                "phone": request.form.get("phone", ""),
+                "email": request.form.get("email", ""),
+                "address": request.form.get("address", ""),
+                "bank_name": request.form.get("bank_name", ""),
+                "bank_account": request.form.get("bank_account", ""),
+                "bank_branch": request.form.get("bank_branch", ""),
+            }
             
-            def calc_hours(time_in, time_out, lunch_break=30):
-                """Calculate work hours from in/out times"""
-                if time_in is None or time_out is None:
-                    return 0, 0
-                
-                # Handle overnight (out < in means next day)
-                if time_out < time_in:
-                    time_out += 24 * 60
-                
-                worked_minutes = time_out - time_in
-                
-                # Only deduct lunch if worked more than 5 hours
-                if worked_minutes > 300:
-                    worked_minutes -= lunch_break
-                
-                if worked_minutes < 0:
-                    worked_minutes = 0
-                
-                worked_hours = worked_minutes / 60
-                
-                # Overtime split is controlled per-business.
-                # When split_overtime is off, all worked hours count as normal.
-                if split_overtime:
-                    normal = min(worked_hours, 8)
-                    overtime = max(0, worked_hours - 8)
-                else:
-                    normal = worked_hours
-                    overtime = 0
-                
-                # Return exact hours — totals are rounded once at the end so
-                # summing per-day values never drifts (kept identical to the
-                # payslip recompute in compute_worked_hours).
-                return normal, overtime
+            logger.info(f"[SETTINGS] Saving business {biz_id} for user {user_id}")
+            logger.info(f"[SETTINGS] Updates: {updates}")
             
-            # Process each employee - Flask calculates!
-            processed_employees = []
-            for emp in raw_employees:
-                emp_name = emp.get("name", "Unknown")
-                job_number = emp.get("job_number", None)
-                days = emp.get("days", [])
-                
-                # Try to match job number to actual job
-                matched_job_id = None
-                matched_job_title = None
-                if job_number:
-                    # Normalize job number format
-                    jn_clean = job_number.upper().replace(" ", "-").replace("JC", "JC-").replace("--", "-")
-                    for job in active_jobs:
-                        if jn_clean in job.get("job_number", "").upper() or job.get("job_number", "").upper() in jn_clean:
-                            matched_job_id = job.get("id")
-                            matched_job_title = job.get("title", "")
-                            job_number = job.get("job_number")  # Use exact format
-                            break
-                
-                calculated_days = []
-                total_hours = 0
-                total_overtime = 0
-                total_sunday = 0
-                
-                for day in days:
-                    d_date = day.get("date", "-")
-                    d_in = day.get("in", "-")
-                    d_out = day.get("out", "-")
-                    
-                    time_in = parse_time(d_in)
-                    time_out = parse_time(d_out)
-                    
-                    hours, ot = calc_hours(time_in, time_out)
-                    
-                    # Check if Sunday - all hours count as Sunday rate
-                    sunday_hours = 0
-                    if is_sunday(d_date):
-                        sunday_hours = hours + ot
-                        total_sunday += sunday_hours
-                        hours = 0
-                        ot = 0
-                    else:
-                        total_hours += hours
-                        total_overtime += ot
-                    
-                    calculated_days.append({
-                        "date": d_date,
-                        "in": d_in,
-                        "out": d_out,
-                        "hours": round(hours, 2),
-                        "overtime": round(ot, 2),
-                        "sunday": round(sunday_hours, 2),
-                        "is_sunday": is_sunday(d_date)
-                    })
-                
-                processed_employees.append({
-                    "name": emp_name,
-                    "job_number": job_number,
-                    "job_id": matched_job_id,
-                    "job_title": matched_job_title,
-                    "days": calculated_days,
-                    "total_hours": round(total_hours, 2),
-                    "total_overtime": round(total_overtime, 2),
-                    "total_sunday": round(total_sunday, 2)
+            # START from the existing business record to preserve ALL columns
+            # This prevents NOT NULL violations on columns we don't show in the form
+            save_data = {}
+            if business:
+                save_data = {k: v for k, v in business.items() if v is not None}
+            
+            # Apply form updates on top
+            save_data.update(updates)
+            
+            # Ensure id is set
+            save_data["id"] = biz_id
+            
+            # Sync name ↔ business_name (DB might have either/both columns)
+            biz_name_val = updates.get("name") or business.get("name") or business.get("business_name", "Business") if business else "Business"
+            save_data["name"] = biz_name_val
+            save_data["business_name"] = biz_name_val
+            
+            # Preserve critical fields
+            if business:
+                save_data["user_id"] = business.get("user_id", user_id)
+                save_data["owner_id"] = business.get("owner_id", business.get("user_id", user_id))
+                save_data["created_at"] = business.get("created_at", now())
+            
+            logger.info(f"[SETTINGS] Full upsert data keys: {list(save_data.keys())}")
+            
+            success, result = db.save("businesses", save_data)
+            
+            logger.info(f"[SETTINGS] Save result: success={success}, result={result}")
+            
+            if success:
+                # CRITICAL: Clear ALL caches so next page load gets fresh data!
+                Auth.clear_cache()
+                session.pop("_biz_cache", None)
+                session.pop("businesses_cache", None)
+                session.pop("business_name", None)  # Also clear the name cache
+                session["_biz_cache"] = None  # Explicitly set to None
+                logger.info(f"[SETTINGS] Business '{updates.get('name')}' saved successfully - caches cleared")
+                return redirect("/settings?saved=1")
+            else:
+                logger.error(f"[SETTINGS] Business save failed: {result}")
+                import urllib.parse
+                error_encoded = urllib.parse.quote(str(result)[:100])
+                return redirect(f"/settings?error={error_encoded}")
+            
+        except Exception as e:
+            logger.error(f"[SETTINGS] Business save error: {e}")
+            import urllib.parse
+            error_encoded = urllib.parse.quote(str(e)[:100])
+            return redirect(f"/settings?error={error_encoded}")
+    
+    
+    @app.route("/api/gl-migrate", methods=["GET", "POST"])
+    @login_required
+    def api_gl_migrate():
+        """
+        Migrate existing GL journals from ClickAI default codes to the business's
+        actual COA codes (from Sage/Xero import).
+        
+        GET  = preview (shows what would change)
+        POST = apply the migration
+        """
+        business = Auth.get_current_business()
+        biz_id = business.get("id") if business else None
+        user = Auth.get_current_user()
+        
+        if not biz_id:
+            return jsonify({"error": "No business selected"})
+        
+        # Build the GL map from COA
+        global _gl_map_cache
+        _gl_map_cache = {}  # Clear cache
+        gl_map = build_gl_map(biz_id)
+        
+        if not gl_map:
+            return jsonify({"error": "No chart_of_accounts found for this business. Import a Sage/Xero COA first.", "gl_map": {}})
+        
+        # Build reverse map: ClickAI default code → Sage code
+        # e.g. "1300" → "2100/005" (because gl_map has "stock" → "2100/005" and CLICKAI_DEFAULTS has "stock" → "1300")
+        migration_map = {}  # old_code → new_code
+        for role, sage_code in gl_map.items():
+            default_code = CLICKAI_DEFAULTS.get(role)
+            if default_code and default_code != sage_code:
+                migration_map[default_code] = {"new_code": sage_code, "role": role}
+        
+        # Manual mappings for codes NOT in CLICKAI_DEFAULTS but clearly belong to a Sage range
+        # e.g. "4400" was used for salaries before migration, Sage uses "4400/000"
+        _manual_extras = {
+            "4400": ("4400/000", "salaries_manual"),
+            "4001": ("4000", "sales_other"),
+            "4002": ("4000", "sales_services"),
+            "4003": ("4000", "sales_misc"),
+            "5002": ("5100", "purchases_other"),
+        }
+        # Only add if the target code actually exists in COA (validate)
+        coa = db.get("chart_of_accounts", {"business_id": biz_id}) or []
+        coa_codes = set(str(a.get("account_code", "") or a.get("code", "")).strip() for a in coa)
+        for old_code, (new_code, role_label) in _manual_extras.items():
+            if old_code not in migration_map and new_code in coa_codes:
+                migration_map[old_code] = {"new_code": new_code, "role": role_label}
+        
+        if not migration_map:
+            return jsonify({"message": "Nothing to migrate — COA codes match ClickAI defaults.", "gl_map": gl_map})
+        
+        # Get all journals for this business
+        all_journals = db.get("journals", {"business_id": biz_id}) or []
+        
+        # Count what needs to change
+        changes = []
+        for j in all_journals:
+            old_code = j.get("account_code", "")
+            if old_code in migration_map:
+                changes.append({
+                    "journal_id": j.get("id"),
+                    "date": j.get("date", ""),
+                    "description": j.get("description", "")[:60],
+                    "reference": j.get("reference", ""),
+                    "old_code": old_code,
+                    "new_code": migration_map[old_code]["new_code"],
+                    "role": migration_map[old_code]["role"],
+                    "debit": j.get("debit", 0),
+                    "credit": j.get("credit", 0),
                 })
-            
-            # Save as a batch for review
-            batch_id = generate_id()
-            db.save("timesheet_batches", {
-                "id": batch_id,
-                "business_id": biz_id,
-                "period": period,
-                "data": json.dumps({"period": period, "employees": processed_employees}),
-                "status": "pending",
-                "created_at": now()
-            })
+        
+        # Also check journal_entries (OB entries)
+        all_je = db.get("journal_entries", {"business_id": biz_id}) or []
+        je_changes = []
+        for je in all_je:
+            old_code = je.get("account_code", "")
+            if old_code in migration_map:
+                je_changes.append({
+                    "je_id": je.get("id"),
+                    "account": je.get("account", ""),
+                    "old_code": old_code,
+                    "new_code": migration_map[old_code]["new_code"],
+                    "role": migration_map[old_code]["role"],
+                })
+        
+        if request.method == "GET":
+            # Preview mode
+            summary = {}
+            for c in changes:
+                key = f"{c['old_code']} → {c['new_code']} ({c['role']})"
+                summary[key] = summary.get(key, 0) + 1
             
             return jsonify({
-                "success": True,
-                "batch_id": batch_id,
-                "period": period,
-                "employees": processed_employees
+                "mode": "PREVIEW — POST to this URL to apply",
+                "business": business.get("name", "?"),
+                "gl_map": gl_map,
+                "migration_map": {k: v["new_code"] + f" ({v['role']})" for k, v in migration_map.items()},
+                "journals_to_migrate": len(changes),
+                "journal_entries_to_migrate": len(je_changes),
+                "total_journals_in_db": len(all_journals),
+                "summary": summary,
+                "sample_changes": changes[:10],
             })
-            
-        except json.JSONDecodeError as e:
-            logger.error(f"[TIMESHEET SCAN] JSON parse error: {e}")
-            return jsonify({"success": False, "error": "Could not parse timesheet data"})
-        except Exception as e:
-            logger.error(f"[TIMESHEET SCAN] Error: {e}")
-            return jsonify({"success": False, "error": str(e)})
+        
+        # POST = Apply migration
+        migrated = 0
+        failed = 0
+        
+        for c in changes:
+            try:
+                success = db.update("journals", c["journal_id"], {"account_code": c["new_code"]}, biz_id)
+                if success:
+                    migrated += 1
+                else:
+                    failed += 1
+            except Exception as e:
+                logger.error(f"[GL MIGRATE] Failed journal {c['journal_id']}: {e}")
+                failed += 1
+        
+        je_migrated = 0
+        for jc in je_changes:
+            try:
+                success = db.update("journal_entries", jc["je_id"], {"account_code": jc["new_code"]}, biz_id)
+                if success:
+                    je_migrated += 1
+            except:
+                pass
+        
+        # Clear GL map cache so next request picks up fresh data
+        _gl_map_cache = {}
+        
+        logger.info(f"[GL MIGRATE] Done: {migrated} journals migrated, {failed} failed, {je_migrated} OB entries migrated")
+        
+        return jsonify({
+            "success": True,
+            "message": f"Migration complete: {migrated} journals + {je_migrated} OB entries migrated to Sage codes",
+            "journals_migrated": migrated,
+            "journals_failed": failed,
+            "je_migrated": je_migrated,
+        })
     
     
-    @app.route("/api/scan/timesheet/save", methods=["POST"])
+    @app.route("/api/debug-gl")
     @login_required
-    def api_scan_timesheet_save():
-        """Save scanned timesheet entries"""
+    def api_debug_gl():
+        """Shows GL map and COA for debugging"""
+        business = Auth.get_current_business()
+        biz_id = business.get("id") if business else None
+        
+        if not biz_id:
+            return jsonify({"error": "No business selected"})
+        
+        global _gl_map_cache
+        _gl_map_cache = {}
+        gl_map = build_gl_map(biz_id)
+        
+        coa = db.get("chart_of_accounts", {"business_id": biz_id}) or []
+        coa_dump = [{"code": a.get("account_code","") or a.get("code",""),
+                     "name": a.get("account_name","") or a.get("name",""),
+                     "category": a.get("category","")} for a in coa]
+        
+        # Show what gl() returns for each role
+        resolved = {}
+        for role in CLICKAI_DEFAULTS:
+            resolved[role] = gl(biz_id, role)
+        
+        return jsonify({
+            "business": business.get("name", "?"),
+            "coa_count": len(coa),
+            "gl_map_from_coa": gl_map,
+            "resolved_all_roles": resolved,
+            "coa_all": coa_dump,
+        })
+    
+    
+    @app.route("/api/switch-business", methods=["POST"])
+    @login_required
+    def api_switch_business():
+        """Switch to a different business"""
         
         try:
             data = request.get_json()
-            entries = data.get("entries", [])
+            business_id = data.get("business_id", "") if data else ""
             
-            business = Auth.get_current_business()
-            biz_id = business.get("id") if business else None
+            if business_id:
+                session["business_id"] = business_id
+                # Update business_name in session
+                biz = db.get_one("businesses", business_id)
+                if biz:
+                    session["business_name"] = biz.get("name", "Business")
+                # Clear cache so next request loads new business
+                Auth.clear_cache()
+                return jsonify({"success": True})
             
-            employees = db.get("employees", {"business_id": biz_id}) if biz_id else []
-            emp_map = {e.get("name", "").lower(): e for e in employees}
-            
-            count = 0
-            for entry in entries:
-                name = entry.get("name", "")
-                hours = float(entry.get("hours", 0)) + float(entry.get("overtime", 0) * 1.5)  # OT at 1.5x
-                
-                # Find employee
-                employee = emp_map.get(name.lower())
-                if not employee:
-                    # Try partial match
-                    for emp_name, emp in emp_map.items():
-                        if name.lower() in emp_name or emp_name in name.lower():
-                            employee = emp
-                            break
-                
-                if employee and hours > 0:
-                    db.save("timesheet_entries", {
-                        "id": generate_id(),
-                        "business_id": biz_id,
-                        "employee_id": employee.get("id"),
-                        "employee_name": employee.get("name"),
-                        "date": entry.get("date", today()),
-                        "hours": hours,
-                        "description": f"Scanned timesheet - {entry.get('hours', 0)}h normal, {entry.get('overtime', 0)}h OT",
-                        "created_at": now()
-                    })
-                    count += 1
-            
-            return jsonify({"success": True, "count": count})
-            
+            return jsonify({"success": False, "error": "No business ID provided"})
         except Exception as e:
+            logger.error(f"[SWITCH] Error: {e}")
             return jsonify({"success": False, "error": str(e)})
-
-    # === TIMESHEETS PAGE, DETAIL, REPORT, APIs ===
-
-    @app.route("/timesheets")
+    
+    
+    @app.route("/api/create-business", methods=["POST"])
     @login_required
-    def timesheets_page():
-        """Employee Timesheets"""
-        
-        user = Auth.get_current_user()
-        business = Auth.get_current_business()
-        biz_id = business.get("id") if business else None
-        
-        # Get employees
-        employees = db.get("employees", {"business_id": biz_id}) if biz_id else []
-        
-        # Get this week's timesheet entries
-        today_date = datetime.now().date()
-        week_start = today_date - timedelta(days=today_date.weekday())  # Monday
-        week_end = week_start + timedelta(days=6)  # Sunday
-        
-        entries = db.get("timesheet_entries", {"business_id": biz_id}) if biz_id else []
-        week_entries = []
-        for e in entries:
-            try:
-                entry_date = datetime.strptime(e.get("date", ""), "%Y-%m-%d").date()
-                if week_start <= entry_date <= week_end:
-                    week_entries.append(e)
-            except:
-                pass
-        
-        # Group by employee
-        employee_hours = {}
-        for emp in employees:
-            emp_id = emp.get("id")
-            emp_entries = [e for e in week_entries if e.get("employee_id") == emp_id]
-            total_hours = sum(float(e.get("hours", 0)) for e in emp_entries)
-            employee_hours[emp_id] = {
-                "name": emp.get("name"),
-                "entries": emp_entries,
-                "total_hours": total_hours
-            }
-        
-        # Build employee cards
-        emp_cards = ""
-        for emp in employees:
-            emp_id = emp.get("id")
-            data = employee_hours.get(emp_id, {"total_hours": 0, "entries": []})
-            hours = data["total_hours"]
-            hourly_rate = float(emp.get("hourly_rate", 0))
-            week_earnings = hours * hourly_rate
-            
-            emp_cards += f'''
-            <div class="card" style="cursor:pointer;" onclick="window.location='/timesheet/{emp_id}'">
-                <div style="display:flex;justify-content:space-between;align-items:center;">
-                    <div>
-                        <h3 style="margin:0;">{safe_string(emp.get("name", "-"))}</h3>
-                        <p style="color:var(--text-muted);margin:5px 0 0 0;">{safe_string(emp.get("position", "Employee"))}</p>
-                    </div>
-                    <div style="text-align:right;">
-                        <div style="font-size:24px;font-weight:bold;color:var(--primary);">{hours:.1f}h</div>
-                        <div style="color:var(--text-muted);font-size:14px;">this week</div>
-                        {f'<div style="color:var(--green);font-size:14px;">{money(week_earnings)}</div>' if hourly_rate else ''}
-                    </div>
-                </div>
-            </div>
-            '''
-        
-        # Get jobs for dropdown
-        jobs = db.get("jobs", {"business_id": biz_id}) if biz_id else []
-        active_jobs = [j for j in jobs if j.get("status") != "completed"]
-        job_options = "".join([f'<option value="{j.get("id")}">{j.get("job_number")} - {safe_string(j.get("title", ""))}</option>' for j in active_jobs])
-        
-        emp_options = "".join([f'<option value="{e.get("id")}">{safe_string(e.get("name", ""))}</option>' for e in employees])
-
-        # Scanned timesheet batches — including processed ones, so a timesheet
-        # can be re-opened and viewed at any time after the payslips are built.
-        batches = db.get("timesheet_batches", {"business_id": biz_id}) if biz_id else []
-        batches = [b for b in batches if b.get("status") != "discarded"]
-        batches.sort(key=lambda b: str(b.get("created_at", "")), reverse=True)
-        _status_label = {"pending": "Pending review", "approved": "Approved",
-                         "processed": "Payslips built"}
-        _status_colour = {"pending": "#f59e0b", "approved": "#3b82f6",
-                          "processed": "#22c55e"}
-        archive_rows = ""
-        for b in batches[:50]:
-            try:
-                _d = json.loads(b.get("data", "{}")) if isinstance(b.get("data"), str) else (b.get("data") or {})
-                _emps = _d if isinstance(_d, list) else _d.get("employees", [])
-            except Exception:
-                _emps = []
-            st = b.get("status", "")
-            archive_rows += f'''
-            <tr style="cursor:pointer;" onclick="window.location='/timesheets/view/{b.get("id")}'">
-                <td style="padding:8px;">{safe_string(b.get("period","") or "—")}</td>
-                <td style="padding:8px;">{len(_emps)}</td>
-                <td style="padding:8px;"><span style="color:{_status_colour.get(st,'var(--text-muted)')};">{_status_label.get(st, st or "—")}</span></td>
-                <td style="padding:8px;color:var(--text-muted);">{str(b.get("created_at",""))[:10]}</td>
-                <td style="padding:8px;text-align:right;"><a href="/timesheets/view/{b.get("id")}" class="btn btn-secondary" style="padding:5px 12px;font-size:12px;">View</a></td>
-            </tr>'''
-        archive_section = f'''
-        <div class="card" style="margin-top:20px;">
-            <h3 style="margin:0 0 12px 0;">Scanned Timesheets</h3>
-            <table style="width:100%;font-size:13px;">
-                <thead><tr style="border-bottom:1px solid var(--border);color:var(--text-muted);">
-                    <th style="text-align:left;padding:8px;">Period</th>
-                    <th style="text-align:left;padding:8px;">Employees</th>
-                    <th style="text-align:left;padding:8px;">Status</th>
-                    <th style="text-align:left;padding:8px;">Scanned</th>
-                    <th></th>
-                </tr></thead>
-                <tbody>{archive_rows or '<tr><td colspan="5" style="padding:10px;color:var(--text-muted);">No scanned timesheets yet.</td></tr>'}</tbody>
-            </table>
-        </div>
-        '''
-        
-        content = f'''
-        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:20px;">
-            <h2 style="margin:0;">Timesheets</h2>
-            <a href="/timesheets/scan" class="btn btn-primary" style="background:#8b5cf6;">
-                📷 Scan Timesheet
-            </a>
-        </div>
-        
-        <div class="card" style="margin-bottom:20px;">
-            <h3 style="margin:0 0 15px 0;"> Quick Clock In</h3>
-            <div style="display:grid;grid-template-columns:1fr 1fr 1fr auto;gap:10px;align-items:end;">
-                <div>
-                    <label style="display:block;margin-bottom:5px;font-size:13px;color:var(--text-muted);">Employee</label>
-                    <select id="clockEmployee" class="form-input">
-                        <option value="">Select...</option>
-                        {emp_options}
-                    </select>
-                </div>
-                <div>
-                    <label style="display:block;margin-bottom:5px;font-size:13px;color:var(--text-muted);">Job (optional)</label>
-                    <select id="clockJob" class="form-input">
-                        <option value="">No job</option>
-                        {job_options}
-                    </select>
-                </div>
-                <div>
-                    <label style="display:block;margin-bottom:5px;font-size:13px;color:var(--text-muted);">Hours</label>
-                    <input type="number" id="clockHours" class="form-input" value="8" min="0.5" max="24" step="0.5">
-                </div>
-                <button class="btn btn-primary" onclick="quickClockIn()"> Log Time</button>
-            </div>
-        </div>
-        
-        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:15px;">
-            <h2 style="margin:0;"> This Week ({week_start.strftime("%d %b")} - {week_end.strftime("%d %b")})</h2>
-            <div style="display:flex;gap:10px;">
-                <button class="btn btn-primary" onclick="window.location='/timesheets/scan'"> Scan Timesheet</button>
-                <button class="btn btn-secondary" onclick="window.location='/timesheets/report'"> Report</button>
-            </div>
-        </div>
-        
-        <div class="stats-grid">
-            {emp_cards or '<div class="card"><p style="color:var(--text-muted);text-align:center;">No employees yet. Add employees in Payroll.</p></div>'}
-        </div>
-        
-        {archive_section}
-        
-        <div class="card" style="margin-top:20px;">
-            <h3 style="margin-bottom:10px;"> Tips</h3>
-            <p style="color:var(--text-muted);">
-                 Say "Log 8 hours for John on JOB-0001"<br>
-                 Say "Show me timesheet for this week"<br>
-                 Click an employee to see their full timesheet
-            </p>
-        </div>
-        
-        <script>
-        async function quickClockIn() {{
-            const empId = document.getElementById('clockEmployee').value;
-            const jobId = document.getElementById('clockJob').value;
-            const hours = document.getElementById('clockHours').value;
-            
-            if (!empId) {{
-                alert('Please select an employee');
-                return;
-            }}
-            
-            const response = await fetch('/api/timesheet/log', {{
-                method: 'POST',
-                headers: {{'Content-Type': 'application/json'}},
-                body: JSON.stringify({{
-                    employee_id: empId,
-                    job_id: jobId || null,
-                    hours: parseFloat(hours),
-                    date: '{today()}'
-                }})
-            }});
-            
-            const data = await response.json();
-            if (data.success) {{
-                location.reload();
-            }} else {{
-                alert('Error: ' + (data.error || 'Failed to log time'));
-            }}
-        }}
-        </script>
-        '''
-        
-        return render_page("Timesheets", content, user, "timesheets")
-    
-    
-    @app.route("/timesheet/<employee_id>")
-    @login_required
-    def timesheet_detail(employee_id):
-        """Individual employee timesheet"""
-        
-        user = Auth.get_current_user()
-        business = Auth.get_current_business()
-        biz_id = business.get("id") if business else None
-        
-        employee = db.get_one("employees", employee_id)
-        if not employee:
-            return redirect("/timesheets")
-        
-        # Get all entries for this employee
-        entries = db.get("timesheet_entries", {"business_id": biz_id, "employee_id": employee_id}) if biz_id else []
-        entries = sorted(entries, key=lambda x: x.get("date", ""), reverse=True)
-        
-        # Get jobs for reference
-        jobs = db.get("jobs", {"business_id": biz_id}) if biz_id else []
-        job_map = {j.get("id"): j for j in jobs}
-        
-        # Calculate totals
-        today_date = datetime.now().date()
-        week_start = today_date - timedelta(days=today_date.weekday())
-        month_start = today_date.replace(day=1)
-        
-        week_hours = 0
-        month_hours = 0
-        total_hours = 0
-        
-        for e in entries:
-            hours = float(e.get("hours", 0))
-            total_hours += hours
-            try:
-                entry_date = datetime.strptime(e.get("date", ""), "%Y-%m-%d").date()
-                if entry_date >= week_start:
-                    week_hours += hours
-                if entry_date >= month_start:
-                    month_hours += hours
-            except:
-                pass
-        
-        hourly_rate = float(employee.get("hourly_rate", 0))
-        
-        # Build entries table
-        rows = ""
-        for e in entries[:500]:
-            job_id = e.get("job_id")
-            job = job_map.get(job_id, {}) if job_id else {}
-            job_info = f'{job.get("job_number", "")} - {safe_string(job.get("title", ""))}' if job else "-"
-            hours = float(e.get("hours", 0))
-            
-            rows += f'''
-            <tr>
-                <td>{e.get("date", "-")}</td>
-                <td>{job_info}</td>
-                <td>{safe_string(e.get("description", "-"))}</td>
-                <td style="text-align:right;font-weight:bold;">{hours:.1f}h</td>
-                <td style="text-align:right;">{money(hours * hourly_rate) if hourly_rate else "-"}</td>
-                <td>
-                    <button class="btn btn-secondary" style="padding:4px 8px;font-size:12px;" onclick="deleteEntry('{e.get("id")}')"></button>
-                </td>
-            </tr>
-            '''
-        
-        # Get jobs for dropdown
-        active_jobs = [j for j in jobs if j.get("status") != "completed"]
-        job_options = "".join([f'<option value="{j.get("id")}">{j.get("job_number")} - {safe_string(j.get("title", ""))}</option>' for j in active_jobs])
-        
-        content = f'''
-        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:20px;">
-            <a href="/timesheets" style="color:var(--text-muted);">-> Back to Timesheets</a>
-            <button class="btn btn-secondary" onclick="window.print();"> Print</button>
-        </div>
-        
-        <div class="card" style="margin-bottom:20px;">
-            <div style="display:flex;justify-content:space-between;align-items:start;">
-                <div>
-                    <h2 style="margin:0;">{safe_string(employee.get("name", "-"))}</h2>
-                    <p style="color:var(--text-muted);margin:5px 0 0 0;">{safe_string(employee.get("position", "Employee"))}</p>
-                    {f'<p style="color:var(--green);margin:5px 0 0 0;">Rate: {money(hourly_rate)}/hour</p>' if hourly_rate else ''}
-                </div>
-            </div>
-            
-            <div class="stats-grid" style="margin-top:20px;">
-                <div class="stat-card">
-                    <div class="stat-value">{week_hours:.1f}h</div>
-                    <div class="stat-label">This Week</div>
-                </div>
-                <div class="stat-card">
-                    <div class="stat-value">{month_hours:.1f}h</div>
-                    <div class="stat-label">This Month</div>
-                </div>
-                <div class="stat-card green">
-                    <div class="stat-value">{money(month_hours * hourly_rate) if hourly_rate else f"{month_hours:.0f}h"}</div>
-                    <div class="stat-label">Month Earnings</div>
-                </div>
-            </div>
-        </div>
-        
-        <div class="card" style="margin-bottom:20px;">
-            <h3 style="margin:0 0 15px 0;"> Log Time</h3>
-            <div style="display:grid;grid-template-columns:1fr 1fr 2fr auto;gap:10px;align-items:end;">
-                <div>
-                    <label style="display:block;margin-bottom:5px;font-size:13px;color:var(--text-muted);">Date</label>
-                    <input type="date" id="logDate" class="form-input" value="{today()}">
-                </div>
-                <div>
-                    <label style="display:block;margin-bottom:5px;font-size:13px;color:var(--text-muted);">Hours</label>
-                    <input type="number" id="logHours" class="form-input" value="8" min="0.5" max="24" step="0.5">
-                </div>
-                <div>
-                    <label style="display:block;margin-bottom:5px;font-size:13px;color:var(--text-muted);">Job / Description</label>
-                    <select id="logJob" class="form-input">
-                        <option value="">General work</option>
-                        {job_options}
-                    </select>
-                </div>
-                <button class="btn btn-primary" onclick="logTime()"> Add</button>
-            </div>
-        </div>
-        
-        <div class="card">
-            <h3 style="margin:0 0 15px 0;"> Time Entries</h3>
-            <table class="table">
-                <thead>
-                    <tr>
-                        <th>Date</th>
-                        <th>Job</th>
-                        <th>Description</th>
-                        <th style="text-align:right;">Hours</th>
-                        <th style="text-align:right;">Value</th>
-                        <th></th>
-                    </tr>
-                </thead>
-                <tbody>
-                    {rows or "<tr><td colspan='6' style='text-align:center;color:var(--text-muted)'>No time entries yet</td></tr>"}
-                </tbody>
-            </table>
-        </div>
-        
-        <script>
-        async function logTime() {{
-            const date = document.getElementById('logDate').value;
-            const hours = document.getElementById('logHours').value;
-            const jobId = document.getElementById('logJob').value;
-            
-            const response = await fetch('/api/timesheet/log', {{
-                method: 'POST',
-                headers: {{'Content-Type': 'application/json'}},
-                body: JSON.stringify({{
-                    employee_id: '{employee_id}',
-                    job_id: jobId || null,
-                    hours: parseFloat(hours),
-                    date: date
-                }})
-            }});
-            
-            const data = await response.json();
-            if (data.success) {{
-                location.reload();
-            }} else {{
-                alert('Error: ' + (data.error || 'Failed to log time'));
-            }}
-        }}
-        
-        async function deleteEntry(entryId) {{
-            if (!confirm('Delete this time entry?')) return;
-            
-            const response = await fetch('/api/timesheet/delete/' + entryId, {{
-                method: 'POST'
-            }});
-            
-            const data = await response.json();
-            if (data.success) {{
-                location.reload();
-            }}
-        }}
-        </script>
-        '''
-        
-        return render_page(f"Timesheet - {employee.get('name', '')}", content, user, "timesheets")
-    
-    
-    @app.route("/timesheets/report")
-    @login_required
-    def timesheets_report():
-        """Timesheet report"""
-        
-        user = Auth.get_current_user()
-        business = Auth.get_current_business()
-        biz_id = business.get("id") if business else None
-        
-        # Get date range from query params
-        today_date = datetime.now().date()
-        month_start = today_date.replace(day=1)
-        
-        start_date = request.args.get("start", month_start.strftime("%Y-%m-%d"))
-        end_date = request.args.get("end", today_date.strftime("%Y-%m-%d"))
-        
-        # Get all entries in range
-        entries = db.get("timesheet_entries", {"business_id": biz_id}) if biz_id else []
-        filtered_entries = []
-        for e in entries:
-            try:
-                entry_date = e.get("date", "")
-                if start_date <= entry_date <= end_date:
-                    filtered_entries.append(e)
-            except:
-                pass
-        
-        # Get employees and jobs
-        employees = db.get("employees", {"business_id": biz_id}) if biz_id else []
-        emp_map = {e.get("id"): e for e in employees}
-        
-        jobs = db.get("jobs", {"business_id": biz_id}) if biz_id else []
-        job_map = {j.get("id"): j for j in jobs}
-        
-        # Group by employee
-        employee_summary = {}
-        job_summary = {}
-        
-        for e in filtered_entries:
-            emp_id = e.get("employee_id")
-            job_id = e.get("job_id")
-            hours = float(e.get("hours", 0))
-            
-            # Employee summary
-            if emp_id not in employee_summary:
-                emp = emp_map.get(emp_id, {})
-                employee_summary[emp_id] = {
-                    "name": emp.get("name", "Unknown"),
-                    "rate": float(emp.get("hourly_rate", 0)),
-                    "hours": 0
-                }
-            employee_summary[emp_id]["hours"] += hours
-            
-            # Job summary
-            if job_id:
-                if job_id not in job_summary:
-                    job = job_map.get(job_id, {})
-                    job_summary[job_id] = {
-                        "number": job.get("job_number", "-"),
-                        "title": job.get("title", "Unknown"),
-                        "hours": 0
-                    }
-                job_summary[job_id]["hours"] += hours
-        
-        # Build tables
-        emp_rows = ""
-        total_hours = 0
-        total_cost = 0
-        for emp_id, data in sorted(employee_summary.items(), key=lambda x: x[1]["hours"], reverse=True):
-            cost = data["hours"] * data["rate"]
-            total_hours += data["hours"]
-            total_cost += cost
-            emp_rows += f'''
-            <tr>
-                <td><strong>{safe_string(data["name"])}</strong></td>
-                <td style="text-align:right;">{data["hours"]:.1f}h</td>
-                <td style="text-align:right;">{money(data["rate"])}/h</td>
-                <td style="text-align:right;font-weight:bold;">{money(cost)}</td>
-            </tr>
-            '''
-        
-        job_rows = ""
-        for job_id, data in sorted(job_summary.items(), key=lambda x: x[1]["hours"], reverse=True):
-            job_rows += f'''
-            <tr>
-                <td><strong>{data["number"]}</strong></td>
-                <td>{safe_string(data["title"])}</td>
-                <td style="text-align:right;font-weight:bold;">{data["hours"]:.1f}h</td>
-            </tr>
-            '''
-        
-        content = f'''
-        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:20px;">
-            <a href="/timesheets" style="color:var(--text-muted);">-> Back to Timesheets</a>
-            <button class="btn btn-secondary" onclick="window.print();"> Print</button>
-        </div>
-        
-        <div class="card" style="margin-bottom:20px;">
-            <h2 style="margin:0 0 15px 0;"> Timesheet Report</h2>
-            <form style="display:flex;gap:10px;align-items:end;">
-                <div>
-                    <label style="display:block;margin-bottom:5px;font-size:13px;color:var(--text-muted);">From</label>
-                    <input type="date" name="start" class="form-input" value="{start_date}">
-                </div>
-                <div>
-                    <label style="display:block;margin-bottom:5px;font-size:13px;color:var(--text-muted);">To</label>
-                    <input type="date" name="end" class="form-input" value="{end_date}">
-                </div>
-                <button type="submit" class="btn btn-primary"> Update</button>
-            </form>
-        </div>
-        
-        <div class="stats-grid" style="margin-bottom:20px;">
-            <div class="stat-card">
-                <div class="stat-value">{total_hours:.1f}h</div>
-                <div class="stat-label">Total Hours</div>
-            </div>
-            <div class="stat-card green">
-                <div class="stat-value">{money(total_cost)}</div>
-                <div class="stat-label">Total Labour Cost</div>
-            </div>
-            <div class="stat-card">
-                <div class="stat-value">{len(employee_summary)}</div>
-                <div class="stat-label">Employees</div>
-            </div>
-        </div>
-        
-        <div class="card" style="margin-bottom:20px;">
-            <h3 style="margin:0 0 15px 0;"> By Employee</h3>
-            <table class="table">
-                <thead>
-                    <tr><th>Employee</th><th style="text-align:right;">Hours</th><th style="text-align:right;">Rate</th><th style="text-align:right;">Cost</th></tr>
-                </thead>
-                <tbody>
-                    {emp_rows or "<tr><td colspan='4' style='text-align:center;color:var(--text-muted)'>No time entries</td></tr>"}
-                </tbody>
-                <tfoot style="font-weight:bold;background:rgba(255,255,255,0.05);">
-                    <tr>
-                        <td>TOTAL</td>
-                        <td style="text-align:right;">{total_hours:.1f}h</td>
-                        <td></td>
-                        <td style="text-align:right;color:var(--primary);">{money(total_cost)}</td>
-                    </tr>
-                </tfoot>
-            </table>
-        </div>
-        
-        <div class="card">
-            <h3 style="margin:0 0 15px 0;"> By Job</h3>
-            <table class="table">
-                <thead>
-                    <tr><th>Job #</th><th>Title</th><th style="text-align:right;">Hours</th></tr>
-                </thead>
-                <tbody>
-                    {job_rows or "<tr><td colspan='3' style='text-align:center;color:var(--text-muted)'>No job time logged</td></tr>"}
-                </tbody>
-            </table>
-        </div>
-        '''
-        
-        return render_page("Timesheet Report", content, user, "timesheets")
-    
-    
-    @app.route("/api/timesheet/log", methods=["POST"])
-    @login_required
-    def api_timesheet_log():
-        """Log time entry"""
+    def api_create_business():
+        """Create a new business"""
         
         try:
-            data = request.get_json()
-            business = Auth.get_current_business()
-            biz_id = business.get("id") if business else None
+            user = Auth.get_current_user()
             
-            employee_id = data.get("employee_id")
-            job_id = data.get("job_id")
-            hours = float(data.get("hours", 0))
-            date = data.get("date", today())
-            description = data.get("description", "")
+            # Enforce the same business limit as the settings page
+            _existing = db.get("businesses", {"user_id": user.get("id")}) if user else []
+            if len(_existing or []) >= MAX_BUSINESSES_PER_ACCOUNT:
+                return jsonify({"success": False, "error": f"Business limit reached ({MAX_BUSINESSES_PER_ACCOUNT} per account)"})
             
-            if not employee_id or hours <= 0:
-                return jsonify({"success": False, "error": "Need employee and hours"})
+            data = request.get_json() if request.is_json else request.form
+            name = data.get("name", "New Business") if data else "New Business"
             
-            # Get employee name
-            employee = db.get_one("employees", employee_id)
-            emp_name = employee.get("name", "Unknown") if employee else "Unknown"
-            
-            # Get job info if provided
-            job_info = ""
-            if job_id:
-                job = db.get_one("jobs", job_id)
-                if job:
-                    job_info = f"{job.get('job_number', '')} - {job.get('title', '')}"
-                    description = description or job_info
-            
-            entry = {
+            new_biz = {
                 "id": generate_id(),
-                "business_id": biz_id,
-                "employee_id": employee_id,
-                "employee_name": emp_name,
-                "job_id": job_id,
-                "date": date,
-                "hours": hours,
-                "description": description,
-                "created_at": now()
+                "name": name,
+                "created_at": now(),
+                "user_id": user.get("id") if user else None
             }
             
-            db.save("timesheet_entries", entry)
+            ok, result = db.save("businesses", new_biz)
             
-            # Also add to job time_entries if job specified
-            if job_id:
-                job = db.get_one("jobs", job_id)
-                if job:
-                    try:
-                        time_entries = json.loads(job.get("time_entries", "[]"))
-                    except:
-                        time_entries = []
-                    
-                    hourly_rate = float(employee.get("hourly_rate", 0)) if employee else 0
-                    time_entries.append({
-                        "date": date,
-                        "employee": emp_name,
-                        "hours": hours,
-                        "rate": hourly_rate,
-                        "total": hours * hourly_rate
-                    })
-                    
-                    db.save("jobs", {"id": job_id, "time_entries": json.dumps(time_entries)})
+            if ok:
+                session["business_id"] = new_biz["id"]
+                return jsonify({"success": True, "business_id": new_biz["id"]})
             
-            return jsonify({"success": True})
-            
+            return jsonify({"success": False, "error": str(result)})
         except Exception as e:
-            logger.error(f"[TIMESHEET] Error: {e}")
+            logger.error(f"[CREATE BIZ] Error: {e}")
             return jsonify({"success": False, "error": str(e)})
     
     
-    @app.route("/api/timesheet/delete/<entry_id>", methods=["POST"])
+    @app.route("/api/settings/payfast", methods=["POST"])
     @login_required
-    def api_timesheet_delete(entry_id):
-        """Delete time entry"""
+    def api_settings_payfast():
+        """Save PayFast payment settings"""
+        try:
+            business = Auth.get_current_business()
+            if not business:
+                flash("No business selected", "error")
+                return redirect("/settings")
+            
+            update = {
+                "id": business["id"],
+                "payfast_merchant_id": request.form.get("payfast_merchant_id", "").strip(),
+                "payfast_merchant_key": request.form.get("payfast_merchant_key", "").strip(),
+                "payfast_passphrase": request.form.get("payfast_passphrase", "").strip()
+            }
+            
+            success, _ = db.save("businesses", update)
+            if success:
+                flash("PayFast settings saved! Online payments are now enabled on your invoices.", "success")
+            else:
+                flash("Error saving PayFast settings", "error")
+        except Exception as e:
+            flash(f"Error: {str(e)}", "error")
+        
+        return redirect("/settings")
+    
+    
+    @app.route("/api/settings/email", methods=["POST"])
+    @login_required
+    def api_settings_email():
+        """Save email settings"""
         
         try:
-            entry = db.get_one("timesheet_entries", entry_id)
-            if entry:
-                db.delete("timesheet_entries", entry_id)
-            return jsonify({"success": True})
+            business = Auth.get_current_business()
+            if not business:
+                flash("No business selected", "error")
+                return redirect("/settings")
+            
+            user = Auth.get_current_user()
+            biz_id = business.get("id")
+            user_id = user.get("id", "") if user else ""
+            
+            updates = {
+                "smtp_host": request.form.get("smtp_host", ""),
+                "smtp_port": request.form.get("smtp_port", ""),
+                "smtp_user": request.form.get("smtp_user", ""),
+                "email_from": request.form.get("email_from", ""),
+                "smtp_pass": request.form.get("smtp_pass", ""),
+            }
+            
+            # Only update password if provided
+            if not updates["smtp_pass"]:
+                del updates["smtp_pass"]
+            
+            ok, msg = db.update_business(biz_id, user_id, updates)
+            if ok:
+                Auth.clear_cache()   # so the SMTP test reads the fresh settings
+                flash("Email settings saved", "success")
+            else:
+                flash(f"Error saving email settings: {msg}", "error")
+            
+            return redirect("/settings")
         except Exception as e:
-            return jsonify({"success": False, "error": str(e)})
+            logger.error(f"[SETTINGS EMAIL] Error: {e}")
+            flash(f"Error saving email settings: {str(e)}", "error")
+            return redirect("/settings")
+    
+    
+    @app.route("/api/settings/scan-inbox", methods=["POST"])
+    @login_required
+    def api_settings_scan_inbox():
+        """Save scanner inbox (IMAP) settings"""
+        
+        business = Auth.get_current_business()
+        if not business:
+            flash("No business found", "error")
+            return redirect("/settings")
+        
+        imap_user = request.form.get("imap_user", "").strip()
+        imap_pass = request.form.get("imap_pass", "").strip()
+        imap_host = request.form.get("imap_host", "imap.gmail.com").strip()
+        imap_port = request.form.get("imap_port", "993").strip()
+        
+        logger.info(f"[SCANNER] Saving scanner inbox for business {business.get('id')}: user={imap_user}, host={imap_host}")
+        
+        updates = {
+            "id": business.get("id"),
+            "imap_host": imap_host,
+            "imap_port": imap_port,
+            "imap_user": imap_user,
+        }
+        
+        # Only update password if provided
+        if imap_pass:
+            updates["imap_pass"] = imap_pass
+        
+        success, result = db.save("businesses", updates)
+        
+        if success:
+            logger.info(f"[SCANNER] Scanner inbox saved successfully: {imap_user}")
+            flash(f"Scanner inbox saved: {imap_user}", "success")
+        else:
+            logger.error(f"[SCANNER] Failed to save scanner inbox: {result}")
+            flash(f"Failed to save: {result}", "error")
+        
+        return redirect("/settings")
+    
+    
+    @app.route("/api/settings/whatsapp", methods=["POST"])
+    @login_required
+    def api_settings_whatsapp():
+        """Save WhatsApp settings"""
+        
+        business = Auth.get_current_business()
+        if not business:
+            return redirect("/settings")
+        
+        updates = {
+            "id": business.get("id"),
+            "whatsapp_phone": request.form.get("whatsapp_phone", ""),
+            "whatsapp_token": request.form.get("whatsapp_token", ""),
+            "whatsapp_account_id": request.form.get("whatsapp_account_id", ""),
+        }
+        
+        # Only update token if provided
+        if not updates["whatsapp_token"]:
+            del updates["whatsapp_token"]
+        
+        db.save("businesses", updates)
+        logger.info(f"[SETTINGS] WhatsApp saved for {business.get('name')}")
+        
+        return redirect("/settings")
+    
+    
 
-    logger.info("[TIMESHEETS] All timesheet routes registered ✓")
+    logger.info("[SETTINGS] All settings routes registered ✓")
