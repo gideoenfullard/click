@@ -122,27 +122,29 @@ def _apply_review_edits(form, employees_data, count, db=None, business=None):
         else:
             emp["days"] = days
 
-        # Manual total override: if the reviewer changed a total box (its value
-        # differs from the hidden original that was rendered), use the typed
-        # total and flag it so the payslip honours it. Untouched totals keep
-        # tracking the daily times.
+        # Manual total override: a typed total only counts as a manual
+        # override when it differs from the SERVER RECOMPUTE from the (edited)
+        # times — not from the stale scanned original. The review screen's JS
+        # writes the recomputed total back into the box on every edit, so
+        # comparing against the scanned original wrongly flagged every time
+        # correction as a manual override, which made build_payslip_gross use
+        # the flat totals and skip the per-day overtime / short-hours lines.
         overridden = False
-        def _ovr(field, orig_field, fallback):
+        def _ovr(field, recomputed, fallback):
             nonlocal overridden
             try:
                 sub = form.get(field, None)
-                orig = form.get(orig_field, None)
-                if sub is None or orig is None:
+                if sub is None:
                     return fallback
-                if abs(float(sub) - float(orig)) > 0.001:
+                if abs(float(sub) - float(recomputed)) > 0.001:
                     overridden = True
                     return round(float(sub), 2)
             except Exception:
                 pass
             return fallback
-        emp["total_hours"] = _ovr(f"hours_{i}", f"hours_orig_{i}", emp.get("total_hours", 0))
-        emp["total_overtime"] = _ovr(f"overtime_{i}", f"ot_orig_{i}", emp.get("total_overtime", 0))
-        emp["total_sunday"] = _ovr(f"sunday_{i}", f"sun_orig_{i}", emp.get("total_sunday", 0))
+        emp["total_hours"] = _ovr(f"hours_{i}", emp.get("total_hours", 0), emp.get("total_hours", 0))
+        emp["total_overtime"] = _ovr(f"overtime_{i}", emp.get("total_overtime", 0), emp.get("total_overtime", 0))
+        emp["total_sunday"] = _ovr(f"sunday_{i}", emp.get("total_sunday", 0), emp.get("total_sunday", 0))
         emp["totals_overridden"] = overridden
     return employees_data
 
