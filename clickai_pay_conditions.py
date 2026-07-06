@@ -64,6 +64,28 @@ def _round15(minutes):
     return int(round(minutes / 15.0)) * 15
 
 
+def _weekday_of(date_str):
+    """Weekday (0=Mon .. 6=Sun) from a scanned day cell. Handles a full date
+    like '2026-06-08' / '2026/06/08' or a day-name label like 'Mon 8'.
+    Returns None when the weekday cannot be determined."""
+    s = str(date_str or "").strip()
+    m = re.search(r"(\d{4})[/-](\d{1,2})[/-](\d{1,2})", s)
+    if m:
+        try:
+            return datetime(int(m.group(1)), int(m.group(2)), int(m.group(3))).weekday()
+        except Exception:
+            return None
+    sl = s.lower()
+    # English and Afrikaans day-name prefixes
+    for prefix, wd in (("mon", 0), ("tue", 1), ("wed", 2), ("thu", 3),
+                       ("fri", 4), ("sat", 5), ("sun", 6),
+                       ("maa", 0), ("din", 1), ("woe", 2), ("don", 3),
+                       ("vry", 4), ("son", 6)):
+        if sl.startswith(prefix):
+            return wd
+    return None
+
+
 # Words written in the In/Out columns that are NOT clock times. The scanner
 # passes these through verbatim so the reviewer can see/fix them.
 _ABSENT_WORDS = ("absent", "afwesig", "off", "no show", "no-show", "awol", "x")
@@ -504,12 +526,20 @@ def _is_sunday(date_label):
 
 
 def compute_worked_hours(days, split_overtime=False, lunch_minutes=30,
-                         lunch_threshold_min=300, ot_threshold_hours=8):
+                         lunch_threshold_min=300, ot_threshold_hours=8,
+                         cond=None):
     """Worked hours from clock In/Out per day, for the HOURLY model.
 
     Mirrors the timesheet scanner: deduct `lunch_minutes` once a day passes
-    `lunch_threshold_min`, split overtime past `ot_threshold_hours` only when
-    the business has split_overtime on, and bank Sunday time separately.
+    `lunch_threshold_min`, split overtime only when the business has
+    split_overtime on, and bank Sunday time separately.
+
+    Overtime rule (owner decision 2026-07-06): when the employee's pay
+    conditions (`cond`) define a schedule for the day's weekday, overtime is
+    ONLY the time worked past the scheduled out-time — never hours-over-a-
+    daily-threshold. Working the full scheduled day (e.g. 07:30-16:30) is
+    all normal time. When there is no schedule for that day (or no `cond`),
+    the old flat `ot_threshold_hours` split applies as a fallback.
 
     Returns {days:[{date,in,out,hours,overtime,sunday,is_sunday,status}],
              total_hours, total_overtime, total_sunday}.
@@ -533,8 +563,22 @@ def compute_worked_hours(days, split_overtime=False, lunch_minutes=30,
                 worked = 0
             wh = worked / 60.0
             if split_overtime:
-                hours = min(wh, ot_threshold_hours)
-                ot = max(0.0, wh - ot_threshold_hours)
+                sched_out_m = None
+                if cond and cond.get("is_setup"):
+                    wd = _weekday_of(d.get("date"))
+                    if wd is not None and wd != 6:
+                        _si, _so = _day_schedule(cond, wd)
+                        if _so is not None:
+                            sched_out_m = _so
+                if sched_out_m is not None:
+                    # OT only past the scheduled out-time
+                    ot = max(0.0, (out_m - sched_out_m) / 60.0)
+                    if ot > wh:
+                        ot = wh
+                    hours = wh - ot
+                else:
+                    hours = min(wh, ot_threshold_hours)
+                    ot = max(0.0, wh - ot_threshold_hours)
             else:
                 hours = wh
                 ot = 0.0
@@ -639,7 +683,7 @@ def build_payslip_gross(emp, employee_data, period, business=None,
             if cond["schedule"].get("lunch_deducted"):
                 lunch_min = int(_safe_float(cond["schedule"].get("lunch_minutes", 30)) or 30)
             worked = compute_worked_hours(days, split_overtime=split_ot,
-                                          lunch_minutes=lunch_min)
+                                          lunch_minutes=lunch_min, cond=cond)
         return calculate_hourly_pay(emp, period, worked)
 
     # salaried (and the not-set-up fallback) -> deviation engine

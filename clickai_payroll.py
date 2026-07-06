@@ -768,14 +768,22 @@ def register_payroll_routes(app, db, login_required, Auth, render_page,
     # matched by employee_id or name, and aggregated. Consumed batches are marked
     # processed by the run so the same hours are never paid twice across months.
     def _load_hourly_batch_map(biz_id):
-        """Return (days_map, batch_map). days_map is keyed by both employee_id and
-        lower-cased name -> aggregated list of timesheet days. batch_map maps each
-        contributing batch id -> list of per-entry key sets, so the run can mark a
-        batch processed only once every scanned employee on it is covered by a
-        payslip (prevents hours being silently lost on a mismatch or failed save)."""
-        days_map, batch_map = {}, {}
+        """Return (days_map, batch_map, key_batches, conflicts).
+        days_map is keyed by both employee_id and lower-cased name ->
+        aggregated list of timesheet days. batch_map maps each contributing
+        batch id -> list of per-entry key sets, so the run can mark a batch
+        processed only once every scanned employee on it is covered by a
+        payslip (prevents hours being silently lost on a mismatch or failed
+        save). key_batches maps each employee key -> the set of batch ids
+        that contributed days for them (stored on the payslip so a delete
+        can re-open the consumed batches). conflicts maps an employee key ->
+        {date: set(batch_ids)} for any WORKED day (hours on it) that appears
+        on more than one open batch — a double-scan that must block payroll
+        instead of silently paying the same day twice."""
+        days_map, batch_map, key_batches, conflicts = {}, {}, {}, {}
+        _seen_day = {}   # (key, date) -> batch id that first supplied it
         if not biz_id:
-            return days_map, batch_map
+            return days_map, batch_map, key_batches, conflicts
         batches = []
         for _st in ("pending", "approved"):
             try:
@@ -790,6 +798,7 @@ def register_payroll_routes(app, db, login_required, Auth, render_page,
                 continue
             entries = parsed if isinstance(parsed, list) else parsed.get("employees", [])
             entry_keys = []
+            bid = b.get("id")
             for e in entries:
                 if not isinstance(e, dict):
                     continue
@@ -799,15 +808,37 @@ def register_payroll_routes(app, db, login_required, Auth, render_page,
                 keys = {k for k in (e.get("employee_id"), (e.get("name") or "").strip().lower()) if k}
                 for k in keys:
                     days_map.setdefault(k, []).extend(d)
+                    if bid:
+                        key_batches.setdefault(k, set()).add(bid)
                 if keys:
                     entry_keys.append(keys)
-            if entry_keys and b.get("id"):
-                batch_map[b.get("id")] = entry_keys
-        return days_map, batch_map
+                # Duplicate-day detection: only days with worked hours count
+                # (a blank boundary row on 25th-to-25th stationery is fine).
+                if bid:
+                    for day in d:
+                        if not isinstance(day, dict):
+                            continue
+                        _worked = (safe_float(day.get("hours", 0)) > 0 or
+                                   safe_float(day.get("overtime", 0)) > 0 or
+                                   safe_float(day.get("sunday", 0)) > 0)
+                        if not _worked:
+                            continue
+                        dt = str(day.get("date", "")).strip()
+                        if not dt or dt == "-":
+                            continue
+                        for k in keys:
+                            prev = _seen_day.get((k, dt))
+                            if prev and prev != bid:
+                                conflicts.setdefault(k, {}).setdefault(dt, set()).update({prev, bid})
+                            else:
+                                _seen_day[(k, dt)] = bid
+            if entry_keys and bid:
+                batch_map[bid] = entry_keys
+        return days_map, batch_map, key_batches, conflicts
 
     def _hourly_days_for_employee(emp, biz_id):
         """Aggregated timesheet days for one (hourly) employee from unposted batches."""
-        days_map, _ = _load_hourly_batch_map(biz_id)
+        days_map, _, _, _ = _load_hourly_batch_map(biz_id)
         return days_map.get(emp.get("id")) or days_map.get((emp.get("name") or "").strip().lower()) or []
 
     def _compute_hourly_figures(emp, days, pay_month, business, sdl_applies):
@@ -852,9 +883,10 @@ def register_payroll_routes(app, db, login_required, Auth, render_page,
             "total_employer": total_employer, "total_cost": total_cost,
             "normal_hours": safe_float(result.get("normal_hours", 0)),
             "overtime_hours": safe_float(result.get("overtime_hours", 0)),
+            "lines": result.get("lines", []),
         }
 
-    def _save_hourly_payslip(emp, figs, pay_date, pay_month, biz_id):
+    def _save_hourly_payslip(emp, figs, pay_date, pay_month, biz_id, batch_ids=None):
         """Persist an hourly payslip (figs from _compute_hourly_figures) + GL journal.
         Mirrors the timesheet-batch post. Returns True on success."""
         gross = figs["gross"]; non_taxable_allow = figs["non_taxable_allow"]
@@ -894,7 +926,9 @@ def register_payroll_routes(app, db, login_required, Auth, render_page,
             "total_deductions": round(total_ded, 2),
             "total_employer": round(total_employer, 2),
             "total_cost": round(total_cost, 2),
-            "net": round(net, 2)
+            "net": round(net, 2),
+            "pay_lines": figs.get("lines", []),
+            "batch_ids": sorted(batch_ids) if batch_ids else []
         }
         try:
             url = f"{db.url}/rest/v1/payslips"
@@ -1027,11 +1061,12 @@ def register_payroll_routes(app, db, login_required, Auth, render_page,
             _sdl_applies = _total_annual_payroll > 500000
 
             # Option B: pull hourly employees' timesheet hours for this run
-            _hourly_map, _hourly_batch_map = _load_hourly_batch_map(biz_id)
+            _hourly_map, _hourly_batch_map, _key_batches, _conflicts = _load_hourly_batch_map(biz_id)
             # Employees covered by a payslip for this month (paid now, already
             # existing, or nothing payable) — a batch is only marked processed
             # once every scanned employee on it is covered.
             _satisfied = set()
+            _conflict_msgs = []
             
             for emp in employees:
                 _emp_keys = {k for k in (emp.get("id"), (emp.get("name") or "").strip().lower()) if k}
@@ -1041,6 +1076,21 @@ def register_payroll_routes(app, db, login_required, Auth, render_page,
                     _satisfied.update(_emp_keys)
                     continue
                 
+                # Duplicate-day block: the same worked day on two open batches
+                # (a double scan) must never be paid twice. Block this
+                # employee, leave the batches open, and tell the user which
+                # days clash so the duplicate batch can be discarded.
+                _emp_conf = {}
+                for _k in _emp_keys:
+                    _emp_conf.update(_conflicts.get(_k, {}))
+                if _emp_conf:
+                    _conflict_msgs.append(f"{emp.get('name')} ({', '.join(sorted(_emp_conf.keys()))})")
+                    continue
+                
+                _emp_bids = set()
+                for _k in _emp_keys:
+                    _emp_bids.update(_key_batches.get(_k, set()))
+                
                 basic = safe_float(emp.get("basic_salary", 0))
                 if basic <= 0:
                     # Hourly employee: build from timesheet hours (same engine/rules
@@ -1049,7 +1099,7 @@ def register_payroll_routes(app, db, login_required, Auth, render_page,
                     if _h_days:
                         _h_figs = _compute_hourly_figures(emp, _h_days, pay_date[:7], business, _sdl_applies)
                         if _h_figs:
-                            if _save_hourly_payslip(emp, _h_figs, pay_date, pay_date[:7], biz_id):
+                            if _save_hourly_payslip(emp, _h_figs, pay_date, pay_date[:7], biz_id, batch_ids=_emp_bids):
                                 payslips_created += 1
                                 _satisfied.update(_emp_keys)
                         else:
@@ -1057,6 +1107,25 @@ def register_payroll_routes(app, db, login_required, Auth, render_page,
                             # so the batch need not wait for this employee.
                             _satisfied.update(_emp_keys)
                     continue
+                
+                # Salaried employee with a scanned timesheet: apply the
+                # pay-conditions engine deviations (late / early / OT /
+                # absent) so the payslip matches the reviewed timesheet
+                # (owner decision 2026-07-06). Without a timesheet, the flat
+                # basic salary is used exactly as before.
+                _s_pay_lines = None
+                _s_applied = False
+                _s_days = _hourly_map.get(emp.get("id")) or _hourly_map.get((emp.get("name") or "").strip().lower()) or []
+                if _s_days:
+                    try:
+                        from clickai_pay_conditions import build_payslip_gross
+                        _sres = build_payslip_gross(emp, {"days": _s_days}, pay_month, business=business)
+                        if _sres.get("is_setup") and _sres.get("pay_model") == "salaried":
+                            basic = safe_float(_sres.get("gross", basic))
+                            _s_pay_lines = _sres.get("lines", [])
+                            _s_applied = True
+                    except Exception as _se:
+                        logger.error(f"[PAYROLL] salaried deviation engine failed for {emp.get('name')}: {_se}")
                 
                 # Get deductions from employee
                 medical = safe_float(emp.get("medical_aid", 0))
@@ -1140,7 +1209,9 @@ def register_payroll_routes(app, db, login_required, Auth, render_page,
                     "total_deductions": round(total_ded, 2),
                     "total_employer": round(total_employer, 2),
                     "total_cost": round(total_cost, 2),
-                    "net": round(net, 2)
+                    "net": round(net, 2),
+                    "pay_lines": _s_pay_lines if _s_pay_lines else [],
+                    "batch_ids": sorted(_emp_bids) if (_s_applied and _emp_bids) else []
                 }
                 
                 # Direct save without created_at
@@ -1220,6 +1291,8 @@ def register_payroll_routes(app, db, login_required, Auth, render_page,
                 flash(f"Created {payslips_created} payslips. Skipped {skipped} (already exist for {pay_month})", "success")
             else:
                 flash(f"Created {payslips_created} payslips", "success")
+            if _conflict_msgs:
+                flash(f"BLOCKED — the same worked day appears on two open timesheet batches for: {'; '.join(_conflict_msgs)}. Discard the duplicate batch under Timesheets, then run payroll again.", "error")
             if _batches_left_open:
                 flash(f"{_batches_left_open} timesheet batch(es) left unprocessed — some scanned employees have no payslip for {pay_month} yet. Check the names on the batch or post it from the review screen.", "error")
             return redirect("/payroll")
@@ -1269,6 +1342,19 @@ def register_payroll_routes(app, db, login_required, Auth, render_page,
             already_exists = emp.get("id") in today_emp_ids
             if already_exists:
                 existing_count += 1
+            
+            # Salaried employee with a scanned timesheet: preview the engine
+            # gross (base +/- late/early/OT deviations) — the same figure the
+            # POST will pay — instead of the flat basic salary.
+            _s_days = _hourly_days_for_employee(emp, biz_id)
+            if _s_days:
+                try:
+                    from clickai_pay_conditions import build_payslip_gross
+                    _sres = build_payslip_gross(emp, {"days": _s_days}, today()[:7], business=business)
+                    if _sres.get("is_setup") and _sres.get("pay_model") == "salaried":
+                        basic = safe_float(_sres.get("gross", basic))
+                except Exception as _se:
+                    logger.error(f"[PAYROLL PREVIEW] salaried deviation engine failed for {emp.get('name')}: {_se}")
             
             # Deductions from employee
             medical = safe_float(emp.get("medical_aid", 0))
@@ -1949,6 +2035,7 @@ def register_payroll_routes(app, db, login_required, Auth, render_page,
 
         posted = 0
         skipped = 0
+        skipped_names = []
         errors = []
 
         for i in range(count):
@@ -1963,11 +2050,14 @@ def register_payroll_routes(app, db, login_required, Auth, render_page,
                 continue
 
             # Duplicate guard — one payslip per employee per pay MONTH, so the
-            # monthly run and a batch post can never both pay the same person
+            # monthly run and a batch post can never both pay the same person.
+            # Named loudly: a silent skip here is how a timesheet deduction
+            # "disappears" — the earlier payslip (without it) stays in place.
             existing = db.get("payslips", {"business_id": biz_id, "employee_id": emp_id}) if biz_id else []
             existing = [p for p in existing if str(p.get("date") or "")[:7] == pay_month]
             if existing:
                 skipped += 1
+                skipped_names.append(emp.get("name", emp_id))
                 continue
 
             days = employees_data[i].get("days", []) if i < len(employees_data) else []
@@ -2037,7 +2127,9 @@ def register_payroll_routes(app, db, login_required, Auth, render_page,
                 "total_deductions": round(total_ded, 2),
                 "total_employer": round(total_employer, 2),
                 "total_cost": round(total_cost, 2),
-                "net": round(net, 2)
+                "net": round(net, 2),
+                "pay_lines": result.get("lines", []),
+                "batch_ids": [batch_id]
             }
 
             try:
@@ -2117,14 +2209,16 @@ def register_payroll_routes(app, db, login_required, Auth, render_page,
             if posted:
                 msg = "Posted payslip for 1 employee"
                 if skipped:
-                    msg += f" ({skipped} already had a payslip for {pay_date})"
+                    msg += f" ({', '.join(skipped_names)} already had a payslip for {pay_month})"
                 if errors:
                     msg += f" — errors: {', '.join(errors)}"
                 flash(msg, "success")
             else:
                 msg = "Nothing posted"
                 if skipped:
-                    msg += f" — a payslip for {pay_date} already exists"
+                    msg += (f" — {', '.join(skipped_names)} already has a payslip for {pay_month}. "
+                            f"The timesheet figures were NOT applied to it. Delete that payslip first, "
+                            f"then post this timesheet again.")
                 if errors:
                     msg += f" — errors: {', '.join(errors)}"
                 flash(msg, "error")
@@ -2140,7 +2234,8 @@ def register_payroll_routes(app, db, login_required, Auth, render_page,
                 pass
         msg = f"Posted {posted} payslip(s) for {pay_month}"
         if skipped:
-            msg += f", skipped {skipped} (already existed)"
+            msg += (f", skipped {skipped} — {', '.join(skipped_names)} already had a payslip for "
+                    f"{pay_month} (timesheet figures NOT applied — delete that payslip first to repost)")
         if errors:
             msg += f" — errors: {', '.join(errors)} (batch left open — fix and retry)"
         flash(msg, "success" if posted else "error")
@@ -2642,12 +2737,37 @@ def register_payroll_routes(app, db, login_required, Auth, render_page,
         other_allow = safe_float(payslip.get("other_allowance", 0))
         non_taxable_allow = safe_float(payslip.get("non_taxable_allowance", 0))
 
-        # Earnings rows: hourly workers (hours stored on the payslip) show a
-        # Wages line with hours x rate; salaried workers show Basic Salary.
+        # Earnings rows: payslips with stored pay lines (timesheet-driven)
+        # show the base plus every deviation/hour line — exactly what the
+        # preview showed, so a late/early deduction is never invisible.
+        # Legacy payslips fall back to the old Wages / Basic Salary rows.
         hours_worked = safe_float(payslip.get("hours_worked", 0))
         overtime_hours = safe_float(payslip.get("overtime_hours", 0))
         emp_rate = safe_float(_emp_fund.get("hourly_rate", 0)) if _emp_fund else 0.0
-        if hours_worked > 0 or overtime_hours > 0:
+        _pay_lines = payslip.get("pay_lines")
+        if isinstance(_pay_lines, str):
+            try:
+                _pay_lines = json.loads(_pay_lines)
+            except Exception:
+                _pay_lines = None
+        if isinstance(_pay_lines, list) and _pay_lines:
+            _lines_sum = sum(safe_float(l.get("amount", 0)) for l in _pay_lines)
+            _base_amt = round(basic - _lines_sum, 2)
+            earnings_rows = ""
+            if _base_amt > 0.005:
+                earnings_rows += ('<tr style="border-bottom:1px solid #eee;"><td style="padding:6px 0;color:#666;">'
+                                  f'Basic Salary</td><td style="padding:6px 0;text-align:right;color:#333;">{money(_base_amt)}</td></tr>')
+            for _l in _pay_lines:
+                _amt = safe_float(_l.get("amount", 0))
+                _lbl = str(_l.get("label", "")).replace("<", "&lt;").replace(">", "&gt;")
+                _dte = str(_l.get("date", "") or "")
+                _desc = f"{_dte} — {_lbl}" if _dte else _lbl
+                _clr = "#ef4444" if _amt < 0 else "#333"
+                _sgn = "-" if _amt < 0 else ""
+                earnings_rows += (f'<tr style="border-bottom:1px solid #eee;"><td style="padding:6px 0;color:#666;">'
+                                  f'{_desc}</td>'
+                                  f'<td style="padding:6px 0;text-align:right;color:{_clr};">{_sgn}{money(abs(_amt))}</td></tr>')
+        elif hours_worked > 0 or overtime_hours > 0:
             _wage = round(gross - travel - other_allow, 2)
             _norm_amt = round(hours_worked * emp_rate, 2)
             _ot_amt = round(_wage - _norm_amt, 2)
@@ -3102,7 +3222,28 @@ def register_payroll_routes(app, db, login_required, Auth, render_page,
                                                  _reverse_journal_lines(_lines))
                         except Exception as _je:
                             logger.error(f"[PAYSLIP DELETE] GL reversal failed: {_je}")
-                    flash("Payslip deleted — salary journal reversed", "success")
+                    # Re-open the timesheet batches this payslip consumed so
+                    # the hours can be paid again exactly once — no re-scan
+                    # (and no doubling) needed when the payslip is redone.
+                    _bids = payslip.get("batch_ids")
+                    if isinstance(_bids, str):
+                        try:
+                            _bids = json.loads(_bids)
+                        except Exception:
+                            _bids = []
+                    _reopened = 0
+                    for _bid in (_bids or []):
+                        try:
+                            _b = db.get_one("timesheet_batches", _bid)
+                            if _b and _b.get("status") == "processed":
+                                db.save("timesheet_batches", {"id": _bid, "status": "approved"})
+                                _reopened += 1
+                        except Exception as _be:
+                            logger.error(f"[PAYSLIP DELETE] Could not re-open batch {_bid}: {_be}")
+                    if _reopened:
+                        flash(f"Payslip deleted — salary journal reversed. {_reopened} timesheet batch(es) re-opened for payroll.", "success")
+                    else:
+                        flash("Payslip deleted — salary journal reversed", "success")
                 else:
                     flash("Failed to delete payslip", "error")
             except Exception as e:
@@ -3404,7 +3545,30 @@ def register_payroll_routes(app, db, login_required, Auth, render_page,
         hours_worked = safe_float(payslip.get("hours_worked", 0))
         overtime_hours = safe_float(payslip.get("overtime_hours", 0))
         emp_rate = safe_float(_emp.get("hourly_rate", 0))
-        if hours_worked > 0 or overtime_hours > 0:
+        _pay_lines = payslip.get("pay_lines")
+        if isinstance(_pay_lines, str):
+            try:
+                _pay_lines = json.loads(_pay_lines)
+            except Exception:
+                _pay_lines = None
+        if isinstance(_pay_lines, list) and _pay_lines:
+            _lines_sum = sum(safe_float(l.get("amount", 0)) for l in _pay_lines)
+            _base_amt = round(basic - _lines_sum, 2)
+            earnings_rows = ""
+            if _base_amt > 0.005:
+                earnings_rows += ('<tr style="border-bottom:1px solid #eee;"><td style="padding:6px 0;color:#666;">'
+                                  f'Basic Salary</td><td style="padding:6px 0;text-align:right;color:#333;">{money(_base_amt)}</td></tr>')
+            for _l in _pay_lines:
+                _amt = safe_float(_l.get("amount", 0))
+                _lbl = str(_l.get("label", "")).replace("<", "&lt;").replace(">", "&gt;")
+                _dte = str(_l.get("date", "") or "")
+                _desc = f"{_dte} — {_lbl}" if _dte else _lbl
+                _clr = "#ef4444" if _amt < 0 else "#333"
+                _sgn = "-" if _amt < 0 else ""
+                earnings_rows += (f'<tr style="border-bottom:1px solid #eee;"><td style="padding:6px 0;color:#666;">'
+                                  f'{_desc}</td>'
+                                  f'<td style="padding:6px 0;text-align:right;color:{_clr};">{_sgn}{money(abs(_amt))}</td></tr>')
+        elif hours_worked > 0 or overtime_hours > 0:
             _wage = round(gross - travel - other_allow - non_taxable_allow, 2)
             _norm_amt = round(hours_worked * emp_rate, 2)
             _ot_amt = round(_wage - _norm_amt, 2)

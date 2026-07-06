@@ -56,7 +56,7 @@ def _cell_is_time(v):
         return bool(_re.match(r"^\d{1,2}\s*[:.h]\s*\d{2}$", s, _re.I)) or s.isdigit()
 
 
-def _apply_review_edits(form, employees_data, count):
+def _apply_review_edits(form, employees_data, count, db=None, business=None):
     """Overlay the edited per-day In/Out times from the review form onto the
     scanned batch data, then recompute each employee's worked-hour totals.
 
@@ -64,11 +64,22 @@ def _apply_review_edits(form, employees_data, count):
     keep their scanned value. This is what makes a Jacqo misread (or a blank
     Out time) fixable and stick — the corrected times are written back to the
     batch and used by both pay models.
+
+    The recompute uses the same rules as the payslip engine: the business
+    split_overtime setting, each selected employee's schedule (overtime only
+    past the scheduled out-time) and their lunch setting — so the review
+    totals and the payslip never disagree.
     """
     try:
         from clickai_pay_conditions import compute_worked_hours
     except Exception:
         compute_worked_hours = None
+    try:
+        from clickai_pay_conditions import get_conditions as _get_conditions
+    except Exception:
+        _get_conditions = None
+
+    split_ot = bool(business.get("split_overtime")) if business else False
 
     for i in range(count):
         if i >= len(employees_data):
@@ -89,7 +100,21 @@ def _apply_review_edits(form, employees_data, count):
         # Recompute worked totals from the (possibly edited) times so the
         # hourly model and the saved entries reflect the corrections.
         if compute_worked_hours:
-            worked = compute_worked_hours(days)
+            cond = None
+            lunch_min = 30
+            if db is not None and _get_conditions is not None:
+                _eid = (form.get(f"emp_{i}", "") or "").strip()
+                if _eid:
+                    try:
+                        _erec = db.get_one("employees", _eid)
+                        if _erec:
+                            cond = _get_conditions(_erec)
+                            if cond["schedule"].get("lunch_deducted"):
+                                lunch_min = int(float(cond["schedule"].get("lunch_minutes", 30) or 30))
+                    except Exception:
+                        cond = None
+            worked = compute_worked_hours(days, split_overtime=split_ot,
+                                          lunch_minutes=lunch_min, cond=cond)
             emp["days"] = worked["days"]
             emp["total_hours"] = worked["total_hours"]
             emp["total_overtime"] = worked["total_overtime"]
@@ -583,6 +608,19 @@ def register_timesheet_routes(app, db, login_required, Auth, render_page,
         jobs = db.get("jobs", {"business_id": biz_id}) if biz_id else []
         active_jobs = [j for j in jobs if j.get("status") not in ["completed", "invoiced"]]
         
+        # Pay-conditions helpers for the live recalc: per-day scheduled
+        # out-time (OT only past it) and per-employee lunch minutes, so the
+        # on-screen recalculation matches the payslip engine exactly.
+        _rv_get_conditions = _rv_day_schedule = _rv_weekday_of = None
+        try:
+            from clickai_pay_conditions import (get_conditions as _rv_get_conditions,
+                                                _day_schedule as _rv_day_schedule,
+                                                _weekday_of as _rv_weekday_of)
+        except Exception:
+            pass
+        _js_sched = {}   # row index -> [scheduled out-time minutes or None per day]
+        _js_lunch = {}   # row index -> lunch minutes
+        
         for i, emp in enumerate(employees_data):
             scanned_name = emp.get("name", "Unknown")
             total_hours = round(float(emp.get("total_hours", 0) or 0), 2)
@@ -599,6 +637,7 @@ def register_timesheet_routes(app, db, login_required, Auth, render_page,
             
             # Try to match to existing employee - fuzzy match
             matched_id = ""
+            matched_emp = None
             for db_emp in all_employees:
                 db_name = db_emp.get("name", "").lower().strip()
                 scan_name = scanned_name.lower().strip()
@@ -611,8 +650,34 @@ def register_timesheet_routes(app, db, login_required, Auth, render_page,
                     (first_name_db and first_name_db == first_name_scan) or
                     (first_name_scan and first_name_scan == first_name_db)):
                     matched_id = db_emp.get("id", "")
+                    matched_emp = db_emp
                     logger.info(f"[TIMESHEET REVIEW] Matched '{scanned_name}' to '{db_emp.get('name')}'")
                     break
+            
+            # Per-day scheduled out-time + lunch for the live JS recalc
+            _row_cond = None
+            _row_lunch = 30
+            if matched_emp is not None and _rv_get_conditions is not None:
+                try:
+                    _rc = _rv_get_conditions(matched_emp)
+                    if _rc.get("is_setup"):
+                        _row_cond = _rc
+                        if _rc["schedule"].get("lunch_deducted"):
+                            _row_lunch = int(float(_rc["schedule"].get("lunch_minutes", 30) or 30))
+                except Exception:
+                    _row_cond = None
+            _js_lunch[i] = _row_lunch
+            _row_sched = []
+            for _d in days:
+                _so_val = None
+                if _row_cond is not None and _rv_weekday_of and _rv_day_schedule:
+                    _wd = _rv_weekday_of(_d.get("date"))
+                    if _wd is not None and _wd != 6:
+                        _si, _so = _rv_day_schedule(_row_cond, _wd)
+                        if _so is not None:
+                            _so_val = _so
+                _row_sched.append(_so_val)
+            _js_sched[i] = _row_sched
             
             # Dropdown of employees
             emp_options = '<option value="">-- Select Employee --</option>'
@@ -810,6 +875,8 @@ def register_timesheet_routes(app, db, login_required, Auth, render_page,
         (function(){
           var TS_SPLIT_OT = __SPLIT_OT__;
           var TS_LUNCH = 30;
+          var TS_SCHED = __SCHED_MAP__;
+          var TS_LUNCHMAP = __LUNCH_MAP__;
           function tsParse(t){
             if(!t) return null;
             t = String(t).trim().toLowerCase().replace(/\./g,':').replace(/,/g,':').replace(/h/g,':');
@@ -820,15 +887,22 @@ def register_timesheet_routes(app, db, login_required, Auth, render_page,
             if(isNaN(h)||isNaN(m)) return null;
             return h*60+m;
           }
-          function tsDay(inStr,outStr){
+          function tsDay(inStr,outStr,schedOut,lunch){
             var ti=tsParse(inStr), to=tsParse(outStr);
             if(ti===null||to===null) return [0,0];
             if(to<ti) to+=1440;
             var w=to-ti;
-            if(w>300) w-=TS_LUNCH;
+            if(w>300) w-=(lunch!=null?lunch:TS_LUNCH);
             if(w<0) w=0;
             var wh=w/60;
-            if(TS_SPLIT_OT) return [Math.min(wh,8), Math.max(0,wh-8)];
+            if(TS_SPLIT_OT){
+              if(schedOut!=null){
+                var ot=Math.max(0,(to-schedOut)/60);
+                if(ot>wh) ot=wh;
+                return [wh-ot, ot];
+              }
+              return [Math.min(wh,8), Math.max(0,wh-8)];
+            }
             return [wh,0];
           }
           function tsFmt(x){ return String(Math.round(x*100)/100); }
@@ -848,7 +922,9 @@ def register_timesheet_routes(app, db, login_required, Auth, render_page,
               if(status==='SICK'||status==='AWP'){ nh=shEl?(parseFloat(shEl.value)||0):0; }
               else if(status==='AWOL'){ nh=0; }
               else {
-                var r=tsDay(inp?inp.value:'', outp?outp.value:'');
+                var so=(TS_SCHED[i]||[])[j]; if(so===undefined) so=null;
+                var lu=(TS_LUNCHMAP[i]!=null)?TS_LUNCHMAP[i]:null;
+                var r=tsDay(inp?inp.value:'', outp?outp.value:'', so, lu);
                 if(isSun){ suh=r[0]+r[1]; } else { nh=r[0]; oth=r[1]; }
               }
               var hc=document.getElementById('h_'+i+'_'+j);
@@ -870,7 +946,9 @@ def register_timesheet_routes(app, db, login_required, Auth, render_page,
           };
         })();
         </script>
-""".replace("__SPLIT_OT__", _split_ot_js)
+""".replace("__SPLIT_OT__", _split_ot_js) \
+   .replace("__SCHED_MAP__", json.dumps({str(k): v for k, v in _js_sched.items()})) \
+   .replace("__LUNCH_MAP__", json.dumps({str(k): v for k, v in _js_lunch.items()}))
         
         return render_page("Review Timesheet", content, user, "timesheets")
     
@@ -997,11 +1075,15 @@ def register_timesheet_routes(app, db, login_required, Auth, render_page,
 
         # Apply the reviewer's In/Out edits, recompute, and persist back to the
         # batch so the corrections stick and the post step reads the fixed data.
-        employees_data = _apply_review_edits(request.form, employees_data, count)
+        employees_data = _apply_review_edits(request.form, employees_data, count,
+                                             db=db, business=business)
         wrapper["employees"] = employees_data
         wrapper["period"] = wrapper.get("period", "") or batch.get("period", "")
+        # Never downgrade a processed batch back to approved — reopening a
+        # consumed batch is how the same hours end up paid twice.
+        _b_status = "processed" if batch.get("status") == "processed" else "approved"
         try:
-            db.save("timesheet_batches", {"id": batch_id, "data": json.dumps(wrapper), "status": "approved"})
+            db.save("timesheet_batches", {"id": batch_id, "data": json.dumps(wrapper), "status": _b_status})
         except Exception as _se:
             logger.error(f"[TIMESHEET PREVIEW] could not persist edits: {_se}")
 
@@ -1131,7 +1213,8 @@ def register_timesheet_routes(app, db, login_required, Auth, render_page,
             else:
                 employees_data = parsed.get("employees", [])
                 wrapper = parsed
-            employees_data = _apply_review_edits(request.form, employees_data, count)
+            employees_data = _apply_review_edits(request.form, employees_data, count,
+                                                 db=db, business=business)
             wrapper["employees"] = employees_data
             wrapper["period"] = wrapper.get("period", "") or batch.get("period", "")
             try:
@@ -1139,6 +1222,45 @@ def register_timesheet_routes(app, db, login_required, Auth, render_page,
             except Exception as _se:
                 logger.error(f"[TIMESHEET PROCESS] could not persist edits: {_se}")
         
+        # Re-approving this batch REPLACES its previously saved entries instead
+        # of adding to them — running Approve & Save twice must never double
+        # the hours (or the job-card labour cost).
+        try:
+            _old_entries = db.get("timesheet_entries", {"business_id": biz_id, "batch_id": batch_id}) or []
+        except Exception:
+            _old_entries = []
+        if _old_entries:
+            # Roll this batch's labour back off any linked job cards first
+            _old_job_ids = {e.get("job_id") for e in _old_entries if e.get("job_id")}
+            for _jid in _old_job_ids:
+                _job = db.get_one("jobs", _jid)
+                if not _job:
+                    continue
+                try:
+                    _lab = json.loads(_job.get("labour_entries", "[]"))
+                except Exception:
+                    _lab = []
+                _keep = [le for le in _lab if le.get("batch_id") != batch_id]
+                _removed = [le for le in _lab if le.get("batch_id") == batch_id]
+                if _removed:
+                    _rem_cost = sum(float(le.get("cost", 0) or 0) for le in _removed)
+                    _rem_hours = sum(float(le.get("hours", 0) or 0) for le in _removed)
+                    _new_lab_cost = max(0.0, float(_job.get("total_labour_cost", 0) or 0) - _rem_cost)
+                    _new_hours = max(0.0, float(_job.get("actual_hours", 0) or 0) - _rem_hours)
+                    _new_actual = float(_job.get("total_material_cost", 0) or 0) + _new_lab_cost + float(_job.get("total_additional_cost", 0) or 0)
+                    db.update("jobs", _jid, {
+                        "labour_entries": json.dumps(_keep),
+                        "total_labour_cost": _new_lab_cost,
+                        "actual_hours": _new_hours,
+                        "total_actual_cost": _new_actual,
+                        "profit_loss": float(_job.get("quote_value", 0) or 0) - _new_actual,
+                    }, biz_id)
+            try:
+                db.delete_many("timesheet_entries", [e.get("id") for e in _old_entries if e.get("id")], biz_id)
+                logger.info(f"[TIMESHEET PROCESS] Replaced {len(_old_entries)} previous entries for batch {batch_id}")
+            except Exception as _de:
+                logger.error(f"[TIMESHEET PROCESS] Could not remove previous entries for batch {batch_id}: {_de}")
+
         for i in range(count):
             emp_id = request.form.get(f"emp_{i}", "")
             job_id = request.form.get(f"job_{i}", "")
@@ -1506,6 +1628,39 @@ def register_timesheet_routes(app, db, login_required, Auth, render_page,
             # ═══════════════════════════════════════════════════════════════════════
             # Per-business setting: when off, all worked hours count as normal (no OT split)
             split_overtime = bool(business.get("split_overtime")) if business else False
+
+            # Pay-conditions helpers — overtime is only time worked past the
+            # employee's scheduled out-time (owner decision 2026-07-06). The
+            # scanned name is matched to an employee so the scan view shows
+            # the same Normal/OT split the payslip will use. Falls back to
+            # the old flat 8-hour split when the module or a match is missing.
+            _pc_get_conditions = _pc_day_schedule = _pc_weekday_of = None
+            try:
+                from clickai_pay_conditions import (get_conditions as _pc_get_conditions,
+                                                    _day_schedule as _pc_day_schedule,
+                                                    _weekday_of as _pc_weekday_of)
+            except Exception:
+                pass
+            _sched_emps = db.get("employees", {"business_id": biz_id}) if biz_id else []
+
+            def _match_employee_cond(scan_name):
+                """Fuzzy name match (same rule as the review screen) -> the
+                employee's pay conditions, or None when unmatched/not set up."""
+                if not _pc_get_conditions or not scan_name:
+                    return None
+                sn = str(scan_name).lower().strip()
+                sn_first = sn.split()[0] if sn.split() else ""
+                for _de in _sched_emps:
+                    dn = (_de.get("name", "") or "").lower().strip()
+                    dn_first = dn.split()[0] if dn.split() else ""
+                    if (dn == sn or sn in dn or dn in sn or
+                            (dn_first and dn_first == sn_first)):
+                        try:
+                            _c = _pc_get_conditions(_de)
+                            return _c if _c.get("is_setup") else None
+                        except Exception:
+                            return None
+                return None
             
             def parse_time(t):
                 """Convert time string to minutes since midnight"""
@@ -1534,7 +1689,7 @@ def register_timesheet_routes(app, db, login_required, Auth, render_page,
                     sl = str(date_str or "").lower()
                     return "sun" in sl or "son" in sl  # English or Afrikaans
             
-            def calc_hours(time_in, time_out, lunch_break=30):
+            def calc_hours(time_in, time_out, lunch_break=30, sched_out=None):
                 """Calculate work hours from in/out times"""
                 if time_in is None or time_out is None:
                     return 0, 0
@@ -1556,9 +1711,17 @@ def register_timesheet_routes(app, db, login_required, Auth, render_page,
                 
                 # Overtime split is controlled per-business.
                 # When split_overtime is off, all worked hours count as normal.
+                # With a schedule: OT is ONLY time worked past the scheduled
+                # out-time. Without one: old flat 8-hour split (fallback).
                 if split_overtime:
-                    normal = min(worked_hours, 8)
-                    overtime = max(0, worked_hours - 8)
+                    if sched_out is not None:
+                        overtime = max(0, (time_out - sched_out) / 60)
+                        if overtime > worked_hours:
+                            overtime = worked_hours
+                        normal = worked_hours - overtime
+                    else:
+                        normal = min(worked_hours, 8)
+                        overtime = max(0, worked_hours - 8)
                 else:
                     normal = worked_hours
                     overtime = 0
@@ -1588,6 +1751,16 @@ def register_timesheet_routes(app, db, login_required, Auth, render_page,
                             job_number = job.get("job_number")  # Use exact format
                             break
                 
+                # Schedule-aware OT: use the matched employee's agreed
+                # out-time per weekday and their lunch setting.
+                _emp_cond = _match_employee_cond(emp_name)
+                _emp_lunch = 30
+                if _emp_cond and _emp_cond["schedule"].get("lunch_deducted"):
+                    try:
+                        _emp_lunch = int(float(_emp_cond["schedule"].get("lunch_minutes", 30) or 30))
+                    except Exception:
+                        _emp_lunch = 30
+
                 calculated_days = []
                 total_hours = 0
                 total_overtime = 0
@@ -1601,7 +1774,15 @@ def register_timesheet_routes(app, db, login_required, Auth, render_page,
                     time_in = parse_time(d_in)
                     time_out = parse_time(d_out)
                     
-                    hours, ot = calc_hours(time_in, time_out)
+                    _sched_out = None
+                    if _emp_cond and _pc_weekday_of and _pc_day_schedule:
+                        _wd = _pc_weekday_of(d_date)
+                        if _wd is not None and _wd != 6:
+                            _si, _so = _pc_day_schedule(_emp_cond, _wd)
+                            if _so is not None:
+                                _sched_out = _so
+                    
+                    hours, ot = calc_hours(time_in, time_out, lunch_break=_emp_lunch, sched_out=_sched_out)
                     
                     # Check if Sunday - all hours count as Sunday rate
                     sunday_hours = 0
