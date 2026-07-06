@@ -1470,6 +1470,24 @@ def register_payroll_routes(app, db, login_required, Auth, render_page,
         basic_full = basic
         basic = max(0.0, basic - hours_off_amount)
 
+        # Manual overtime: hours entered by hand, paid at the employee's own
+        # rate from pay conditions (hourly staff use hourly_rate; monthly staff
+        # use basic ÷ agreed hours), at either 1.5x or 2x.
+        ot_hours = max(0.0, safe_float(request.args.get("ot_hours", 0)))
+        ot_mult = safe_float(request.args.get("ot_mult", 1.5)) or 1.5
+        if ot_mult not in (1.5, 2.0):
+            ot_mult = 1.5
+        ot_rate = hours_rate
+        try:
+            from clickai_pay_conditions import get_conditions, derive_hourly_rate
+            _ot_cond = get_conditions(emp)
+            _ot_base = derive_hourly_rate(emp, _ot_cond, avg_hours)
+            if _ot_base > 0:
+                ot_rate = _ot_base
+        except Exception as _oe:
+            logger.error(f"[PAYSLIP-PREVIEW] OT rate from pay conditions failed for {emp.get('name')}: {_oe}")
+        ot_amount = round(ot_hours * ot_rate * ot_mult, 2)
+
         # Hourly employees have no basic salary — their pay is this month's
         # worked hours x rate. Use that as the earnings base so the payslip
         # shows the real amount instead of zero.
@@ -1516,6 +1534,10 @@ def register_payroll_routes(app, db, login_required, Auth, render_page,
         else:
             earnings_first_row = ('<tr style="border-bottom:1px solid #eee;"><td style="padding:6px 0;color:#666;">'
                                   f'Basic Salary</td><td style="padding:6px 0;text-align:right;color:#333;">{money(basic_full)}</td></tr>')
+        
+        # Manual overtime adds to the taxable pay (after the hourly branch so it
+        # is not overwritten by the worked-hours gross).
+        basic = basic + ot_amount
         
         # Deductions from employee
         medical = safe_float(emp.get("medical_aid", 0))
@@ -1685,6 +1707,17 @@ def register_payroll_routes(app, db, login_required, Auth, render_page,
                     <input type="number" name="hours_off" step="0.25" min="0" value="{hours_off:g}" style="width:120px;padding:10px;border-radius:6px;border:1px solid var(--border);background:var(--card);color:var(--text);">
                 </div>
                 <div>
+                    <label style="display:block;margin-bottom:5px;font-weight:500;font-size:13px;">Hours Overtime</label>
+                    <input type="number" name="ot_hours" step="0.25" min="0" value="{ot_hours:g}" style="width:120px;padding:10px;border-radius:6px;border:1px solid var(--border);background:var(--card);color:var(--text);">
+                </div>
+                <div>
+                    <label style="display:block;margin-bottom:5px;font-weight:500;font-size:13px;">OT Rate</label>
+                    <select name="ot_mult" style="width:100px;padding:10px;border-radius:6px;border:1px solid var(--border);background:var(--card);color:var(--text);">
+                        <option value="1.5" {"selected" if ot_mult == 1.5 else ""}>1.5x</option>
+                        <option value="2" {"selected" if ot_mult == 2.0 else ""}>2x</option>
+                    </select>
+                </div>
+                <div>
                     <label style="display:block;margin-bottom:5px;font-weight:500;font-size:13px;">Avg Working Hours / Month</label>
                     <input type="number" name="avg_hours" step="0.01" min="1" value="{avg_hours:g}" style="width:140px;padding:10px;border-radius:6px;border:1px solid var(--border);background:var(--card);color:var(--text);">
                 </div>
@@ -1755,6 +1788,7 @@ def register_payroll_routes(app, db, login_required, Auth, render_page,
                     <table style="width:100%;border-collapse:collapse;font-size:12px;">
                         {earnings_first_row}
                         {f'<tr style="border-bottom:1px solid #eee;"><td style="padding:6px 0;color:#666;">Hours Off / Late ({hours_off:g} hrs)</td><td style="padding:6px 0;text-align:right;color:#ef4444;">-{money(hours_off_amount)}</td></tr>' if hours_off_amount > 0 else ''}
+                        {f'<tr style="border-bottom:1px solid #eee;"><td style="padding:6px 0;color:#666;">Overtime ({ot_hours:g} hrs @ {money(ot_rate)}/h x{ot_mult:g})</td><td style="padding:6px 0;text-align:right;color:#333;">{money(ot_amount)}</td></tr>' if ot_amount > 0 else ''}
                         {f'<tr style="border-bottom:1px solid #eee;"><td style="padding:6px 0;color:#666;">Travel Allowance</td><td style="padding:6px 0;text-align:right;color:#333;">{money(travel)}</td></tr>' if travel > 0 else ''}
                         {f'<tr style="border-bottom:1px solid #eee;"><td style="padding:6px 0;color:#666;">Other Allowance</td><td style="padding:6px 0;text-align:right;color:#333;">{money(other_allow)}</td></tr>' if other_allow > 0 else ''}
                         {f'<tr style="border-bottom:1px solid #eee;"><td style="padding:6px 0;color:#666;">Non-Taxable Allowance</td><td style="padding:6px 0;text-align:right;color:#333;">{money(non_taxable_allow)}</td></tr>' if non_taxable_allow > 0 else ''}

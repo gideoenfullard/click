@@ -108,6 +108,11 @@ def _apply_review_edits(form, employees_data, count, db=None, business=None):
                     try:
                         _erec = db.get_one("employees", _eid)
                         if _erec:
+                            # The reviewer picked this employee to correct a
+                            # misread name — store the real name on the batch
+                            # so the timesheet matches the payslip.
+                            if _erec.get("name"):
+                                emp["name"] = _erec.get("name")
                             cond = _get_conditions(_erec)
                             if cond["schedule"].get("lunch_deducted"):
                                 lunch_min = int(float(cond["schedule"].get("lunch_minutes", 30) or 30))
@@ -731,6 +736,12 @@ def register_timesheet_routes(app, db, login_required, Auth, render_page,
                     d_ot = day.get("overtime", 0)
                     d_sunday = day.get("sunday", 0)
                     is_sun = day.get("is_sunday", False)
+                    # Show the day of the week alongside the date for easier checking.
+                    _wd_lbl = ""
+                    if _rv_weekday_of:
+                        _wd = _rv_weekday_of(d_date)
+                        if _wd is not None:
+                            _wd_lbl = ("Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun")[_wd]
                     
                     calc_hours += d_hours
                     calc_ot += d_ot
@@ -743,7 +754,7 @@ def register_timesheet_routes(app, db, login_required, Auth, render_page,
                     _sun_flag = "1" if is_sun else "0"
                     days_html += f'''
                     <tr style="{row_style}">
-                        <td style="white-space:nowrap;">{d_date} {"☀️" if is_sun else ""}</td>
+                        <td style="white-space:nowrap;">{(_wd_lbl + " ") if _wd_lbl else ""}{d_date} {"☀️" if is_sun else ""}</td>
                         <td><input type="text" name="in_{i}_{j}" value="{safe_string(str(d_in))}" data-sun="{_sun_flag}" oninput="tsRecalc({i})" style="width:78px;padding:5px;border-radius:5px;border:{in_border};background:#1a1a2e;color:var(--text);"></td>
                         <td><input type="text" name="out_{i}_{j}" value="{safe_string(str(d_out))}" oninput="tsRecalc({i})" style="width:78px;padding:5px;border-radius:5px;border:{out_border};background:#1a1a2e;color:var(--text);"></td>
                         <td id="h_{i}_{j}">{d_hours if d_hours > 0 else "-"}</td>
