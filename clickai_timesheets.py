@@ -19,10 +19,30 @@ from flask import request, jsonify, session, redirect, flash
 logger = logging.getLogger(__name__)
 
 
-def _guess_pay_month(period_text, today_str):
-    """Best-effort YYYY-MM from a free-text scanned period (e.g.
-    'Week of 6-12 Jan 2026'). Falls back to the current month."""
+def _guess_pay_month(period_text, today_str, days=None):
+    """Best-effort YYYY-MM for the pay month.
+
+    Priority:
+      1. The scanned day dates themselves (e.g. '2026/06/01') — majority
+         month wins. This is the reliable source; period text like 'Jun-26'
+         is whatever Sonnet wrote and previously fell back to the CURRENT
+         month, which silently filtered every deviation out of the salaried
+         engine.
+      2. The period text ('June 2026', '2026-06', 'Jun-26').
+      3. The current month.
+    """
     import re as _re
+    # 1) Majority YYYY-MM from the scanned day dates
+    _counts = {}
+    for _d in (days or []):
+        _ds = str(_d.get("date", "") if isinstance(_d, dict) else _d)
+        _m = _re.search(r"(20\d{2})[/-](\d{1,2})[/-](\d{1,2})", _ds)
+        if _m:
+            _key = f"{int(_m.group(1)):04d}-{int(_m.group(2)):02d}"
+            _counts[_key] = _counts.get(_key, 0) + 1
+    if _counts:
+        return max(_counts, key=_counts.get)
+    # 2) Period text
     s = str(period_text or "")
     ym = _re.search(r"(20\d{2})[-/](\d{1,2})", s)
     if ym:
@@ -35,12 +55,19 @@ def _guess_pay_month(period_text, today_str):
     yr = _re.search(r"(20\d{2})", s)
     low = s.lower()
     mo = None
+    mo_key = None
     for k, v in months.items():
         if k in low:
             mo = v
+            mo_key = k
             break
     if yr and mo:
         return f"{int(yr.group(1)):04d}-{mo:02d}"
+    # 2-digit year written next to the month name (e.g. 'Jun-26')
+    if mo and mo_key:
+        y2 = _re.search(mo_key + r"[a-z]*\s*[-'/., ]\s*(\d{2})\b", low)
+        if y2:
+            return f"20{int(y2.group(1)):02d}-{mo:02d}"
     return str(today_str)[:7]
 
 
@@ -850,7 +877,11 @@ def register_timesheet_routes(app, db, login_required, Auth, render_page,
         else:
             ai_badge = '<span style="background:#6366f1;color:white;padding:4px 10px;border-radius:4px;font-size:12px;margin-left:10px;">AI</span>'
         
-        _pay_month_default = _guess_pay_month(period, today())
+        _all_batch_days = []
+        for _e in employees_data:
+            if isinstance(_e, dict):
+                _all_batch_days.extend(_e.get("days", []) or [])
+        _pay_month_default = _guess_pay_month(period, today(), days=_all_batch_days)
         _split_ot_js = "true" if (business and business.get("split_overtime")) else "false"
         content = f'''
         <div style="margin-bottom:20px;">
