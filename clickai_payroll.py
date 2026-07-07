@@ -2146,10 +2146,14 @@ def register_payroll_routes(app, db, login_required, Auth, render_page,
             gross = safe_float(result.get("gross", 0))
             # Hourly staff allowances are paid outside payroll like tips (owner
             # decision 2026-07-03); salaried staff keep it in gross as before.
+            # Travel allowance follows the same rule — it was missing from this
+            # path entirely, which silently dropped it off batch-posted payslips.
             if result.get("pay_model") == "hourly":
                 non_taxable_allow = 0.0
+                travel = 0.0
             else:
                 non_taxable_allow = safe_float(emp.get("non_taxable_allowance", 0))
+                travel = safe_float(emp.get("travel_allowance", 0))
             if gross <= 0:
                 skipped += 1
                 continue
@@ -2165,17 +2169,17 @@ def register_payroll_routes(app, db, login_required, Auth, render_page,
 
             _emp_age = safe_float(emp.get("age", 0))
             _medical_members = safe_float(emp.get("medical_members", 0))
-            paye = calc_monthly_paye(gross, _emp_age, pension, provident, _medical_members)
+            paye = calc_monthly_paye(gross, _emp_age, pension, provident, _medical_members, travel)
 
-            uif = min(gross * 0.01, 177.12)
+            uif = min((gross + travel * 0.8) * 0.01, 177.12)
             uif_employer = uif
-            sdl = gross * 0.01 if _sdl_applies else 0
+            sdl = (gross + travel * 0.8) * 0.01 if _sdl_applies else 0
             coida = gross * 0.01
 
             total_ded = paye + uif + medical + union_fees + pension + provident + loan + other_ded
-            net = (gross + non_taxable_allow) - total_ded
+            net = (gross + travel + non_taxable_allow) - total_ded
             total_employer = uif_employer + sdl + coida + pension_employer
-            total_cost = gross + non_taxable_allow + total_employer
+            total_cost = gross + travel + non_taxable_allow + total_employer
 
             payslip_id = generate_id()
             payslip = {
@@ -2186,7 +2190,8 @@ def register_payroll_routes(app, db, login_required, Auth, render_page,
                 "date": pay_date,
                 "period": pay_month,
                 "basic": round(gross, 2),
-                "gross": round(gross + non_taxable_allow, 2),
+                "gross": round(gross + travel + non_taxable_allow, 2),
+                "travel_allowance": round(travel, 2),
                 "non_taxable_allowance": round(non_taxable_allow, 2),
                 "hours_worked": round(safe_float(result.get("normal_hours", 0)), 2),
                 "overtime_hours": round(safe_float(result.get("overtime_hours", 0)), 2),
@@ -2238,10 +2243,10 @@ def register_payroll_routes(app, db, login_required, Auth, render_page,
                     pass
 
             # GL journal — same balanced pattern as payroll_run / payslip_create.
-            # Debit matches the payslip gross (engine gross + any non-taxable
-            # allowance) so the journal balances against net.
+            # Debit matches the payslip gross (engine gross + travel + any
+            # non-taxable allowance) so the journal balances against net.
             payroll_entries = [
-                {"account_code": gl(biz_id, "salaries"), "debit": round(gross + non_taxable_allow, 2), "credit": 0},
+                {"account_code": gl(biz_id, "salaries"), "debit": round(gross + travel + non_taxable_allow, 2), "credit": 0},
             ]
             employer_uif_amount = round(uif_employer, 2) if uif_employer > 0 else 0
             employer_sdl_amount = round(sdl, 2) if sdl > 0 else 0
