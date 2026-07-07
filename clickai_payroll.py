@@ -1657,6 +1657,10 @@ def register_payroll_routes(app, db, login_required, Auth, render_page,
             action_block = f'''
             <div class="card" style="margin-top:15px;">
                 <form method="POST" action="/payroll/payslip-create/{emp_id}">
+                    <input type="hidden" name="hours_off" value="{hours_off:g}">
+                    <input type="hidden" name="avg_hours" value="{avg_hours:g}">
+                    <input type="hidden" name="ot_hours" value="{ot_hours:g}">
+                    <input type="hidden" name="ot_mult" value="{ot_mult:g}">
                     <label style="display:block;margin-bottom:5px;font-weight:500;">Pay Date</label>
                     <input type="date" name="pay_date" value="{_today}" style="padding:10px;border-radius:6px;border:1px solid var(--border);background:var(--card);color:var(--text);margin-bottom:15px;">
                     <div style="display:flex;gap:10px;flex-wrap:wrap;">
@@ -1885,6 +1889,39 @@ def register_payroll_routes(app, db, login_required, Auth, render_page,
             flash(f"{emp.get('name')} is hourly - use Run Payroll or post their timesheet batch to pay worked hours", "error")
             return redirect("/payroll")
 
+        # Apply the SAME Hours Off/Late and manual overtime the preview showed
+        # (carried through the form) — Save must never drop what was previewed.
+        basic_full = basic
+        hours_off = max(0.0, safe_float(request.form.get("hours_off", 0)))
+        avg_hours = safe_float(request.form.get("avg_hours", 195)) or 195.0
+        hours_rate = basic_full / avg_hours if avg_hours > 0 else 0.0
+        hours_off_amount = round(hours_off * hours_rate, 2)
+        basic = max(0.0, basic - hours_off_amount)
+
+        ot_hours = max(0.0, safe_float(request.form.get("ot_hours", 0)))
+        ot_mult = safe_float(request.form.get("ot_mult", 1.5)) or 1.5
+        if ot_mult not in (1.5, 2.0):
+            ot_mult = 1.5
+        ot_rate = hours_rate
+        try:
+            from clickai_pay_conditions import get_conditions, derive_hourly_rate
+            _ot_cond = get_conditions(emp)
+            _ot_base = derive_hourly_rate(emp, _ot_cond, avg_hours)
+            if _ot_base > 0:
+                ot_rate = _ot_base
+        except Exception as _oe:
+            logger.error(f"[PAYSLIP CREATE] OT rate from pay conditions failed for {emp.get('name')}: {_oe}")
+        ot_amount = round(ot_hours * ot_rate * ot_mult, 2)
+        basic = basic + ot_amount
+
+        _pay_lines = []
+        if hours_off_amount > 0:
+            _pay_lines.append({"date": "", "label": f"Hours Off / Late ({hours_off:g} hrs)",
+                               "hours": -round(hours_off, 2), "amount": -hours_off_amount, "kind": "late"})
+        if ot_amount > 0:
+            _pay_lines.append({"date": "", "label": f"Overtime ({ot_hours:g} hrs @ {money(ot_rate)}/h x{ot_mult:g})",
+                               "hours": round(ot_hours, 2), "amount": ot_amount, "kind": "ot"})
+
         # Deductions from employee
         medical = safe_float(emp.get("medical_aid", 0))
         union_fees = safe_float(emp.get("union_fees", 0))
@@ -1960,7 +1997,8 @@ def register_payroll_routes(app, db, login_required, Auth, render_page,
             "total_deductions": round(total_ded, 2),
             "total_employer": round(total_employer, 2),
             "total_cost": round(total_cost, 2),
-            "net": round(net, 2)
+            "net": round(net, 2),
+            "pay_lines": _pay_lines
         }
 
         # Direct save (avoids created_at schema-cache issue)
