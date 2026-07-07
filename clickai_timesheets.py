@@ -136,10 +136,12 @@ def _apply_review_edits(form, employees_data, count, db=None, business=None):
                         _erec = db.get_one("employees", _eid)
                         if _erec:
                             # The reviewer picked this employee to correct a
-                            # misread name — store the real name on the batch
-                            # so the timesheet matches the payslip.
+                            # misread name — store the real name and id on the
+                            # batch so the timesheet matches the payslip and
+                            # the payslip preview knows who each row is.
                             if _erec.get("name"):
                                 emp["name"] = _erec.get("name")
+                            emp["employee_id"] = _eid
                             cond = _get_conditions(_erec)
                             if cond["schedule"].get("lunch_deducted"):
                                 lunch_min = int(float(cond["schedule"].get("lunch_minutes", 30) or 30))
@@ -905,8 +907,7 @@ def register_timesheet_routes(app, db, login_required, Auth, render_page,
             </div>
             
             <div style="display:flex;flex-wrap:wrap;gap:10px;margin-top:20px;padding-bottom:30px;">
-                <button type="submit" formaction="/timesheets/payslip-preview/{batch_id}" class="btn btn-primary" style="padding:14px 24px;flex:1;min-width:200px;">📄 Approve &amp; Build Payslips</button>
-                <button type="submit" class="btn btn-secondary" style="padding:14px 24px;">Approve &amp; Save (hours only)</button>
+                <button type="submit" class="btn btn-primary" style="padding:14px 24px;flex:1;min-width:200px;">Approve Timesheet</button>
                 <a href="/timesheets" class="btn btn-secondary" style="padding:14px 20px;">← Back</a>
                 <a href="/timesheets/discard/{batch_id}" class="btn" style="background:var(--red);color:white;padding:14px 20px;" onclick="return confirm('Discard this timesheet scan?')">🗑</a>
             </div>
@@ -1079,11 +1080,13 @@ def register_timesheet_routes(app, db, login_required, Auth, render_page,
         return render_page("View Timesheet", content, user, "timesheets")
     
     
-    @app.route("/timesheets/payslip-preview/<batch_id>", methods=["POST"])
+    @app.route("/timesheets/payslip-preview/<batch_id>", methods=["GET", "POST"])
     @login_required
     def timesheets_payslip_preview(batch_id):
         """Build payslip previews from a reviewed timesheet using each
-        employee's pay conditions. Shows the deviation lines before posting."""
+        employee's pay conditions. Shows the deviation lines before posting.
+        POST comes from the review form (applies the reviewer's edits);
+        GET comes from the Approve flow, reading the already-saved batch."""
         user = Auth.get_current_user()
         business = Auth.get_current_business()
         biz_id = business.get("id") if business else None
@@ -1098,7 +1101,7 @@ def register_timesheet_routes(app, db, login_required, Auth, render_page,
             from clickai_pay_conditions import build_payslip_gross
         except Exception as e:
             logger.error(f"[TIMESHEET PREVIEW] pay conditions module not available: {e}")
-            flash("Pay conditions module not loaded — using Approve & Save instead", "error")
+            flash("Pay conditions module not loaded — hours are saved, but payslips cannot be built", "error")
             return redirect(f"/timesheets/review/{batch_id}")
 
         raw_data = batch.get("data", "{}")
@@ -1110,32 +1113,55 @@ def register_timesheet_routes(app, db, login_required, Auth, render_page,
             employees_data = parsed.get("employees", [])
             wrapper = parsed
         # Pay month (YYYY-MM) comes from the review screen; fall back to today.
-        period = request.form.get("pay_month", "") or today()[:7]
+        period = (request.form.get("pay_month", "") or request.args.get("pay_month", "")
+                  or today()[:7])
         if len(period) < 7:
             period = today()[:7]
         period = period[:7]
 
-        count = int(request.form.get("count", 0))
+        if request.method == "POST":
+            count = int(request.form.get("count", 0))
 
-        # Apply the reviewer's In/Out edits, recompute, and persist back to the
-        # batch so the corrections stick and the post step reads the fixed data.
-        employees_data = _apply_review_edits(request.form, employees_data, count,
-                                             db=db, business=business)
-        wrapper["employees"] = employees_data
-        wrapper["period"] = wrapper.get("period", "") or batch.get("period", "")
-        # Never downgrade a processed batch back to approved — reopening a
-        # consumed batch is how the same hours end up paid twice.
-        _b_status = "processed" if batch.get("status") == "processed" else "approved"
+            # Apply the reviewer's In/Out edits, recompute, and persist back to the
+            # batch so the corrections stick and the post step reads the fixed data.
+            employees_data = _apply_review_edits(request.form, employees_data, count,
+                                                 db=db, business=business)
+            wrapper["employees"] = employees_data
+            wrapper["period"] = wrapper.get("period", "") or batch.get("period", "")
+            # Never downgrade a processed batch back to approved — reopening a
+            # consumed batch is how the same hours end up paid twice.
+            _b_status = "processed" if batch.get("status") == "processed" else "approved"
+            try:
+                db.save("timesheet_batches", {"id": batch_id, "data": json.dumps(wrapper), "status": _b_status})
+            except Exception as _se:
+                logger.error(f"[TIMESHEET PREVIEW] could not persist edits: {_se}")
+            _emp_ids = [request.form.get(f"emp_{i}", "") for i in range(count)]
+        else:
+            # GET (from the Approve flow): the batch was just saved by
+            # timesheets_process — read it as-is, using the employee ids the
+            # reviewer confirmed there.
+            count = len(employees_data)
+            _emp_ids = [(e.get("employee_id") or "") if isinstance(e, dict) else ""
+                        for e in employees_data]
+
+        # Deduction maths — the same helper the posting route uses, so the
+        # preview matches the posted payslip to the cent.
         try:
-            db.save("timesheet_batches", {"id": batch_id, "data": json.dumps(wrapper), "status": _b_status})
-        except Exception as _se:
-            logger.error(f"[TIMESHEET PREVIEW] could not persist edits: {_se}")
+            from clickai_payroll import calc_monthly_paye as _paye_fn
+        except Exception:
+            _paye_fn = None
+
+        def _sf(x):
+            try:
+                return float(x or 0)
+            except Exception:
+                return 0.0
 
         cards = ""
         hidden_emps = ""
 
         for i in range(count):
-            emp_id = request.form.get(f"emp_{i}", "")
+            emp_id = _emp_ids[i] if i < len(_emp_ids) else ""
             if not emp_id:
                 continue
             emp = db.get_one("employees", emp_id)
@@ -1147,6 +1173,44 @@ def register_timesheet_routes(app, db, login_required, Auth, render_page,
             employee_data = employees_data[i] if i < len(employees_data) else {"days": []}
             result = build_payslip_gross(emp, employee_data, period, business=business)
             model = result.get("pay_model", "salaried")
+
+            # Full payslip figures — identical formulas to /payroll/post-batch
+            # so what you see here is what gets posted, to the cent.
+            _gross = _sf(result.get("gross", 0))
+            if model == "hourly":
+                _travel = _non_tax = _rma = 0.0
+            else:
+                _travel = _sf(emp.get("travel_allowance", 0))
+                _non_tax = _sf(emp.get("non_taxable_allowance", 0))
+                _rma = _sf(emp.get("rma_funeral", 0))
+            _medical = _sf(emp.get("medical_aid", 0))
+            _union = _sf(emp.get("union_fees", 0))
+            _pension = _sf(emp.get("pension", 0))
+            _loan = _sf(emp.get("loan_deduction", 0))
+            _other_d = _sf(emp.get("other_deduction", 0))
+            _provident = _sf(emp.get("provident_fund_amount", 0))
+            _paye = 0.0
+            if _paye_fn:
+                try:
+                    _paye = _sf(_paye_fn(_gross, _sf(emp.get("age", 0)), _pension, _provident,
+                                         _sf(emp.get("medical_members", 0)), _travel))
+                except Exception as _pe:
+                    logger.error(f"[TIMESHEET PREVIEW] PAYE calc failed for {emp.get('name')}: {_pe}")
+            _uif = min((_gross + _travel * 0.8) * 0.01, 177.12)
+            _tot_ded = _paye + _uif + _medical + _union + _pension + _provident + _loan + _other_d + _rma
+            _tot_earn = _gross + _travel + _non_tax
+            _net = _tot_earn - _tot_ded
+            _ded_bits = [("PAYE", _paye), ("UIF", _uif), ("Medical", _medical), ("Union", _union),
+                         ("Pension", _pension), ("Provident", _provident), ("RMA", _rma),
+                         ("Loan", _loan), ("Other", _other_d)]
+            _ded_txt = " · ".join(f"{n} {money(v)}" for n, v in _ded_bits if v > 0.005) or "None"
+            _extra_rows = ""
+            if _travel > 0.005:
+                _extra_rows += (f'<tr><td style="padding:6px 0;"></td><td>Travel Allowance</td>'
+                                f'<td style="text-align:right;color:var(--green);">+{money(_travel)}</td></tr>')
+            if _non_tax > 0.005:
+                _extra_rows += (f'<tr><td style="padding:6px 0;"></td><td>Non-Taxable Allowance</td>'
+                                f'<td style="text-align:right;color:var(--green);">+{money(_non_tax)}</td></tr>')
 
             # Build the line rows
             if not result["is_setup"]:
@@ -1187,8 +1251,9 @@ def register_timesheet_routes(app, db, login_required, Auth, render_page,
                         <div style="font-size:12px;color:var(--text-muted);">{rate_note}</div>
                     </div>
                     <div style="text-align:right;">
-                        <div style="font-size:12px;color:var(--text-muted);">GROSS</div>
-                        <div style="font-size:24px;font-weight:bold;color:var(--green);">{money(result["gross"])}</div>
+                        <div style="font-size:12px;color:var(--text-muted);">TOTAL EARNINGS {money(_tot_earn)}</div>
+                        <div style="font-size:12px;color:var(--text-muted);">NET PAY</div>
+                        <div style="font-size:24px;font-weight:bold;color:var(--green);">{money(_net)}</div>
                     </div>
                 </div>
                 <table style="width:100%;font-size:13px;">
@@ -1197,8 +1262,9 @@ def register_timesheet_routes(app, db, login_required, Auth, render_page,
                         <th style="text-align:left;">{"Item" if model == "hourly" else "Adjustment"}</th>
                         <th style="text-align:right;">Amount</th>
                     </tr></thead>
-                    <tbody>{lines_html}</tbody>
+                    <tbody>{lines_html}{_extra_rows}</tbody>
                 </table>
+                <div style="margin-top:8px;font-size:12px;color:var(--text-muted);">Deductions: {_ded_txt} = -{money(_tot_ded)}</div>
                 <div style="margin-top:12px;">
                     <button type="submit" name="only" value="{emp_id}" class="btn btn-secondary" style="padding:8px 16px;font-size:13px;">Post this payslip</button>
                 </div>
@@ -1425,9 +1491,12 @@ def register_timesheet_routes(app, db, login_required, Auth, render_page,
         if errors:
             flash(f"Saved {saved} entries ({job_logged} linked to job cards). Errors: {', '.join(errors)}", "error")
         else:
-            flash(f"Saved {saved} timesheet entries ({job_logged} linked to job cards) — batch remains available for payroll", "success")
+            flash(f"Approved — {saved} timesheet entries saved ({job_logged} linked to job cards). Check the payslips below, then post.", "success")
         
-        return redirect("/payroll")
+        # Flow straight into the payslip preview so approving the timesheet
+        # leads to the payslips in one motion — no manual detour via Payroll.
+        _pm = (request.form.get("pay_month", "") or today()[:7])[:7]
+        return redirect(f"/timesheets/payslip-preview/{batch_id}?pay_month={_pm}")
     
     
     @app.route("/timesheets/discard/<batch_id>")
