@@ -141,6 +141,8 @@ def register_payroll_routes(app, db, login_required, Auth, render_page,
         for batch in staging_batches:
             batch_data = json.loads(batch.get("data", "{}")) if isinstance(batch.get("data"), str) else batch.get("data", {})
             emp_count = len(batch_data.get("employees", []))
+            emp_names = ", ".join(safe_string(e.get("name", "")) for e in batch_data.get("employees", [])
+                                  if isinstance(e, dict) and e.get("name"))
             period = batch.get("period", batch_data.get("period", "-"))
             status = batch.get("status", "pending")
             status_badge = '<span style="background:#f59e0b;color:white;padding:2px 8px;border-radius:4px;font-size:11px;">PENDING</span>' if status == "pending" else '<span style="background:#10b981;color:white;padding:2px 8px;border-radius:4px;font-size:11px;">APPROVED</span>'
@@ -159,7 +161,7 @@ def register_payroll_routes(app, db, login_required, Auth, render_page,
             staging_rows += f'''
             <tr style="cursor:pointer;" onclick="window.location='/timesheets/review/{batch.get("id")}'">
                 <td>{period}</td>
-                <td>{emp_count} employees</td>
+                <td>{emp_names or "—"} ({emp_count})</td>
                 <td>{ai_badge}</td>
                 <td>{status_badge}</td>
                 <td><a href="/timesheets/review/{batch.get("id")}" class="btn btn-secondary" style="padding:5px 10px;font-size:12px;">Review</a></td>
