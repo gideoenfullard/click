@@ -2151,9 +2151,11 @@ def register_payroll_routes(app, db, login_required, Auth, render_page,
             if result.get("pay_model") == "hourly":
                 non_taxable_allow = 0.0
                 travel = 0.0
+                rma_funeral = 0.0
             else:
                 non_taxable_allow = safe_float(emp.get("non_taxable_allowance", 0))
                 travel = safe_float(emp.get("travel_allowance", 0))
+                rma_funeral = safe_float(emp.get("rma_funeral", 0))
             if gross <= 0:
                 skipped += 1
                 continue
@@ -2176,7 +2178,7 @@ def register_payroll_routes(app, db, login_required, Auth, render_page,
             sdl = (gross + travel * 0.8) * 0.01 if _sdl_applies else 0
             coida = gross * 0.01
 
-            total_ded = paye + uif + medical + union_fees + pension + provident + loan + other_ded
+            total_ded = paye + uif + medical + union_fees + pension + provident + loan + other_ded + rma_funeral
             net = (gross + travel + non_taxable_allow) - total_ded
             total_employer = uif_employer + sdl + coida + pension_employer
             total_cost = gross + travel + non_taxable_allow + total_employer
@@ -2205,6 +2207,7 @@ def register_payroll_routes(app, db, login_required, Auth, render_page,
                 "pension_employee": round(pension, 2),
                 "pension_employer": round(pension_employer, 2),
                 "provident_fund": round(provident, 2),
+                "rma_funeral": round(rma_funeral, 2),
                 "loan_deduction": round(loan, 2),
                 "other_deduction": round(other_ded, 2),
                 "sdl": round(sdl, 2),
@@ -2259,7 +2262,7 @@ def register_payroll_routes(app, db, login_required, Auth, render_page,
                 payroll_entries.append({"account_code": "2210", "debit": 0, "credit": round(uif + employer_uif_amount, 2)})
             if employer_sdl_amount > 0:
                 payroll_entries.append({"account_code": "2220", "debit": 0, "credit": round(employer_sdl_amount, 2)})
-            other_deduction_total = round(medical + union_fees + pension + provident + loan + other_ded, 2)
+            other_deduction_total = round(medical + union_fees + pension + provident + loan + other_ded + rma_funeral, 2)
             if other_deduction_total > 0:
                 payroll_entries.append({"account_code": gl(biz_id, "loan"), "debit": 0, "credit": other_deduction_total})
             payroll_entries.append({"account_code": gl(biz_id, "bank"), "debit": 0, "credit": round(net, 2)})
