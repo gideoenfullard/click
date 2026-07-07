@@ -534,12 +534,12 @@ def compute_worked_hours(days, split_overtime=False, lunch_minutes=30,
     `lunch_threshold_min`, split overtime only when the business has
     split_overtime on, and bank Sunday time separately.
 
-    Overtime rule (owner decision 2026-07-06): when the employee's pay
-    conditions (`cond`) define a schedule for the day's weekday, overtime is
-    ONLY the time worked past the scheduled out-time — never hours-over-a-
-    daily-threshold. Working the full scheduled day (e.g. 07:30-16:30) is
-    all normal time. When there is no schedule for that day (or no `cond`),
-    the old flat `ot_threshold_hours` split applies as a fallback.
+    Overtime rule (owner decisions 2026-07-06): overtime exists ONLY when the
+    employee's pay conditions (`cond`) define a valid schedule for the day's
+    weekday AND the clock-out is past the scheduled out-time. Working the
+    full scheduled day (e.g. 07:30-16:30) is all normal time. With no (valid)
+    schedule for the day — not set up, unmatched, or an out-time at/before
+    the clock-in — there is NO overtime: all worked time is normal.
 
     Returns {days:[{date,in,out,hours,overtime,sunday,is_sunday,status}],
              total_hours, total_overtime, total_sunday}.
@@ -570,6 +570,12 @@ def compute_worked_hours(days, split_overtime=False, lunch_minutes=30,
                         _si, _so = _day_schedule(cond, wd)
                         if _so is not None:
                             sched_out_m = _so
+                # Sanity guard: a scheduled out-time at/before the clock-in
+                # time is invalid (e.g. 04:30 captured instead of 16:30) and
+                # would wrongly turn the WHOLE day into overtime. Treat it as
+                # no usable schedule for the day.
+                if sched_out_m is not None and sched_out_m <= in_m:
+                    sched_out_m = None
                 if sched_out_m is not None:
                     # OT only past the scheduled out-time
                     ot = max(0.0, (out_m - sched_out_m) / 60.0)
@@ -577,8 +583,11 @@ def compute_worked_hours(days, split_overtime=False, lunch_minutes=30,
                         ot = wh
                     hours = wh - ot
                 else:
-                    hours = min(wh, ot_threshold_hours)
-                    ot = max(0.0, wh - ot_threshold_hours)
+                    # No (valid) schedule for this day -> no OT at all;
+                    # all worked time counts as normal (owner decision
+                    # 2026-07-06: OT exists ONLY past a scheduled out-time).
+                    hours = wh
+                    ot = 0.0
             else:
                 hours = wh
                 ot = 0.0

@@ -909,12 +909,12 @@ def register_timesheet_routes(app, db, login_required, Auth, render_page,
             if(w<0) w=0;
             var wh=w/60;
             if(TS_SPLIT_OT){
-              if(schedOut!=null){
+              if(schedOut!=null && schedOut>ti){
                 var ot=Math.max(0,(to-schedOut)/60);
                 if(ot>wh) ot=wh;
                 return [wh-ot, ot];
               }
-              return [Math.min(wh,8), Math.max(0,wh-8)];
+              return [wh, 0];
             }
             return [wh,0];
           }
@@ -1724,17 +1724,21 @@ def register_timesheet_routes(app, db, login_required, Auth, render_page,
                 
                 # Overtime split is controlled per-business.
                 # When split_overtime is off, all worked hours count as normal.
-                # With a schedule: OT is ONLY time worked past the scheduled
-                # out-time. Without one: old flat 8-hour split (fallback).
+                # OT exists ONLY past a valid scheduled out-time (owner
+                # decision 2026-07-06). A sched_out at/before the clock-in is
+                # invalid (would turn the whole day into OT) and is ignored.
+                # No (valid) schedule -> no OT: all hours normal.
                 if split_overtime:
+                    if sched_out is not None and sched_out <= time_in:
+                        sched_out = None
                     if sched_out is not None:
                         overtime = max(0, (time_out - sched_out) / 60)
                         if overtime > worked_hours:
                             overtime = worked_hours
                         normal = worked_hours - overtime
                     else:
-                        normal = min(worked_hours, 8)
-                        overtime = max(0, worked_hours - 8)
+                        normal = worked_hours
+                        overtime = 0
                 else:
                     normal = worked_hours
                     overtime = 0
@@ -1913,8 +1917,11 @@ def register_timesheet_routes(app, db, login_required, Auth, render_page,
         business = Auth.get_current_business()
         biz_id = business.get("id") if business else None
         
-        # Get employees
+        # Get employees — always alphabetical so the cards and dropdowns keep
+        # a stable order (the database returns rows in a different order on
+        # every request, which made employees jump around the page).
         employees = db.get("employees", {"business_id": biz_id}) if biz_id else []
+        employees.sort(key=lambda e: (e.get("name") or "").lower())
         
         # Get this week's timesheet entries
         today_date = datetime.now().date()
@@ -1992,10 +1999,11 @@ def register_timesheet_routes(app, db, login_required, Auth, render_page,
             except Exception:
                 _emps = []
             st = b.get("status", "")
+            _names = ", ".join(safe_string(e.get("name", "")) for e in _emps if isinstance(e, dict) and e.get("name"))
             archive_rows += f'''
             <tr style="cursor:pointer;" onclick="window.location='/timesheets/view/{b.get("id")}'">
                 <td style="padding:8px;">{safe_string(b.get("period","") or "—")}</td>
-                <td style="padding:8px;">{len(_emps)}</td>
+                <td style="padding:8px;">{_names or "—"} ({len(_emps)})</td>
                 <td style="padding:8px;"><span style="color:{_status_colour.get(st,'var(--text-muted)')};">{_status_label.get(st, st or "—")}</span></td>
                 <td style="padding:8px;color:var(--text-muted);">{str(b.get("created_at",""))[:10]}</td>
                 <td style="padding:8px;text-align:right;"><a href="/timesheets/view/{b.get("id")}" class="btn btn-secondary" style="padding:5px 12px;font-size:12px;">View</a></td>
