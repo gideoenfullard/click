@@ -1656,11 +1656,17 @@ def register_payroll_routes(app, db, login_required, Auth, render_page,
         else:
             action_block = f'''
             <div class="card" style="margin-top:15px;">
-                <form method="POST" action="/payroll/payslip-create/{emp_id}">
-                    <input type="hidden" name="hours_off" value="{hours_off:g}">
-                    <input type="hidden" name="avg_hours" value="{avg_hours:g}">
-                    <input type="hidden" name="ot_hours" value="{ot_hours:g}">
-                    <input type="hidden" name="ot_mult" value="{ot_mult:g}">
+                <form method="POST" action="/payroll/payslip-create/{emp_id}" onsubmit="
+                    var g=function(i){{var e=document.getElementById(i);return e?e.value:null;}};
+                    if(g('pv_hours_off')!==null) document.getElementById('cr_hours_off').value=g('pv_hours_off');
+                    if(g('pv_avg_hours')!==null) document.getElementById('cr_avg_hours').value=g('pv_avg_hours');
+                    if(g('pv_ot_hours')!==null) document.getElementById('cr_ot_hours').value=g('pv_ot_hours');
+                    if(g('pv_ot_mult')!==null) document.getElementById('cr_ot_mult').value=g('pv_ot_mult');
+                    return true;">
+                    <input type="hidden" id="cr_hours_off" name="hours_off" value="{hours_off:g}">
+                    <input type="hidden" id="cr_avg_hours" name="avg_hours" value="{avg_hours:g}">
+                    <input type="hidden" id="cr_ot_hours" name="ot_hours" value="{ot_hours:g}">
+                    <input type="hidden" id="cr_ot_mult" name="ot_mult" value="{ot_mult:g}">
                     <label style="display:block;margin-bottom:5px;font-weight:500;">Pay Date</label>
                     <input type="date" name="pay_date" value="{_today}" style="padding:10px;border-radius:6px;border:1px solid var(--border);background:var(--card);color:var(--text);margin-bottom:15px;">
                     <div style="display:flex;gap:10px;flex-wrap:wrap;">
@@ -1710,22 +1716,22 @@ def register_payroll_routes(app, db, login_required, Auth, render_page,
             <form method="GET" action="/payroll/payslip-preview/{emp_id}" style="display:flex;gap:15px;align-items:flex-end;flex-wrap:wrap;">
                 <div>
                     <label style="display:block;margin-bottom:5px;font-weight:500;font-size:13px;">Hours Off / Late</label>
-                    <input type="number" name="hours_off" step="0.25" min="0" value="{hours_off:g}" style="width:120px;padding:10px;border-radius:6px;border:1px solid var(--border);background:var(--card);color:var(--text);">
+                    <input type="number" id="pv_hours_off" name="hours_off" step="0.25" min="0" value="{hours_off:g}" style="width:120px;padding:10px;border-radius:6px;border:1px solid var(--border);background:var(--card);color:var(--text);">
                 </div>
                 <div>
                     <label style="display:block;margin-bottom:5px;font-weight:500;font-size:13px;">Hours Overtime</label>
-                    <input type="number" name="ot_hours" step="0.25" min="0" value="{ot_hours:g}" style="width:120px;padding:10px;border-radius:6px;border:1px solid var(--border);background:var(--card);color:var(--text);">
+                    <input type="number" id="pv_ot_hours" name="ot_hours" step="0.25" min="0" value="{ot_hours:g}" style="width:120px;padding:10px;border-radius:6px;border:1px solid var(--border);background:var(--card);color:var(--text);">
                 </div>
                 <div>
                     <label style="display:block;margin-bottom:5px;font-weight:500;font-size:13px;">OT Rate</label>
-                    <select name="ot_mult" style="width:100px;padding:10px;border-radius:6px;border:1px solid var(--border);background:var(--card);color:var(--text);">
+                    <select id="pv_ot_mult" name="ot_mult" style="width:100px;padding:10px;border-radius:6px;border:1px solid var(--border);background:var(--card);color:var(--text);">
                         <option value="1.5" {"selected" if ot_mult == 1.5 else ""}>1.5x</option>
                         <option value="2" {"selected" if ot_mult == 2.0 else ""}>2x</option>
                     </select>
                 </div>
                 <div>
                     <label style="display:block;margin-bottom:5px;font-weight:500;font-size:13px;">Avg Working Hours / Month</label>
-                    <input type="number" name="avg_hours" step="0.01" min="1" value="{avg_hours:g}" style="width:140px;padding:10px;border-radius:6px;border:1px solid var(--border);background:var(--card);color:var(--text);">
+                    <input type="number" id="pv_avg_hours" name="avg_hours" step="0.01" min="1" value="{avg_hours:g}" style="width:140px;padding:10px;border-radius:6px;border:1px solid var(--border);background:var(--card);color:var(--text);">
                 </div>
                 <button type="submit" class="btn btn-secondary">Recalculate</button>
                 <p style="color:var(--text-muted);font-size:12px;margin:0;flex-basis:100%;">Full month with all deductions as if fully worked. Hours off/late are deducted at basic salary ÷ average working hours per month ({money(hours_rate)}/hour).</p>
