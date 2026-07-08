@@ -28679,6 +28679,21 @@ def customer_view(customer_id):
         '''
     
     receipts_html = ""
+    # Cash already allocated per receipt (payment_allocations are the source of
+    # truth). Banking receipts that settled invoices directly carry no
+    # allocation rows — those invoices hold the receipt's reference in
+    # payment_reference, so such receipts are treated as consumed.
+    _alloc_cash_by_receipt = {}
+    for _a in _all_allocs:
+        _arid = _a.get("receipt_id", "")
+        if not _arid:
+            continue
+        _ac = _a.get("cash_amount", None)
+        if _ac is None:
+            _ac = float(_a.get("amount", 0) or 0) - float(_a.get("discount", 0) or 0)
+        _alloc_cash_by_receipt[_arid] = round(_alloc_cash_by_receipt.get(_arid, 0) + float(_ac or 0), 2)
+    _inv_pay_refs = {str(_i.get("payment_reference") or "").strip()
+                     for _i in invoices if _i.get("payment_reference")}
     for r in receipts[:200]:
         _r_ref = r.get("reference", "")
         _r_source = r.get("source", "")
@@ -28693,6 +28708,16 @@ def customer_view(customer_id):
         
         _rcpt_id = r.get("id", "")
         _rcpt_amt_str = money(r.get("amount", 0))
+        # On-account remainder: receipt cash minus what its allocations cover.
+        # A banking receipt whose reference sits on invoices was applied there.
+        _r_unalloc = round(float(r.get("amount", 0) or 0) - _alloc_cash_by_receipt.get(_rcpt_id, 0.0), 2)
+        _r_consumed = bool((_r_ref or "").strip()) and (_r_ref or "").strip() in _inv_pay_refs
+        _alloc_btn = ""
+        if can_see_balances and _rcpt_id and _r_unalloc > 0.01 and not _r_consumed:
+            _alloc_btn = (
+                f'<button onclick="cpOpenAllocate(\'{_rcpt_id}\', {_r_unalloc})" '
+                f'style="padding:2px 8px;font-size:10px;background:var(--primary);color:#fff;border:none;border-radius:4px;cursor:pointer;margin-right:4px;">Allocate</button>'
+            )
         _reverse_btn = ""
         if can_see_balances and _rcpt_id:
             _reverse_btn = (
@@ -28708,7 +28733,7 @@ def customer_view(customer_id):
             <td style="color:var(--green);">{money(r.get("amount", 0)) if can_see_balances else "---"}</td>
             <td>{r.get("method", "-")}</td>
             <td>{_r_source_html}</td>
-            <td>{_reverse_btn}</td>
+            <td>{_alloc_btn}{_reverse_btn}</td>
         </tr>
         '''
     
@@ -28788,7 +28813,7 @@ def customer_view(customer_id):
             <button onclick="showEmailModal()" class="btn btn-secondary">📨 Email Group</button>
             <a href="/invoice/new?customer_id={customer_id}&mode=freetext" class="btn btn-secondary">➕ Free Text Invoice</a>
             <a href="/invoice/new?customer_id={customer_id}" class="btn btn-primary">➕ New Invoice</a>
-            {f'<button onclick="document.getElementById(' + chr(39) + 'paymentModal' + chr(39) + ').style.display=' + chr(39) + 'flex' + chr(39) + '" class="btn btn-primary" style="background:#16a34a;">💰 Record Payment</button>' if can_see_balances else ''}
+            {f'<button onclick="cpOpenNew()" class="btn btn-primary" style="background:#16a34a;">💰 Record Payment</button>' if can_see_balances else ''}
             {f'<a href="/customer/{customer_id}/opening-balance" class="btn btn-secondary">Add Opening Balance</a>' if can_see_balances else ''}
         </div>
     </div>
@@ -29236,6 +29261,36 @@ def customer_view(customer_id):
     // ──────────────────────────────────────────────────────────
     // RECORD PAYMENT — receive money from customer
     // ──────────────────────────────────────────────────────────
+    function cpOpenNew() {{
+        // Normal Record Payment mode — clean slate
+        var rid = document.getElementById('cpReceiptId');
+        if (rid) rid.value = '';
+        var amt = document.getElementById('cpAmount');
+        if (amt) {{ amt.readOnly = false; }}
+        var t = document.getElementById('cpModalTitle');
+        if (t) t.textContent = '💰 Record Payment';
+        var b = document.getElementById('cpBtn');
+        if (b) b.textContent = 'Receive Now';
+        document.getElementById('paymentModal').style.display = 'flex';
+        cpUpdateAllocSummary();
+    }}
+    
+    function cpOpenAllocate(receiptId, unalloc) {{
+        // Allocate an EXISTING on-account payment across invoices. The money
+        // was already received (and journalled) — the amount is locked to the
+        // unallocated remainder; only allocation + Discount Allowed happen.
+        var rid = document.getElementById('cpReceiptId');
+        if (rid) rid.value = receiptId;
+        var amt = document.getElementById('cpAmount');
+        if (amt) {{ amt.value = unalloc.toFixed(2); amt.readOnly = true; }}
+        var t = document.getElementById('cpModalTitle');
+        if (t) t.textContent = 'Allocate On-Account Payment';
+        var b = document.getElementById('cpBtn');
+        if (b) b.textContent = 'Allocate & Credit';
+        document.getElementById('paymentModal').style.display = 'flex';
+        cpUpdateAllocSummary();
+    }}
+    
     function submitCustomerPayment() {{
         const btn = document.getElementById('cpBtn');
         btn.disabled = true;
@@ -29259,6 +29314,7 @@ def customer_view(customer_id):
             method: document.getElementById('cpMethod').value,
             date: document.getElementById('cpDate').value,
             reference: document.getElementById('cpRef').value.trim(),
+            receipt_id: (document.getElementById('cpReceiptId') ? document.getElementById('cpReceiptId').value : ''),
             allocations: cpCollectAllocations()
         }};
         
@@ -29400,9 +29456,10 @@ def customer_view(customer_id):
     <div id="paymentModal" style="display:none;position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.7);z-index:9999;justify-content:center;align-items:center;">
         <div style="background:var(--card);border-radius:12px;padding:30px;width:90%;max-width:560px;max-height:90vh;overflow-y:auto;border:1px solid var(--border);">
             <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:20px;">
-                <h2 style="margin:0;">💰 Record Payment</h2>
+                <h2 style="margin:0;" id="cpModalTitle">💰 Record Payment</h2>
                 <button onclick="document.getElementById('paymentModal').style.display='none'" style="background:none;border:none;color:var(--text-muted);font-size:24px;cursor:pointer;">&times;</button>
             </div>
+            <input type="hidden" id="cpReceiptId" value="">
             <p style="color:var(--text-muted);margin-bottom:16px;font-size:13px;">Receive payment from <strong>{safe_string(customer.get("name", ""))}</strong> — balance: <strong style="color:var(--orange);">{money(balance) if can_see_balances else "---"}</strong></p>
             
             <div style="display:flex;flex-direction:column;gap:14px;">
@@ -55192,80 +55249,161 @@ def api_customer_record_payment():
             total_disc_net = round(total_disc_net + _dnet, 2)
             total_disc_vat = round(total_disc_vat + _dvat, 2)
         
-        # Save receipt record
-        # NOTE: receipts schema uses 'method' not 'payment_method'.
-        # Adding both causes Supabase to reject the whole record on installs
-        # where 'payment_method' column doesn't exist.
-        receipt_id = generate_id()
-        receipt = {
-            "id": receipt_id,
-            "business_id": biz_id,
-            "customer_id": customer_id,
-            "customer_name": customer_name,
-            "amount": round(amount, 2),
-            "discount_total": round(total_disc, 2),
-            "date": pay_date,
-            "method": method,
-            "reference": reference,
-            "source": "manual",
-            "created_at": now()
-        }
+        # ── On-account allocation mode: an EXISTING receipt is being spread
+        # across invoices. The cash was already received and journalled when
+        # the money came in (e.g. banking) — so no new receipt and no new cash
+        # journal below; only allocations plus any Discount Allowed.
+        _alloc_receipt_id = (data.get("receipt_id", "") or "").strip()
+        _alloc_receipt = None
+        _unalloc = 0.0
+        if _alloc_receipt_id:
+            _alloc_receipt = db.get_one("receipts", _alloc_receipt_id)
+            if not _alloc_receipt or _alloc_receipt.get("business_id") != biz_id:
+                return jsonify({"success": False, "error": "Payment (receipt) not found"})
+            _prev_allocs_r = db.get("payment_allocations", {"business_id": biz_id, "receipt_id": _alloc_receipt_id}) or []
+            _prev_cash = 0.0
+            for _pa in _prev_allocs_r:
+                _pc = _pa.get("cash_amount", None)
+                if _pc is None:
+                    _pc = float(_pa.get("amount", 0) or 0) - float(_pa.get("discount", 0) or 0)
+                _prev_cash += float(_pc or 0)
+            _unalloc = round(float(_alloc_receipt.get("amount", 0) or 0) - _prev_cash, 2)
+            if _unalloc <= 0.01:
+                return jsonify({"success": False, "error": "This payment is already fully allocated"})
+            if not _processed:
+                return jsonify({"success": False, "error": "Tick at least one invoice to allocate"})
+            _req_cash = round(sum(_p["cash"] for _p in _processed), 2)
+            if _req_cash > _unalloc + 0.01:
+                return jsonify({"success": False, "error": f"Only R{_unalloc:,.2f} of this payment is unallocated — reduce the allocations"})
         
-        success, err = db.save("receipts", receipt)
-        if not success:
-            return jsonify({"success": False, "error": f"Failed to save payment: {err}"})
-        
-        # GL journal: Credit Debtors, Debit Bank/Cash
-        # (opposite of an invoice posting — money in, debt down)
-        rounded = round(amount, 2)
-        ref_label = reference or f"REC-{receipt_id[:8]}"
-        
-        # Choose bank account based on method
-        if method == "cash":
-            bank_code = gl(biz_id, "cash")
-        elif method == "card":
-            bank_code = "1010"  # Card Clearing (card payment clears to bank on settlement)
-        else:
-            bank_code = gl(biz_id, "bank")
-        
-        _disc_allow_code = None
-        if total_disc_net > 0:
+        if _alloc_receipt is not None:
+            # ── On-account allocation of an EXISTING receipt ──
+            # The cash journal (Bank DR / Debtors CR) was already posted when
+            # the money was received — do NOT post it again and do NOT create
+            # a new receipt. Only the settlement discount needs a journal:
+            #   DR Discount Allowed (net) · DR VAT Output (vat) · CR Debtors (total)
+            receipt_id = _alloc_receipt_id
+            rounded = round(amount, 2)
+            ref_label = (_alloc_receipt.get("reference") or "").strip() or f"ALLOC-{receipt_id[:8]}"
+            gl_entries = []
+            if total_disc > 0.005:
+                try:
+                    _disc_allow_code = ensure_gl_account(biz_id, "discount_allowed", "Discount Allowed", "expense", "Expenses")
+                except Exception:
+                    _disc_allow_code = gl(biz_id, "discount_allowed")
+                gl_entries = [
+                    {"account_code": _disc_allow_code, "debit": round(total_disc_net, 2), "credit": 0},
+                ]
+                if total_disc_vat > 0:
+                    gl_entries.append({"account_code": gl(biz_id, "vat_output"), "debit": round(total_disc_vat, 2), "credit": 0})
+                gl_entries.append({"account_code": gl(biz_id, "debtors"), "debit": 0, "credit": round(total_disc, 2)})
+                try:
+                    create_journal_entry(biz_id, pay_date,
+                                         f"Discount Allowed - {customer_name}",
+                                         ref_label, gl_entries)
+                    logger.info(f"[CUST ALLOC] Discount GL: net {total_disc_net}, vat {total_disc_vat}, debtors CR {total_disc} for {customer_name}")
+                except Exception as je_err:
+                    logger.error(f"[CUST ALLOC] Discount GL error: {je_err}")
+                # The receipt now also settles the discount — the customer
+                # balance formula (amount + discount_total) stays correct.
+                try:
+                    db.update("receipts", receipt_id,
+                              {"discount_total": round(float(_alloc_receipt.get("discount_total", 0) or 0) + total_disc, 2)},
+                              biz_id)
+                except Exception as _rd_err:
+                    logger.error(f"[CUST ALLOC] receipt discount update failed: {_rd_err}")
+            # Audit trail for the allocation
             try:
-                _disc_allow_code = ensure_gl_account(biz_id, "discount_allowed", "Discount Allowed", "expense", "Expenses")
+                if log_allocation:
+                    log_allocation(
+                        business_id=biz_id, allocation_type="payment", source_table="receipts", source_id=receipt_id,
+                        description=f"On-account payment allocated - {customer_name}",
+                        amount=round(sum(_p["cash"] for _p in _processed), 2),
+                        gl_entries=gl_entries,
+                        category="Customer Payment", category_code=gl(biz_id, "debtors"),
+                        customer_name=customer_name, payment_method=(_alloc_receipt.get("method") or method),
+                        reference=ref_label, transaction_date=pay_date,
+                        created_by=user.get("id", "") if user else "",
+                        created_by_name=user.get("name", "") if user else ""
+                    )
             except Exception:
-                _disc_allow_code = gl(biz_id, "discount_allowed")
-        gl_entries = [
-            {"account_code": bank_code,             "debit": rounded, "credit": 0},
-            {"account_code": gl(biz_id, "debtors"), "debit": 0,       "credit": round(rounded + total_disc, 2)},
-        ]
-        if total_disc_net > 0:
-            gl_entries.append({"account_code": _disc_allow_code, "debit": round(total_disc_net, 2), "credit": 0})
-        if total_disc_vat > 0:
-            gl_entries.append({"account_code": gl(biz_id, "vat_output"), "debit": round(total_disc_vat, 2), "credit": 0})
-        try:
-            create_journal_entry(biz_id, pay_date,
-                                 f"Payment from {customer_name}",
-                                 ref_label, gl_entries)
-            logger.info(f"[CUST PAY] GL: Bank DR:{rounded}, Debtors CR:{round(rounded + total_disc, 2)}, disc_net:{total_disc_net}, disc_vat:{total_disc_vat} for {customer_name}")
-        except Exception as je_err:
-            logger.error(f"[CUST PAY] GL entry error (payment still saved): {je_err}")
+                pass
+        else:
+            # Save receipt record
+            # NOTE: receipts schema uses 'method' not 'payment_method'.
+            # Adding both causes Supabase to reject the whole record on installs
+            # where 'payment_method' column doesn't exist.
+            receipt_id = generate_id()
+            receipt = {
+                "id": receipt_id,
+                "business_id": biz_id,
+                "customer_id": customer_id,
+                "customer_name": customer_name,
+                "amount": round(amount, 2),
+                "discount_total": round(total_disc, 2),
+                "date": pay_date,
+                "method": method,
+                "reference": reference,
+                "source": "manual",
+                "created_at": now()
+            }
         
-        # Audit trail
-        try:
-            if log_allocation:
-                log_allocation(
-                    business_id=biz_id, allocation_type="payment", source_table="receipts", source_id=receipt_id,
-                    description=f"Payment from {customer_name}",
-                    amount=rounded,
-                    gl_entries=gl_entries,
-                    category="Customer Payment", category_code=gl(biz_id, "debtors"),
-                    customer_name=customer_name, payment_method=method,
-                    reference=reference or ref_label, transaction_date=pay_date,
-                    created_by=user.get("id", "") if user else "",
-                    created_by_name=user.get("name", "") if user else ""
-                )
-        except Exception:
-            pass
+            success, err = db.save("receipts", receipt)
+            if not success:
+                return jsonify({"success": False, "error": f"Failed to save payment: {err}"})
+        
+            # GL journal: Credit Debtors, Debit Bank/Cash
+            # (opposite of an invoice posting — money in, debt down)
+            rounded = round(amount, 2)
+            ref_label = reference or f"REC-{receipt_id[:8]}"
+        
+            # Choose bank account based on method
+            if method == "cash":
+                bank_code = gl(biz_id, "cash")
+            elif method == "card":
+                bank_code = "1010"  # Card Clearing (card payment clears to bank on settlement)
+            else:
+                bank_code = gl(biz_id, "bank")
+        
+            _disc_allow_code = None
+            if total_disc_net > 0:
+                try:
+                    _disc_allow_code = ensure_gl_account(biz_id, "discount_allowed", "Discount Allowed", "expense", "Expenses")
+                except Exception:
+                    _disc_allow_code = gl(biz_id, "discount_allowed")
+            gl_entries = [
+                {"account_code": bank_code,             "debit": rounded, "credit": 0},
+                {"account_code": gl(biz_id, "debtors"), "debit": 0,       "credit": round(rounded + total_disc, 2)},
+            ]
+            if total_disc_net > 0:
+                gl_entries.append({"account_code": _disc_allow_code, "debit": round(total_disc_net, 2), "credit": 0})
+            if total_disc_vat > 0:
+                gl_entries.append({"account_code": gl(biz_id, "vat_output"), "debit": round(total_disc_vat, 2), "credit": 0})
+            try:
+                create_journal_entry(biz_id, pay_date,
+                                     f"Payment from {customer_name}",
+                                     ref_label, gl_entries)
+                logger.info(f"[CUST PAY] GL: Bank DR:{rounded}, Debtors CR:{round(rounded + total_disc, 2)}, disc_net:{total_disc_net}, disc_vat:{total_disc_vat} for {customer_name}")
+            except Exception as je_err:
+                logger.error(f"[CUST PAY] GL entry error (payment still saved): {je_err}")
+        
+            # Audit trail
+            try:
+                if log_allocation:
+                    log_allocation(
+                        business_id=biz_id, allocation_type="payment", source_table="receipts", source_id=receipt_id,
+                        description=f"Payment from {customer_name}",
+                        amount=rounded,
+                        gl_entries=gl_entries,
+                        category="Customer Payment", category_code=gl(biz_id, "debtors"),
+                        customer_name=customer_name, payment_method=method,
+                        reference=reference or ref_label, transaction_date=pay_date,
+                        created_by=user.get("id", "") if user else "",
+                        created_by_name=user.get("name", "") if user else ""
+                    )
+            except Exception:
+                pass
+        
         
         # ── Save invoice allocations. Each invoice is settled by cash + discount
         # (so it clears in full); the discount was booked in the journal above. ──
@@ -55298,7 +55436,14 @@ def api_customer_record_payment():
             recalc_invoice_status(biz_id, _p["id"])
         
         unallocated = round(rounded - allocated_cash, 2)
-        if allocated_count > 0:
+        if _alloc_receipt is not None:
+            _msg = f"Allocated R{allocated_cash:,.2f} of the on-account payment to {allocated_count} invoice(s)"
+            if total_disc > 0.005:
+                _msg += f", R{total_disc:,.2f} Discount Allowed credited"
+            _left = round(_unalloc - allocated_cash, 2)
+            if _left > 0.005:
+                _msg += f", R{_left:,.2f} still on account"
+        elif allocated_count > 0:
             _msg = (f"Payment of R{amount:,.2f} from {customer_name} recorded "
                     f"({method.upper()}) — allocated to {allocated_count} invoice(s)")
             if total_disc > 0.005:
