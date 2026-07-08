@@ -1886,7 +1886,7 @@ def register_payroll_routes(app, db, login_required, Auth, render_page,
         existing = [p for p in existing if str(p.get("date") or "")[:7] == _pay_month]
         if existing:
             flash(f"A payslip for {emp.get('name')} in {_pay_month} already exists", "error")
-            return redirect(f"/payslip/{existing[0].get('id')}")
+            return redirect(f"/payslip/{existing[0].get('id')}?dupe={_pay_month}")
 
         basic = safe_float(emp.get("basic_salary", 0))
         if basic <= 0:
@@ -2114,6 +2114,7 @@ def register_payroll_routes(app, db, login_required, Auth, render_page,
         _sdl_applies = _total_annual_payroll > 500000
 
         posted = 0
+        _last_payslip_id = None
         skipped = 0
         skipped_names = []
         errors = []
@@ -2273,9 +2274,10 @@ def register_payroll_routes(app, db, login_required, Auth, render_page,
                 logger.error(f"[POST BATCH] Journal entry failed for {emp.get('name')}: {e}")
 
             posted += 1
+            _last_payslip_id = payslip_id
 
-        # Single-employee post: stay on review so the rest can still be posted.
-        # If every employee on this batch now has a payslip for the month the
+        # Single-employee post: open the payslip that was just created. If
+        # every employee on this batch now has a payslip for the month the
         # batch is fully consumed — mark it processed so a later payroll run
         # cannot pay the same hours again.
         if only:
@@ -2301,6 +2303,8 @@ def register_payroll_routes(app, db, login_required, Auth, render_page,
                 if errors:
                     msg += f" — errors: {', '.join(errors)}"
                 flash(msg, "success")
+                if _last_payslip_id:
+                    return redirect(f"/payslip/{_last_payslip_id}")
             else:
                 msg = "Nothing posted"
                 if skipped:
@@ -2812,6 +2816,17 @@ def register_payroll_routes(app, db, login_required, Auth, render_page,
         if not payslip:
             return redirect("/payroll")
         
+        # Opened via the duplicate guard: nothing new was created — make that
+        # impossible to miss, or an old payslip looks like dropped figures.
+        _dupe_month = request.args.get("dupe", "").strip()
+        dupe_banner = ""
+        if _dupe_month:
+            dupe_banner = (f'<div style="background:#7f1d1d;border:2px solid #ef4444;color:#fff;'
+                           f'padding:16px 20px;border-radius:8px;margin-bottom:16px;font-size:15px;">'
+                           f'<strong>NO NEW PAYSLIP WAS CREATED.</strong> This is the EXISTING payslip '
+                           f'for {_dupe_month} — your new figures were NOT applied to it. '
+                           f'To recreate it, delete this payslip first, then post again.</div>')
+        
         biz_name = business.get("name", "Business") if business else "Business"
         _emp_fund = db.get_one("employees", payslip.get("employee_id")) if payslip.get("employee_id") else None
         fund_label = _industry_fund_label(_emp_fund.get("provident_fund") if _emp_fund else None)
@@ -2956,6 +2971,7 @@ def register_payroll_routes(app, db, login_required, Auth, render_page,
             logger.error(f"[PAYSLIP] YTD calc failed: {_e}")
 
         content = f'''
+        {dupe_banner}
         <style>
             .print-only {{ display: none; }}
             @media print {{
