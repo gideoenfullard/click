@@ -929,6 +929,10 @@ def register_banking_routes(app, db, login_required, Auth, render_page,
                 }}
                 
                 let html = '<div style="font-size:11px;color:var(--text-muted);margin-bottom:4px;font-weight:600;">Allocate against invoices:</div>';
+                // Customer's Discount Allowed % (from customer setup) — shown on
+                // every due invoice and used for the Total Due after discount.
+                const discPct = parseFloat(data.discount_percent || 0) || 0;
+                container.setAttribute('data-disc-pct', discPct);
                 // Statement match: render smallest-outstanding first so the LARGEST invoice is last.
                 // On confirm the payment is applied in order and the last (largest) invoice cleanly
                 // absorbs the settlement-discount shortfall (keeps it within the per-invoice guard).
@@ -955,10 +959,15 @@ def register_banking_routes(app, db, login_required, Auth, render_page,
                             ageNote = `<span style="color:var(--orange);font-size:10px;">${{inv.days_old}}d · over 30 days</span>`;
                         }}
                     }}
+                    // After the customer's Discount Allowed % (from customer setup)
+                    const afterDisc = Math.round(outstanding * (1 - discPct / 100) * 100) / 100;
+                    const discNote = discPct > 0
+                        ? `<span style="color:#22d3ee;font-size:10px;display:block;">less ${{discPct}}% disc → R${{afterDisc.toLocaleString('en-ZA', {{minimumFractionDigits:2}})}}</span>`
+                        : '';
                     html += `<label style="display:flex;align-items:center;gap:8px;padding:5px 8px;border-radius:6px;cursor:pointer;font-size:12px;${{rowStyle}}margin-bottom:3px;">
                         <input type="checkbox" class="invCheck_${{txnId}}" value="${{inv.id}}" data-num="${{inv.number}}" data-amount="${{outstanding}}" onchange="srUpdateShortfall('${{txnId}}')" style="accent-color:var(--green);"${{checked}}>
                         <span style="flex:1;">${{inv.number}} <span style="color:var(--text-muted);">(${{inv.date}})</span> ${{ageNote}}</span>
-                        <span style="font-weight:700;">R${{outstanding.toLocaleString('en-ZA', {{minimumFractionDigits:2}})}}</span>
+                        <span style="font-weight:700;text-align:right;">R${{outstanding.toLocaleString('en-ZA', {{minimumFractionDigits:2}})}}${{discNote}}</span>
                     </label>`;
                 }}
                 // Live shortfall panel — appears when ticked invoices exceed the payment.
@@ -969,6 +978,9 @@ def register_banking_routes(app, db, login_required, Auth, render_page,
                         <span>Credit the shortfall as Discount Allowed (customer will be credited, closes the invoice)</span>
                     </label>
                 </div>`;
+                // Running totals: due total of the ticked invoices and the same
+                // total after the customer's Discount Allowed %.
+                html += `<div id="totalsBox_${{txnId}}" style="margin-top:6px;padding:8px 10px;border-radius:6px;background:rgba(34,211,238,0.08);border:1px solid rgba(34,211,238,0.3);font-size:12px;font-weight:700;color:var(--text);"></div>`;
                 container.innerHTML = html;
                 srUpdateShortfall(txnId);
                 // Settlement-discount match (single invoice OR full statement) — pre-tick Discount Allowed
@@ -988,6 +1000,24 @@ def register_banking_routes(app, db, login_required, Auth, render_page,
         // is the payment amount minus the outstanding total of ticked invoices.
         // Only shown when the payment is SHORT (paid less than invoiced).
         function srUpdateShortfall(txnId) {{
+            // Totals footer: due total + total after the customer's Discount
+            // Allowed %. Uses the ticked invoices; with nothing ticked it
+            // shows all listed invoices.
+            const tBox = document.getElementById('totalsBox_' + txnId);
+            if (tBox) {{
+                const listEl = document.getElementById('invList_' + txnId);
+                const pct = listEl ? (parseFloat(listEl.getAttribute('data-disc-pct') || '0') || 0) : 0;
+                const ticked = document.querySelectorAll('.invCheck_' + txnId + ':checked');
+                const scope = ticked.length > 0 ? ticked : document.querySelectorAll('.invCheck_' + txnId);
+                let due = 0;
+                scope.forEach(c => {{ due += parseFloat(c.getAttribute('data-amount') || '0'); }});
+                due = Math.round(due * 100) / 100;
+                const afterD = Math.round(due * (1 - pct / 100) * 100) / 100;
+                const lbl = ticked.length > 0 ? 'Selected' : 'All due';
+                tBox.innerHTML = pct > 0
+                    ? `${{lbl}}: TOTAL DUE R${{due.toLocaleString('en-ZA', {{minimumFractionDigits:2}})}} · after Discount Allowed (${{pct}}%): <span style="color:#22d3ee;">R${{afterD.toLocaleString('en-ZA', {{minimumFractionDigits:2}})}}</span>`
+                    : `${{lbl}}: TOTAL DUE R${{due.toLocaleString('en-ZA', {{minimumFractionDigits:2}})}}`;
+            }}
             const box = document.getElementById('shortfallBox_' + txnId);
             if (!box) return;
             const row = document.querySelector(`tr[data-id="${{txnId}}"]`);
@@ -5716,9 +5746,15 @@ Return ONLY the JSON array. No markdown, no explanation."""
                 return jsonify({"success": False, "invoices": []})
             
             result = []
+            _disc_pct = 0.0
             if entity_type == "customer":
                 from datetime import datetime as _dt
                 _today = _dt.now()
+                try:
+                    _cust = db.get_one("customers", entity_id)
+                    _disc_pct = round(float(_cust.get("discount_percentage", 0) or 0), 2) if _cust else 0.0
+                except Exception:
+                    _disc_pct = 0.0
                 invoices = db.get("invoices", {"business_id": biz_id, "customer_id": entity_id}) or []
                 for inv in invoices:
                     if inv.get("status") in ("paid", "credited"):
@@ -5753,7 +5789,7 @@ Return ONLY the JSON array. No markdown, no explanation."""
                     })
             
             result.sort(key=lambda x: x["date"])
-            return jsonify({"success": True, "invoices": result})
+            return jsonify({"success": True, "invoices": result, "discount_percent": _disc_pct})
         except Exception as e:
             logger.error(f"[BANK ENTITY-INV] Error: {e}")
             return jsonify({"success": False, "invoices": []})
