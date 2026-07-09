@@ -205,10 +205,15 @@ def register_timesheet_routes(app, db, login_required, Auth, render_page,
         </div>
         
         <div class="card">
-            <h2 style="margin-bottom:15px;">📷 Scan Timesheet</h2>
+            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:15px;">
+                <h2 style="margin:0;">📷 Scan Timesheet</h2>
+                <a href="/timesheets" class="btn btn-secondary" style="padding:8px 18px;">Finish / Exit</a>
+            </div>
             <p style="color:var(--text-muted);margin-bottom:20px;">
-                Take a photo of your handwritten timesheet or clock card. AI reads the clock in/out times, Flask calculates the hours.
+                Take a photo of your handwritten timesheet or clock card. AI reads the clock in/out times, Flask calculates the hours. Scan as many as you like — you stay on this page until you press Finish.
             </p>
+            
+            <div id="scannedBanner" style="display:none;background:rgba(34,197,94,0.12);border:1px solid rgba(34,197,94,0.4);color:var(--green);border-radius:8px;padding:10px 14px;margin-bottom:15px;font-weight:600;"></div>
             
             <div id="uploadArea" style="border:2px dashed var(--border);border-radius:12px;padding:40px;text-align:center;cursor:pointer;transition:all 0.2s;" 
                  onclick="document.getElementById('fileInput').click()">
@@ -231,10 +236,20 @@ def register_timesheet_routes(app, db, login_required, Auth, render_page,
                 <p style="margin-top:15px;">AI is reading clock in/out times...</p>
                 <p style="font-size:12px;color:var(--text-muted);">Flask will calculate the hours</p>
             </div>
+            
+            <div id="donePanel" style="display:none;margin-top:20px;text-align:center;">
+                <p style="font-size:16px;margin-bottom:16px;">Scan the next timesheet, or finish to review them all.</p>
+                <div style="display:flex;gap:10px;justify-content:center;flex-wrap:wrap;">
+                    <button class="btn btn-primary" onclick="scanAnother()" style="background:#8b5cf6;">📷 Scan Another</button>
+                    <a href="/timesheets" class="btn btn-primary" style="background:#16a34a;">✓ Finish — go to Timesheets</a>
+                </div>
+            </div>
         </div>
         
         <script>
         let currentFile = null;
+        let scannedCount = 0;
+        let lastBatchId = null;
         
         function handleFile(file) {
             if (!file) return;
@@ -244,6 +259,7 @@ def register_timesheet_routes(app, db, login_required, Auth, render_page,
             reader.onload = function(e) {
                 document.getElementById('previewImg').src = e.target.result;
                 document.getElementById('uploadArea').style.display = 'none';
+                document.getElementById('donePanel').style.display = 'none';
                 document.getElementById('preview').style.display = 'block';
             };
             reader.readAsDataURL(file);
@@ -267,8 +283,17 @@ def register_timesheet_routes(app, db, login_required, Auth, render_page,
                 const data = await response.json();
                 
                 if (data.success && data.batch_id) {
-                    // Redirect to review page
-                    window.location.href = '/timesheets/review/' + data.batch_id;
+                    // Stay on the page: count it, show the done panel, let the
+                    // user scan another or press Finish. No auto-redirect.
+                    scannedCount++;
+                    lastBatchId = data.batch_id;
+                    const banner = document.getElementById('scannedBanner');
+                    banner.style.display = 'block';
+                    banner.textContent = '✓ ' + scannedCount + (scannedCount === 1 ? ' timesheet scanned' : ' timesheets scanned') + ' — still on this page.';
+                    document.getElementById('scanning').style.display = 'none';
+                    document.getElementById('donePanel').style.display = 'block';
+                    currentFile = null;
+                    document.getElementById('fileInput').value = '';
                 } else {
                     alert('Could not read timesheet: ' + (data.error || 'Unknown error'));
                     resetScan();
@@ -279,11 +304,22 @@ def register_timesheet_routes(app, db, login_required, Auth, render_page,
             }
         }
         
+        function scanAnother() {
+            currentFile = null;
+            document.getElementById('fileInput').value = '';
+            document.getElementById('preview').style.display = 'none';
+            document.getElementById('scanning').style.display = 'none';
+            document.getElementById('donePanel').style.display = 'none';
+            document.getElementById('uploadArea').style.display = 'block';
+            document.getElementById('fileInput').click();
+        }
+        
         function resetScan() {
             currentFile = null;
             document.getElementById('uploadArea').style.display = 'block';
             document.getElementById('preview').style.display = 'none';
             document.getElementById('scanning').style.display = 'none';
+            document.getElementById('donePanel').style.display = 'none';
             document.getElementById('fileInput').value = '';
         }
         </script>
