@@ -124,6 +124,21 @@ def _apply_review_edits(form, employees_data, count, db=None, business=None):
                 days[j]["in"] = in_v.strip()
             if out_v is not None:
                 days[j]["out"] = out_v.strip()
+            # Leave-status dropdown: store the reviewer's choice on the day so
+            # the payslip engine pays it correctly (sick with note / AWP paid;
+            # sick no note / AWOL deducted).
+            st_v = form.get(f"status_{i}_{j}", None)
+            if st_v is not None:
+                st_v = st_v.strip().upper()
+                if st_v in ("SICK_PAID", "SICK_NOPAY", "AWP", "AWOL"):
+                    days[j]["status_override"] = st_v
+                    try:
+                        days[j]["status_hours"] = float(form.get(f"stathrs_{i}_{j}", 8) or 8)
+                    except Exception:
+                        days[j]["status_hours"] = 8.0
+                else:
+                    days[j].pop("status_override", None)
+                    days[j].pop("status_hours", None)
         # Recompute worked totals from the (possibly edited) times so the
         # hourly model and the saved entries reflect the corrections.
         if compute_worked_hours:
@@ -817,6 +832,9 @@ def register_timesheet_routes(app, db, login_required, Auth, render_page,
                     out_border = "1px solid var(--border)" if _cell_is_time(d_out) else "2px solid #f59e0b"
                     
                     _sun_flag = "1" if is_sun else "0"
+                    _st_ov = str(day.get("status_override", "") or "").upper()
+                    _st_hrs = day.get("status_hours", 8)
+                    _st_show = "" if _st_ov in ("SICK_PAID", "AWP") else "display:none;"
                     days_html += f'''
                     <tr style="{row_style}">
                         <td style="white-space:nowrap;">{(_wd_lbl + " ") if _wd_lbl else ""}{d_date} {"☀️" if is_sun else ""}</td>
@@ -828,11 +846,12 @@ def register_timesheet_routes(app, db, login_required, Auth, render_page,
                         <td style="white-space:nowrap;">
                             <select name="status_{i}_{j}" onchange="tsRecalc({i})" style="padding:4px;border-radius:5px;border:1px solid var(--border);background:#1a1a2e;color:var(--text);font-size:12px;">
                                 <option value="">Worked</option>
-                                <option value="SICK">Sick (paid)</option>
-                                <option value="AWP">AWP</option>
-                                <option value="AWOL">AWOL</option>
+                                <option value="SICK_PAID" {"selected" if _st_ov == "SICK_PAID" else ""}>Sick (with note) - paid</option>
+                                <option value="SICK_NOPAY" {"selected" if _st_ov == "SICK_NOPAY" else ""}>Sick (no note) - unpaid</option>
+                                <option value="AWP" {"selected" if _st_ov == "AWP" else ""}>AWP - paid</option>
+                                <option value="AWOL" {"selected" if _st_ov == "AWOL" else ""}>AWOL - unpaid</option>
                             </select>
-                            <input type="number" name="stathrs_{i}_{j}" value="8" step="0.5" min="0" oninput="tsRecalc({i})" style="width:52px;padding:4px;border-radius:5px;border:1px solid var(--border);background:#1a1a2e;color:var(--text);display:none;">
+                            <input type="number" name="stathrs_{i}_{j}" value="{_st_hrs}" step="0.5" min="0" oninput="tsRecalc({i})" style="width:52px;padding:4px;border-radius:5px;border:1px solid var(--border);background:#1a1a2e;color:var(--text);{_st_show}">
                         </td>
                     </tr>
                     '''
@@ -998,10 +1017,10 @@ def register_timesheet_routes(app, db, login_required, Auth, render_page,
               var shEl=document.getElementsByName('stathrs_'+i+'_'+j)[0];
               var isSun=inp && inp.getAttribute('data-sun')==='1';
               var status=stEl?stEl.value:'';
-              if(shEl) shEl.style.display=(status==='SICK'||status==='AWP')?'':'none';
+              if(shEl) shEl.style.display=(status==='SICK_PAID'||status==='AWP')?'':'none';
               var nh=0,oth=0,suh=0;
-              if(status==='SICK'||status==='AWP'){ nh=shEl?(parseFloat(shEl.value)||0):0; }
-              else if(status==='AWOL'){ nh=0; }
+              if(status==='SICK_PAID'||status==='AWP'){ nh=shEl?(parseFloat(shEl.value)||0):0; }
+              else if(status==='SICK_NOPAY'||status==='AWOL'){ nh=0; }
               else {
                 var so=(TS_SCHED[i]||[])[j]; if(so===undefined) so=null;
                 var lu=(TS_LUNCHMAP[i]!=null)?TS_LUNCHMAP[i]:null;

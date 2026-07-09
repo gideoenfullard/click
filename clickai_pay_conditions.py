@@ -350,6 +350,39 @@ def calculate_pay_from_timesheet(emp, entries, period, public_holidays=None):
         # is never deducted — but a day actually WORKED on a public holiday
         # keeps its worked treatment (times, late/early/OT) unchanged.
         status, in_m, out_m = _day_status(e.get("in"), e.get("out"))
+
+        # Reviewer's leave-status choice from the timesheet review dropdown
+        # takes precedence over the scanned cell text: sick WITH a note or
+        # absent WITH permission (AWP) is PAID in full; sick with NO note or
+        # AWOL is deducted.
+        override = str(e.get("status_override", "") or "").upper()
+        if override in ("SICK_PAID", "AWP"):
+            agreed = agreed_per_date.get(date_str, 0.0)
+            _ov_hrs = _safe_float(e.get("status_hours", agreed)) or agreed
+            label = ("Sick — paid (sick note received)" if override == "SICK_PAID"
+                     else "Absent with permission (AWP) — paid")
+            lines.append({
+                "date": date_str, "day": day_name,
+                "label": label,
+                "hours": round(_ov_hrs, 2),
+                "amount": 0.0,
+                "kind": "sick_paid" if override == "SICK_PAID" else "awp",
+            })
+            continue   # full pay — the monthly base already covers the day
+        if override in ("SICK_NOPAY", "AWOL"):
+            agreed = agreed_per_date.get(date_str, 0.0)
+            if agreed > 0:
+                label = ("Sick — not paid (no sick note)" if override == "SICK_NOPAY"
+                         else "Absent — not paid (AWOL)")
+                lines.append({
+                    "date": date_str, "day": day_name,
+                    "label": label,
+                    "hours": round(agreed, 2),
+                    "amount": -round(agreed * rate, 2),
+                    "kind": "sick" if override == "SICK_NOPAY" else "absent",
+                })
+            continue
+
         if date_str in public_holidays and status in ("absent", "sick"):
             status = "holiday"
 
@@ -505,7 +538,11 @@ def build_entries_from_days(days, pay_month):
                 if 1 <= dom <= dim:
                     iso = f"{yr:04d}-{mo:02d}-{dom:02d}"
 
-        out.append({"date": iso, "in": d.get("in"), "out": d.get("out")})
+        _entry = {"date": iso, "in": d.get("in"), "out": d.get("out")}
+        if d.get("status_override"):
+            _entry["status_override"] = d.get("status_override")
+            _entry["status_hours"] = d.get("status_hours")
+        out.append(_entry)
     return out
 
 
@@ -552,8 +589,16 @@ def compute_worked_hours(days, split_overtime=False, lunch_minutes=30,
         status, in_m, out_m = _day_status(d_in, d_out)
         is_sun = _is_sunday(d.get("date"))
 
+        # Reviewer's leave-status choice: paid leave (sick with note / AWP)
+        # counts its hours as normal time; unpaid (sick no note / AWOL) is 0.
+        override = str(d.get("status_override", "") or "").upper()
+
         hours = ot = sunday = 0.0
-        if status == "present" and in_m is not None and out_m is not None:
+        if override in ("SICK_PAID", "AWP"):
+            hours = _safe_float(d.get("status_hours", 8)) or 8.0
+        elif override in ("SICK_NOPAY", "AWOL"):
+            hours = 0.0
+        elif status == "present" and in_m is not None and out_m is not None:
             if out_m < in_m:          # overnight
                 out_m += 24 * 60
             worked = out_m - in_m
@@ -592,7 +637,7 @@ def compute_worked_hours(days, split_overtime=False, lunch_minutes=30,
                 hours = wh
                 ot = 0.0
 
-        if is_sun:
+        if is_sun and not override:
             sunday = hours + ot
             hours = ot = 0.0
             total_sun += sunday
@@ -600,12 +645,16 @@ def compute_worked_hours(days, split_overtime=False, lunch_minutes=30,
             total_h += hours
             total_ot += ot
 
-        out_days.append({
+        _od = {
             "date": d.get("date"), "in": d_in, "out": d_out,
             "hours": round(hours, 2), "overtime": round(ot, 2),
             "sunday": round(sunday, 2), "is_sunday": is_sun,
             "status": status,
-        })
+        }
+        if override:
+            _od["status_override"] = override
+            _od["status_hours"] = _safe_float(d.get("status_hours", 8)) or 8.0
+        out_days.append(_od)
 
     return {
         "days": out_days,
@@ -634,6 +683,18 @@ def calculate_hourly_pay(emp, period, worked):
         lines.append({"label": f"Normal {nh:.1f}h @ {round(rate,2)}/h",
                       "hours": round(nh, 2), "amount": round(nh * rate, 2),
                       "kind": "normal"})
+    # Paid leave (sick with note / AWP) is included in the normal hours —
+    # name it on the payslip so it never reads as ordinary worked time.
+    _paid_sick = sum(_safe_float(d.get("status_hours", 0)) for d in (worked.get("days") or [])
+                     if str(d.get("status_override", "")).upper() == "SICK_PAID")
+    _paid_awp = sum(_safe_float(d.get("status_hours", 0)) for d in (worked.get("days") or [])
+                    if str(d.get("status_override", "")).upper() == "AWP")
+    if _paid_sick > 0:
+        lines.append({"label": f"Includes sick leave — paid (sick note) {_paid_sick:.1f}h",
+                      "hours": round(_paid_sick, 2), "amount": 0.0, "kind": "sick_paid"})
+    if _paid_awp > 0:
+        lines.append({"label": f"Includes absent with permission (AWP) — paid {_paid_awp:.1f}h",
+                      "hours": round(_paid_awp, 2), "amount": 0.0, "kind": "awp"})
     if oth > 0:
         lines.append({"label": f"Overtime {oth:.1f}h @ {ot_mult}x",
                       "hours": round(oth, 2),
