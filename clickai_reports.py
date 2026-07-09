@@ -1417,6 +1417,7 @@ def register_report_routes(app, db, login_required, Auth, render_page,
                 "1200": "Debtors Control", "1300": "Stock", "1400": "VAT Input",
                 "1500": "Equipment", "1600": "Vehicles", "1700": "Accumulated Depreciation",
                 "2000": "Creditors Control", "2100": "VAT Output", "2200": "PAYE Payable",
+                "2210": "UIF Payable", "2220": "SDL Payable",
                 "2300": "UIF/Loan Payable", "2400": "Loan",
                 "3000": "Capital", "3100": "Retained Earnings", "3200": "Drawings",
                 "4000": "Sales - Cash", "4001": "Sales - Credit", "4002": "Sales - Card Machine",
@@ -1428,6 +1429,7 @@ def register_report_routes(app, db, login_required, Auth, render_page,
                 "5004": "Stock Purchases - Electrical", "5005": "Stock Purchases - Plumbing",
                 "5010": "Stock Purchases - Food & Beverage", "5100": "Delivery/Freight",
                 "5200": "Import Duties", "5300": "Packaging", "5400": "Direct Labour",
+                "6000": "Salaries & Wages",
                 "6100": "Rent - Business Premises", "6110": "Rates & Taxes - Municipal",
                 "6111": "Rates & Taxes - Property", "6120": "Electricity", "6121": "Water",
                 "6130": "Repairs & Maintenance - Building", "6140": "Cleaning & Hygiene",
@@ -1787,7 +1789,9 @@ def register_report_routes(app, db, login_required, Auth, render_page,
             pass
         # Extra defaults not in BOOKING_CATEGORIES
         for _c, _n in {"1200": "Debtors Control", "1400": "VAT Input", "1300": "Stock",
-                        "2000": "Creditors Control", "2200": "PAYE Payable", "3100": "Retained Earnings"}.items():
+                        "2000": "Creditors Control", "2200": "PAYE Payable", "3100": "Retained Earnings",
+                        "6000": "Salaries & Wages", "2210": "UIF Payable", "2220": "SDL Payable",
+                        "2400": "Payroll Deductions Payable", "6210": "Employer Payroll Costs (UIF/SDL)"}.items():
             if _c not in account_names:
                 account_names[_c] = _n
         
