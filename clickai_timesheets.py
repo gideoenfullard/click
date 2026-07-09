@@ -218,6 +218,20 @@ def register_timesheet_routes(app, db, login_required, Auth, render_page,
                 <input type="file" id="fileInput" accept="image/*" capture="environment" style="display:none;" onchange="handleFile(this.files[0])">
             </div>
             
+            <div style="text-align:center;margin-top:12px;">
+                <button type="button" class="btn btn-secondary" onclick="document.getElementById('multiInput').click()" style="padding:10px 18px;">📚 Scan several files at once</button>
+            </div>
+            <input type="file" id="multiInput" accept="image/*,application/pdf" multiple style="display:none;" onchange="handleMulti(this.files)">
+            <div id="multiPreview" style="display:none;margin-top:16px;">
+                <div id="multiCount" style="font-weight:600;margin-bottom:10px;"></div>
+                <div id="multiThumbs" style="display:flex;flex-wrap:wrap;gap:10px;margin-bottom:15px;"></div>
+                <div style="display:flex;gap:10px;">
+                    <button class="btn btn-primary" onclick="scanMulti()">🔍 Extract All Hours</button>
+                    <button class="btn btn-secondary" onclick="resetMulti()">🔄 Clear</button>
+                </div>
+                <div id="multiStatus" style="margin-top:10px;font-size:13px;color:var(--text-muted);"></div>
+            </div>
+            
             <div id="preview" style="display:none;margin-top:20px;">
                 <img id="previewImg" style="max-width:100%;max-height:400px;border-radius:8px;margin-bottom:15px;">
                 <div style="display:flex;gap:10px;">
@@ -285,6 +299,82 @@ def register_timesheet_routes(app, db, login_required, Auth, render_page,
             document.getElementById('preview').style.display = 'none';
             document.getElementById('scanning').style.display = 'none';
             document.getElementById('fileInput').value = '';
+        }
+        
+        // ── Multi-file scan (separate from the single-file path above) ──
+        let multiFiles = [];
+        function handleMulti(files) {
+            try {
+                if (!files || !files.length) return;
+                multiFiles = Array.from(files);
+                const thumbs = document.getElementById('multiThumbs');
+                thumbs.innerHTML = '';
+                document.getElementById('multiCount').textContent =
+                    multiFiles.length + (multiFiles.length === 1 ? ' file ready' : ' files ready');
+                multiFiles.forEach(function(f) {
+                    if (f.type && f.type.indexOf('image') === 0) {
+                        const reader = new FileReader();
+                        reader.onload = function(e) {
+                            const img = document.createElement('img');
+                            img.src = e.target.result;
+                            img.style.cssText = 'width:80px;height:80px;object-fit:cover;border-radius:8px;border:1px solid var(--border);';
+                            thumbs.appendChild(img);
+                        };
+                        reader.readAsDataURL(f);
+                    } else {
+                        const box = document.createElement('div');
+                        box.style.cssText = 'width:80px;height:80px;display:flex;align-items:center;justify-content:center;border-radius:8px;border:1px solid var(--border);font-size:11px;color:var(--text-muted);';
+                        box.textContent = 'PDF';
+                        thumbs.appendChild(box);
+                    }
+                });
+                document.getElementById('multiPreview').style.display = 'block';
+            } catch (err) {
+                alert('Could not load the files: ' + err.message);
+            }
+        }
+        
+        async function scanMulti() {
+            if (!multiFiles.length) return;
+            const status = document.getElementById('multiStatus');
+            const total = multiFiles.length;
+            let done = 0;
+            const failed = [];
+            // One at a time, so a single bad file never loses the rest.
+            for (let i = 0; i < total; i++) {
+                status.textContent = 'Reading file ' + (i + 1) + ' of ' + total + '...';
+                const fd = new FormData();
+                fd.append('file', multiFiles[i]);
+                try {
+                    const resp = await fetch('/api/scan/timesheet', { method: 'POST', body: fd });
+                    const data = await resp.json();
+                    if (data.success && data.batch_id) {
+                        done++;
+                    } else {
+                        failed.push((multiFiles[i].name || ('file ' + (i + 1))) + ': ' + (data.error || 'unreadable'));
+                    }
+                } catch (err) {
+                    failed.push((multiFiles[i].name || ('file ' + (i + 1))) + ': ' + err.message);
+                }
+            }
+            if (done === 0) {
+                alert('Could not read any file:\n' + failed.join('\n'));
+                return;
+            }
+            if (failed.length) {
+                alert(done + ' of ' + total + ' scanned. Could not read:\n' + failed.join('\n'));
+            }
+            // Go to the Timesheets list where every new batch waits for review.
+            window.location.href = '/timesheets';
+        }
+        
+        function resetMulti() {
+            multiFiles = [];
+            document.getElementById('multiInput').value = '';
+            document.getElementById('multiThumbs').innerHTML = '';
+            document.getElementById('multiCount').textContent = '';
+            document.getElementById('multiStatus').textContent = '';
+            document.getElementById('multiPreview').style.display = 'none';
         }
         </script>
         '''
