@@ -215,8 +215,9 @@ def register_timesheet_routes(app, db, login_required, Auth, render_page,
                 <div style="font-size:48px;margin-bottom:15px;">[FORM]</div>
                 <p style="font-size:18px;margin-bottom:10px;">Drop timesheets here or click to upload</p>
                 <p style="color:var(--text-muted);font-size:14px;">Pick one or several files — or use the camera on mobile</p>
-                <input type="file" id="fileInput" accept="image/*,application/pdf" multiple style="display:none;" onchange="handleFiles(this.files)">
             </div>
+            <input type="file" id="fileInput" accept="image/*,application/pdf" multiple style="display:none;" onchange="handleFiles(this.files)">
+            <div id="scanDebug" style="margin-top:10px;font-size:12px;color:var(--text-muted);"></div>
             
             <div id="preview" style="display:none;margin-top:20px;">
                 <div id="fileCount" style="font-weight:600;margin-bottom:10px;"></div>
@@ -239,6 +240,8 @@ def register_timesheet_routes(app, db, login_required, Auth, render_page,
         
         function handleFiles(files) {
             try {
+                var dbg = document.getElementById('scanDebug');
+                if (dbg) dbg.textContent = 'Selected ' + (files ? files.length : 0) + ' file(s)...';
                 if (!files || !files.length) return;
                 currentFiles = Array.from(files);
                 const thumbs = document.getElementById('thumbs');
@@ -270,7 +273,12 @@ def register_timesheet_routes(app, db, login_required, Auth, render_page,
         }
         
         async function scanAll() {
-            if (!currentFiles.length) return;
+            var dbg = document.getElementById('scanDebug');
+            if (!currentFiles.length) {
+                if (dbg) dbg.textContent = 'No files selected yet — click the box above and choose files first.';
+                return;
+            }
+            if (dbg) dbg.textContent = 'Starting scan of ' + currentFiles.length + ' file(s)...';
             document.getElementById('preview').style.display = 'none';
             document.getElementById('scanning').style.display = 'block';
             
