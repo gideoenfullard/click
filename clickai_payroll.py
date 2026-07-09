@@ -1641,22 +1641,33 @@ def register_payroll_routes(app, db, login_required, Auth, render_page,
         if other_ded > 0:
             deduction_rows += f'<tr style="border-bottom:1px solid #eee;"><td style="padding:8px 0;color:#666;">Other Deductions</td><td style="padding:8px 0;text-align:right;color:#ef4444;">-{money(other_ded)}</td></tr>'
 
-        # Check if a payslip already exists for this employee today
+        # Check if a payslip already exists for this employee in the current
+        # pay month. The form stays visible either way — Create & Post will
+        # REPLACE a same-month payslip (old journal reversed, new one posted),
+        # so the OT/hours off entered here are saved on the first Create.
         _today = today()
-        _existing = db.get("payslips", {"business_id": biz_id, "employee_id": emp_id, "date": _today}) if biz_id else []
+        _cur_month = _today[:7]
+        _existing = db.get("payslips", {"business_id": biz_id, "employee_id": emp_id}) if biz_id else []
+        _existing = [p for p in _existing if str(p.get("date") or "")[:7] == _cur_month]
         _has_payslip = len(_existing) > 0
 
+        replace_warning = ""
+        confirm_js = ""
         if _has_payslip:
-            action_block = f'''
-            <div class="card" style="margin-top:15px;background:rgba(245,158,11,0.15);border:1px solid #f59e0b;">
-                <p style="margin-bottom:10px;"><strong>[!] A payslip already exists for {safe_string(emp.get("name", "-"))} on {_today}.</strong></p>
-                <a href="/payslip/{_existing[0].get("id")}" class="btn btn-primary">View existing payslip</a>
-            </div>
+            replace_warning = f'''
+                <div style="background:rgba(245,158,11,0.15);border:1px solid #f59e0b;border-radius:6px;padding:10px 14px;margin-bottom:15px;">
+                    <strong>[!] A payslip for {safe_string(emp.get("name", "-"))} in {_cur_month} already exists.</strong>
+                    Creating this payslip will replace it — the old salary journal is reversed and the new figures are posted.
+                    <a href="/payslip/{_existing[0].get("id")}" target="_blank">View existing payslip</a>
+                </div>
             '''
-        else:
-            action_block = f'''
+            confirm_js = f"if(!confirm('A payslip for {_cur_month} already exists. Replace it with these figures?')) return false;"
+
+        action_block = f'''
             <div class="card" style="margin-top:15px;">
+                {replace_warning}
                 <form method="POST" action="/payroll/payslip-create/{emp_id}" onsubmit="
+                    {confirm_js}
                     var g=function(i){{var e=document.getElementById(i);return e?e.value:null;}};
                     if(g('pv_hours_off')!==null) document.getElementById('cr_hours_off').value=g('pv_hours_off');
                     if(g('pv_avg_hours')!==null) document.getElementById('cr_avg_hours').value=g('pv_avg_hours');
@@ -1879,21 +1890,62 @@ def register_payroll_routes(app, db, login_required, Auth, render_page,
 
         pay_date = request.form.get("pay_date", today())
 
-        # Guard: don't create a duplicate payslip for the same employee in the
-        # same pay month (payroll is monthly)
-        _pay_month = pay_date[:7]
-        existing = db.get("payslips", {"business_id": biz_id, "employee_id": emp_id}) if biz_id else []
-        existing = [p for p in existing if str(p.get("date") or "")[:7] == _pay_month]
-        if existing:
-            flash(f"A payslip for {emp.get('name')} in {_pay_month} already exists", "error")
-            return redirect(f"/payslip/{existing[0].get('id')}?dupe={_pay_month}")
-
         basic = safe_float(emp.get("basic_salary", 0))
         if basic <= 0:
             # Hourly employee: paid from timesheet hours via Run Payroll (which now
             # includes hourly staff) or by posting their timesheet batch.
             flash(f"{emp.get('name')} is hourly - use Run Payroll or post their timesheet batch to pay worked hours", "error")
             return redirect("/payroll")
+
+        # A payslip already exists for the same employee in the same pay month:
+        # REPLACE it instead of blocking, so the figures on this form (OT,
+        # hours off, pay date) are saved on the FIRST Create — never lost to a
+        # delete-and-redo second attempt. Sage pattern: reverse and repost —
+        # the old salary journal is reversed, consumed timesheet batches are
+        # re-opened (same as payslip delete), the old record is removed, and
+        # the new payslip is created below with the new figures.
+        _pay_month = pay_date[:7]
+        existing = db.get("payslips", {"business_id": biz_id, "employee_id": emp_id}) if biz_id else []
+        existing = [p for p in existing if str(p.get("date") or "")[:7] == _pay_month]
+        _replaced = 0
+        for _old in existing:
+            _old_id = _old.get("id")
+            try:
+                _del_url = f"{db.url}/rest/v1/payslips?id=eq.{_old_id}"
+                _del_resp = requests.delete(_del_url, headers=db.headers, timeout=30)
+                if _del_resp.status_code not in (200, 204):
+                    logger.error(f"[PAYSLIP CREATE] Could not replace old payslip {_old_id}: {_del_resp.text[:200]}")
+                    flash(f"A payslip for {emp.get('name')} in {_pay_month} already exists and could not be replaced", "error")
+                    return redirect(f"/payslip/{_old_id}?dupe={_pay_month}")
+            except Exception as _de:
+                logger.error(f"[PAYSLIP CREATE] Replace delete failed for {_old_id}: {_de}")
+                flash(f"A payslip for {emp.get('name')} in {_pay_month} already exists and could not be replaced", "error")
+                return redirect(f"/payslip/{_old_id}?dupe={_pay_month}")
+            # Reverse the old salary journal so the GL never double-counts
+            try:
+                _old_lines = _payslip_journal_lines(biz_id, _old)
+                create_journal_entry(biz_id, _old.get("date") or pay_date,
+                                     f"Salary replaced - {_old.get('employee_name', '')}",
+                                     f"PAY-{str(_old_id)[:8]}-DEL",
+                                     _reverse_journal_lines(_old_lines))
+            except Exception as _je:
+                logger.error(f"[PAYSLIP CREATE] GL reversal failed for replaced payslip {_old_id}: {_je}")
+            # Re-open timesheet batches the old payslip consumed so the hours
+            # can be paid again exactly once (same as payslip delete).
+            _bids = _old.get("batch_ids")
+            if isinstance(_bids, str):
+                try:
+                    _bids = json.loads(_bids)
+                except Exception:
+                    _bids = []
+            for _bid in (_bids or []):
+                try:
+                    _b = db.get_one("timesheet_batches", _bid)
+                    if _b and _b.get("status") == "processed":
+                        db.save("timesheet_batches", {"id": _bid, "status": "approved"})
+                except Exception as _be:
+                    logger.error(f"[PAYSLIP CREATE] Could not re-open batch {_bid}: {_be}")
+            _replaced += 1
 
         # Apply the SAME Hours Off/Late and manual overtime the preview showed
         # (carried through the form) — Save must never drop what was previewed.
@@ -2059,7 +2111,10 @@ def register_payroll_routes(app, db, login_required, Auth, render_page,
         except Exception as e:
             logger.error(f"[PAYROLL] Journal entry failed for {emp.get('name')}: {e}")
 
-        flash(f"Payslip created for {emp.get('name')} — posted to GL", "success")
+        if _replaced:
+            flash(f"Payslip created for {emp.get('name')} — replaced the existing {_pay_month} payslip (old journal reversed) and posted to GL", "success")
+        else:
+            flash(f"Payslip created for {emp.get('name')} — posted to GL", "success")
         return redirect(f"/payslip/{payslip_id}")
     
     
