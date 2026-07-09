@@ -215,7 +215,7 @@ def register_timesheet_routes(app, db, login_required, Auth, render_page,
                 <div style="font-size:48px;margin-bottom:15px;">[FORM]</div>
                 <p style="font-size:18px;margin-bottom:10px;">Drop timesheets here or click to upload</p>
                 <p style="color:var(--text-muted);font-size:14px;">Pick one or several files — or use the camera on mobile</p>
-                <input type="file" id="fileInput" accept="image/*,application/pdf" capture="environment" multiple style="display:none;" onchange="handleFiles(this.files)">
+                <input type="file" id="fileInput" accept="image/*,application/pdf" multiple style="display:none;" onchange="handleFiles(this.files)">
             </div>
             
             <div id="preview" style="display:none;margin-top:20px;">
@@ -238,31 +238,35 @@ def register_timesheet_routes(app, db, login_required, Auth, render_page,
         let currentFiles = [];
         
         function handleFiles(files) {
-            if (!files || !files.length) return;
-            currentFiles = Array.from(files);
-            const thumbs = document.getElementById('thumbs');
-            thumbs.innerHTML = '';
-            document.getElementById('fileCount').textContent =
-                currentFiles.length + (currentFiles.length === 1 ? ' timesheet ready' : ' timesheets ready');
-            currentFiles.forEach(function(file) {
-                if (file.type && file.type.indexOf('image') === 0) {
-                    const reader = new FileReader();
-                    reader.onload = function(e) {
-                        const img = document.createElement('img');
-                        img.src = e.target.result;
-                        img.style.cssText = 'width:90px;height:90px;object-fit:cover;border-radius:8px;border:1px solid var(--border);';
-                        thumbs.appendChild(img);
-                    };
-                    reader.readAsDataURL(file);
-                } else {
-                    const box = document.createElement('div');
-                    box.style.cssText = 'width:90px;height:90px;display:flex;align-items:center;justify-content:center;border-radius:8px;border:1px solid var(--border);font-size:11px;color:var(--text-muted);text-align:center;padding:4px;';
-                    box.textContent = 'PDF';
-                    thumbs.appendChild(box);
-                }
-            });
-            document.getElementById('uploadArea').style.display = 'none';
-            document.getElementById('preview').style.display = 'block';
+            try {
+                if (!files || !files.length) return;
+                currentFiles = Array.from(files);
+                const thumbs = document.getElementById('thumbs');
+                thumbs.innerHTML = '';
+                document.getElementById('fileCount').textContent =
+                    currentFiles.length + (currentFiles.length === 1 ? ' timesheet ready' : ' timesheets ready');
+                currentFiles.forEach(function(file) {
+                    if (file.type && file.type.indexOf('image') === 0) {
+                        const reader = new FileReader();
+                        reader.onload = function(e) {
+                            const img = document.createElement('img');
+                            img.src = e.target.result;
+                            img.style.cssText = 'width:90px;height:90px;object-fit:cover;border-radius:8px;border:1px solid var(--border);';
+                            thumbs.appendChild(img);
+                        };
+                        reader.readAsDataURL(file);
+                    } else {
+                        const box = document.createElement('div');
+                        box.style.cssText = 'width:90px;height:90px;display:flex;align-items:center;justify-content:center;border-radius:8px;border:1px solid var(--border);font-size:11px;color:var(--text-muted);text-align:center;padding:4px;';
+                        box.textContent = 'PDF';
+                        thumbs.appendChild(box);
+                    }
+                });
+                document.getElementById('uploadArea').style.display = 'none';
+                document.getElementById('preview').style.display = 'block';
+            } catch (err) {
+                alert('Could not load the selected files: ' + err.message);
+            }
         }
         
         async function scanAll() {
