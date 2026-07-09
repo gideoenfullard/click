@@ -207,84 +207,122 @@ def register_timesheet_routes(app, db, login_required, Auth, render_page,
         <div class="card">
             <h2 style="margin-bottom:15px;">📷 Scan Timesheet</h2>
             <p style="color:var(--text-muted);margin-bottom:20px;">
-                Take a photo of your handwritten timesheet or clock card. AI reads the clock in/out times, Flask calculates the hours.
+                Take a photo of your handwritten timesheet or clock card, or pick several at once. AI reads the clock in/out times, Flask calculates the hours.
             </p>
             
             <div id="uploadArea" style="border:2px dashed var(--border);border-radius:12px;padding:40px;text-align:center;cursor:pointer;transition:all 0.2s;" 
                  onclick="document.getElementById('fileInput').click()">
                 <div style="font-size:48px;margin-bottom:15px;">[FORM]</div>
-                <p style="font-size:18px;margin-bottom:10px;">Drop timesheet here or click to upload</p>
-                <p style="color:var(--text-muted);font-size:14px;">Or use camera on mobile</p>
-                <input type="file" id="fileInput" accept="image/*" capture="environment" style="display:none;" onchange="handleFile(this.files[0])">
+                <p style="font-size:18px;margin-bottom:10px;">Drop timesheets here or click to upload</p>
+                <p style="color:var(--text-muted);font-size:14px;">Pick one or several files — or use the camera on mobile</p>
+                <input type="file" id="fileInput" accept="image/*,application/pdf" capture="environment" multiple style="display:none;" onchange="handleFiles(this.files)">
             </div>
             
             <div id="preview" style="display:none;margin-top:20px;">
-                <img id="previewImg" style="max-width:100%;max-height:400px;border-radius:8px;margin-bottom:15px;">
+                <div id="fileCount" style="font-weight:600;margin-bottom:10px;"></div>
+                <div id="thumbs" style="display:flex;flex-wrap:wrap;gap:10px;margin-bottom:15px;"></div>
                 <div style="display:flex;gap:10px;">
-                    <button class="btn btn-primary" onclick="scanTimesheet()">🔍 Extract Hours</button>
-                    <button class="btn btn-secondary" onclick="resetScan()">🔄 Different Image</button>
+                    <button class="btn btn-primary" onclick="scanAll()">🔍 Extract Hours</button>
+                    <button class="btn btn-secondary" onclick="resetScan()">🔄 Start Over</button>
                 </div>
             </div>
             
             <div id="scanning" style="display:none;text-align:center;padding:40px;">
                 <div style="font-size:48px;animation:pulse 1s infinite;">👀</div>
-                <p style="margin-top:15px;">AI is reading clock in/out times...</p>
+                <p id="scanStatus" style="margin-top:15px;">AI is reading clock in/out times...</p>
                 <p style="font-size:12px;color:var(--text-muted);">Flask will calculate the hours</p>
             </div>
         </div>
         
         <script>
-        let currentFile = null;
+        let currentFiles = [];
         
-        function handleFile(file) {
-            if (!file) return;
-            currentFile = file;
-            
-            const reader = new FileReader();
-            reader.onload = function(e) {
-                document.getElementById('previewImg').src = e.target.result;
-                document.getElementById('uploadArea').style.display = 'none';
-                document.getElementById('preview').style.display = 'block';
-            };
-            reader.readAsDataURL(file);
+        function handleFiles(files) {
+            if (!files || !files.length) return;
+            currentFiles = Array.from(files);
+            const thumbs = document.getElementById('thumbs');
+            thumbs.innerHTML = '';
+            document.getElementById('fileCount').textContent =
+                currentFiles.length + (currentFiles.length === 1 ? ' timesheet ready' : ' timesheets ready');
+            currentFiles.forEach(function(file) {
+                if (file.type && file.type.indexOf('image') === 0) {
+                    const reader = new FileReader();
+                    reader.onload = function(e) {
+                        const img = document.createElement('img');
+                        img.src = e.target.result;
+                        img.style.cssText = 'width:90px;height:90px;object-fit:cover;border-radius:8px;border:1px solid var(--border);';
+                        thumbs.appendChild(img);
+                    };
+                    reader.readAsDataURL(file);
+                } else {
+                    const box = document.createElement('div');
+                    box.style.cssText = 'width:90px;height:90px;display:flex;align-items:center;justify-content:center;border-radius:8px;border:1px solid var(--border);font-size:11px;color:var(--text-muted);text-align:center;padding:4px;';
+                    box.textContent = 'PDF';
+                    thumbs.appendChild(box);
+                }
+            });
+            document.getElementById('uploadArea').style.display = 'none';
+            document.getElementById('preview').style.display = 'block';
         }
         
-        async function scanTimesheet() {
-            if (!currentFile) return;
-            
+        async function scanAll() {
+            if (!currentFiles.length) return;
             document.getElementById('preview').style.display = 'none';
             document.getElementById('scanning').style.display = 'block';
             
-            const formData = new FormData();
-            formData.append('file', currentFile);
+            const total = currentFiles.length;
+            let done = 0;
+            let lastBatchId = null;
+            const failed = [];
             
-            try {
-                const response = await fetch('/api/scan/timesheet', {
-                    method: 'POST',
-                    body: formData
-                });
-                
-                const data = await response.json();
-                
-                if (data.success && data.batch_id) {
-                    // Redirect to review page
-                    window.location.href = '/timesheets/review/' + data.batch_id;
-                } else {
-                    alert('Could not read timesheet: ' + (data.error || 'Unknown error'));
-                    resetScan();
+            // One file at a time, so a single bad photo never loses the rest.
+            for (let i = 0; i < total; i++) {
+                document.getElementById('scanStatus').textContent =
+                    'Reading timesheet ' + (i + 1) + ' of ' + total + '...';
+                const formData = new FormData();
+                formData.append('file', currentFiles[i]);
+                try {
+                    const response = await fetch('/api/scan/timesheet', {
+                        method: 'POST',
+                        body: formData
+                    });
+                    const data = await response.json();
+                    if (data.success && data.batch_id) {
+                        lastBatchId = data.batch_id;
+                        done++;
+                    } else {
+                        failed.push((currentFiles[i].name || ('file ' + (i + 1))) + ': ' + (data.error || 'unreadable'));
+                    }
+                } catch (err) {
+                    failed.push((currentFiles[i].name || ('file ' + (i + 1))) + ': ' + err.message);
                 }
-            } catch (err) {
-                alert('Error scanning timesheet: ' + err.message);
+            }
+            
+            if (done === 0) {
+                alert('Could not read any timesheet:\n' + failed.join('\n'));
                 resetScan();
+                return;
+            }
+            if (failed.length) {
+                alert(done + ' of ' + total + ' scanned. These could not be read:\n' + failed.join('\n'));
+            }
+            // One file: straight into its review. Several: the Timesheets list,
+            // where every new batch is waiting to be opened and approved — no
+            // trip back to Payroll between sheets.
+            if (done === 1 && failed.length === 0 && lastBatchId) {
+                window.location.href = '/timesheets/review/' + lastBatchId;
+            } else {
+                window.location.href = '/timesheets';
             }
         }
         
         function resetScan() {
-            currentFile = null;
+            currentFiles = [];
             document.getElementById('uploadArea').style.display = 'block';
             document.getElementById('preview').style.display = 'none';
             document.getElementById('scanning').style.display = 'none';
             document.getElementById('fileInput').value = '';
+            document.getElementById('thumbs').innerHTML = '';
         }
         </script>
         '''
@@ -2100,13 +2138,18 @@ def register_timesheet_routes(app, db, login_required, Auth, render_page,
                 _emps = []
             st = b.get("status", "")
             _names = ", ".join(safe_string(e.get("name", "")) for e in _emps if isinstance(e, dict) and e.get("name"))
+            # A pending (freshly scanned) batch opens in REVIEW so it can be
+            # checked and approved; processed/approved ones open read-only.
+            _open_url = f'/timesheets/review/{b.get("id")}' if st == "pending" else f'/timesheets/view/{b.get("id")}'
+            _btn_label = "Review" if st == "pending" else "View"
+            _btn_style = "btn-primary" if st == "pending" else "btn-secondary"
             archive_rows += f'''
-            <tr style="cursor:pointer;" onclick="window.location='/timesheets/view/{b.get("id")}'">
+            <tr style="cursor:pointer;" onclick="window.location='{_open_url}'">
                 <td style="padding:8px;">{safe_string(b.get("period","") or "—")}</td>
                 <td style="padding:8px;">{_names or "—"} ({len(_emps)})</td>
                 <td style="padding:8px;"><span style="color:{_status_colour.get(st,'var(--text-muted)')};">{_status_label.get(st, st or "—")}</span></td>
                 <td style="padding:8px;color:var(--text-muted);">{str(b.get("created_at",""))[:10]}</td>
-                <td style="padding:8px;text-align:right;"><a href="/timesheets/view/{b.get("id")}" class="btn btn-secondary" style="padding:5px 12px;font-size:12px;">View</a></td>
+                <td style="padding:8px;text-align:right;"><a href="{_open_url}" class="btn {_btn_style}" style="padding:5px 12px;font-size:12px;">{_btn_label}</a></td>
             </tr>'''
         archive_section = f'''
         <div class="card" style="margin-top:20px;">
