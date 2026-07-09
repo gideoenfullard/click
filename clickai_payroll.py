@@ -2115,7 +2115,7 @@ def register_payroll_routes(app, db, login_required, Auth, render_page,
             flash(f"Payslip created for {emp.get('name')} — replaced the existing {_pay_month} payslip (old journal reversed) and posted to GL", "success")
         else:
             flash(f"Payslip created for {emp.get('name')} — posted to GL", "success")
-        return redirect(f"/payslip/{payslip_id}")
+        return redirect(f"/payslip/{payslip_id}?print=1")
     
     
     @app.route("/payroll/post-batch/<batch_id>", methods=["POST"])
@@ -2171,7 +2171,8 @@ def register_payroll_routes(app, db, login_required, Auth, render_page,
         posted = 0
         _last_payslip_id = None
         skipped = 0
-        skipped_names = []
+        replaced = 0
+        replaced_names = []
         errors = []
 
         for i in range(count):
@@ -2185,15 +2186,59 @@ def register_payroll_routes(app, db, login_required, Auth, render_page,
             if not emp:
                 continue
 
-            # Duplicate guard — one payslip per employee per pay MONTH, so the
-            # monthly run and a batch post can never both pay the same person.
-            # Named loudly: a silent skip here is how a timesheet deduction
-            # "disappears" — the earlier payslip (without it) stays in place.
+            # A payslip already exists for this employee in this pay month:
+            # REPLACE it instead of skipping, so approving the timesheet
+            # always saves the payslip on the first try. Sage pattern:
+            # reverse and repost — old salary journal reversed, old record
+            # removed, other consumed batches re-opened, new payslip below.
             existing = db.get("payslips", {"business_id": biz_id, "employee_id": emp_id}) if biz_id else []
             existing = [p for p in existing if str(p.get("date") or "")[:7] == pay_month]
-            if existing:
-                skipped += 1
-                skipped_names.append(emp.get("name", emp_id))
+            _replace_failed = False
+            for _old in existing:
+                _old_id = _old.get("id")
+                try:
+                    _del_url = f"{db.url}/rest/v1/payslips?id=eq.{_old_id}"
+                    _del_resp = requests.delete(_del_url, headers=db.headers, timeout=30)
+                    if _del_resp.status_code not in (200, 204):
+                        logger.error(f"[POST BATCH] Could not replace old payslip {_old_id} for {emp.get('name')}: {_del_resp.text[:200]}")
+                        errors.append(emp.get("name", emp_id))
+                        _replace_failed = True
+                        break
+                except Exception as _de:
+                    logger.error(f"[POST BATCH] Replace delete failed for {_old_id}: {_de}")
+                    errors.append(emp.get("name", emp_id))
+                    _replace_failed = True
+                    break
+                # Reverse the old salary journal so the GL never double-counts
+                try:
+                    _old_lines = _payslip_journal_lines(biz_id, _old)
+                    create_journal_entry(biz_id, _old.get("date") or pay_date,
+                                         f"Salary replaced - {_old.get('employee_name', '')}",
+                                         f"PAY-{str(_old_id)[:8]}-DEL",
+                                         _reverse_journal_lines(_old_lines))
+                except Exception as _je:
+                    logger.error(f"[POST BATCH] GL reversal failed for replaced payslip {_old_id}: {_je}")
+                # Re-open OTHER batches the old payslip consumed so those hours
+                # stay payable exactly once — never this batch, it is being
+                # consumed right now.
+                _bids = _old.get("batch_ids")
+                if isinstance(_bids, str):
+                    try:
+                        _bids = json.loads(_bids)
+                    except Exception:
+                        _bids = []
+                for _bid in (_bids or []):
+                    if str(_bid) == str(batch_id):
+                        continue
+                    try:
+                        _b = db.get_one("timesheet_batches", _bid)
+                        if _b and _b.get("status") == "processed":
+                            db.save("timesheet_batches", {"id": _bid, "status": "approved"})
+                    except Exception as _be:
+                        logger.error(f"[POST BATCH] Could not re-open batch {_bid}: {_be}")
+                replaced += 1
+                replaced_names.append(emp.get("name", emp_id))
+            if _replace_failed:
                 continue
 
             days = employees_data[i].get("days", []) if i < len(employees_data) else []
@@ -2353,19 +2398,15 @@ def register_payroll_routes(app, db, login_required, Auth, render_page,
                     pass
             if posted:
                 msg = "Posted payslip for 1 employee"
-                if skipped:
-                    msg += f" ({', '.join(skipped_names)} already had a payslip for {pay_month})"
+                if replaced:
+                    msg += f" — replaced the existing {pay_month} payslip (old journal reversed)"
                 if errors:
                     msg += f" — errors: {', '.join(errors)}"
                 flash(msg, "success")
                 if _last_payslip_id:
-                    return redirect(f"/payslip/{_last_payslip_id}")
+                    return redirect(f"/payslip/{_last_payslip_id}?print=1")
             else:
                 msg = "Nothing posted"
-                if skipped:
-                    msg += (f" — {', '.join(skipped_names)} already has a payslip for {pay_month}. "
-                            f"The timesheet figures were NOT applied to it. Delete that payslip first, "
-                            f"then post this timesheet again.")
                 if errors:
                     msg += f" — errors: {', '.join(errors)}"
                 flash(msg, "error")
@@ -2380,12 +2421,15 @@ def register_payroll_routes(app, db, login_required, Auth, render_page,
             except Exception:
                 pass
         msg = f"Posted {posted} payslip(s) for {pay_month}"
+        if replaced:
+            msg += f", replaced {replaced} existing ({', '.join(replaced_names)}) — old journals reversed"
         if skipped:
-            msg += (f", skipped {skipped} — {', '.join(skipped_names)} already had a payslip for "
-                    f"{pay_month} (timesheet figures NOT applied — delete that payslip first to repost)")
+            msg += f", skipped {skipped} with no payable hours"
         if errors:
             msg += f" — errors: {', '.join(errors)} (batch left open — fix and retry)"
         flash(msg, "success" if posted else "error")
+        if posted == 1 and _last_payslip_id:
+            return redirect(f"/payslip/{_last_payslip_id}?print=1")
         return redirect("/payroll")
     
     
@@ -2882,6 +2926,13 @@ def register_payroll_routes(app, db, login_required, Auth, render_page,
                            f'for {_dupe_month} — your new figures were NOT applied to it. '
                            f'To recreate it, delete this payslip first, then post again.</div>')
         
+        # Arrived straight after a save/post (?print=1): ask to print.
+        print_prompt_js = ""
+        if request.args.get("print", "") == "1":
+            print_prompt_js = ('<script>window.addEventListener("load", function() {'
+                               'if (confirm("Print payslip?")) { window.print(); }'
+                               '});</script>')
+        
         biz_name = business.get("name", "Business") if business else "Business"
         _emp_fund = db.get_one("employees", payslip.get("employee_id")) if payslip.get("employee_id") else None
         fund_label = _industry_fund_label(_emp_fund.get("provident_fund") if _emp_fund else None)
@@ -3027,6 +3078,7 @@ def register_payroll_routes(app, db, login_required, Auth, render_page,
 
         content = f'''
         {dupe_banner}
+        {print_prompt_js}
         <style>
             .print-only {{ display: none; }}
             @media print {{
