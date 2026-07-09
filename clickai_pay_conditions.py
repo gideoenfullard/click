@@ -169,7 +169,7 @@ def get_conditions(emp):
     return {
         "is_setup": bool(cond.get("is_setup", False)),
         "rate_method": cond.get("rate_method", "monthly"),   # 'monthly' | 'hourly'
-        "pay_model": cond.get("pay_model", "salaried"),      # 'salaried' | 'hourly'
+        "pay_model": cond.get("pay_model", "salaried"),      # 'salaried' | 'hourly' | 'fixed'
         "schedule": sched,
         "ot_paid": bool(cond.get("ot_paid", False)),
         "ot_multiplier": _safe_float(cond.get("ot_multiplier", 1.5), 1.5),
@@ -726,11 +726,26 @@ def build_payslip_gross(emp, employee_data, period, business=None,
     Branches on the employee's pay_model:
       - 'hourly'   -> pay Normal + Overtime + Sunday hours actually worked.
       - 'salaried' -> monthly basic +/- absence/late/early/OT deviations.
+      - 'fixed'    -> full monthly basic, no hours required, nothing deducted.
 
     `employee_data` is one entry of the batch (has a 'days' list with in/out).
     Returns the calculation dict (with 'pay_model' and 'gross')."""
     cond = get_conditions(emp)
     days = employee_data.get("days", []) if isinstance(employee_data, dict) else []
+
+    # Fixed pay: the full monthly amount regardless of hours — no timesheet
+    # needed, no deviation lines, no OT, nothing docked.
+    if cond["is_setup"] and cond["pay_model"] == "fixed":
+        _fixed_basic = _safe_float(emp.get("basic_salary", 0))
+        return {
+            "is_setup": True,
+            "pay_model": "fixed",
+            "hourly_rate": 0.0,
+            "agreed_hours": 0.0,
+            "base_pay": round(_fixed_basic, 2),
+            "lines": [],
+            "gross": round(_fixed_basic, 2),
+        }
 
     # Pay the worked-hours (hourly) model when the worker is explicitly on the
     # hourly model OR their rate is an hourly rate. Hourly staff often have no
@@ -832,8 +847,9 @@ def register_pay_conditions_routes(app, db, login_required, Auth, render_page,
                 <select name="pay_model" style="padding:10px;border-radius:6px;border:1px solid var(--border);background:var(--card);color:var(--text);width:100%;max-width:360px;">
                     <option value="salaried" {_selm("salaried")}>Salaried — full monthly amount, deduct absences/late</option>
                     <option value="hourly" {_selm("hourly")}>Hourly — pay only for hours actually worked</option>
+                    <option value="fixed" {_selm("fixed")}>Fixed — full monthly amount, no hours required</option>
                 </select>
-                <p style="color:var(--text-muted);font-size:12px;margin-top:6px;">Salaried pays the monthly basic and docks absent days, late-coming and unpaid sick. Hourly pays Normal + Overtime + Sunday hours from the timesheet.</p>
+                <p style="color:var(--text-muted);font-size:12px;margin-top:6px;">Salaried pays the monthly basic and docks absent days, late-coming and unpaid sick. Hourly pays Normal + Overtime + Sunday hours from the timesheet. Fixed always pays the full monthly basic — no timesheet, no deductions for hours.</p>
 
                 <h3 style="margin:20px 0 10px;">How is the rate set?</h3>
                 <select name="rate_method" style="padding:10px;border-radius:6px;border:1px solid var(--border);background:var(--card);color:var(--text);width:100%;max-width:360px;">
