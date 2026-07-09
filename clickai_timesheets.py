@@ -207,134 +207,84 @@ def register_timesheet_routes(app, db, login_required, Auth, render_page,
         <div class="card">
             <h2 style="margin-bottom:15px;">📷 Scan Timesheet</h2>
             <p style="color:var(--text-muted);margin-bottom:20px;">
-                Take a photo of your handwritten timesheet or clock card, or pick several at once. AI reads the clock in/out times, Flask calculates the hours.
+                Take a photo of your handwritten timesheet or clock card. AI reads the clock in/out times, Flask calculates the hours.
             </p>
             
             <div id="uploadArea" style="border:2px dashed var(--border);border-radius:12px;padding:40px;text-align:center;cursor:pointer;transition:all 0.2s;" 
                  onclick="document.getElementById('fileInput').click()">
                 <div style="font-size:48px;margin-bottom:15px;">[FORM]</div>
-                <p style="font-size:18px;margin-bottom:10px;">Drop timesheets here or click to upload</p>
-                <p style="color:var(--text-muted);font-size:14px;">Pick one or several files — or use the camera on mobile</p>
+                <p style="font-size:18px;margin-bottom:10px;">Drop timesheet here or click to upload</p>
+                <p style="color:var(--text-muted);font-size:14px;">Or use camera on mobile</p>
+                <input type="file" id="fileInput" accept="image/*" capture="environment" style="display:none;" onchange="handleFile(this.files[0])">
             </div>
-            <input type="file" id="fileInput" accept="image/*,application/pdf" multiple style="display:none;" onchange="handleFiles(this.files)">
-            <div id="scanDebug" style="margin-top:10px;font-size:12px;color:var(--text-muted);"></div>
             
             <div id="preview" style="display:none;margin-top:20px;">
-                <div id="fileCount" style="font-weight:600;margin-bottom:10px;"></div>
-                <div id="thumbs" style="display:flex;flex-wrap:wrap;gap:10px;margin-bottom:15px;"></div>
+                <img id="previewImg" style="max-width:100%;max-height:400px;border-radius:8px;margin-bottom:15px;">
                 <div style="display:flex;gap:10px;">
-                    <button class="btn btn-primary" onclick="scanAll()">🔍 Extract Hours</button>
-                    <button class="btn btn-secondary" onclick="resetScan()">🔄 Start Over</button>
+                    <button class="btn btn-primary" onclick="scanTimesheet()">🔍 Extract Hours</button>
+                    <button class="btn btn-secondary" onclick="resetScan()">🔄 Different Image</button>
                 </div>
             </div>
             
             <div id="scanning" style="display:none;text-align:center;padding:40px;">
                 <div style="font-size:48px;animation:pulse 1s infinite;">👀</div>
-                <p id="scanStatus" style="margin-top:15px;">AI is reading clock in/out times...</p>
+                <p style="margin-top:15px;">AI is reading clock in/out times...</p>
                 <p style="font-size:12px;color:var(--text-muted);">Flask will calculate the hours</p>
             </div>
         </div>
         
         <script>
-        let currentFiles = [];
+        let currentFile = null;
         
-        function handleFiles(files) {
-            try {
-                var dbg = document.getElementById('scanDebug');
-                if (dbg) dbg.textContent = 'Selected ' + (files ? files.length : 0) + ' file(s)...';
-                if (!files || !files.length) return;
-                currentFiles = Array.from(files);
-                const thumbs = document.getElementById('thumbs');
-                thumbs.innerHTML = '';
-                document.getElementById('fileCount').textContent =
-                    currentFiles.length + (currentFiles.length === 1 ? ' timesheet ready' : ' timesheets ready');
-                currentFiles.forEach(function(file) {
-                    if (file.type && file.type.indexOf('image') === 0) {
-                        const reader = new FileReader();
-                        reader.onload = function(e) {
-                            const img = document.createElement('img');
-                            img.src = e.target.result;
-                            img.style.cssText = 'width:90px;height:90px;object-fit:cover;border-radius:8px;border:1px solid var(--border);';
-                            thumbs.appendChild(img);
-                        };
-                        reader.readAsDataURL(file);
-                    } else {
-                        const box = document.createElement('div');
-                        box.style.cssText = 'width:90px;height:90px;display:flex;align-items:center;justify-content:center;border-radius:8px;border:1px solid var(--border);font-size:11px;color:var(--text-muted);text-align:center;padding:4px;';
-                        box.textContent = 'PDF';
-                        thumbs.appendChild(box);
-                    }
-                });
+        function handleFile(file) {
+            if (!file) return;
+            currentFile = file;
+            
+            const reader = new FileReader();
+            reader.onload = function(e) {
+                document.getElementById('previewImg').src = e.target.result;
                 document.getElementById('uploadArea').style.display = 'none';
                 document.getElementById('preview').style.display = 'block';
-            } catch (err) {
-                alert('Could not load the selected files: ' + err.message);
-            }
+            };
+            reader.readAsDataURL(file);
         }
         
-        async function scanAll() {
-            var dbg = document.getElementById('scanDebug');
-            if (!currentFiles.length) {
-                if (dbg) dbg.textContent = 'No files selected yet — click the box above and choose files first.';
-                return;
-            }
-            if (dbg) dbg.textContent = 'Starting scan of ' + currentFiles.length + ' file(s)...';
+        async function scanTimesheet() {
+            if (!currentFile) return;
+            
             document.getElementById('preview').style.display = 'none';
             document.getElementById('scanning').style.display = 'block';
             
-            const total = currentFiles.length;
-            let done = 0;
-            let lastBatchId = null;
-            const failed = [];
+            const formData = new FormData();
+            formData.append('file', currentFile);
             
-            // One file at a time, so a single bad photo never loses the rest.
-            for (let i = 0; i < total; i++) {
-                document.getElementById('scanStatus').textContent =
-                    'Reading timesheet ' + (i + 1) + ' of ' + total + '...';
-                const formData = new FormData();
-                formData.append('file', currentFiles[i]);
-                try {
-                    const response = await fetch('/api/scan/timesheet', {
-                        method: 'POST',
-                        body: formData
-                    });
-                    const data = await response.json();
-                    if (data.success && data.batch_id) {
-                        lastBatchId = data.batch_id;
-                        done++;
-                    } else {
-                        failed.push((currentFiles[i].name || ('file ' + (i + 1))) + ': ' + (data.error || 'unreadable'));
-                    }
-                } catch (err) {
-                    failed.push((currentFiles[i].name || ('file ' + (i + 1))) + ': ' + err.message);
+            try {
+                const response = await fetch('/api/scan/timesheet', {
+                    method: 'POST',
+                    body: formData
+                });
+                
+                const data = await response.json();
+                
+                if (data.success && data.batch_id) {
+                    // Redirect to review page
+                    window.location.href = '/timesheets/review/' + data.batch_id;
+                } else {
+                    alert('Could not read timesheet: ' + (data.error || 'Unknown error'));
+                    resetScan();
                 }
-            }
-            
-            if (done === 0) {
-                alert('Could not read any timesheet:\n' + failed.join('\n'));
+            } catch (err) {
+                alert('Error scanning timesheet: ' + err.message);
                 resetScan();
-                return;
-            }
-            if (failed.length) {
-                alert(done + ' of ' + total + ' scanned. These could not be read:\n' + failed.join('\n'));
-            }
-            // One file: straight into its review. Several: the Timesheets list,
-            // where every new batch is waiting to be opened and approved — no
-            // trip back to Payroll between sheets.
-            if (done === 1 && failed.length === 0 && lastBatchId) {
-                window.location.href = '/timesheets/review/' + lastBatchId;
-            } else {
-                window.location.href = '/timesheets';
             }
         }
         
         function resetScan() {
-            currentFiles = [];
+            currentFile = null;
             document.getElementById('uploadArea').style.display = 'block';
             document.getElementById('preview').style.display = 'none';
             document.getElementById('scanning').style.display = 'none';
             document.getElementById('fileInput').value = '';
-            document.getElementById('thumbs').innerHTML = '';
         }
         </script>
         '''
