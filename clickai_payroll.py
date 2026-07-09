@@ -213,15 +213,21 @@ def register_payroll_routes(app, db, login_required, Auth, render_page,
         </div>
         '''
         
-        # Closed pay month banner (Finish Payroll) with a Reopen button
-        _cur_month = today()[:7]
+        # Closed pay month banners (Finish Payroll) — one per closed month,
+        # each with its own Reopen button, so a past month (e.g. forgotten
+        # employees) can always be reopened.
         closed_banner = ""
-        if _payroll_month_closed(biz_id, _cur_month):
-            closed_banner = f'''
+        try:
+            _closed_rows = db.get("payroll_periods", {"business_id": biz_id, "status": "closed"}) if biz_id else []
+        except Exception:
+            _closed_rows = []
+        _closed_months = sorted({str(r.get("month", ""))[:7] for r in _closed_rows if r.get("month")}, reverse=True)
+        for _cm in _closed_months:
+            closed_banner += f'''
         <div class="card" style="border:2px solid var(--green);background:rgba(16,185,129,0.08);display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px;">
-            <strong>Payroll for {_cur_month} is CLOSED (Finish Payroll). No new payslips can be created for this month.</strong>
-            <form method="POST" action="/payroll/reopen-month/{_cur_month}" style="margin:0;" onsubmit="return confirm('Reopen payroll for {_cur_month}?');">
-                <button type="submit" class="btn btn-secondary">Reopen {_cur_month}</button>
+            <strong>Payroll for {_cm} is CLOSED (Finish Payroll). No new payslips can be created for this month.</strong>
+            <form method="POST" action="/payroll/reopen-month/{_cm}" style="margin:0;" onsubmit="return confirm('Reopen payroll for {_cm}?');">
+                <button type="submit" class="btn btn-secondary">Reopen {_cm}</button>
             </form>
         </div>
         '''
