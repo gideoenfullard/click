@@ -1275,35 +1275,74 @@ def register_report_routes(app, db, login_required, Auth, render_page,
                         "credit": amounts.get("credit", 0)
                     }
             
+            # Merge live GL journals (payroll, banking, etc.) into the OB
+            # accounts by code, so the same Sage code never shows twice —
+            # once as Balance Brought Forward and once as bare journal lines.
+            _all_journals_for_merge = db.get("journals", {"business_id": biz_id}) or []
+            _journal_by_code = {}
+            for _jl in _all_journals_for_merge:
+                _ac = _jl.get("account_code", "")
+                if not _ac:
+                    continue
+                _dr = float(_jl.get("debit", 0) or 0)
+                _cr = float(_jl.get("credit", 0) or 0)
+                if _dr == 0 and _cr == 0:
+                    continue
+                if _ac not in _journal_by_code:
+                    _journal_by_code[_ac] = []
+                _journal_by_code[_ac].append(_jl)
+
             for code in sorted(gl_ob_accounts.keys()):
                 acc = gl_ob_accounts[code]
-                debit = acc["debit"]
-                credit = acc["credit"]
+                ob_debit = acc["debit"]
+                ob_credit = acc["credit"]
                 name = acc["name"]
-                
+
+                code_journals = _journal_by_code.get(code, [])
+                j_dr = sum(float(j.get("debit", 0) or 0) for j in code_journals)
+                j_cr = sum(float(j.get("credit", 0) or 0) for j in code_journals)
+                debit = ob_debit + j_dr
+                credit = ob_credit + j_cr
+
                 if debit == 0 and credit == 0:
                     continue
-                
+
+                coa_codes_shown.add(code)
                 total_debit_all += debit
                 total_credit_all += credit
-                
+
                 debit_display = money(debit) if debit else "-"
                 credit_display = money(credit) if credit else "-"
                 debit_color = "var(--green)" if debit else "var(--text-muted)"
                 credit_color = "var(--red)" if credit else "var(--text-muted)"
-                
+
+                if code_journals:
+                    sorted_j = sorted(code_journals, key=lambda x: x.get("date", ""), reverse=True)
+                    j_rows = ""
+                    for _j in sorted_j:
+                        _jdr = money(float(_j.get("debit", 0) or 0)) if float(_j.get("debit", 0) or 0) else "-"
+                        _jcr = money(float(_j.get("credit", 0) or 0)) if float(_j.get("credit", 0) or 0) else "-"
+                        j_rows += f'<tr><td>{_j.get("date","-")}</td><td>{safe_string(_j.get("description","-"))}</td><td>{safe_string(_j.get("reference","-"))}</td><td style="text-align:right;color:var(--green);">{_jdr}</td><td style="text-align:right;color:var(--red);">{_jcr}</td></tr>'
+                    detail_html = f'''<div style="padding:0 10px 8px 10px;">
+                        <div style="font-size:11px;color:var(--text-muted);padding:4px 0;">Imported Opening Balance: DR {money(ob_debit)} / CR {money(ob_credit)} | {len(code_journals)} GL journal entries</div>
+                        <table class="table" style="font-size:11px;"><thead><tr><th>Date</th><th>Description</th><th>Ref</th><th style="text-align:right;">Debit</th><th style="text-align:right;">Credit</th></tr></thead><tbody>{j_rows}</tbody></table>
+                    </div>'''
+                else:
+                    detail_html = '''<div style="padding:8px 12px;font-size:12px;color:var(--text-muted);">
+                        Source: Imported Opening Balance
+                    </div>'''
+                _j_count_label = f' <span style="color:var(--text-muted);font-size:11px;">(+ {len(code_journals)} journals)</span>' if code_journals else ""
+
                 accounts_html += f'''
                 <details style="background:var(--card);border-radius:6px;margin-bottom:4px;">
                     <summary style="cursor:pointer;padding:8px 12px;list-style:none;">
                         <div style="display:grid;grid-template-columns:2fr 1fr 1fr;align-items:center;font-size:13px;">
-                            <span><strong>{safe_string(code)}</strong> - {safe_string(name)}</span>
+                            <span><strong>{safe_string(code)}</strong> - {safe_string(name)}{_j_count_label}</span>
                             <span style="text-align:right;color:{debit_color};">{debit_display}</span>
                             <span style="text-align:right;color:{credit_color};">{credit_display}</span>
                         </div>
                     </summary>
-                    <div style="padding:8px 12px;font-size:12px;color:var(--text-muted);">
-                        Source: Imported Opening Balance
-                    </div>
+                    {detail_html}
                 </details>
                 '''
         else:
