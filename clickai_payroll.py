@@ -213,7 +213,21 @@ def register_payroll_routes(app, db, login_required, Auth, render_page,
         </div>
         '''
         
+        # Closed pay month banner (Finish Payroll) with a Reopen button
+        _cur_month = today()[:7]
+        closed_banner = ""
+        if _payroll_month_closed(biz_id, _cur_month):
+            closed_banner = f'''
+        <div class="card" style="border:2px solid var(--green);background:rgba(16,185,129,0.08);display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px;">
+            <strong>Payroll for {_cur_month} is CLOSED (Finish Payroll). No new payslips can be created for this month.</strong>
+            <form method="POST" action="/payroll/reopen-month/{_cur_month}" style="margin:0;" onsubmit="return confirm('Reopen payroll for {_cur_month}?');">
+                <button type="submit" class="btn btn-secondary">Reopen {_cur_month}</button>
+            </form>
+        </div>
+        '''
+
         content = f'''
+        {closed_banner}
         <div class="stats-grid">
             <div class="stat-card">
                 <div class="stat-value">{len(employees)}</div>
@@ -1022,6 +1036,79 @@ def register_payroll_routes(app, db, login_required, Auth, render_page,
         return [{"account_code": e.get("account_code"), "debit": e.get("credit", 0), "credit": e.get("debit", 0)}
                 for e in entries]
 
+    def _payroll_month_closed(biz_id, month):
+        """True if payroll for this pay month was finished (closed) via
+        Finish Payroll and not reopened. Absence of a row means open."""
+        if not biz_id or not month:
+            return False
+        try:
+            rows = db.get("payroll_periods", {"business_id": biz_id, "month": month}) or []
+            return any(r.get("status") == "closed" for r in rows)
+        except Exception as _pe:
+            logger.error(f"[PAYROLL PERIOD] closed check failed for {month}: {_pe}")
+            return False
+
+    @app.route("/payroll/finish-month/<month>", methods=["POST"])
+    @login_required
+    def payroll_finish_month(month):
+        """Finish Payroll: close the pay month — no new or replacement
+        payslips for it until it is reopened (Sage period close)."""
+        business = Auth.get_current_business()
+        biz_id = business.get("id") if business else None
+        if not biz_id:
+            flash("Please select a business first", "error")
+            return redirect("/payroll")
+        month = (month or "")[:7]
+        if len(month) != 7:
+            flash("Invalid pay month", "error")
+            return redirect("/payroll")
+        if _payroll_month_closed(biz_id, month):
+            flash(f"Payroll for {month} is already closed", "error")
+            return redirect("/payroll")
+        row = {"id": generate_id(), "business_id": biz_id, "month": month, "status": "closed"}
+        try:
+            url = f"{db.url}/rest/v1/payroll_periods"
+            response = requests.post(
+                url,
+                headers={**db.headers, "Prefer": "return=representation"},
+                json=row,
+                timeout=30
+            )
+            if response.status_code not in (200, 201):
+                logger.error(f"[PAYROLL PERIOD] close failed: {response.text[:200]}")
+                flash("Could not close the pay month — check the logs (has the payroll_periods table been created in Supabase?)", "error")
+                return redirect("/payroll")
+        except Exception as e:
+            logger.error(f"[PAYROLL PERIOD] close error: {e}")
+            flash("Could not close the pay month — check the logs", "error")
+            return redirect("/payroll")
+        _ps = db.get("payslips", {"business_id": biz_id}) or []
+        _mps = [p for p in _ps if str(p.get("date") or "")[:7] == month]
+        _net = sum(safe_float(p.get("net", 0)) for p in _mps)
+        flash(f"Payroll for {month} finished — {len(_mps)} payslip(s), total net {money(_net)}. The month is now closed.", "success")
+        return redirect("/payroll")
+
+    @app.route("/payroll/reopen-month/<month>", methods=["POST"])
+    @login_required
+    def payroll_reopen_month(month):
+        """Reopen a closed pay month so payslips can be created again."""
+        business = Auth.get_current_business()
+        biz_id = business.get("id") if business else None
+        if not biz_id:
+            flash("Please select a business first", "error")
+            return redirect("/payroll")
+        month = (month or "")[:7]
+        try:
+            rows = db.get("payroll_periods", {"business_id": biz_id, "month": month}) or []
+            for r in rows:
+                url = f"{db.url}/rest/v1/payroll_periods?id=eq.{r.get('id')}"
+                requests.delete(url, headers=db.headers, timeout=30)
+            flash(f"Payroll for {month} reopened", "success")
+        except Exception as e:
+            logger.error(f"[PAYROLL PERIOD] reopen error: {e}")
+            flash("Could not reopen the pay month — check the logs", "error")
+        return redirect("/payroll")
+
     @app.route("/payroll/run", methods=["GET", "POST"])
     @login_required
     def payroll_run():
@@ -1047,6 +1134,9 @@ def register_payroll_routes(app, db, login_required, Auth, render_page,
         if request.method == "POST":
             pay_date = request.form.get("pay_date", today())
             pay_month = pay_date[:7]
+            if _payroll_month_closed(biz_id, pay_month):
+                flash(f"Payroll for {pay_month} is closed (Finish Payroll) — reopen it on the Payroll page first", "error")
+                return redirect("/payroll")
             payslips_created = 0
             skipped = 0
             
@@ -1890,6 +1980,10 @@ def register_payroll_routes(app, db, login_required, Auth, render_page,
 
         pay_date = request.form.get("pay_date", today())
 
+        if _payroll_month_closed(biz_id, pay_date[:7]):
+            flash(f"Payroll for {pay_date[:7]} is closed (Finish Payroll) — reopen it on the Payroll page first", "error")
+            return redirect(f"/payroll/payslip-preview/{emp_id}")
+
         basic = safe_float(emp.get("basic_salary", 0))
         if basic <= 0:
             # Hourly employee: paid from timesheet hours via Run Payroll (which now
@@ -2151,6 +2245,10 @@ def register_payroll_routes(app, db, login_required, Auth, render_page,
         if len(pay_month) < 7:
             pay_month = today()[:7]
         pay_month = pay_month[:7]
+
+        if _payroll_month_closed(biz_id, pay_month):
+            flash(f"Payroll for {pay_month} is closed (Finish Payroll) — reopen it on the Payroll page first", "error")
+            return redirect(f"/timesheets/review/{batch_id}")
 
         # Pay date = last day of the pay month (keeps the payslip in the right tax month)
         try:
@@ -2928,10 +3026,33 @@ def register_payroll_routes(app, db, login_required, Auth, render_page,
         
         # Arrived straight after a save/post (?print=1): ask to print.
         print_prompt_js = ""
+        workflow_bar = ""
         if request.args.get("print", "") == "1":
             print_prompt_js = ('<script>window.addEventListener("load", function() {'
                                'if (confirm("Print payslip?")) { window.print(); }'
                                '});</script>')
+            # Payroll-run workflow: next timesheet, import the next one, or
+            # Finish Payroll to close the pay month.
+            _wf_biz = payslip.get("business_id")
+            _wf_month = str(payslip.get("date") or today())[:7]
+            _wf_pending = db.get("timesheet_batches", {"business_id": _wf_biz, "status": "pending"}) if _wf_biz else []
+            _wf_approved = db.get("timesheet_batches", {"business_id": _wf_biz, "status": "approved"}) if _wf_biz else []
+            _wf_waiting = (_wf_pending or []) + (_wf_approved or [])
+            if _wf_waiting:
+                _wf_next = (f'<a href="/timesheets/review/{_wf_waiting[0].get("id")}" class="btn btn-primary">'
+                            f'Next Timesheet ({len(_wf_waiting)} waiting)</a>')
+            else:
+                _wf_next = '<span style="color:var(--text-muted);">No timesheets waiting</span>'
+            workflow_bar = f'''
+        <div class="no-print card" style="margin-bottom:20px;display:flex;gap:10px;align-items:center;flex-wrap:wrap;">
+            <strong style="margin-right:5px;">Payslip saved.</strong>
+            {_wf_next}
+            <a href="/timesheets/scan" class="btn btn-secondary">Import Next Timesheet</a>
+            <form method="POST" action="/payroll/finish-month/{_wf_month}" style="margin:0;" onsubmit="return confirm('Finish payroll for {_wf_month}? The month will be closed — no more payslips can be created for it until it is reopened.');">
+                <button type="submit" class="btn" style="background:var(--green);color:white;">Finish Payroll ({_wf_month})</button>
+            </form>
+        </div>
+        '''
         
         biz_name = business.get("name", "Business") if business else "Business"
         _emp_fund = db.get_one("employees", payslip.get("employee_id")) if payslip.get("employee_id") else None
@@ -3097,6 +3218,8 @@ def register_payroll_routes(app, db, login_required, Auth, render_page,
                 <a href="/payslip/{payslip_id}/delete" class="btn" style="background:var(--red);color:white;" onclick="return confirm('Delete this payslip?');">🗑️ Delete</a>
             </div>
         </div>
+
+        {workflow_bar}
 
         <div class="print-area">
         <div class="print-only" style="background:white;color:#333;max-width:720px;margin:0 auto;padding:30px 30px 0;">
