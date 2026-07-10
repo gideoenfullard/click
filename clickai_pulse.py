@@ -845,8 +845,16 @@ def register_pulse_routes(app, db, login_required, Auth, generate_id, now, today
             user_names = {u.get("id"): (u.get("name") or u.get("email") or "Unknown") for u in team_users}
             logger.info(f"[PULSE] DB loaded in {time.time()-_start:.1f}s (parallel, {len(team_users)} users)")
 
+            # Payments received live in TWO tables: 'payments' (invoice Mark
+            # Paid — mirrored into receipts with the SAME id) and 'receipts'
+            # (bank recon / on-account). Union by id so bank-loaded payments
+            # are counted too, without double-counting the mirrored ones.
+            _payment_ids = {p.get("id") for p in payments if p.get("id")}
+            _bank_receipts = [r for r in receipts_data if r.get("id") not in _payment_ids]
+
             # ── Today's totals ──
-            today_payments = sum(float(p.get("amount", 0)) for p in payments if str(p.get("date", ""))[:10] == today_str)
+            today_payments = (sum(float(p.get("amount", 0)) for p in payments if str(p.get("date", ""))[:10] == today_str)
+                              + sum(float(r.get("amount", 0)) for r in _bank_receipts if str(r.get("date", ""))[:10] == today_str))
             today_invoiced = sum(float(inv.get("total", 0)) for inv in invoices if str(inv.get("date", ""))[:10] == today_str)
             today_sales_total = sum(float(s.get("total", 0)) for s in sales if str(s.get("date", ""))[:10] == today_str)
 
@@ -1086,6 +1094,13 @@ def register_pulse_routes(app, db, login_required, Auth, generate_id, now, today
                     lambda p: f"Payment received from {(p.get('customer_name', '') or 'Customer')[:25]} ({p.get('payment_method', '') or 'n/a'})",
                     lambda p: float(p.get("amount", 0) or 0),
                     "&#10003;", "#10b981", "payments", "p_amt")
+
+            # Payments received via bank recon / on-account (receipts not
+            # mirrored from the payments table) — same bucket, full visibility
+            _gather(_bank_receipts, "date", "created_by",
+                    lambda r: f"Payment received (bank) from {(r.get('customer_name', '') or 'Customer')[:25]}",
+                    lambda r: float(r.get("amount", 0) or 0),
+                    "&#10003;", "#10b981", "payments", "p_amt", "created_at")
 
             # Credit Notes
             _gather(credit_notes, "date", "created_by",
@@ -1359,7 +1374,9 @@ def register_pulse_routes(app, db, login_required, Auth, generate_id, now, today
                     })
 
             # ── FULL VISIBILITY: receipts (customer payments allocated) ──
-            _add_activity(receipts_data, "date",
+            # Only receipts NOT mirrored from the payments table — mirrored
+            # ones already show as "Payment received" above (same id).
+            _add_activity(_bank_receipts, "date",
                           lambda r: f'Receipt from {(r.get("customer_name", "") or "Customer")[:20]} (allocated)',
                           lambda r: float(r.get("amount", 0) or 0), "&#128179;", "#22c55e", extra_date_field="created_at")
 

@@ -8,6 +8,7 @@
 
 import json
 import logging
+import requests
 from datetime import datetime, timedelta
 from decimal import Decimal
 from concurrent.futures import ThreadPoolExecutor
@@ -53,14 +54,37 @@ def register_invoicing_routes(app, db, login_required, Auth, render_page,
         business = Auth.get_current_business()
         biz_id = business.get("id") if business else None
         
-        # FAST: Direct query with order and limit
+        # Server-side pagination, ordered newest-first AT THE DATABASE. The
+        # old fetch took an arbitrary 200 rows and sorted afterwards, so any
+        # invoice outside that arbitrary 200 could never be seen.
         try:
-            invoices = db.get("invoices", {"business_id": biz_id}, limit=200)
-            # Sort by date descending
-            invoices = sorted(invoices, key=lambda x: x.get("date", ""), reverse=True)
-        except Exception as e:
-            logger.error(f"[INVOICES] Error loading: {e}")
-            invoices = []
+            page = max(1, int(request.args.get("page", 1) or 1))
+        except Exception:
+            page = 1
+        per_page = 200
+        _offset = (page - 1) * per_page
+        total_count = 0
+        invoices = []
+        if biz_id:
+            try:
+                _url = f"{db.url}/rest/v1/invoices?business_id=eq.{biz_id}&select=*&order=date.desc,invoice_number.desc"
+                _hdrs = {**db.headers, "Range-Unit": "items", "Range": f"{_offset}-{_offset + per_page - 1}", "Prefer": "count=exact"}
+                _resp = requests.get(_url, headers=_hdrs, timeout=30)
+                if _resp.status_code in (200, 206):
+                    invoices = _resp.json() or []
+                    _cr = _resp.headers.get("Content-Range", "")  # e.g. "0-199/5321"
+                    try:
+                        total_count = int(_cr.split("/")[-1]) if "/" in _cr else len(invoices)
+                    except Exception:
+                        total_count = len(invoices)
+                else:
+                    logger.error(f"[INVOICES] Paged query failed ({_resp.status_code}): {_resp.text[:200]} — falling back")
+                    invoices = db.get("invoices", {"business_id": biz_id}, limit=200)
+                    invoices = sorted(invoices, key=lambda x: x.get("date", ""), reverse=True)
+                    total_count = len(invoices)
+            except Exception as e:
+                logger.error(f"[INVOICES] Error loading: {e}")
+                invoices = []
         
         rows = ""
         for inv in invoices:
@@ -77,10 +101,22 @@ def register_invoicing_routes(app, db, login_required, Auth, render_page,
             </tr>
             '''
         
+        _total_pages = max(1, (total_count + per_page - 1) // per_page)
+        _pager = ""
+        if _total_pages > 1:
+            _prev = f'<a href="/invoices?page={page - 1}" class="btn btn-secondary">&larr; Newer</a>' if page > 1 else '<span></span>'
+            _next = f'<a href="/invoices?page={page + 1}" class="btn btn-secondary">Older &rarr;</a>' if page < _total_pages else '<span></span>'
+            _pager = f'''
+            <div style="display:flex;justify-content:space-between;align-items:center;margin-top:15px;">
+                {_prev}
+                <span style="color:var(--text-muted);font-size:13px;">Page {page} of {_total_pages} — {total_count} invoices (search covers this page)</span>
+                {_next}
+            </div>'''
+        
         content = f'''
         <div class="card">
             <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:15px;">
-                <h3 class="card-title" style="margin:0;">Invoices ({len(invoices)})</h3>
+                <h3 class="card-title" style="margin:0;">Invoices ({total_count or len(invoices)})</h3>
                 <div style="display: flex; gap: 10px; flex-wrap: wrap;">
                     <a href="/recurring-invoices" class="btn btn-secondary">🔄 Recurring</a>
                     <a href="/rentals" class="btn btn-secondary">🏠 Rentals</a>
@@ -100,6 +136,7 @@ def register_invoicing_routes(app, db, login_required, Auth, render_page,
                     {rows or "<tr><td colspan='5' style='text-align:center;color:var(--text-muted)'>No invoices yet</td></tr>"}
                 </tbody>
             </table>
+            {_pager}
         </div>
         '''
         
