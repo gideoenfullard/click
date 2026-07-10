@@ -2571,9 +2571,21 @@ def register_payroll_routes(app, db, login_required, Auth, render_page,
         ytd_paye = sum(float(p.get("paye", 0)) for p in payslips)
         ytd_net = sum(float(p.get("net", 0)) for p in payslips)
         
+        # Read the employee's Pay Conditions — workers on the fixed model
+        # (full monthly amount, no hours required) get a direct payslip
+        # builder that pays the basic salary, no timesheet needed.
+        build_payslip_btn = ""
+        try:
+            from clickai_pay_conditions import get_conditions
+            if get_conditions(employee).get("pay_model") == "fixed":
+                build_payslip_btn = f'<a href="/payroll/payslip-preview/{emp_id}" class="btn btn-primary">Build Payslip with Basic Salary</a>'
+        except Exception as _pce:
+            logger.error(f"[EMPLOYEE] Pay conditions read failed for {emp_id}: {_pce}")
+        
         content = f'''
         <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:20px;flex-wrap:wrap;gap:10px;">
             <a href="/payroll" style="color:var(--text-muted);">← Back to Payroll</a>
+            {build_payslip_btn}
             <a href="/employee/{emp_id}/edit" class="btn btn-secondary">✏️ Edit Employee</a>
             <a href="/employee/{emp_id}/pay-conditions" class="btn btn-secondary">📋 Pay Conditions</a>
         </div>
