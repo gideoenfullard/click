@@ -4597,35 +4597,81 @@ Return ONLY the JSON array. No markdown, no explanation."""
                                         break
                         except Exception:
                             pass
-                    expense = RecordFactory.expense(
-                        business_id=biz_id,
-                        description=description,
-                        amount=expense_amount,
-                        date=txn_date,
-                        category=category,
-                        category_code=gl_code,
-                        reference=f"Bank: {txn_id[:8]}",
-                        payment_method="eft"
-                    )
+                    # A bank payment linked to a supplier with OPEN creditor
+                    # items settles the creditor: Dr Creditors / Cr Bank plus a
+                    # supplier_payments record — NOT a second expense. The
+                    # expense and its VAT were already posted when the supplier
+                    # invoice was captured (Sage treatment).
+                    _settles_creditor = False
                     if _exp_supplier_id:
-                        expense["supplier_id"] = _exp_supplier_id
-                        expense["supplier_name"] = _exp_supplier_name
-                        expense["supplier"] = _exp_supplier_name
-                    db.save("expenses", expense)
+                        try:
+                            _open_sinvs = db.get("supplier_invoices", {"business_id": biz_id, "supplier_id": _exp_supplier_id}) or []
+                            for _osi in _open_sinvs:
+                                if _osi.get("status") in ("paid", "credited", "cancelled"):
+                                    continue
+                                _osi_out = float(_osi.get("total", 0) or 0) - float(_osi.get("paid_amount", 0) or 0)
+                                if _osi_out > 0.01:
+                                    _settles_creditor = True
+                                    break
+                        except Exception as _oce:
+                            logger.error(f"[BANK] Open-creditor check failed (treated as expense): {_oce}")
                     
-                    # Create journal entry with proper GL code
-                    vat_amount = round(expense_amount * 15 / 115, 2) if not is_no_vat else 0
-                    net_amount = round(expense_amount - vat_amount, 2)
-                    
-                    journal_entries = [
-                        {"account_code": gl_code, "debit": net_amount, "credit": 0},
-                    ]
-                    if vat_amount > 0:
-                        journal_entries.append({"account_code": gl(biz_id, "vat_input"), "debit": vat_amount, "credit": 0})
-                    journal_entries.append({"account_code": gl(biz_id, "bank"), "debit": 0, "credit": round(expense_amount, 2)})
-                    
-                    _cje(biz_id, txn_date, desc_short, ref, journal_entries)
-                    logger.info(f"[BANK] Created expense: {category} GL={gl_code} R{expense_amount}")
+                    if _settles_creditor:
+                        # --- SUPPLIER PAYMENT (settles open creditor items) ---
+                        txn["matched_name"] = _exp_supplier_name
+                        txn["matched_entity_type"] = "supplier"
+                        txn["matched_entity_id"] = _exp_supplier_id
+                        db.save("bank_transactions", txn)
+                        _cje(biz_id, txn_date, desc_short, ref, [
+                            {"account_code": gl(biz_id, "creditors"), "debit": round(expense_amount, 2), "credit": 0},
+                            {"account_code": gl(biz_id, "bank"), "debit": 0, "credit": round(expense_amount, 2)},
+                        ])
+                        try:
+                            db.save("supplier_payments", {
+                                "id": generate_id(),
+                                "business_id": biz_id,
+                                "supplier_id": _exp_supplier_id,
+                                "supplier_name": _exp_supplier_name,
+                                "amount": float(expense_amount),
+                                "date": txn_date,
+                                "method": "eft",
+                                "reference": ref,
+                                "source": "banking_recon",
+                                "created_at": now()
+                            })
+                        except Exception as _spe:
+                            logger.error(f"[BANK] Supplier payment save failed: {_spe}")
+                        logger.info(f"[BANK] Expense-categorised payment settles creditor {_exp_supplier_name}: SUPPLIER PAYMENT R{expense_amount}")
+                    else:
+                        expense = RecordFactory.expense(
+                            business_id=biz_id,
+                            description=description,
+                            amount=expense_amount,
+                            date=txn_date,
+                            category=category,
+                            category_code=gl_code,
+                            reference=f"Bank: {txn_id[:8]}",
+                            payment_method="eft"
+                        )
+                        if _exp_supplier_id:
+                            expense["supplier_id"] = _exp_supplier_id
+                            expense["supplier_name"] = _exp_supplier_name
+                            expense["supplier"] = _exp_supplier_name
+                        db.save("expenses", expense)
+                        
+                        # Create journal entry with proper GL code
+                        vat_amount = round(expense_amount * 15 / 115, 2) if not is_no_vat else 0
+                        net_amount = round(expense_amount - vat_amount, 2)
+                        
+                        journal_entries = [
+                            {"account_code": gl_code, "debit": net_amount, "credit": 0},
+                        ]
+                        if vat_amount > 0:
+                            journal_entries.append({"account_code": gl(biz_id, "vat_input"), "debit": vat_amount, "credit": 0})
+                        journal_entries.append({"account_code": gl(biz_id, "bank"), "debit": 0, "credit": round(expense_amount, 2)})
+                        
+                        _cje(biz_id, txn_date, desc_short, ref, journal_entries)
+                        logger.info(f"[BANK] Created expense: {category} GL={gl_code} R{expense_amount}")
             
             elif credit > 0 or amount > 0:
                 income_amount = credit if credit > 0 else amount
