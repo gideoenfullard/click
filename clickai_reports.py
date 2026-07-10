@@ -1001,71 +1001,13 @@ def register_report_routes(app, db, login_required, Auth, render_page,
                             "d120": _slb, "total": _slb
                         }
         
-        # === SOURCE 2: Outstanding purchase orders (sent/partial — not yet invoiced) ===
-        # Track which POs already have a matching supplier invoice to avoid double-counting
-        sinv_po_refs = set()
-        for si in supplier_invoices:
-            _ref = si.get("po_number") or si.get("reference") or ""
-            if _ref:
-                sinv_po_refs.add(_ref.strip().upper())
-        
-        outstanding_pos = [po for po in purchase_orders if po.get("status") in ("sent", "partial")]
-        for po in outstanding_pos:
-            po_num = (po.get("po_number") or "").strip().upper()
-            # Skip if this PO already has a supplier invoice
-            if po_num and po_num in sinv_po_refs:
-                continue
-            
-            supp_id = po.get("supplier_id")
-            supp_name = po.get("supplier_name", "Unknown")
-            key = supp_id or supp_name
-            if not key or key == "Unknown":
-                continue
-            
-            if key not in aging_data:
-                supp = supplier_map.get(supp_id, {}) if supp_id else {}
-                aging_data[key] = {
-                    "name": supp.get("name") or supp_name,
-                    "current": 0, "d30": 0, "d60": 0, "d90": 0, "d120": 0, "total": 0
-                }
-            
-            try:
-                po_date = datetime.strptime(po.get("date", today()), "%Y-%m-%d").date()
-            except:
-                po_date = today_date
-            
-            days_old = (today_date - po_date).days
-            amount = float(po.get("total", 0) or 0)
-            
-            if days_old <= 30:
-                aging_data[key]["current"] += amount
-            elif days_old <= 60:
-                aging_data[key]["d30"] += amount
-            elif days_old <= 90:
-                aging_data[key]["d60"] += amount
-            elif days_old <= 120:
-                aging_data[key]["d90"] += amount
-            else:
-                aging_data[key]["d120"] += amount
-            
-            aging_data[key]["total"] += amount
-        
-        # === SOURCE 3: Suppliers with balance > 0 but no invoices/POs in aging ===
-        for s in suppliers:
-            sup_id = s.get("id")
-            name = s.get("name", "")
-            balance = float(s.get("balance", 0) or 0)
-            if balance <= 0:
-                continue
-            key = sup_id or name
-            if not key:
-                continue
-            if key not in aging_data:
-                # Supplier has a balance but no individual invoices — put into current bucket
-                aging_data[key] = {
-                    "name": name,
-                    "current": balance, "d30": 0, "d60": 0, "d90": 0, "d120": 0, "total": balance
-                }
+        # Purchase orders are NOT aged: a PO is a commitment, not creditors
+        # ledger debt — no liability exists until the supplier invoice is
+        # captured (Sage: age analysis = creditors ledger only). Stored
+        # supplier 'balance' fields are never used either — balances are
+        # calculated from source documents, and suppliers with a calculated
+        # balance but no open invoices are already added by the ledger
+        # reconciliation above.
         
         # Sort alphabetically by supplier name
         sorted_aging = sorted(aging_data.values(), key=lambda x: (x["name"] or "").upper())
