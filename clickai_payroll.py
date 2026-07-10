@@ -3318,7 +3318,7 @@ def register_payroll_routes(app, db, login_required, Auth, render_page,
 
         <div class="print-area">
         <div class="print-only" style="background:white;color:#333;max-width:720px;margin:0 auto;padding:30px 30px 0;">
-            <div style="position:absolute;top:28mm;left:0;width:100%;">
+            <div style="position:absolute;top:34mm;left:0;width:100%;">
                 <div style="max-width:720px;margin:0 auto;padding:0 30px;">
                     <h2 style="color:#333;margin:0;font-size:15px;">{safe_string(biz_name)}</h2>
                 </div>
