@@ -283,20 +283,21 @@ def register_report_routes(app, db, login_required, Auth, render_page,
             except:
                 inv_date = today_date
             
-            days_old = (today_date - inv_date).days
-            _terms = _parse_terms_days(customer_map.get(cust_id, {}).get("payment_terms"))
-            days_pd = days_old - _terms  # days past the due date (<=0 means still within terms)
+            # Statement-based aging (Sage): buckets by calendar MONTH.
+            # Current = this month's invoices; 31-60 = last month's, payable
+            # 30 days from statement; 61-90 = two months back, and so on.
+            months_old = (today_date.year - inv_date.year) * 12 + (today_date.month - inv_date.month)
             amount = round(float(inv.get("total", 0) or 0) - float(inv.get("paid_amount", 0) or 0), 2)
             if amount <= 0:
                 continue  # fully covered by payments — nothing left to age
             
-            if days_pd <= 0:
+            if months_old <= 0:
                 aging_data[cust_id]["current"] += amount
-            elif days_pd <= 30:
+            elif months_old == 1:
                 aging_data[cust_id]["d30"] += amount
-            elif days_pd <= 60:
+            elif months_old == 2:
                 aging_data[cust_id]["d60"] += amount
-            elif days_pd <= 90:
+            elif months_old == 3:
                 aging_data[cust_id]["d90"] += amount
             else:
                 aging_data[cust_id]["d120"] += amount
@@ -938,20 +939,21 @@ def register_report_routes(app, db, login_required, Auth, render_page,
             except:
                 p_date = today_date
             
-            days_old = (today_date - p_date).days
-            _terms = _parse_terms_days(supplier_map.get(supp_id, {}).get("payment_terms"))
-            days_pd = days_old - _terms  # days past the due date (<=0 means still within terms)
+            # Statement-based aging (Sage): buckets by calendar MONTH.
+            # Current = this month's invoices; 31-60 = last month's, payable
+            # 30 days from statement; 61-90 = two months back, and so on.
+            months_old = (today_date.year - p_date.year) * 12 + (today_date.month - p_date.month)
             amount = round(float(p.get("total", 0) or 0) - float(p.get("paid_amount", 0) or 0), 2)
             if amount <= 0:
                 continue  # fully covered by payments — nothing left to age
             
-            if days_pd <= 0:
+            if months_old <= 0:
                 aging_data[key]["current"] += amount
-            elif days_pd <= 30:
+            elif months_old == 1:
                 aging_data[key]["d30"] += amount
-            elif days_pd <= 60:
+            elif months_old == 2:
                 aging_data[key]["d60"] += amount
-            elif days_pd <= 90:
+            elif months_old == 3:
                 aging_data[key]["d90"] += amount
             else:
                 aging_data[key]["d120"] += amount
