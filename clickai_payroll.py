@@ -1866,8 +1866,8 @@ def register_payroll_routes(app, db, login_required, Auth, render_page,
         <div class="print-only" style="background:white;color:#333;max-width:720px;margin:0 auto;padding:30px 30px 0;">
             <div style="display:flex;justify-content:space-between;margin-bottom:12px;padding-bottom:12px;border-bottom:2px solid #333;">
                 <div>
-                    <h2 style="color:#333;margin:0;font-size:17px;">{safe_string(biz_name)}</h2>
-                    <p style="color:#666;margin:4px 0 0;font-size:12px;">{safe_string(biz_addr)}</p>
+                    <p style="color:#666;margin:0;font-size:12px;">{safe_string(biz_addr)}</p>
+                    <h2 style="color:#333;margin:4px 0 0;font-size:17px;">{safe_string(biz_name)}</h2>
                 </div>
                 <div style="text-align:right;">
                     <h1 style="color:#333;margin:0;font-size:20px;">PAYSLIP</h1>
