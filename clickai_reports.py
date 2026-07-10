@@ -303,6 +303,53 @@ def register_report_routes(app, db, login_required, Auth, render_page,
             
             aging_data[cust_id]["total"] += amount
         
+        # Reconcile each customer's aging to their CALCULATED ledger balance
+        # (invoices + account sales - receipts - credit notes), so on-account
+        # payments and credit notes reduce the aging too. Sage principle: the
+        # age analysis must tie back to the debtors control total.
+        if biz_id and calc_all_customer_balances:
+            try:
+                _ledger = calc_all_customer_balances(biz_id) or {}
+            except Exception as _abe:
+                logger.error(f"[AGING] Ledger reconcile failed: {_abe}")
+                _ledger = {}
+            if _ledger:
+                _oldest_first = ["d120", "d90", "d60", "d30", "current"]
+                for cust_id in list(aging_data.keys()):
+                    row = aging_data[cust_id]
+                    ledger_bal = round(float(_ledger.get(cust_id, row["total"]) or 0), 2)
+                    diff = round(row["total"] - ledger_bal, 2)
+                    if diff > 0.01:
+                        # Unallocated credits (on-account receipts / credit
+                        # notes) — allocate against the OLDEST buckets first
+                        for b in _oldest_first:
+                            if diff <= 0.01:
+                                break
+                            take = min(row[b], diff)
+                            row[b] = round(row[b] - take, 2)
+                            diff = round(diff - take, 2)
+                    elif diff < -0.01:
+                        # Ledger debt not in the invoices table (account sales,
+                        # brought-forward balances) — age it as oldest debt so
+                        # nothing hides from credit control
+                        row["d120"] = round(row["d120"] + (-diff), 2)
+                    row["total"] = round(row["current"] + row["d30"] + row["d60"] + row["d90"] + row["d120"], 2)
+                    if row["total"] <= 0.01:
+                        del aging_data[cust_id]
+                # Customers with a ledger balance but no open invoices at all
+                # (e.g. account sales or brought-forward debt) must still age
+                for _cid, _lb in _ledger.items():
+                    _lb = round(float(_lb or 0), 2)
+                    if _lb > 0.01 and _cid not in aging_data:
+                        _cust = customer_map.get(_cid)
+                        if not _cust:
+                            continue
+                        aging_data[_cid] = {
+                            "name": _cust.get("name", "Unknown"),
+                            "current": 0, "d30": 0, "d60": 0, "d90": 0,
+                            "d120": _lb, "total": _lb
+                        }
+        
         # Sort alphabetically by customer name
         sorted_aging = sorted(aging_data.values(), key=lambda x: (x["name"] or "").upper())
         
@@ -910,6 +957,49 @@ def register_report_routes(app, db, login_required, Auth, render_page,
                 aging_data[key]["d120"] += amount
             
             aging_data[key]["total"] += amount
+        
+        # Reconcile each supplier's invoice aging to their CALCULATED ledger
+        # balance (invoices - payments - credits), so on-account payments
+        # reduce the aging too. Runs BEFORE purchase orders are added — POs
+        # are commitments, not ledger debt, and stay on top unchanged.
+        if biz_id and calc_all_supplier_balances:
+            try:
+                _s_ledger = calc_all_supplier_balances(biz_id) or {}
+            except Exception as _sbe:
+                logger.error(f"[CR AGING] Ledger reconcile failed: {_sbe}")
+                _s_ledger = {}
+            if _s_ledger:
+                _oldest_first = ["d120", "d90", "d60", "d30", "current"]
+                for key in list(aging_data.keys()):
+                    if key not in _s_ledger:
+                        continue  # name-keyed rows can't be matched to the ledger
+                    row = aging_data[key]
+                    ledger_bal = round(float(_s_ledger.get(key, row["total"]) or 0), 2)
+                    diff = round(row["total"] - ledger_bal, 2)
+                    if diff > 0.01:
+                        for b in _oldest_first:
+                            if diff <= 0.01:
+                                break
+                            take = min(row[b], diff)
+                            row[b] = round(row[b] - take, 2)
+                            diff = round(diff - take, 2)
+                    elif diff < -0.01:
+                        row["d120"] = round(row["d120"] + (-diff), 2)
+                    row["total"] = round(row["current"] + row["d30"] + row["d60"] + row["d90"] + row["d120"], 2)
+                    if row["total"] <= 0.01:
+                        del aging_data[key]
+                # Suppliers with a ledger balance but no open invoices at all
+                for _sid, _slb in _s_ledger.items():
+                    _slb = round(float(_slb or 0), 2)
+                    if _slb > 0.01 and _sid not in aging_data:
+                        _supp = supplier_map.get(_sid)
+                        if not _supp:
+                            continue
+                        aging_data[_sid] = {
+                            "name": _supp.get("name", "Unknown"),
+                            "current": 0, "d30": 0, "d60": 0, "d90": 0,
+                            "d120": _slb, "total": _slb
+                        }
         
         # === SOURCE 2: Outstanding purchase orders (sent/partial — not yet invoiced) ===
         # Track which POs already have a matching supplier invoice to avoid double-counting
