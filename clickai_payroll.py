@@ -122,6 +122,10 @@ def register_payroll_routes(app, db, login_required, Auth, render_page,
         biz_id = business.get("id") if business else None
         
         employees = db.get("employees", {"business_id": biz_id}) if biz_id else []
+        # Ended employment: out of the active list and payroll totals,
+        # shown greyed at the bottom so their record stays reachable
+        ended_employees = [e for e in employees if (e.get("status") or "").lower() == "ended"]
+        employees = [e for e in employees if (e.get("status") or "").lower() != "ended"]
         payslips = db.get("payslips", {"business_id": biz_id}) if biz_id else []
         
         # Get pending timesheet batches for staging
@@ -177,6 +181,16 @@ def register_payroll_routes(app, db, login_required, Auth, render_page,
                 <td>{safe_string(e.get("position", "-"))}</td>
                 <td>{money(e.get("basic_salary", 0))}</td>
                 <td><a href="/payroll/payslip-preview/{e.get("id")}" onclick="event.stopPropagation();" class="btn btn-secondary" style="padding:5px 10px;font-size:12px;">View Payslip</a></td>
+            </tr>
+            '''
+        for e in ended_employees:
+            emp_rows += f'''
+            <tr style="cursor:pointer;opacity:0.5;" onclick="window.location='/employee/{e.get("id")}'">
+                <td><strong>{safe_string(e.get("name", "-"))}</strong> <span style="color:var(--red);font-size:11px;">ENDED {safe_string(e.get("employment_end_date") or "")}</span></td>
+                <td>{safe_string((e.get("id_number", "") or "-")[:6])}****</td>
+                <td>{safe_string(e.get("position", "-"))}</td>
+                <td>{money(e.get("basic_salary", 0))}</td>
+                <td></td>
             </tr>
             '''
         
@@ -1129,6 +1143,9 @@ def register_payroll_routes(app, db, login_required, Auth, render_page,
             return redirect("/payroll")
         
         employees = db.get("employees", {"business_id": biz_id}) if biz_id else []
+        # Ended employment never goes through a payroll run — a final payslip
+        # can still be created manually from the employee page if owed
+        employees = [e for e in employees if (e.get("status") or "").lower() != "ended"]
         
         if not employees:
             flash("No employees to run payroll for", "error")
@@ -2537,6 +2554,41 @@ def register_payroll_routes(app, db, login_required, Auth, render_page,
         return redirect("/payroll")
     
     
+    @app.route("/employee/<emp_id>/end-employment", methods=["POST"])
+    @login_required
+    def employee_end_employment(emp_id):
+        """End a worker's employment on a given date: excluded from payroll
+        runs and the active list; payslip history stays. A final payslip can
+        still be created manually if anything is owed."""
+        employee = db.get_one("employees", emp_id)
+        if not employee:
+            flash("Employee not found", "error")
+            return redirect("/payroll")
+        end_date = request.form.get("end_date", "").strip() or today()
+        try:
+            db.update("employees", emp_id, {"status": "ended", "employment_end_date": end_date})
+            flash(f"Employment ended for {employee.get('name')} on {end_date} — removed from payroll runs. Payslip history stays available.", "success")
+        except Exception as e:
+            logger.error(f"[EMPLOYEE] End employment failed for {emp_id}: {e}")
+            flash("Could not end employment — check that the employees table has the status and employment_end_date columns", "error")
+        return redirect(f"/employee/{emp_id}")
+
+    @app.route("/employee/<emp_id>/reactivate", methods=["POST"])
+    @login_required
+    def employee_reactivate(emp_id):
+        """Reactivate a worker whose employment was ended."""
+        employee = db.get_one("employees", emp_id)
+        if not employee:
+            flash("Employee not found", "error")
+            return redirect("/payroll")
+        try:
+            db.update("employees", emp_id, {"status": "active", "employment_end_date": ""})
+            flash(f"{employee.get('name')} reactivated — back in payroll runs", "success")
+        except Exception as e:
+            logger.error(f"[EMPLOYEE] Reactivate failed for {emp_id}: {e}")
+            flash("Could not reactivate — check the logs", "error")
+        return redirect(f"/employee/{emp_id}")
+
     @app.route("/employee/<emp_id>")
     @login_required
     def employee_view(emp_id):
@@ -2582,6 +2634,29 @@ def register_payroll_routes(app, db, login_required, Auth, render_page,
         except Exception as _pce:
             logger.error(f"[EMPLOYEE] Pay conditions read failed for {emp_id}: {_pce}")
         
+        # End Employment: date form for active workers; ended workers get a
+        # banner with the end date and a Reactivate button
+        _emp_status = (employee.get("status") or "").lower()
+        if _emp_status == "ended":
+            end_employment_block = f'''
+        <div class="card" style="border:1px solid var(--red);background:rgba(239,68,68,0.08);display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px;">
+            <strong>Employment ended {safe_string(employee.get("employment_end_date") or "-")} — excluded from payroll runs. Payslip history stays available.</strong>
+            <form method="POST" action="/employee/{emp_id}/reactivate" style="margin:0;" onsubmit="return confirm('Reactivate this employee? They will be included in payroll runs again.');">
+                <button type="submit" class="btn btn-secondary">Reactivate</button>
+            </form>
+        </div>
+        '''
+        else:
+            end_employment_block = f'''
+        <div class="card" style="display:flex;justify-content:flex-end;align-items:center;gap:10px;flex-wrap:wrap;">
+            <form method="POST" action="/employee/{emp_id}/end-employment" style="margin:0;display:flex;gap:10px;align-items:center;flex-wrap:wrap;" onsubmit="return confirm('End employment for this worker? They will be removed from payroll runs. A final payslip can still be created manually if anything is owed.');">
+                <label style="color:var(--text-muted);font-size:12px;">End Employment date</label>
+                <input type="date" name="end_date" value="{today()}" required style="padding:8px;border-radius:6px;border:1px solid var(--border);background:var(--card);color:var(--text);">
+                <button type="submit" class="btn" style="background:var(--red);color:white;">End Employment</button>
+            </form>
+        </div>
+        '''
+        
         content = f'''
         <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:20px;flex-wrap:wrap;gap:10px;">
             <a href="/payroll" style="color:var(--text-muted);">← Back to Payroll</a>
@@ -2589,6 +2664,8 @@ def register_payroll_routes(app, db, login_required, Auth, render_page,
             <a href="/employee/{emp_id}/edit" class="btn btn-secondary">✏️ Edit Employee</a>
             <a href="/employee/{emp_id}/pay-conditions" class="btn btn-secondary">📋 Pay Conditions</a>
         </div>
+        
+        {end_employment_block}
         
         <div class="card">
             <h2 style="margin:0 0 15px 0;">{safe_string(employee.get("name", "-"))}</h2>
@@ -3224,7 +3301,7 @@ def register_payroll_routes(app, db, login_required, Auth, render_page,
                 body * {{ visibility: hidden !important; }}
                 .print-area, .print-area * {{ visibility: visible !important; }}
                 .print-area .print-only {{ display: block !important; }}
-                .print-area {{ position: absolute; left: 0; top: -15mm; width: 100%; }}
+                .print-area {{ position: absolute; left: 0; top: -27mm; width: 100%; }}
             }}
         </style>
         
