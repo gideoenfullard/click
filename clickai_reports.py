@@ -245,9 +245,11 @@ def register_report_routes(app, db, login_required, Auth, render_page,
         business = Auth.get_current_business()
         biz_id = business.get("id") if business else None
         
-        # Get all invoices
+        # Get all invoices — outstanding is calculated from the source
+        # documents: invoice total minus payments already allocated
+        # (paid_amount). Credited invoices are closed by their credit note.
         invoices = db.get("invoices", {"business_id": biz_id}) if biz_id else []
-        outstanding = [inv for inv in invoices if inv.get("status") != "paid"]
+        outstanding = [inv for inv in invoices if inv.get("status") not in ("paid", "credited")]
         
         # Get customers
         customers = db.get("customers", {"business_id": biz_id}) if biz_id else []
@@ -284,7 +286,9 @@ def register_report_routes(app, db, login_required, Auth, render_page,
             days_old = (today_date - inv_date).days
             _terms = _parse_terms_days(customer_map.get(cust_id, {}).get("payment_terms"))
             days_pd = days_old - _terms  # days past the due date (<=0 means still within terms)
-            amount = float(inv.get("total", 0))
+            amount = round(float(inv.get("total", 0) or 0) - float(inv.get("paid_amount", 0) or 0), 2)
+            if amount <= 0:
+                continue  # fully covered by payments — nothing left to age
             
             if days_pd <= 0:
                 aging_data[cust_id]["current"] += amount
@@ -863,8 +867,10 @@ def register_report_routes(app, db, login_required, Auth, render_page,
         
         aging_data = {}
         
-        # === SOURCE 1: Unpaid supplier invoices ===
-        outstanding_sinv = [p for p in supplier_invoices if p.get("status") != "paid"]
+        # === SOURCE 1: Unpaid supplier invoices — outstanding is calculated
+        # from the source documents: invoice total minus payments already
+        # allocated (paid_amount). Credited invoices are closed. ===
+        outstanding_sinv = [p for p in supplier_invoices if p.get("status") not in ("paid", "credited")]
         for p in outstanding_sinv:
             supp_id = p.get("supplier_id")
             supp_name = p.get("supplier_name", "Unknown")
@@ -888,7 +894,9 @@ def register_report_routes(app, db, login_required, Auth, render_page,
             days_old = (today_date - p_date).days
             _terms = _parse_terms_days(supplier_map.get(supp_id, {}).get("payment_terms"))
             days_pd = days_old - _terms  # days past the due date (<=0 means still within terms)
-            amount = float(p.get("total", 0) or 0)
+            amount = round(float(p.get("total", 0) or 0) - float(p.get("paid_amount", 0) or 0), 2)
+            if amount <= 0:
+                continue  # fully covered by payments — nothing left to age
             
             if days_pd <= 0:
                 aging_data[key]["current"] += amount
