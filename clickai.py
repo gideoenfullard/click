@@ -15328,8 +15328,12 @@ class Actions:
                     # Find or create supplier
                     suppliers = db.get("suppliers", {"business_id": biz_id})
                     supplier = None
+                    _pas_norm = _normalize_supplier_match_name(supplier_name)
                     for s in suppliers:
-                        if supplier_name.lower() in s.get("name", "").lower():
+                        _s_name = s.get("name", "") or ""
+                        _s_norm = _normalize_supplier_match_name(_s_name)
+                        if supplier_name.lower() in _s_name.lower() or \
+                           (_pas_norm and _s_norm and (_pas_norm == _s_norm or _pas_norm in _s_norm or _s_norm in _pas_norm)):
                             supplier = s
                             break
                     
@@ -15342,7 +15346,12 @@ class Actions:
                             email=item_data.get("email", ""),
                             created_by=context.get("user_id", "")
                         )
-                        db.save("suppliers", supplier)
+                        _sup_ok, _sup_err = db.save("suppliers", supplier)
+                        if not _sup_ok:
+                            # Do NOT save the invoice with a dangling supplier_id
+                            logger.error(f"[PROCESS ALL SCANS] Failed to create supplier '{supplier_name}': {_sup_err}")
+                            failed_items.append(item.get("description", supplier_name))
+                            continue
                     
                     # Create supplier invoice
                     inv = {
@@ -61501,6 +61510,24 @@ po_qty = qty from PO. qty_diff = invoice_qty - po_qty. stock_code = PO item's co
         return jsonify({"success": False, "error": str(e)})
 
 
+def _normalize_supplier_match_name(name: str) -> str:
+    """Normalise a supplier name for duplicate matching ONLY (never for display).
+    Lowercases, strips punctuation/brackets, drops a leading 'THE', expands the
+    abbreviation 'CO' to 'COMPANY', and removes legal-entity suffix words, so
+    'THE INDUSTRIAL CLOTHING CO (PTY) LTD' matches
+    'INDUSTRIAL CLOTHING COMPANY (PTY) LTD'."""
+    import re as _re
+    n = (name or "").lower().strip()
+    n = _re.sub(r"[.,&'\"/()]", " ", n)
+    words = n.split()
+    if words and words[0] == "the":
+        words = words[1:]
+    words = ["company" if w == "co" else w for w in words]
+    _drop = {"pty", "ltd", "limited", "cc", "inc", "incorporated", "proprietary"}
+    words = [w for w in words if w not in _drop]
+    return " ".join(words)
+
+
 @app.route("/api/scan/save-supplier-invoice", methods=["POST"])
 @login_required
 def api_scan_save_supplier_invoice():
@@ -61532,9 +61559,12 @@ def api_scan_save_supplier_invoice():
             supplier_name = "Unknown Supplier"
         supplier_name = supplier_name.strip()
         
+        _scan_supp_norm = _normalize_supplier_match_name(supplier_name)
         for s in suppliers:
             s_name = s.get("name", "") or ""
-            if supplier_name.lower() in s_name.lower() or s_name.lower() in supplier_name.lower():
+            _s_norm = _normalize_supplier_match_name(s_name)
+            if supplier_name.lower() in s_name.lower() or s_name.lower() in supplier_name.lower() or \
+               (_scan_supp_norm and _s_norm and (_scan_supp_norm == _s_norm or _scan_supp_norm in _s_norm or _s_norm in _scan_supp_norm)):
                 supplier = s
                 logger.info(f"[SCAN PROCESS] Found existing supplier: {s_name}")
                 break
@@ -61553,8 +61583,9 @@ def api_scan_save_supplier_invoice():
             success, result = db.save("suppliers", new_supplier)
             if not success:
                 logger.error(f"[SCAN PROCESS] Failed to create supplier: {result}")
-                # Don't fail completely - continue with None supplier
-                supplier = new_supplier  # Use local copy even if save failed
+                # Do NOT continue — saving the invoice now would create an orphan
+                # record with a dangling supplier_id (ghost supplier on aging).
+                return jsonify({"success": False, "error": f"Could not create supplier '{supplier_name}' — the invoice was NOT saved. Please try again, or add the supplier manually first."})
             else:
                 supplier = new_supplier
                 logger.info(f"[SCAN PROCESS] Supplier created successfully: {supplier_name}")
