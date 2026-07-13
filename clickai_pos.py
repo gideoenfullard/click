@@ -107,8 +107,8 @@ def register_pos_routes(app, db, login_required, Auth, render_page,
             '''
         
         # Customer options - sorted alphabetically
+        # (no "+ Add New" — POS may not create customers, Deon 2026-07-13)
         customer_options = '<option value="">-- Countersale --</option>'
-        customer_options += '<option value="NEW" style="color:#10b981;">+ Add New</option>'
         for c in sorted(customers, key=lambda x: (x.get("name") or "").lower()):
             customer_options += f'<option value="{c.get("id")}" data-name="{safe_string(c.get("name"))}">{safe_string(c.get("name"))}</option>'
         
@@ -120,7 +120,7 @@ def register_pos_routes(app, db, login_required, Auth, render_page,
         
         # JSON data for searchable dropdown
         import json
-        customer_list = [{"id": "", "name": "Countersale"}] + [{"id": "NEW", "name": "+ Add New"}]
+        customer_list = [{"id": "", "name": "Countersale"}]
         customer_list += [{"id": c.get("id"), "name": c.get("name", ""), "address": c.get("address", ""), "phone": c.get("phone", "") or c.get("cell", ""), "vat_number": c.get("vat_number", ""), "email": c.get("email", "")} for c in sorted(customers, key=lambda x: (x.get("name") or "").lower())]
         supplier_list = [{"id": "", "name": "Select Supplier"}] + [{"id": "NEW", "name": "+ Add New"}]
         supplier_list += [{"id": s.get("id"), "name": s.get("name", "")} for s in sorted(suppliers, key=lambda x: (x.get("name") or "").lower())]
@@ -2275,9 +2275,9 @@ def register_pos_routes(app, db, login_required, Auth, render_page,
             const customerName = customer.name || '';
             
             // LOGIC:
-            // Cart empty + no customer = Quick Quote (once-off, new customer)
+            // Cart empty + no customer = Quick Quote (existing customer required by backend)
             // Cart empty + customer selected = Quick Quote with custom items for this customer
-            // Cart has items + no customer = Quick Customer modal
+            // Cart has items + no customer = must select existing customer (POS may not create customers)
             // Cart has items + customer = Normal quote with stock items
             
             if (cart.length === 0) {
@@ -2288,8 +2288,11 @@ def register_pos_routes(app, db, login_required, Auth, render_page,
             
             // Cart has items
             if (!customerId) {
-                // Show quick customer modal instead of just alert
-                showQuickCustomerModal();
+                // POS may not create customers (Deon 2026-07-13) — require
+                // selecting an existing customer instead of the create modal.
+                alert('Please select an existing customer first.\n\nNew customers must be added on the Customers page by an administrator.');
+                const _custSearch = document.getElementById('entitySearch');
+                if (_custSearch) _custSearch.focus();
                 return;
             }
             
@@ -6808,8 +6811,9 @@ def register_pos_routes(app, db, login_required, Auth, render_page,
     @login_required
     def api_pos_quick_quote():
         """
-        Create a quote on-the-fly without needing stock items or saved customer.
-        Customer is created if not exists, items are custom (non-stock).
+        Create a quote on-the-fly without needing stock items.
+        Customer MUST already exist (matched by exact name or phone) — POS may
+        not create customers. Items are custom (non-stock).
         If customer_id is provided, uses existing customer.
         """
         
@@ -6859,19 +6863,12 @@ def register_pos_routes(app, db, login_required, Auth, render_page,
                         customer_name = c.get("name", customer_name)
                         break
                 
-                # Create customer if not found
+                # POS may NOT create customers (Deon 2026-07-13) — quotes for
+                # unknown names were silently creating duplicate customer
+                # records. If no match, reject with a clear message.
                 if not customer_id:
-                    new_customer = RecordFactory.customer(
-                        business_id=biz_id,
-                        name=customer_name,
-                        phone=customer_phone,
-                        email=customer_email,
-                        vat_number=customer_vat,
-                        address=customer_address
-                    )
-                    customer_id = new_customer["id"]
-                    db.save("customers", new_customer)
-                    logger.info(f"[QUICK QUOTE] Created new customer: {customer_name}")
+                    logger.info(f"[QUICK QUOTE] Blocked quote for unknown customer '{customer_name}' — POS may not create customers")
+                    return jsonify({"success": False, "error": f"Customer '{customer_name}' not found. Please select an existing customer — new customers must be added on the Customers page first."})
             
             # Calculate totals - items come with excl VAT prices
             subtotal = Decimal("0")
