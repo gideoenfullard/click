@@ -6363,13 +6363,20 @@ def register_pos_routes(app, db, login_required, Auth, render_page,
             if not customer_id and biz_id:
                 try:
                     _all_custs = db.get("customers", {"business_id": biz_id}) or []
+                    _cs_matches = []
                     for _c in _all_custs:
                         _cn = (_c.get("name") or "").strip().lower()
                         if _cn in ("counter sale", "countersale", "counter-sale", "counter sales", "countersales"):
-                            customer_id = _c.get("id", "")
-                            customer_name = _c.get("name", customer_name)
-                            logger.info(f"[POS] Counter sale auto-linked to customer '{_c.get('name')}' (id={customer_id})")
-                            break
+                            _cs_matches.append(_c)
+                    if _cs_matches:
+                        # Always link to the OLDEST matching account so an
+                        # accidentally-created duplicate can never hijack the
+                        # counter sales (root cause of the June/July 2026 split).
+                        _cs_matches.sort(key=lambda _m: str(_m.get("created_at") or ""))
+                        _c = _cs_matches[0]
+                        customer_id = _c.get("id", "")
+                        customer_name = _c.get("name", customer_name)
+                        logger.info(f"[POS] Counter sale auto-linked to customer '{_c.get('name')}' (id={customer_id}, oldest of {len(_cs_matches)} match(es))")
                 except Exception as _link_err:
                     logger.warning(f"[POS] Counter sale lookup failed: {_link_err}")
             
