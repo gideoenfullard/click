@@ -58932,7 +58932,7 @@ def scan_inbox_page():
             
             if (sugg.vat_warning) {{
                 html += `
-                    <div style="background:#fef3c7;border-left:3px solid #f59e0b;padding:8px;border-radius:4px;font-size:12px;color:#000;margin-top:8px;">
+                    <div id="zaneVatWarning" style="background:#fef3c7;border-left:3px solid #f59e0b;padding:8px;border-radius:4px;font-size:12px;color:#000;margin-top:8px;">
                         Warning: ${{sugg.vat_warning}}
                     </div>
                 `;
@@ -59337,7 +59337,7 @@ def scan_inbox_page():
                 </div>
                 <div class="modal-field">
                     <label>Total</label>
-                    <input type="number" step="0.01" id="m_total" value="${{data.total || (data.extracted && data.extracted.total_amount) || 0}}" style="font-size:20px;font-weight:bold;background:rgba(34,197,94,0.1);border-color:#22c55e;">
+                    <input type="number" step="0.01" id="m_total" value="${{data.total || (data.extracted && data.extracted.total_amount) || 0}}" onchange="refreshZaneVatWarning()" oninput="refreshZaneVatWarning()" style="font-size:20px;font-weight:bold;background:rgba(34,197,94,0.1);border-color:#22c55e;">
                 </div>
                 <div class="modal-field">
                     <label>Supplier Discount % (Discount Received)</label>
@@ -59830,6 +59830,20 @@ def scan_inbox_page():
         if (totalField) {{
             totalField.value = (sub + vat).toFixed(2);
         }}
+        refreshZaneVatWarning();
+    }}
+    
+    // Keep Zane's VAT warning in sync with the CURRENT field values so the
+    // message never shows stale pre-edit amounts. The booking itself always
+    // reads the live field values, so this is display-only.
+    function refreshZaneVatWarning() {{
+        const el = document.getElementById('zaneVatWarning');
+        if (!el) return;
+        const vat = parseFloat(document.getElementById('m_vat')?.value || 0);
+        const total = parseFloat(document.getElementById('m_total')?.value || 0);
+        if (!total) return;
+        const net = Math.round((total - vat) * 100) / 100;
+        el.textContent = 'Warning: VAT of R' + vat.toFixed(2) + ' included in total R' + total.toFixed(2) + '. Net expense R' + net.toFixed(2) + '. (updated with your edits — these amounts will be booked)';
     }}
     
     function recalcModalDiscount() {{
@@ -59862,6 +59876,7 @@ def scan_inbox_page():
             noteEl.textContent = 'Discount Received ' + discPct + '%: -R' + discAmt.toFixed(2)
                 + '  (Net R' + discountedNet.toFixed(2) + ' + VAT R' + vatAmt.toFixed(2) + ')';
         }}
+        refreshZaneVatWarning();
     }}
     
     function recalcModalFromItems() {{
@@ -59890,6 +59905,7 @@ def scan_inbox_page():
             }} else {{
                 if (vatField) vatField.value = (itemsTotal * 0.15).toFixed(2);
                 if (totalField) totalField.value = (itemsTotal * 1.15).toFixed(2);
+                refreshZaneVatWarning();
             }}
         }}
     }}

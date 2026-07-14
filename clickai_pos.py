@@ -3245,23 +3245,30 @@ def register_pos_routes(app, db, login_required, Auth, render_page,
         let _qqSuggestIndex = -1;
         
         function qqStockSuggest(lineId, inputEl) {
-            const drop = document.getElementById('qqStockDrop');
-            if (!drop) return;
+            // Create the dropdown on first use and attach it to <body> so no
+            // modal stacking context or overflow clipping can ever hide it.
+            let drop = document.getElementById('qqStockDrop');
+            if (!drop) {
+                drop = document.createElement('div');
+                drop.id = 'qqStockDrop';
+                drop.style.cssText = 'display:none;position:fixed;z-index:2147483000;background:#12122a;border:1px solid rgba(255,255,255,0.25);border-radius:8px;box-shadow:0 10px 30px rgba(0,0,0,0.6);max-height:220px;overflow-y:auto;';
+                document.body.appendChild(drop);
+            }
             const q = (inputEl.value || '').trim().toLowerCase().replace(/\\s*x\\s*/gi, 'x');
-            if (q.length < 2) { qqStockHide(); return; }
             const esc = function(s) { return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;'); };
             const rows = document.querySelectorAll('.stock-row');
             const matches = [];
             for (let row of rows) {
-                const hay = (row.getAttribute('data-search') || '').toLowerCase().replace(/\\s*x\\s*/gi, 'x');
-                if (hay.indexOf(q) !== -1) {
-                    matches.push({
-                        code: row.getAttribute('data-code') || '',
-                        desc: row.getAttribute('data-desc') || '',
-                        price: parseFloat(row.getAttribute('data-price')) || 0
-                    });
-                    if (matches.length >= 8) break;
+                if (q.length > 0) {
+                    const hay = (row.getAttribute('data-search') || '').toLowerCase().replace(/\\s*x\\s*/gi, 'x');
+                    if (hay.indexOf(q) === -1) continue;
                 }
+                matches.push({
+                    code: row.getAttribute('data-code') || '',
+                    desc: row.getAttribute('data-desc') || '',
+                    price: parseFloat(row.getAttribute('data-price')) || 0
+                });
+                if (matches.length >= 8) break;
             }
             _qqSuggestMatches = matches;
             _qqSuggestLine = lineId;
@@ -3333,7 +3340,7 @@ def register_pos_routes(app, db, login_required, Auth, render_page,
             
             const lineHtml = `
             <div id="${lineId}" style="display:grid;grid-template-columns:2fr 80px 100px 40px;gap:10px;margin-bottom:10px;align-items:center;">
-                <input type="text" placeholder="Description — type to search stock" autocomplete="off" onchange="qqUpdateLine('${lineId}')" oninput="qqStockSuggest('${lineId}', this)" onkeydown="qqStockKeys(event, '${lineId}')" onblur="qqStockBlur()" 
+                <input type="text" placeholder="Description — type to search stock" autocomplete="off" onchange="qqUpdateLine('${lineId}')" oninput="qqStockSuggest('${lineId}', this)" onfocus="qqStockSuggest('${lineId}', this)" onclick="qqStockSuggest('${lineId}', this)" onkeydown="qqStockKeys(event, '${lineId}')" onblur="qqStockBlur()" 
                     style="padding:10px;border-radius:6px;border:1px solid rgba(255,255,255,0.2);background:#1a1a2e;color:white;font-size:14px;">
                 <input type="number" placeholder="Qty" value="1" min="1" onchange="qqUpdateLine('${lineId}')"
                     style="padding:10px;border-radius:6px;border:1px solid rgba(255,255,255,0.2);background:#1a1a2e;color:white;font-size:14px;text-align:center;">
@@ -4526,8 +4533,6 @@ def register_pos_routes(app, db, login_required, Auth, render_page,
                     <div id="qqLines" style="max-height:250px;overflow-y:auto;">
                         <!-- Line items will be added here -->
                     </div>
-                    <!-- Stock suggestion dropdown (fixed so qqLines overflow doesn't clip it) -->
-                    <div id="qqStockDrop" style="display:none;position:fixed;z-index:10001;background:#12122a;border:1px solid rgba(255,255,255,0.25);border-radius:8px;box-shadow:0 10px 30px rgba(0,0,0,0.6);max-height:220px;overflow-y:auto;"></div>
                     <div style="display:flex;justify-content:flex-end;margin-top:15px;padding-top:15px;border-top:1px solid rgba(255,255,255,0.1);">
                         <div style="text-align:right;">
                             <span style="color:var(--text-muted);font-size:14px;">Total (excl VAT):</span>
