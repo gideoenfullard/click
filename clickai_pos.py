@@ -2290,7 +2290,7 @@ def register_pos_routes(app, db, login_required, Auth, render_page,
             if (!customerId) {
                 // POS may not create customers (Deon 2026-07-13) — require
                 // selecting an existing customer instead of the create modal.
-                alert('Please select an existing customer first.\n\nNew customers must be added on the Customers page by an administrator.');
+                alert('Please select an existing customer first.\\n\\nNew customers must be added on the Customers page by an administrator.');
                 const _custSearch = document.getElementById('entitySearch');
                 if (_custSearch) _custSearch.focus();
                 return;
