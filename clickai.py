@@ -59139,6 +59139,20 @@ def scan_inbox_page():
                     <div style="max-height:250px;overflow-y:auto;">
                 `;
                 
+                // Detect whether line prices INCLUDE VAT (till slips, e.g.
+                // Checkers/SPAR) or EXCLUDE it (typical supplier invoices) by
+                // comparing the scanned line sum to the scanned total vs
+                // subtotal. Used by recalcModalFromItems for live totals.
+                let _lineSumScan = 0;
+                items.forEach(function(it) {{
+                    const _q = parseFloat(it.qty || it.quantity || 1);
+                    const _p = parseFloat(it.unit_price || it.price || 0);
+                    _lineSumScan += _q * _p;
+                }});
+                const _scanTotal = parseFloat(data.total || (data.extracted && data.extracted.total_amount) || 0);
+                const _scanSub = parseFloat(data.subtotal || (data.extracted && data.extracted.subtotal) || 0);
+                window._itemsVatMode = (Math.abs(_lineSumScan - _scanSub) < Math.abs(_lineSumScan - _scanTotal)) ? 'excl' : 'incl';
+                
                 items.forEach((item, i) => {{
                     const desc = item.description || 'Item';
                     const qty = item.qty || item.quantity || 1;
@@ -59277,6 +59291,7 @@ def scan_inbox_page():
                                            style="border:none;background:transparent;width:40px;outline:none;text-align:center;color:#fff;"
                                            onfocus="this.style.background='#fffbeb';this.style.padding='2px';this.style.borderRadius='3px';this.style.color='#000'"
                                            onblur="this.style.background='transparent';this.style.padding='0';this.style.color='#fff'"
+                                           oninput="recalcModalFromItems()" onchange="recalcModalFromItems()"
                                            step="0.01"
                                     /> 
                                     @ R<input type="number" 
@@ -59285,10 +59300,11 @@ def scan_inbox_page():
                                              style="border:none;background:transparent;width:60px;outline:none;text-align:right;color:#fff;"
                                              onfocus="this.style.background='#fffbeb';this.style.padding='2px';this.style.borderRadius='3px';this.style.color='#000'"
                                              onblur="this.style.background='transparent';this.style.padding='0';this.style.color='#fff'"
+                                             oninput="recalcModalFromItems()" onchange="recalcModalFromItems()"
                                              step="0.01"
                                     />
                                 </div>
-                                <div style="font-weight:600;color:var(--primary);">R${{lineTotal.toFixed(2)}}</div>
+                                <div style="font-weight:600;color:var(--primary);" id="item_linetotal_${{i}}">R${{lineTotal.toFixed(2)}}</div>
                             </div>
                         </div>
                     </div>
@@ -59880,25 +59896,49 @@ def scan_inbox_page():
     }}
     
     function recalcModalFromItems() {{
-        // Recalculate subtotal from line items, then VAT and total
+        // Recalculate totals LIVE from the line items. Negative lines
+        // (discounts / rewards promos, e.g. Checkers) are included as-is.
         const itemRows = document.querySelectorAll('.line-item-row');
+        if (!itemRows.length) return;
         let itemsTotal = 0;
+        let anyValue = false;
         itemRows.forEach((row, i) => {{
             const qtyEl = document.getElementById(`item_qty_${{i}}`);
             const priceEl = document.getElementById(`item_price_${{i}}`);
             if (qtyEl && priceEl) {{
                 const qty = parseFloat(qtyEl.value || 0);
                 const price = parseFloat(priceEl.value || 0);
-                itemsTotal += qty * price;
+                const line = Math.round(qty * price * 100) / 100;
+                if (line !== 0) anyValue = true;
+                itemsTotal += line;
+                const lt = document.getElementById(`item_linetotal_${{i}}`);
+                if (lt) lt.textContent = 'R' + line.toFixed(2);
             }}
         }});
-        if (itemsTotal > 0) {{
-            const subField = document.getElementById('m_subtotal');
-            const vatField = document.getElementById('m_vat');
-            const totalField = document.getElementById('m_total');
+        if (!anyValue) return;
+        itemsTotal = Math.round(itemsTotal * 100) / 100;
+        const subField = document.getElementById('m_subtotal');
+        const vatField = document.getElementById('m_vat');
+        const totalField = document.getElementById('m_total');
+        const discEl = document.getElementById('m_discount_pct');
+        const discPct = discEl ? (parseFloat(discEl.value) || 0) : 0;
+        if (window._itemsVatMode === 'incl') {{
+            // Till slip: line prices INCLUDE VAT — total is the line sum,
+            // VAT extracted at 15/115, subtotal is the remainder.
+            const vatAmt = Math.round(itemsTotal * 15 / 115 * 100) / 100;
+            if (subField) subField.value = (itemsTotal - vatAmt).toFixed(2);
+            if (discPct > 0) {{
+                // Discount active — let the discounted recalculation set VAT and total.
+                recalcModalDiscount();
+            }} else {{
+                if (vatField) vatField.value = vatAmt.toFixed(2);
+                if (totalField) totalField.value = itemsTotal.toFixed(2);
+                refreshZaneVatWarning();
+            }}
+        }} else {{
+            // Supplier invoice: line prices EXCLUDE VAT — subtotal is the
+            // line sum, VAT added at 15%.
             if (subField) subField.value = itemsTotal.toFixed(2);
-            const discEl = document.getElementById('m_discount_pct');
-            const discPct = discEl ? (parseFloat(discEl.value) || 0) : 0;
             if (discPct > 0) {{
                 // Discount active — let the discounted recalculation set VAT and total.
                 recalcModalDiscount();
