@@ -3189,7 +3189,7 @@ def register_pos_routes(app, db, login_required, Auth, render_page,
                     <div style="display:grid;grid-template-columns:1fr 1fr;gap:15px;">
                         <div>
                             <label style="display:block;margin-bottom:5px;color:white;font-size:13px;">Name *</label>
-                            <input type="text" id="qqCustName" placeholder="Company or person" 
+                            <input type="text" id="qqCustName" value="COUNTERSALE" placeholder="Company or person" 
                                 style="width:100%;padding:10px;border-radius:6px;border:1px solid rgba(255,255,255,0.2);background:#1a1a2e;color:white;font-size:14px;box-sizing:border-box;">
                         </div>
                         <div>
@@ -3251,7 +3251,7 @@ def register_pos_routes(app, db, login_required, Auth, render_page,
             if (!drop) {
                 drop = document.createElement('div');
                 drop.id = 'qqStockDrop';
-                drop.style.cssText = 'display:none;position:fixed;z-index:2147483000;background:#12122a;border:1px solid rgba(255,255,255,0.25);border-radius:8px;box-shadow:0 10px 30px rgba(0,0,0,0.6);max-height:220px;overflow-y:auto;';
+                drop.style.cssText = 'display:none;position:fixed;z-index:2147483000;background:#12122a;border:1px solid rgba(255,255,255,0.25);border-radius:8px;box-shadow:0 10px 30px rgba(0,0,0,0.6);max-height:300px;overflow-y:auto;';
                 document.body.appendChild(drop);
             }
             const q = (inputEl.value || '').trim().toLowerCase().replace(/\\s*x\\s*/gi, 'x');
@@ -3268,7 +3268,7 @@ def register_pos_routes(app, db, login_required, Auth, render_page,
                     desc: row.getAttribute('data-desc') || '',
                     price: parseFloat(row.getAttribute('data-price')) || 0
                 });
-                if (matches.length >= 8) break;
+                if (matches.length >= 100) break;
             }
             _qqSuggestMatches = matches;
             _qqSuggestLine = lineId;
@@ -4492,7 +4492,7 @@ def register_pos_routes(app, db, login_required, Auth, render_page,
                     <div style="display:grid;grid-template-columns:1fr 1fr;gap:15px;">
                         <div>
                             <label style="display:block;margin-bottom:5px;color:white;font-size:13px;">Name *</label>
-                            <input type="text" id="qqCustName" placeholder="Company or person" 
+                            <input type="text" id="qqCustName" value="COUNTERSALE" placeholder="Company or person" 
                                 style="width:100%;padding:10px;border-radius:6px;border:1px solid rgba(255,255,255,0.2);background:#1a1a2e;color:white;font-size:14px;box-sizing:border-box;">
                         </div>
                         <div>
