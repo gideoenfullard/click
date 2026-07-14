@@ -877,6 +877,11 @@ def register_invoicing_routes(app, db, login_required, Auth, render_page,
         cust_address = safe_string(customer.get("address", "")).replace("\n", "<br>") if customer else ""
         cust_vat = customer.get("vat_number", "") if customer else ""
         
+        # Invoice emails go to the customer's accounts/admin address by default;
+        # fall back to the primary email when no accounts address exists.
+        _accounts_email = (customer.get("accounts_contact_email") or "").strip() if customer else ""
+        cust_email_to = _accounts_email if (_accounts_email and "@" in _accounts_email) else cust_email
+        
         # ═══════════════════════════════════════════════════════════════
         # BUILD CC OPTIONS for the email modal.
         # Pull all known emails from the customer record into labeled groups
@@ -892,7 +897,7 @@ def register_invoicing_routes(app, db, login_required, Auth, render_page,
             if _key in _cc_seen:
                 return
             # Don't offer the same address as the primary "To" recipient
-            if _key == (cust_email or "").lower():
+            if _key == (cust_email_to or "").lower():
                 return
             _cc_seen.add(_key)
             _cc_options.append({"label": _label, "email": _addr})
@@ -902,6 +907,7 @@ def register_invoicing_routes(app, db, login_required, Auth, render_page,
             _saved_ccs = (customer.get("cc_emails") or customer.get("email_cc") or "")
             for _e in str(_saved_ccs).split(","):
                 _add_cc("CC List", _e)
+            _add_cc("Primary Email", cust_email)
             _add_cc("Accounts Dept", customer.get("accounts_contact_email", ""))
             _add_cc("Sales Dept", customer.get("sales_contact_email", ""))
         
@@ -1104,7 +1110,7 @@ def register_invoicing_routes(app, db, login_required, Auth, render_page,
                 <p style="color:var(--text-muted);margin-bottom:20px;">Send invoice <strong>{invoice.get("invoice_number", "")}</strong> to:</p>
                 
                 <label style="font-size:12px;color:var(--text-muted);display:block;margin-bottom:4px;">To</label>
-                <input type="text" id="emailTo" value="{cust_email}" placeholder="customer@email.com" 
+                <input type="text" id="emailTo" value="{cust_email_to}" placeholder="customer@email.com" 
                        style="width:100%;padding:12px;border-radius:8px;border:1px solid var(--border);background:var(--bg);color:var(--text);font-size:16px;margin-bottom:6px;">
                 <small style="color:var(--text-muted);display:block;margin-bottom:15px;">Multiple emails: separate with comma (e.g. john@co.za, admin@co.za)</small>
                 

@@ -2716,6 +2716,19 @@ class Email:
             logger.warning(f"[EMAIL] Debug - Global: SMTP_USER={bool(SMTP_USER)}, SMTP_PASS={bool(SMTP_PASS)}, FROM_EMAIL={bool(FROM_EMAIL)}")
             return False
         
+        # ── FULLTECH RULE (2026-07-14): every email sent from Daphne's or the
+        # sales address must always CC admin@fulltech1.co.za. Hardcoded to
+        # these two sender addresses so no other tenant is ever affected.
+        # The CC parser below dedupes and skips addresses already in To.
+        if (from_email or "").strip().lower() in ("daphne@fulltech1.co.za", "sales@fulltech1.co.za"):
+            _admin_cc = "admin@fulltech1.co.za"
+            if not cc:
+                cc = _admin_cc
+            elif isinstance(cc, (list, tuple)):
+                cc = list(cc) + [_admin_cc]
+            else:
+                cc = f"{cc},{_admin_cc}"
+        
         try:
             # ═══════════════════════════════════════════════════════════════
             # PARSE to_email into a list of individual addresses.
@@ -34454,11 +34467,14 @@ def customer_statement(customer_id):
     final_balance = running_balance  # Calculated from source documents above
     cust_email = customer.get("email", "")
     cust_cc_emails = (customer.get("cc_emails") or customer.get("email_cc") or "").strip()
+    # Statements go to the customer's accounts/admin address by default;
+    # primary email is the fallback (and stays selectable in the dropdown).
+    cust_accounts_email = (customer.get("accounts_contact_email") or "").strip()
     
     # Build list of known email addresses for this customer (dedup, preserve order)
     _known_emails = []
     _seen_lower = set()
-    for _e in [cust_email] + [x.strip() for x in cust_cc_emails.split(",") if x.strip()]:
+    for _e in [cust_accounts_email, cust_email] + [x.strip() for x in cust_cc_emails.split(",") if x.strip()]:
         _e_clean = (_e or "").strip()
         if _e_clean and "@" in _e_clean and _e_clean.lower() not in _seen_lower:
             _known_emails.append(_e_clean)
