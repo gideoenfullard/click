@@ -1631,7 +1631,7 @@ Return ONLY this JSON structure (no markdown, no ```json, no explanation):
     "supplier_address": "Physical address if visible",
     "customer_name": "Customer name if this is TO someone",
     "date": "YYYY-MM-DD",
-    "invoice_number": "INV-12345 or reference number",
+    "invoice_number": "Document number: invoice no, or for till slips the SLIP/RECEIPT/TRANSACTION/TILL number (e.g. SLIP 9341 → 9341). ANY identifying number EXCEPT amounts, VAT numbers, phone numbers or dates",
     "order_number": "PO/Order number if visible",
     "subtotal": 156.00,
     "vat": 23.40,
@@ -56850,6 +56850,9 @@ STEP 3: NORMAL EXTRACTION RULES (apply to both invoices and credit notes)
 2. Read EVERY item row - do not skip any
 3. Look at the TOP and BOTTOM of the document for phone, email, address, VAT number
 4. Document number from: "Invoice No", "Inv No", "Tax Invoice", "Ref", "Document No", "Credit Note No", "CR No"
+   - TILL SLIPS / RECEIPTS often have NO invoice number. Then use the SLIP number, RECEIPT number, TRANSACTION number, TILL number, or DOC number printed on the slip (e.g. "SLIP 9341" → invoice_number: "9341")
+   - ANY identifying document number counts — but NEVER use an amount, VAT registration number, phone number, or date as the document number
+   - Only leave invoice_number empty if the document truly has NO identifying number anywhere
 5. For VAT: READ it if shown on document. If not shown, set vat to 0 (Python will calculate)
 6. supplier_vat_number: Look for "VAT No", "VAT Reg", "Tax No" - usually starts with 4
 
@@ -62708,7 +62711,12 @@ def api_scan_save_expense():
                 journal_entries.append({"account_code": gl(biz_id, "vat_input"), "debit": round(vat_claimable, 2), "credit": 0})
             journal_entries.append({"account_code": _credit_account, "debit": 0, "credit": round(total_amount, 2)})
         
-        create_journal_entry(biz_id, data.get("date", today()), desc[:50], f"EXP-{exp_id[:8]}", journal_entries)
+        # Use the slip's own reference number (read by Sonnet) as journal
+        # reference so entries are traceable back to the physical slip.
+        # Fallback to the expense id only when the slip has no number.
+        _slip_ref = str(data.get("invoice_number") or "").strip()
+        _journal_ref = f"EXP-{_slip_ref[:20]}" if _slip_ref else f"EXP-{exp_id[:8]}"
+        create_journal_entry(biz_id, data.get("date", today()), desc[:50], _journal_ref, journal_entries)
         
         logger.info(f"[SCAN SAVE] Expense saved: {exp_id} cat={category} GL={expense_account} for {biz_id}")
         
