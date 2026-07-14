@@ -5805,38 +5805,58 @@ Nothing else."""
                 </tr>'''
         amount_due = running
 
-        # Aging: each outstanding invoice aged by its term due date vs the month-end
+        # Aging: SAME method as the Creditors Aging report (Sage statement-
+        # based): buckets by calendar MONTH on each invoice's outstanding
+        # amount, then reconciled to this statement's calculated Amount Due
+        # with oldest-first reduction — so payments/credits always reduce the
+        # aging and the buckets ALWAYS sum to the Amount Due.
         buckets = {"current": 0.0, "d30": 0.0, "d60": 0.0, "d90": 0.0, "d120": 0.0}
         try:
             asat_d = datetime.strptime(asat, "%Y-%m-%d").date()
         except Exception:
             asat_d = datetime.now().date()
         for si in s_invoices:
-            if si.get("status") == "cancelled":
+            if si.get("status") in ("cancelled", "paid", "credited"):
                 continue
             if (si.get("date") or "")[:10] > asat:
                 continue
             try:
-                outstanding = round(float(si.get("total", 0) or 0) - float(si.get("amount_paid", 0) or 0), 2)
+                _paid = float(si.get("paid_amount", si.get("amount_paid", 0)) or 0)
+                outstanding = round(float(si.get("total", 0) or 0) - _paid, 2)
             except Exception:
                 outstanding = 0.0
             if outstanding <= 0.01:
                 continue
-            age_ref = (si.get("due_date") or si.get("date") or "")[:10]
             try:
-                age = (asat_d - datetime.strptime(age_ref, "%Y-%m-%d").date()).days
+                si_d = datetime.strptime((si.get("date") or "")[:10], "%Y-%m-%d").date()
             except Exception:
-                age = 0
-            if age <= 30:
+                si_d = asat_d
+            months_old = (asat_d.year - si_d.year) * 12 + (asat_d.month - si_d.month)
+            if months_old <= 0:
                 buckets["current"] += outstanding
-            elif age <= 60:
+            elif months_old == 1:
                 buckets["d30"] += outstanding
-            elif age <= 90:
+            elif months_old == 2:
                 buckets["d60"] += outstanding
-            elif age <= 120:
+            elif months_old == 3:
                 buckets["d90"] += outstanding
             else:
                 buckets["d120"] += outstanding
+        # Reconcile the buckets to the statement's own calculated Amount Due
+        # (oldest-first reduction; any shortfall lands in the oldest bucket,
+        # matching the Creditors Aging report).
+        _target = round(max(float(amount_due or 0), 0.0), 2)
+        _btotal = round(sum(buckets.values()), 2)
+        _bdiff = round(_btotal - _target, 2)
+        if _bdiff > 0.01:
+            for _b in ("d120", "d90", "d60", "d30", "current"):
+                if _bdiff <= 0.01:
+                    break
+                _take = min(buckets[_b], _bdiff)
+                buckets[_b] = round(buckets[_b] - _take, 2)
+                _bdiff = round(_bdiff - _take, 2)
+        elif _bdiff < -0.01:
+            buckets["d120"] = round(buckets["d120"] + (-_bdiff), 2)
 
         sup_vat = sup.get("vat_number", "") or ""
         sup_addr = safe_string(sup.get("address", "") or "").replace("\n", "<br>")

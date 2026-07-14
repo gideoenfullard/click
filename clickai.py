@@ -8102,18 +8102,22 @@ class ZaneToolHandler:
             
             cust_id = inv.get("customer_id", "")
             cust_name = inv.get("customer_name", "Unknown")
-            amount = float(inv.get("total", 0) or 0)
+            # Outstanding calculated from source documents: total minus
+            # payments already allocated — never the full face value.
+            _paid = float(inv.get("paid_amount", inv.get("amount_paid", 0)) or 0)
+            amount = round(float(inv.get("total", 0) or 0) - _paid, 2)
+            if amount <= 0.01:
+                continue
             
-            # Calculate days old
+            # Calculate age (calendar months — same as the Debtors Aging report)
             inv_date = inv.get("date", "")
-            if inv_date:
-                try:
-                    inv_dt = datetime.strptime(str(inv_date)[:10], "%Y-%m-%d").date()
-                    days_old = (today - inv_dt).days
-                except:
-                    days_old = 0
-            else:
+            try:
+                inv_dt = datetime.strptime(str(inv_date)[:10], "%Y-%m-%d").date()
+                days_old = (today - inv_dt).days
+            except Exception:
+                inv_dt = today
                 days_old = 0
+            months_old = (today.year - inv_dt.year) * 12 + (today.month - inv_dt.month)
             
             if cust_name not in customer_aging:
                 customer_aging[cust_name] = {
@@ -8128,14 +8132,14 @@ class ZaneToolHandler:
             if days_old > ca["oldest_invoice_days"]:
                 ca["oldest_invoice_days"] = days_old
             
-            # Aging buckets
-            if days_old <= 30:
+            # Aging buckets (calendar months, Sage statement-based)
+            if months_old <= 0:
                 ca["current"] += amount
-            elif days_old <= 60:
+            elif months_old == 1:
                 ca["days_30"] += amount
-            elif days_old <= 90:
+            elif months_old == 2:
                 ca["days_60"] += amount
-            elif days_old <= 120:
+            elif months_old == 3:
                 ca["days_90"] += amount
             else:
                 ca["days_120_plus"] += amount
@@ -8147,6 +8151,36 @@ class ZaneToolHandler:
                 customer_aging[name]["phone"] = c.get("phone", "")
                 customer_aging[name]["email"] = c.get("email", "")
         
+        # RECONCILE each customer's aging to their CALCULATED ledger balance
+        # (invoices - receipts - credits) — oldest-first reduction so
+        # on-account payments reduce the aging; shortfall lands in the
+        # oldest bucket. Same step that makes the Debtors Aging report correct.
+        _cust_id_by_name = {}
+        for c in customers:
+            _n = (c.get("name") or "").strip().lower()
+            if _n:
+                _cust_id_by_name[_n] = c.get("id")
+        _oldest_first = ("days_120_plus", "days_90", "days_60", "days_30", "current")
+        for _name in list(customer_aging.keys()):
+            _cid = _cust_id_by_name.get((_name or "").strip().lower())
+            if not _cid or _cid not in _all_bals:
+                continue
+            row = customer_aging[_name]
+            ledger_bal = round(float(_all_bals.get(_cid, row["total"]) or 0), 2)
+            diff = round(row["total"] - ledger_bal, 2)
+            if diff > 0.01:
+                for b in _oldest_first:
+                    if diff <= 0.01:
+                        break
+                    take = min(row[b], diff)
+                    row[b] = round(row[b] - take, 2)
+                    diff = round(diff - take, 2)
+            elif diff < -0.01:
+                row["days_120_plus"] = round(row["days_120_plus"] + (-diff), 2)
+            row["total"] = round(row["current"] + row["days_30"] + row["days_60"] + row["days_90"] + row["days_120_plus"], 2)
+            if row["total"] <= 0.01:
+                del customer_aging[_name]
+        
         # Also add customers with balance but no outstanding invoices
         for c in customers:
             name = c.get("name", "")
@@ -8154,8 +8188,8 @@ class ZaneToolHandler:
             if balance > 0 and name not in customer_aging:
                 customer_aging[name] = {
                     "name": name, "phone": c.get("phone", ""), "email": c.get("email", ""),
-                    "total": balance, "current": balance, "days_30": 0, "days_60": 0, 
-                    "days_90": 0, "days_120_plus": 0, "oldest_invoice_days": 0, "invoice_count": 0
+                    "total": balance, "current": 0, "days_30": 0, "days_60": 0, 
+                    "days_90": 0, "days_120_plus": balance, "oldest_invoice_days": 0, "invoice_count": 0
                 }
         
         # Filter and sort
@@ -8205,7 +8239,7 @@ class ZaneToolHandler:
         }
     
     def _tool_get_creditors(self, params: dict) -> dict:
-        """Get creditors with aging analysis — includes supplier invoices + outstanding POs + supplier balances"""
+        """Get creditors with aging analysis — calculated outstanding per invoice, reconciled to ledger balances; POs reported separately as commitments"""
         limit = params.get("limit", 20)
         suppliers = self.db.get("suppliers", {"business_id": self.biz_id}) or []
         supplier_invoices = self.db.get("supplier_invoices", {"business_id": self.biz_id}) or []
@@ -8215,23 +8249,25 @@ class ZaneToolHandler:
         today = datetime.now().date()
         supplier_aging = {}
         
-        # === SOURCE 1: Unpaid supplier invoices ===
+        # === SOURCE 1: Unpaid supplier invoices — outstanding is calculated
+        # from source documents (total minus payments already allocated),
+        # bucketed by calendar MONTH exactly like the Creditors Aging report. ===
         for inv in supplier_invoices:
-            if inv.get("status") == "paid":
+            if inv.get("status") in ("paid", "credited", "cancelled"):
                 continue
             
             supp_name = inv.get("supplier_name", "Unknown")
-            amount = float(inv.get("total", 0) or inv.get("amount", 0) or 0)
+            _paid = float(inv.get("paid_amount", inv.get("amount_paid", 0)) or 0)
+            amount = round(float(inv.get("total", 0) or inv.get("amount", 0) or 0) - _paid, 2)
+            if amount <= 0.01:
+                continue
             
             inv_date = inv.get("date", "")
-            if inv_date:
-                try:
-                    inv_dt = datetime.strptime(str(inv_date)[:10], "%Y-%m-%d").date()
-                    days_old = (today - inv_dt).days
-                except:
-                    days_old = 0
-            else:
-                days_old = 0
+            try:
+                inv_dt = datetime.strptime(str(inv_date)[:10], "%Y-%m-%d").date()
+            except Exception:
+                inv_dt = today
+            months_old = (today.year - inv_dt.year) * 12 + (today.month - inv_dt.month)
             
             if supp_name not in supplier_aging:
                 supplier_aging[supp_name] = {
@@ -8242,61 +8278,66 @@ class ZaneToolHandler:
             sa = supplier_aging[supp_name]
             sa["total"] += amount
             
-            if days_old <= 30:
+            if months_old <= 0:
                 sa["current"] += amount
-            elif days_old <= 60:
+            elif months_old == 1:
                 sa["days_30"] += amount
-            elif days_old <= 90:
+            elif months_old == 2:
                 sa["days_60"] += amount
             else:
                 sa["days_90_plus"] += amount
         
-        # === SOURCE 2: Outstanding POs (sent/partial) not yet invoiced ===
+        # === RECONCILE each supplier's aging to their CALCULATED ledger
+        # balance (invoices - payments - credits) — the same step that makes
+        # the Creditors Aging report correct. Oldest-first reduction; any
+        # shortfall lands in the oldest bucket. ===
+        _sup_id_by_name = {}
+        for s in suppliers:
+            _n = (s.get("name") or "").strip().lower()
+            if _n:
+                _sup_id_by_name[_n] = s.get("id")
+        _oldest_first = ("days_90_plus", "days_60", "days_30", "current")
+        for _name in list(supplier_aging.keys()):
+            _sid = _sup_id_by_name.get((_name or "").strip().lower())
+            if not _sid or _sid not in _sup_bals:
+                continue
+            row = supplier_aging[_name]
+            ledger_bal = round(float(_sup_bals.get(_sid, row["total"]) or 0), 2)
+            diff = round(row["total"] - ledger_bal, 2)
+            if diff > 0.01:
+                for b in _oldest_first:
+                    if diff <= 0.01:
+                        break
+                    take = min(row[b], diff)
+                    row[b] = round(row[b] - take, 2)
+                    diff = round(diff - take, 2)
+            elif diff < -0.01:
+                row["days_90_plus"] = round(row["days_90_plus"] + (-diff), 2)
+            row["total"] = round(row["current"] + row["days_30"] + row["days_60"] + row["days_90_plus"], 2)
+            if row["total"] <= 0.01:
+                del supplier_aging[_name]
+        
+        # === SOURCE 2: Outstanding POs (sent/partial) not yet invoiced —
+        # POs are COMMITMENTS, not creditors ledger debt (Sage: age analysis
+        # = creditors ledger only). Kept SEPARATE from the owed totals. ===
         sinv_po_refs = set()
         for si in supplier_invoices:
             _ref = si.get("po_number") or si.get("reference") or ""
             if _ref:
                 sinv_po_refs.add(_ref.strip().upper())
         
+        po_commitments = 0.0
+        po_commitment_count = 0
         for po in purchase_orders:
             if po.get("status") not in ("sent", "partial"):
                 continue
             po_num = (po.get("po_number") or "").strip().upper()
             if po_num and po_num in sinv_po_refs:
                 continue  # Already has a supplier invoice
-            
-            supp_name = po.get("supplier_name", "Unknown")
-            amount = float(po.get("total", 0) or 0)
-            
-            po_date = po.get("date", "")
-            if po_date:
-                try:
-                    po_dt = datetime.strptime(str(po_date)[:10], "%Y-%m-%d").date()
-                    days_old = (today - po_dt).days
-                except:
-                    days_old = 0
-            else:
-                days_old = 0
-            
-            if supp_name not in supplier_aging:
-                supplier_aging[supp_name] = {
-                    "name": supp_name, "phone": "",
-                    "total": 0, "current": 0, "days_30": 0, "days_60": 0, "days_90_plus": 0
-                }
-            
-            sa = supplier_aging[supp_name]
-            sa["total"] += amount
-            
-            if days_old <= 30:
-                sa["current"] += amount
-            elif days_old <= 60:
-                sa["days_30"] += amount
-            elif days_old <= 90:
-                sa["days_60"] += amount
-            else:
-                sa["days_90_plus"] += amount
+            po_commitments = round(po_commitments + float(po.get("total", 0) or 0), 2)
+            po_commitment_count += 1
         
-        # === SOURCE 3: Suppliers with balance but no invoices/POs ===
+        # === SOURCE 3: Suppliers with a calculated balance but no open invoices ===
         for s in suppliers:
             name = s.get("name", "")
             balance = _sup_bals.get(s.get("id"), 0)
@@ -8306,7 +8347,7 @@ class ZaneToolHandler:
                 else:
                     supplier_aging[name] = {
                         "name": name, "phone": s.get("phone", ""),
-                        "total": balance, "current": balance, "days_30": 0, "days_60": 0, "days_90_plus": 0
+                        "total": balance, "current": 0, "days_30": 0, "days_60": 0, "days_90_plus": balance
                     }
         
         creditors = list(supplier_aging.values())
@@ -8337,6 +8378,11 @@ class ZaneToolHandler:
                 "days_31_60": total_30,
                 "days_61_90": total_60,
                 "days_90_plus": total_90_plus
+            },
+            "po_commitments": {
+                "note": "Purchase orders not yet invoiced — commitments, NOT included in total_owed (creditors ledger only, per Sage).",
+                "count": po_commitment_count,
+                "total": po_commitments
             },
             "status": status,
             "insight": insight,
