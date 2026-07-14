@@ -3232,7 +3232,99 @@ def register_pos_routes(app, db, login_required, Auth, render_page,
         }
         
         function closeQuickQuoteModal() {
+            qqStockHide();
             document.getElementById('quickQuoteModal').style.display = 'none';
+        }
+        
+        // === STOCK SUGGESTION DROPDOWN for Quick Quote description fields ===
+        // Reads directly from the stock rows already rendered in the POS DOM
+        // (no network call). Picking an item fills description (CODE - DESC)
+        // and the excl-VAT price; typing manually still works as before.
+        let _qqSuggestMatches = [];
+        let _qqSuggestLine = null;
+        let _qqSuggestIndex = -1;
+        
+        function qqStockSuggest(lineId, inputEl) {
+            const drop = document.getElementById('qqStockDrop');
+            if (!drop) return;
+            const q = (inputEl.value || '').trim().toLowerCase().replace(/\\s*x\\s*/gi, 'x');
+            if (q.length < 2) { qqStockHide(); return; }
+            const esc = function(s) { return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;'); };
+            const rows = document.querySelectorAll('.stock-row');
+            const matches = [];
+            for (let row of rows) {
+                const hay = (row.getAttribute('data-search') || '').toLowerCase().replace(/\\s*x\\s*/gi, 'x');
+                if (hay.indexOf(q) !== -1) {
+                    matches.push({
+                        code: row.getAttribute('data-code') || '',
+                        desc: row.getAttribute('data-desc') || '',
+                        price: parseFloat(row.getAttribute('data-price')) || 0
+                    });
+                    if (matches.length >= 8) break;
+                }
+            }
+            _qqSuggestMatches = matches;
+            _qqSuggestLine = lineId;
+            _qqSuggestIndex = -1;
+            if (matches.length === 0) { qqStockHide(); return; }
+            let html = '';
+            matches.forEach(function(m, i) {
+                html += '<div class="qq-sug" onmousedown="event.preventDefault(); qqStockPick(' + i + ')" style="padding:8px 12px;cursor:pointer;border-bottom:1px solid rgba(255,255,255,0.08);color:white;font-size:13px;display:flex;justify-content:space-between;gap:12px;">'
+                     + '<span><strong style="color:#10b981;">' + esc(m.code) + '</strong> ' + esc(m.desc) + '</span>'
+                     + '<span style="color:rgba(255,255,255,0.6);white-space:nowrap;">R' + m.price.toFixed(2) + '</span></div>';
+            });
+            drop.innerHTML = html;
+            const r = inputEl.getBoundingClientRect();
+            drop.style.left = r.left + 'px';
+            drop.style.top = (r.bottom + 4) + 'px';
+            drop.style.width = Math.max(r.width, 340) + 'px';
+            drop.style.display = 'block';
+        }
+        
+        function qqStockPick(i) {
+            const m = _qqSuggestMatches[i];
+            if (!m || !_qqSuggestLine) return;
+            const line = document.getElementById(_qqSuggestLine);
+            if (!line) { qqStockHide(); return; }
+            const inputs = line.querySelectorAll('input');
+            inputs[0].value = m.code + ' - ' + m.desc;
+            inputs[2].value = m.price.toFixed(2);
+            qqStockHide();
+            qqUpdateLine(_qqSuggestLine);
+            if (inputs[1]) { inputs[1].focus(); inputs[1].select(); }
+        }
+        
+        function qqStockHide() {
+            const drop = document.getElementById('qqStockDrop');
+            if (drop) drop.style.display = 'none';
+            _qqSuggestMatches = [];
+            _qqSuggestIndex = -1;
+        }
+        
+        function qqStockBlur() {
+            // Delay so a mousedown on a suggestion can register first
+            setTimeout(qqStockHide, 150);
+        }
+        
+        function qqStockKeys(e, lineId) {
+            const drop = document.getElementById('qqStockDrop');
+            if (!drop || drop.style.display === 'none') return;
+            const items = drop.querySelectorAll('.qq-sug');
+            if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+                e.preventDefault(); e.stopPropagation();
+                if (items.length === 0) return;
+                _qqSuggestIndex += (e.key === 'ArrowDown' ? 1 : -1);
+                if (_qqSuggestIndex < 0) _qqSuggestIndex = items.length - 1;
+                if (_qqSuggestIndex >= items.length) _qqSuggestIndex = 0;
+                items.forEach(function(el, i) { el.style.background = (i === _qqSuggestIndex) ? 'rgba(16,185,129,0.25)' : 'transparent'; });
+                items[_qqSuggestIndex].scrollIntoView({block: 'nearest'});
+            } else if (e.key === 'Enter') {
+                e.preventDefault(); e.stopPropagation();
+                qqStockPick(_qqSuggestIndex >= 0 ? _qqSuggestIndex : 0);
+            } else if (e.key === 'Escape') {
+                e.preventDefault(); e.stopPropagation();
+                qqStockHide();
+            }
         }
         
         function qqAddLine() {
@@ -3241,7 +3333,7 @@ def register_pos_routes(app, db, login_required, Auth, render_page,
             
             const lineHtml = `
             <div id="${lineId}" style="display:grid;grid-template-columns:2fr 80px 100px 40px;gap:10px;margin-bottom:10px;align-items:center;">
-                <input type="text" placeholder="Description" onchange="qqUpdateLine('${lineId}')" 
+                <input type="text" placeholder="Description — type to search stock" autocomplete="off" onchange="qqUpdateLine('${lineId}')" oninput="qqStockSuggest('${lineId}', this)" onkeydown="qqStockKeys(event, '${lineId}')" onblur="qqStockBlur()" 
                     style="padding:10px;border-radius:6px;border:1px solid rgba(255,255,255,0.2);background:#1a1a2e;color:white;font-size:14px;">
                 <input type="number" placeholder="Qty" value="1" min="1" onchange="qqUpdateLine('${lineId}')"
                     style="padding:10px;border-radius:6px;border:1px solid rgba(255,255,255,0.2);background:#1a1a2e;color:white;font-size:14px;text-align:center;">
@@ -4434,6 +4526,8 @@ def register_pos_routes(app, db, login_required, Auth, render_page,
                     <div id="qqLines" style="max-height:250px;overflow-y:auto;">
                         <!-- Line items will be added here -->
                     </div>
+                    <!-- Stock suggestion dropdown (fixed so qqLines overflow doesn't clip it) -->
+                    <div id="qqStockDrop" style="display:none;position:fixed;z-index:10001;background:#12122a;border:1px solid rgba(255,255,255,0.25);border-radius:8px;box-shadow:0 10px 30px rgba(0,0,0,0.6);max-height:220px;overflow-y:auto;"></div>
                     <div style="display:flex;justify-content:flex-end;margin-top:15px;padding-top:15px;border-top:1px solid rgba(255,255,255,0.1);">
                         <div style="text-align:right;">
                             <span style="color:var(--text-muted);font-size:14px;">Total (excl VAT):</span>
