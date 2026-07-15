@@ -344,6 +344,9 @@ def register_purchases_routes(app, db, login_required, Auth, render_page,
                     fields["credit_limit"] = float(request.form.get("credit_limit", 0) or 0)
                 except:
                     fields["credit_limit"] = 0
+                # Checkbox: checked ("on") = NOT VAT registered → vat_registered False.
+                # Unchecked checkboxes are absent from the POST → True.
+                fields["vat_registered"] = request.form.get("not_vat_registered") != "on"
                 
                 supplier = RecordFactory.supplier(
                     business_id=biz_id, name=name, code=code,
@@ -1714,6 +1717,9 @@ def register_purchases_routes(app, db, login_required, Auth, render_page,
                     fields["discount_percentage"] = float(request.form.get("discount_percentage", 0) or 0)
                 except:
                     fields["discount_percentage"] = 0
+                # Checkbox: checked ("on") = NOT VAT registered → vat_registered False.
+                # Unchecked checkboxes are absent from the POST → True.
+                fields["vat_registered"] = request.form.get("not_vat_registered") != "on"
                 
                 success = db.update("suppliers", supplier_id, fields)
                 if success:
