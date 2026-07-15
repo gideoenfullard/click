@@ -2431,6 +2431,9 @@ def register_pos_routes(app, db, login_required, Auth, render_page,
                 
                 if (data.success) {
                     alert('Quote ' + data.quote_number + ' created!');
+                    if (confirm('Print thermal quote slip?')) {
+                        printQuoteThermal(data.quote_number, customerName, items, subtotal, vat, grandTotal);
+                    }
                     clearCart();
                     if (confirm('Open quote now?')) {
                         window.location = '/quote/' + data.quote_id;
@@ -3562,6 +3565,11 @@ def register_pos_routes(app, db, login_required, Auth, render_page,
                 if (data.success) {
                     closeQuickQuoteModal();
                     alert('Quote ' + data.quote_number + ' created!');
+                    if (confirm('Print thermal quote slip?')) {
+                        const qqSub = Math.round(items.reduce((s, i) => s + i.total, 0) * 100) / 100;
+                        const qqVat = Math.round(qqSub * 0.15 * 100) / 100;
+                        printQuoteThermal(data.quote_number, custName, items, qqSub, qqVat, qqSub + qqVat);
+                    }
                     if (confirm('Open quote now?')) {
                         window.location = '/quote/' + data.quote_id;
                     }
@@ -3918,6 +3926,11 @@ def register_pos_routes(app, db, login_required, Auth, render_page,
                 
                 if (data.success) {
                     alert('Quote ' + data.quote_number + ' created!');
+                    if (confirm('Print thermal quote slip?')) {
+                        const cqSub = Math.round(total * 100) / 100;
+                        const cqVat = Math.round(cqSub * 0.15 * 100) / 100;
+                        printQuoteThermal(data.quote_number, customerName, items, cqSub, cqVat, cqSub + cqVat);
+                    }
                     clearCart();
                     if (confirm('Open quote now?')) {
                         window.location = '/quote/' + data.quote_id;
@@ -4164,6 +4177,66 @@ def register_pos_routes(app, db, login_required, Auth, render_page,
         var _lastPrintFormat = null;
         var _lastPrintHtml = null;  // Cache the HTML so reprint doesn't need to rebuild
         var _printInProgress = false;  // Prevent double-fire
+        
+        // ═══ THERMAL QUOTE SLIP (2026-07-15) ═══
+        // Quotes made at the POS counter can now print as a proper thermal
+        // slip, exactly like the sale slip — the A4 quote page squashed onto
+        // the 80mm printer was unreadable. Completely separate from the sale
+        // print machinery (own iframe, no shared state) so the fragile
+        // sale-print flow is untouched.
+        function printQuoteThermal(quoteNum, custName, items, subtotal, vat, totalIncl) {
+            var sub = parseFloat(subtotal) || 0;
+            var vatAmt = parseFloat(vat) || 0;
+            var incl = parseFloat(totalIncl) || 0;
+            var now = new Date();
+            var dateStr = now.toLocaleDateString('en-ZA');
+            var timeStr = now.toLocaleTimeString('en-ZA', {hour: '2-digit', minute: '2-digit'});
+            var itemsHtml = '';
+            (items || []).forEach(function(item) {
+                var qty = item.quantity || item.qty || 1;
+                var price = parseFloat(item.price || 0);
+                var lineTotal = parseFloat(item.total || (qty * price));
+                var name = (item.description && String(item.description).trim()) ? item.description : (item.code || 'Item');
+                itemsHtml += '<tr><td style="padding:3px 0;font-size:13px;">' + qty + 'x ' + name + '</td><td style="text-align:right;padding:3px 0;font-size:13px;white-space:nowrap;">R' + lineTotal.toFixed(2) + '</td></tr>';
+                var dPct = parseFloat(item.discount_pct) || 0;
+                var oPrice = parseFloat(item.original_price) || price;
+                if (dPct > 0 && oPrice > price) {
+                    itemsHtml += '<tr><td colspan="2" style="padding:0 0 4px 12px;font-size:13px;"><span style="text-decoration:line-through;">Was R' + oPrice.toFixed(2) + '</span> <span style="font-weight:bold;border:2px solid #000;padding:0 4px;">' + dPct + '% DISCOUNT</span> <span style="font-weight:bold;">Now R' + price.toFixed(2) + '</span></td></tr>';
+                }
+            });
+            var s = posSettings || {};
+            var body = '<div style="text-align:center;border-bottom:2px dashed #000;padding-bottom:8px;margin-bottom:8px;">'
+                + '<div style="font-size:18px;font-weight:bold;">' + (s.business_name || 'Business') + '</div>'
+                + (s.phone ? '<div style="font-size:12px;">Tel: ' + s.phone + '</div>' : '')
+                + (s.vat_number ? '<div style="font-size:12px;">VAT: ' + s.vat_number + '</div>' : '')
+                + '<div style="margin-top:6px;font-size:16px;font-weight:bold;">QUOTATION</div>'
+                + '<div style="font-size:15px;font-weight:bold;">' + quoteNum + '</div>'
+                + '<div style="font-size:12px;">' + dateStr + ' ' + timeStr + '</div>'
+                + (currentCashierName ? '<div style="font-size:12px;margin-top:2px;">Salesman: ' + currentCashierName + '</div>' : '')
+                + '</div>'
+                + '<div style="margin-bottom:8px;font-size:13px;font-weight:bold;">For: ' + (custName || 'Customer') + '</div>'
+                + '<table style="width:100%;border-collapse:collapse;margin-bottom:8px;">' + itemsHtml + '</table>'
+                + '<div style="border-top:2px dashed #000;padding-top:6px;">'
+                + '<div style="display:flex;justify-content:space-between;font-size:13px;padding:2px 0;"><span>Subtotal (excl VAT)</span><span>R' + sub.toFixed(2) + '</span></div>'
+                + '<div style="display:flex;justify-content:space-between;font-size:13px;padding:2px 0;"><span>VAT (15%)</span><span>R' + vatAmt.toFixed(2) + '</span></div>'
+                + '<div style="display:flex;justify-content:space-between;font-size:22px;font-weight:bold;margin-top:6px;"><span>TOTAL</span><span>R' + incl.toFixed(2) + '</span></div>'
+                + '</div>'
+                + ((s.bank_name || s.bank_account) ? '<div style="margin-top:8px;padding-top:8px;border-top:2px dashed #000;font-size:12px;"><div style="font-weight:bold;">Banking Details</div>' + (s.bank_name ? '<div>Bank: ' + s.bank_name + '</div>' : '') + (s.bank_account ? '<div>Account: ' + s.bank_account + '</div>' : '') + (s.bank_branch ? '<div>Branch: ' + s.bank_branch + '</div>' : '') + '</div>' : '')
+                + '<div style="text-align:center;margin-top:8px;padding-top:8px;border-top:2px dashed #000;font-size:12px;">Quote valid for 30 days from date of issue.<br>This is not a tax invoice.</div>';
+            var styles = 'body { width: 72mm; margin: 0; padding: 4mm; font-family: "Courier New", monospace; font-size: 16px; font-weight: bold; color: #000; background: #fff; -webkit-print-color-adjust: exact; print-color-adjust: exact; } * { font-weight: bold !important; color: #000 !important; background: transparent !important; } table { width: 100%; border-collapse: collapse; } td { font-weight: bold !important; padding: 2px 0; } @page { size: 80mm auto; margin: 0; } @media print { body { width: 72mm; } }';
+            var fullHtml = '<!DOCTYPE html><html><head><title>Quote Slip</title><style>' + styles + '</style></head><body>' + body + '</body></html>';
+            var oldPf = document.getElementById('posQuotePrintFrame');
+            if (oldPf) oldPf.remove();
+            var pf = document.createElement('iframe');
+            pf.id = 'posQuotePrintFrame';
+            pf.style.cssText = 'position:fixed;top:-9999px;left:-9999px;width:80mm;height:600px;border:none;';
+            document.body.appendChild(pf);
+            var fd = pf.contentDocument || pf.contentWindow.document;
+            fd.open(); fd.write(fullHtml); fd.close();
+            setTimeout(function() {
+                try { pf.contentWindow.focus(); pf.contentWindow.print(); } catch(e) { console.log('[POS] Quote print error:', e); }
+            }, 250);
+        }
         
         function doPrintSlip(format) {
             if (_printInProgress) return;  // Already printing
