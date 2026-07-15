@@ -58,6 +58,32 @@ def register_pos_routes(app, db, login_required, Auth, render_page,
         except Exception:
             cashier_list = []
         
+        # ═══ SALE / DISCOUNT CAMPAIGN (2026-07-15) ═══
+        # Category-based sale discounts configured on /stock/sale-campaign.
+        # Stock prices stay UNCHANGED — the discount is applied on top at the
+        # POS, so slips can show old price + discount % + new price.
+        _camp = {}
+        try:
+            _camp_raw = business.get("discount_campaign") if business else None
+            if isinstance(_camp_raw, str) and _camp_raw.strip():
+                _camp = json.loads(_camp_raw)
+            elif isinstance(_camp_raw, dict):
+                _camp = _camp_raw
+        except Exception:
+            _camp = {}
+        _camp_active = bool(_camp.get("active"))
+        _camp_cats = {(k or "").strip().lower(): float(v or 0) for k, v in (_camp.get("categories") or {}).items()}
+        _camp_default = float(_camp.get("default_pct") or 0)
+        def _camp_pct(_category):
+            if not _camp_active:
+                return 0.0
+            _p = _camp_cats.get((_category or "").strip().lower(), _camp_default)
+            try:
+                _p = float(_p or 0)
+            except (ValueError, TypeError):
+                _p = 0.0
+            return max(0.0, min(90.0, _p))
+        
         # Sort stock by category then code
         stock = sorted(stock, key=lambda x: (x.get("category") or "ZZZ", x.get("code") or ""))
         
@@ -94,6 +120,7 @@ def register_pos_routes(app, db, login_required, Auth, render_page,
                 data-desc="{desc}"
                 data-price="{price}"
                 data-qty="{qty}"
+                data-disc="{_camp_pct(category)}"
                 data-search="{code.lower()} {desc.lower()}"
                 onclick="addToCart('{item.get("id")}', '{code}', '{desc}', {price}, {qty})">
                 <td class="col-code">{code}</td>
@@ -1437,6 +1464,14 @@ def register_pos_routes(app, db, login_required, Auth, render_page,
                 </div>
                 
                 <div class="pos-totals">
+                    <div class="pos-total-row" style="align-items:center;">
+                        <span>Discount % (max 10)</span>
+                        <input type="number" id="posDiscPct" value="0" min="0" max="10" step="1" onchange="setManualDiscount(this.value)" style="width:70px;padding:4px 8px;border-radius:6px;border:1px solid rgba(255,255,255,0.25);background:#1a1a2e;color:white;text-align:right;font-size:14px;">
+                    </div>
+                    <div class="pos-total-row" id="discountSavedRow" style="display:none;color:#f59e0b;font-weight:bold;">
+                        <span>SALE DISCOUNT SAVED</span>
+                        <span id="discountSaved">R0.00</span>
+                    </div>
                     <div class="pos-total-row">
                         <span>Subtotal (excl VAT)</span>
                         <span id="subtotal">R0.00</span>
@@ -1667,7 +1702,46 @@ def register_pos_routes(app, db, login_required, Auth, render_page,
             updateCart();
         }
         
+        // ═══ SALE / DISCOUNT ENGINE ═══
+        // Campaign discount (per category, from /stock/sale-campaign) is baked
+        // into each stock row as data-disc. Isaac's manual discount (max 10%)
+        // applies ONLY to items with NO campaign discount — the campaign
+        // OVERRIDES manual so discounts can never stack.
+        let posManualDiscPct = 0;
+        
+        function setManualDiscount(v) {
+            let p = parseFloat(v) || 0;
+            if (p < 0) p = 0;
+            if (p > 10) {
+                alert('Maximum manual discount is 10%');
+                p = 10;
+            }
+            posManualDiscPct = p;
+            const el = document.getElementById('posDiscPct');
+            if (el) el.value = p;
+            updateCart();
+        }
+        
+        function applyCartDiscounts() {
+            cart.forEach(function(item) {
+                if (item.origPrice === undefined || item.origPrice === null) {
+                    item.origPrice = item.price;
+                }
+                if (item.campPct === undefined || item.campPct === null) {
+                    const row = document.querySelector('tr.stock-row[data-id="' + item.id + '"]');
+                    item.campPct = row ? (parseFloat(row.getAttribute('data-disc')) || 0) : 0;
+                }
+                let eff = 0;
+                if (!item.isPOItem) {
+                    eff = item.campPct > 0 ? item.campPct : posManualDiscPct;
+                }
+                item.effPct = eff;
+                item.price = Math.round(item.origPrice * (1 - eff / 100) * 100) / 100;
+            });
+        }
+        
         function updateCart() {
+            applyCartDiscounts();
             const container = document.getElementById('cartItems');
             const count = document.getElementById('cartCount');
             
@@ -1700,18 +1774,27 @@ def register_pos_routes(app, db, login_required, Auth, render_page,
             let html = '';
             let total = 0;
             let itemCount = 0;
+            let discountSaved = 0;
             
             cart.forEach(item => {
                 const lineTotal = item.price * item.qty;
                 total += lineTotal;
                 itemCount += item.qty;
                 
+                let priceHtml = 'R' + item.price.toFixed(2) + ' each';
+                if (item.effPct > 0 && item.origPrice > item.price) {
+                    discountSaved += (item.origPrice - item.price) * item.qty;
+                    priceHtml = '<span style="text-decoration:line-through;opacity:0.6;">R' + item.origPrice.toFixed(2) + '</span> '
+                        + '<span style="background:#dc2626;color:#fff;padding:1px 6px;border-radius:4px;font-weight:bold;font-size:11px;">' + item.effPct + '% OFF</span> '
+                        + '<span style="color:#f59e0b;font-weight:bold;">R' + item.price.toFixed(2) + '</span>';
+                }
+                
                 html += `
                     <div class="cart-item">
                         <div class="cart-item-info">
                             <div class="cart-item-name">${item.desc}</div>
                             <div class="cart-item-code">${item.code}</div>
-                            <div class="cart-item-price">R${item.price.toFixed(2)} each</div>
+                            <div class="cart-item-price">${priceHtml}</div>
                         </div>
                         <div class="cart-item-qty">
                             <button class="cart-qty-btn minus" onclick="updateQty('${item.id}', -1)">−</button>
@@ -1723,6 +1806,18 @@ def register_pos_routes(app, db, login_required, Auth, render_page,
                     </div>
                 `;
             });
+            
+            // Savings row (attention-grabbing when a discount is active)
+            const savedRow = document.getElementById('discountSavedRow');
+            const savedEl = document.getElementById('discountSaved');
+            if (savedRow && savedEl) {
+                if (discountSaved > 0.005) {
+                    savedEl.textContent = 'R' + (Math.round(discountSaved * 100) / 100).toFixed(2);
+                    savedRow.style.display = '';
+                } else {
+                    savedRow.style.display = 'none';
+                }
+            }
             
             container.innerHTML = html;
             count.textContent = itemCount + ' item' + (itemCount !== 1 ? 's' : '');
@@ -2199,7 +2294,9 @@ def register_pos_routes(app, db, login_required, Auth, render_page,
                 description: item.desc,
                 quantity: item.qty,
                 price: item.price,
-                total: item.price * item.qty
+                total: item.price * item.qty,
+                original_price: (item.origPrice !== undefined && item.origPrice !== null) ? item.origPrice : item.price,
+                discount_pct: item.effPct || 0
             }));
             
             try {
@@ -2216,6 +2313,7 @@ def register_pos_routes(app, db, login_required, Auth, render_page,
                         total: grandTotal,
                         payment_total: paymentTotal,
                         rounding: roundingAdj,
+                        manual_discount_pct: posManualDiscPct,
                         cashier_id: currentCashierId,
                         cashier_name: currentCashierName
                     })
@@ -2303,7 +2401,9 @@ def register_pos_routes(app, db, login_required, Auth, render_page,
                 description: item.desc,
                 quantity: item.qty,
                 price: item.price,
-                total: item.price * item.qty
+                total: item.price * item.qty,
+                original_price: (item.origPrice !== undefined && item.origPrice !== null) ? item.origPrice : item.price,
+                discount_pct: item.effPct || 0
             }));
             
             // Prices are EXCL VAT - ADD VAT
@@ -2414,7 +2514,9 @@ def register_pos_routes(app, db, login_required, Auth, render_page,
                 description: item.desc,
                 quantity: item.qty,
                 price: item.price,
-                total: item.price * item.qty
+                total: item.price * item.qty,
+                original_price: (item.origPrice !== undefined && item.origPrice !== null) ? item.origPrice : item.price,
+                discount_pct: item.effPct || 0
             }));
             
             try {
@@ -2603,7 +2705,9 @@ def register_pos_routes(app, db, login_required, Auth, render_page,
                 description: item.desc,
                 quantity: item.qty,
                 price: item.price,
-                total: item.price * item.qty
+                total: item.price * item.qty,
+                original_price: (item.origPrice !== undefined && item.origPrice !== null) ? item.origPrice : item.price,
+                discount_pct: item.effPct || 0
             }));
             
             try {
@@ -3783,7 +3887,9 @@ def register_pos_routes(app, db, login_required, Auth, render_page,
                 description: item.desc,
                 quantity: item.qty,
                 price: item.price,
-                total: item.price * item.qty
+                total: item.price * item.qty,
+                original_price: (item.origPrice !== undefined && item.origPrice !== null) ? item.origPrice : item.price,
+                discount_pct: item.effPct || 0
             }));
             
             const total = items.reduce((sum, item) => sum + item.total, 0);
@@ -3927,12 +4033,28 @@ def register_pos_routes(app, db, login_required, Auth, render_page,
             const methodLabel = {cash: 'CASH', card: 'CARD', account: 'ACCOUNT'}[method] || method.toUpperCase();
             
             let itemsHtml = '';
+            let discountSavedTotal = 0;
             items.forEach(item => {
                 const lineTotal = item.price * item.quantity;
                 // Prefer description, fall back to code only if description is empty/missing
                 const itemName = (item.description && item.description.trim()) ? item.description : (item.code || 'Item');
-                itemsHtml += '<tr><td style="padding:3px 0;font-size:13px;">' + item.quantity + 'x ' + itemName + '</td><td style="text-align:right;padding:3px 0;font-size:13px;white-space:nowrap;">R' + lineTotal.toFixed(2) + '</td></tr>';
+                const dPct = parseFloat(item.discount_pct) || 0;
+                const oPrice = parseFloat(item.original_price) || item.price;
+                if (dPct > 0 && oPrice > item.price) {
+                    discountSavedTotal += (oPrice - item.price) * item.quantity;
+                    itemsHtml += '<tr><td style="padding:3px 0 0 0;font-size:13px;">' + item.quantity + 'x ' + itemName + '</td><td style="text-align:right;padding:3px 0 0 0;font-size:13px;white-space:nowrap;">R' + lineTotal.toFixed(2) + '</td></tr>'
+                        + '<tr><td colspan="2" style="padding:0 0 4px 12px;font-size:13px;">'
+                        + '<span style="text-decoration:line-through;">Was R' + oPrice.toFixed(2) + '</span> '
+                        + '<span style="font-weight:bold;border:2px solid #000;padding:0 4px;">' + dPct + '% DISCOUNT</span> '
+                        + '<span style="font-weight:bold;">Now R' + item.price.toFixed(2) + '</span>'
+                        + '</td></tr>';
+                } else {
+                    itemsHtml += '<tr><td style="padding:3px 0;font-size:13px;">' + item.quantity + 'x ' + itemName + '</td><td style="text-align:right;padding:3px 0;font-size:13px;white-space:nowrap;">R' + lineTotal.toFixed(2) + '</td></tr>';
+                }
             });
+            const savedBannerHtml = discountSavedTotal > 0.005
+                ? '<div style="text-align:center;margin-top:8px;padding:8px;border:3px double #000;font-size:16px;font-weight:bold;">*** SALE! YOU SAVED R' + discountSavedTotal.toFixed(2) + ' ***</div>'
+                : '';
             
             // Cash payment details (only for cash sales)
             let cashHtml = '';
@@ -3991,6 +4113,8 @@ def register_pos_routes(app, db, login_required, Auth, render_page,
                         <span>TOTAL</span><span>R${paymentTotal.toFixed(2)}</span>
                     </div>
                 </div>
+                
+                ${savedBannerHtml}
                 
                 ${cashHtml}
                 
@@ -6196,12 +6320,24 @@ def register_pos_routes(app, db, login_required, Auth, render_page,
         
         # Build items HTML exactly like POS slip: qty x description | total
         items_html = ""
+        _reprint_saved_total = 0.0
         for item in items:
             qty = item.get("quantity") or item.get("qty", 1)
             price = float(item.get("price", 0))
             total = qty * price
             item_name = safe_string(item.get("description") or item.get("code") or "Item")
-            items_html += f'<tr><td style="padding:3px 0;font-size:13px;">{qty}x {item_name}</td><td style="text-align:right;padding:3px 0;font-size:13px;white-space:nowrap;">R{total:.2f}</td></tr>'
+            _d_pct = float(item.get("discount_pct", 0) or 0)
+            _o_price = float(item.get("original_price", 0) or 0) or price
+            if _d_pct > 0 and _o_price > price:
+                _reprint_saved_total += (_o_price - price) * float(qty)
+                items_html += (f'<tr><td style="padding:3px 0 0 0;font-size:13px;">{qty}x {item_name}</td>'
+                               f'<td style="text-align:right;padding:3px 0 0 0;font-size:13px;white-space:nowrap;">R{total:.2f}</td></tr>'
+                               f'<tr><td colspan="2" style="padding:0 0 4px 12px;font-size:13px;">'
+                               f'<span style="text-decoration:line-through;">Was R{_o_price:.2f}</span> '
+                               f'<span style="font-weight:bold;border:2px solid #000;padding:0 4px;">{_d_pct:g}% DISCOUNT</span> '
+                               f'<span style="font-weight:bold;">Now R{price:.2f}</span></td></tr>')
+            else:
+                items_html += f'<tr><td style="padding:3px 0;font-size:13px;">{qty}x {item_name}</td><td style="text-align:right;padding:3px 0;font-size:13px;white-space:nowrap;">R{total:.2f}</td></tr>'
         
         payment_method = sale.get("payment_method", "cash").lower()
         method_label = {"cash": "CASH", "card": "CARD", "account": "ACCOUNT"}.get(payment_method, payment_method.upper())
@@ -6278,6 +6414,8 @@ def register_pos_routes(app, db, login_required, Auth, render_page,
                         <span>TOTAL</span><span>R{float(sale.get("payment_total") or sale.get("total", 0)):.2f}</span>
                     </div>
                 </div>
+                
+                {f'<div style="text-align:center;margin-top:8px;padding:8px;border:3px double #000;font-size:16px;font-weight:bold;">*** SALE! YOU SAVED R{_reprint_saved_total:.2f} ***</div>' if _reprint_saved_total > 0.005 else ''}
                 
                 {cash_html}
                 
@@ -6445,6 +6583,45 @@ def register_pos_routes(app, db, login_required, Auth, render_page,
             items = data.get("items", [])
             customer_id = data.get("customer_id", "")
             payment_method = data.get("payment_method", "cash")
+            
+            # ═══ SALE DISCOUNT VALIDATION (server-side, never trust client) ═══
+            # Manual cashier discount is capped at 10%. Items in a campaign
+            # category carry the campaign % which OVERRIDES manual — no
+            # stacking. Any line claiming more than allowed is rejected.
+            try:
+                _manual_pct = float(data.get("manual_discount_pct", 0) or 0)
+            except (ValueError, TypeError):
+                _manual_pct = 0.0
+            _manual_pct = max(0.0, min(10.0, _manual_pct))
+            _vcamp = {}
+            try:
+                _vcamp_raw = business.get("discount_campaign") if business else None
+                if isinstance(_vcamp_raw, str) and _vcamp_raw.strip():
+                    _vcamp = json.loads(_vcamp_raw)
+                elif isinstance(_vcamp_raw, dict):
+                    _vcamp = _vcamp_raw
+            except Exception:
+                _vcamp = {}
+            _vcamp_active = bool(_vcamp.get("active"))
+            _vcamp_cats = {(k or "").strip().lower(): float(v or 0) for k, v in (_vcamp.get("categories") or {}).items()}
+            _vcamp_default = float(_vcamp.get("default_pct") or 0)
+            for _it in items:
+                try:
+                    _ipct = float(_it.get("discount_pct", 0) or 0)
+                except (ValueError, TypeError):
+                    _ipct = 0.0
+                if _ipct <= 0:
+                    continue
+                _allowed = _manual_pct
+                if _vcamp_active and _it.get("stock_id"):
+                    _st = db.get_one_stock(_it.get("stock_id"))
+                    if _st:
+                        _cpct = float(_vcamp_cats.get((_st.get("category") or "").strip().lower(), _vcamp_default) or 0)
+                        if _cpct > 0:
+                            _allowed = min(90.0, _cpct)  # campaign OVERRIDES manual — no stacking
+                if _ipct > _allowed + 0.01:
+                    logger.warning(f"[POS] Discount rejected: {_ipct}% on {_it.get('code','?')} exceeds allowed {_allowed}%")
+                    return jsonify({"success": False, "error": f"Discount {_ipct:.0f}% on {_it.get('code', 'item')} exceeds the allowed {_allowed:.0f}%"})
             # Build sale label: "Counter Sale Cash - Piet" or "Counter Sale Card - Isaac"
             method_label = {"cash": "Cash", "card": "Card", "account": "Account"}.get(payment_method, "Sale")
             cashier_display = data.get("cashier_name", "")

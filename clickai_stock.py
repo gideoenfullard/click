@@ -381,6 +381,7 @@ def register_stock_routes(app, db, login_required, Auth, render_page,
                         style="padding:8px 12px;border-radius:6px;border:1px solid var(--border);background:var(--card-bg);color:var(--text);">
                         <option value="">All Categories</option>
                     </select>
+                    <a href="/stock/sale-campaign" class="btn" style="background:#10b981;">Sale / Discount</a>
                     <a href="/fulltech" class="btn" style="background:#8b5cf6;">🔩 Bolt Pricer</a>
                     <a href="/stock/movements" class="btn btn-secondary">📋 Movements</a>
                     <button onclick="showStockManager()" class="btn" style="background:#f59e0b;">⚡ Stock Manager</button>
@@ -692,6 +693,132 @@ def register_stock_routes(app, db, login_required, Auth, render_page,
         
         return render_page("Stock", content, user, "stock")
         
+    
+    @app.route("/stock/sale-campaign", methods=["GET", "POST"])
+    @login_required
+    def stock_sale_campaign():
+        """Sale / Discount Campaign — a per-category discount % applied ON TOP
+        of unchanged stock prices. The POS applies it automatically and slips
+        show old price + discount % + new price. To end the sale, untick
+        Active (or set everything to 0) — the original prices were never
+        touched, so nothing needs restoring."""
+        user = Auth.get_current_user()
+        business = Auth.get_current_business()
+        biz_id = business.get("id") if business else None
+        user_id = user.get("id") if user else None
+        
+        if request.method == "POST":
+            try:
+                active = request.form.get("active") == "on"
+                try:
+                    default_pct = max(0.0, min(90.0, float(request.form.get("default_pct", 0) or 0)))
+                except (ValueError, TypeError):
+                    default_pct = 0.0
+                cats = {}
+                for key in request.form:
+                    if key.startswith("cat__"):
+                        cat_name = key[5:]
+                        try:
+                            pct = max(0.0, min(90.0, float(request.form.get(key) or 0)))
+                        except (ValueError, TypeError):
+                            pct = 0.0
+                        if cat_name:
+                            cats[cat_name] = pct
+                campaign = {"active": active, "default_pct": default_pct, "categories": cats}
+                db.update_business(biz_id, user_id, {"discount_campaign": json.dumps(campaign)})
+                Auth.clear_cache()
+                flash("Sale campaign saved!" if active else "Sale campaign saved (not active).", "success")
+            except Exception as e:
+                logger.error(f"[SALE CAMPAIGN] Save failed: {e}")
+                flash(f"Error saving campaign: {e}", "error")
+            return redirect("/stock/sale-campaign")
+        
+        # Load saved campaign
+        camp = {}
+        raw = business.get("discount_campaign") if business else None
+        try:
+            if isinstance(raw, str) and raw.strip():
+                camp = json.loads(raw)
+            elif isinstance(raw, dict):
+                camp = raw
+        except Exception:
+            camp = {}
+        active_checked = "checked" if camp.get("active") else ""
+        try:
+            default_pct = float(camp.get("default_pct") or 0)
+        except (ValueError, TypeError):
+            default_pct = 0.0
+        saved_cats = {}
+        for k, v in (camp.get("categories") or {}).items():
+            try:
+                saved_cats[(k or "").strip()] = float(v or 0)
+            except (ValueError, TypeError):
+                saved_cats[(k or "").strip()] = 0.0
+        
+        # Distinct categories from live stock
+        all_stock = db.get_all_stock(biz_id) if biz_id else []
+        categories = sorted(set((s.get("category") or "").strip() for s in all_stock
+                                if (s.get("category") or "").strip()))
+        
+        cat_rows = ""
+        for cat in categories:
+            val = saved_cats.get(cat, 0.0)
+            cat_rows += f'''<tr>
+                <td style="padding:10px 8px;">{safe_string(cat)}</td>
+                <td style="text-align:right;padding:10px 8px;">
+                    <input type="number" name="cat__{safe_string(cat)}" value="{val:g}" min="0" max="90" step="0.5"
+                        style="width:90px;padding:6px 8px;border-radius:6px;border:1px solid var(--border);background:var(--card-bg);color:var(--text);text-align:right;"> %
+                </td>
+            </tr>'''
+        if not cat_rows:
+            cat_rows = '<tr><td colspan="2" style="padding:15px;color:var(--text-muted);">No stock categories found — add categories to your stock items first.</td></tr>'
+        
+        content = f'''
+        <div style="max-width:700px;margin:0 auto;">
+            <a href="/stock" style="color:var(--text-muted);display:block;margin-bottom:15px;">← Back to Stock</a>
+            
+            <div class="card">
+                <h2 style="margin:0 0 5px 0;">Sale / Discount Campaign</h2>
+                <p style="color:var(--text-muted);margin:0 0 20px 0;font-size:14px;">
+                    Set a discount % per category. Your stock prices are NOT changed —
+                    the discount is applied on top at the POS, and slips show the old
+                    price, the discount % and the new price. To end the sale, simply
+                    untick Active. The cashier's manual discount (max 10%) only applies
+                    to items with no campaign discount — campaign discounts always
+                    override, so discounts can never stack.
+                </p>
+                
+                <form method="POST">
+                    <div style="background:var(--bg);padding:15px;border-radius:8px;margin-bottom:20px;">
+                        <label style="display:flex;align-items:center;gap:10px;cursor:pointer;font-weight:600;font-size:16px;">
+                            <input type="checkbox" name="active" value="on" {active_checked} style="width:20px;height:20px;">
+                            Sale is ACTIVE (untick to end the sale — prices revert automatically)
+                        </label>
+                    </div>
+                    
+                    <table class="table" style="margin-bottom:20px;">
+                        <thead>
+                            <tr><th>Category</th><th style="text-align:right;">Discount %</th></tr>
+                        </thead>
+                        <tbody>
+                            {cat_rows}
+                            <tr style="border-top:2px solid var(--border);">
+                                <td style="padding:10px 8px;font-weight:600;">ALL OTHER STOCK (default)</td>
+                                <td style="text-align:right;padding:10px 8px;">
+                                    <input type="number" name="default_pct" value="{default_pct:g}" min="0" max="90" step="0.5"
+                                        style="width:90px;padding:6px 8px;border-radius:6px;border:1px solid var(--border);background:var(--card-bg);color:var(--text);text-align:right;font-weight:600;"> %
+                                </td>
+                            </tr>
+                        </tbody>
+                    </table>
+                    
+                    <button type="submit" class="btn btn-primary" style="width:100%;padding:14px;font-size:16px;">Save Campaign</button>
+                </form>
+            </div>
+        </div>
+        '''
+        return render_page("Sale / Discount Campaign", content, user, "stock")
+    
     
     @app.route("/stock/movements")
     @login_required
