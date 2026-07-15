@@ -1618,6 +1618,9 @@ def register_banking_routes(app, db, login_required, Auth, render_page,
                     if (stats.out_of_range_skipped) {{
                         msg += `\\n📅 Skipped (outside date range): ${{stats.out_of_range_skipped}}`;
                     }}
+                    if (stats.balance_gaps) {{
+                        msg += `\\n\\n⚠️ WARNING: ${{stats.balance_gaps}} balance gap(s) detected — the statement's running balance skips, so one or more transactions may be MISSING from this import. Check against the paper statement.`;
+                    }}
                     if ((stats.total || 0) === 0) {{
                         msg += `\\n\\n🔎 Diagnostics: ${{stats.rows_parsed || 0}} rows parsed`;
                         if (stats.duplicates_skipped) msg += `, ${{stats.duplicates_skipped}} duplicates`;
@@ -3091,6 +3094,8 @@ RULES:
 - Payments IN (credits, deposits) go in "credit" field as POSITIVE numbers
 - Never use negative numbers
 - Include ALL transactions on this page, not just a sample
+- NEVER omit, merge, or "net off" transactions. A payment OUT and a payment IN of the same amount (reversals, refunds, corrections — e.g. a purchase and its refund of R5,000 on the same day) are TWO SEPARATE transactions: return BOTH as separate entries
+- Never decide a transaction is unimportant — EVERY transaction line on the statement must appear in the output, even when amounts cancel each other out. Omitting lines corrupts the books
 - Skip "BALANCE BROUGHT FORWARD" lines, page headers, and column headers
 - If this page has NO transactions (only headers/summary), return an empty array: []
 
@@ -3629,6 +3634,11 @@ Return ONLY the JSON array. No markdown, no explanation."""
             suggested = 0
             skipped_dupes = 0
             skipped_out_of_range = 0
+            # Balance-gap watchdog: every parsed statement line (INCLUDING ones
+            # later skipped as duplicates — they are still on the statement) is
+            # recorded so the running-balance chain can be verified afterwards.
+            # A gap proves a line is missing from the extraction.
+            _chain_rows = []
             
             # ═══════════════════════════════════════════════════════════════
             # DEDUP: Build fingerprint set of existing transactions
@@ -3800,6 +3810,11 @@ Return ONLY the JSON array. No markdown, no explanation."""
                     # Also skip rows with zero amount (just balance lines)
                     if debit == 0 and credit == 0 and amount == 0:
                         continue
+                    
+                    # Record for the balance-gap watchdog (before any dedup skip —
+                    # a skipped duplicate is still a line on the statement).
+                    _chain_rows.append((str(txn_date)[:10], round(float(debit or 0), 2),
+                                        round(float(credit or 0), 2), running_balance))
                     
                     # ═══════════════════════════════════════════════════════════════
                     # DEDUP CHECK.
@@ -4305,6 +4320,31 @@ Return ONLY the JSON array. No markdown, no explanation."""
             # Invoice matching skipped during import for speed — runs on-demand via Zane
             logger.info(f"[BANK IMPORT] Skipping invoice matching during import (will run on-demand)")
             
+            # ═══════════════════════════════════════════════════════════════
+            # BALANCE-GAP WATCHDOG: verify the statement's running balance
+            # chain (previous balance + credit - debit = this balance). Any
+            # gap proves a transaction is MISSING from the extraction (e.g.
+            # the AI dropped an in/out pair). Never silent — reported in the
+            # import result so it can be checked against the paper statement.
+            # ═══════════════════════════════════════════════════════════════
+            balance_gaps = 0
+            try:
+                _prev_bal = None
+                for (_cd, _cdeb, _ccre, _cbal) in _chain_rows:
+                    if _cbal is None:
+                        _prev_bal = None
+                        continue
+                    if _prev_bal is not None:
+                        _expected = round(_prev_bal + _ccre - _cdeb, 2)
+                        if abs(_expected - _cbal) > 0.02:
+                            balance_gaps += 1
+                            logger.warning(f"[BANK IMPORT] BALANCE GAP at line dated {_cd}: expected {_expected}, statement shows {_cbal} (difference {round(_cbal - _expected, 2)}) — a transaction may be missing from the extraction")
+                    _prev_bal = _cbal
+                if balance_gaps:
+                    logger.warning(f"[BANK IMPORT] {balance_gaps} balance gap(s) detected — check the import against the paper statement")
+            except Exception as _bg_err:
+                logger.warning(f"[BANK IMPORT] Balance-gap check error (non-fatal): {_bg_err}")
+            
             needs_attention = imported - auto_matched - suggested
             
             dupe_msg = f" ({skipped_dupes} duplicates skipped)" if skipped_dupes > 0 else ""
@@ -4321,6 +4361,7 @@ Return ONLY the JSON array. No markdown, no explanation."""
                     "needs_attention": max(0, needs_attention),
                     "duplicates_skipped": skipped_dupes,
                     "out_of_range_skipped": skipped_out_of_range,
+                    "balance_gaps": balance_gaps,
                     "rows_parsed": len(data_rows),
                     "row_errors": _row_errors,
                     "row_error_sample": _row_error_sample,
