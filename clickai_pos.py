@@ -98,7 +98,7 @@ def register_pos_routes(app, db, login_required, Auth, render_page,
         # campaign the server read from the DB for this session's business.
         try:
             _raw_dbg = str(locals().get("_camp_raw"))[:200]
-            logger.info(f"[POS CAMPAIGN] biz={biz_id} active={_camp_active} default={_camp_default} cats={_camp_cats} raw={_raw_dbg}")
+            print(f"[POS CAMPAIGN] biz={biz_id} active={_camp_active} default={_camp_default} cats={_camp_cats} raw={_raw_dbg}", flush=True)
         except Exception:
             pass
         
