@@ -28959,6 +28959,37 @@ def customer_view(customer_id):
         _cp_disc_all_html = ('<a href="javascript:void(0)" onclick="cpToggleAllDisc(true)" style="font-size:11px;color:var(--green);margin-right:8px;">Discount: all</a>'
                              '<a href="javascript:void(0)" onclick="cpToggleAllDisc(false)" style="font-size:11px;color:var(--text-muted);margin-right:10px;">none</a>')
     
+    # ── CORRESPONDENCE LOG (2026-07-16): every email the system sent to this
+    # customer, from the email_log table. Newest first, last 50.
+    _corr_rows_html = ""
+    _corr_count = 0
+    try:
+        _corr = db.get("email_log", {"business_id": biz_id, "customer_id": customer_id}) or []
+        _corr = sorted(_corr, key=lambda x: str(x.get("created_at") or ""), reverse=True)[:50]
+        _corr_count = len(_corr)
+        for _m in _corr:
+            _st = (_m.get("status") or "").lower()
+            _st_badge = ('<span style="background:var(--green);color:white;padding:2px 8px;border-radius:10px;font-size:11px;">SENT</span>'
+                         if _st == "sent" else
+                         f'<span style="background:var(--red);color:white;padding:2px 8px;border-radius:10px;font-size:11px;" title="{safe_string(_m.get("error", ""))}">FAILED</span>')
+            _dir_badge = ('<span style="background:#3b82f6;color:white;padding:2px 8px;border-radius:10px;font-size:11px;">IN</span>'
+                          if (_m.get("direction") or "out") == "in" else
+                          '<span style="background:#6366f1;color:white;padding:2px 8px;border-radius:10px;font-size:11px;">OUT</span>')
+            _ts = str(_m.get("created_at") or "")[:16].replace("T", " ")
+            _cc_disp = f'<div style="font-size:11px;color:var(--text-muted);">cc: {safe_string(_m.get("cc_email", ""))}</div>' if _m.get("cc_email") else ""
+            _body_snip = safe_string((_m.get("body_text") or "")[:400])
+            _corr_rows_html += f'''
+            <tr style="cursor:pointer;" onclick="var d=this.nextElementSibling; d.style.display = d.style.display === 'none' ? '' : 'none';">
+                <td style="white-space:nowrap;">{_ts}</td>
+                <td>{_dir_badge}</td>
+                <td>{safe_string(_m.get("to_email", ""))}{_cc_disp}</td>
+                <td>{safe_string(_m.get("subject", ""))}</td>
+                <td>{_st_badge}</td>
+            </tr>
+            <tr style="display:none;"><td colspan="5" style="background:var(--bg);font-size:12px;color:var(--text-muted);padding:10px 15px;">{_body_snip or "(no text)"}</td></tr>'''
+    except Exception as _corr_err:
+        logger.warning(f"[CORRESPONDENCE] Load failed: {_corr_err}")
+    
     content = f'''
     <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:20px;">
         <a href="/customers" style="color:var(--text-muted);">← Back to Customers</a>
@@ -29232,6 +29263,22 @@ def customer_view(customer_id):
             </thead>
             <tbody>
                 {jobs_html or "<tr><td colspan='4' style='text-align:center;color:var(--text-muted)'>No jobs</td></tr>"}
+            </tbody>
+        </table>
+    </div>
+    
+    <!-- Correspondence -->
+    <div class="card">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:15px;">
+            <h3 style="margin:0;">📧 Correspondence ({_corr_count})</h3>
+            <span style="font-size:12px;color:var(--text-muted);">Click a row to see the message text</span>
+        </div>
+        <table class="table" id="corrTable">
+            <thead>
+                <tr><th>Date</th><th></th><th>To</th><th>Subject</th><th>Status</th></tr>
+            </thead>
+            <tbody>
+                {_corr_rows_html or "<tr><td colspan='5' style='text-align:center;color:var(--text-muted)'>No correspondence yet — emails sent to this customer will appear here</td></tr>"}
             </tbody>
         </table>
     </div>
