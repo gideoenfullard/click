@@ -62,9 +62,20 @@ def register_pos_routes(app, db, login_required, Auth, render_page,
         # Category-based sale discounts configured on /stock/sale-campaign.
         # Stock prices stay UNCHANGED — the discount is applied on top at the
         # POS, so slips can show old price + discount % + new price.
+        # Read FRESH from the DB (one small query) so a just-saved campaign is
+        # live immediately — the per-worker business cache (300s) otherwise
+        # serves a stale record and the POS silently sells at full price.
         _camp = {}
         try:
-            _camp_raw = business.get("discount_campaign") if business else None
+            _camp_raw = None
+            try:
+                _fresh_biz = db.get_one("businesses", biz_id) if biz_id else None
+                if _fresh_biz is not None:
+                    _camp_raw = _fresh_biz.get("discount_campaign")
+            except Exception:
+                _camp_raw = None
+            if _camp_raw is None:
+                _camp_raw = business.get("discount_campaign") if business else None
             if isinstance(_camp_raw, str) and _camp_raw.strip():
                 _camp = json.loads(_camp_raw)
             elif isinstance(_camp_raw, dict):
@@ -2263,7 +2274,10 @@ def register_pos_routes(app, db, login_required, Auth, render_page,
                 return;
             }
             
-            // Calculate totals — prices are EXCL VAT
+            // Calculate totals — prices are EXCL VAT.
+            // Guarantee the sale-campaign / manual discounts are applied to
+            // every cart item regardless of which path added it.
+            applyCartDiscounts();
             let subtotal = cart.reduce((sum, item) => sum + (item.price * item.qty), 0);
             subtotal = Math.round(subtotal * 100) / 100;
             const vat = Math.round(subtotal * 0.15 * 100) / 100;
@@ -2399,6 +2413,7 @@ def register_pos_routes(app, db, login_required, Auth, render_page,
             }
             
             // Cart has items AND customer selected - create quote with stock items
+            applyCartDiscounts();
             const items = cart.map(item => ({
                 stock_id: (item.isCustom || item.isPOItem) ? null : item.id,
                 code: item.code,
@@ -3893,6 +3908,7 @@ def register_pos_routes(app, db, login_required, Auth, render_page,
         }
         
         async function createQuoteWithCustomer(customerId, customerName) {
+            applyCartDiscounts();
             const items = cart.map(item => ({
                 stock_id: (item.isCustom || item.isPOItem) ? null : item.id,
                 code: item.code,
@@ -5290,6 +5306,7 @@ def register_pos_routes(app, db, login_required, Auth, render_page,
                     <span id="offlineCount" style="display:none;background:rgba(255,255,255,0.2);padding:1px 6px;margin-left:4px;font-size:10px;"></span>
                 </span>
                 <span id="onlineIndicator" style="padding:2px 8px;font-size:10px;color:#10b981;display:none;">Online</span>
+                {'<span style="padding:2px 8px;font-size:10px;color:#f59e0b;font-weight:bold;border:1px solid #f59e0b;border-radius:4px;letter-spacing:1px;">SALE ACTIVE</span>' if _camp_active else ''}
             </div>
         </header>
     
