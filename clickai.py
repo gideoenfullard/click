@@ -2716,11 +2716,30 @@ class Email:
             logger.warning(f"[EMAIL] Debug - Global: SMTP_USER={bool(SMTP_USER)}, SMTP_PASS={bool(SMTP_PASS)}, FROM_EMAIL={bool(FROM_EMAIL)}")
             return False
         
-        # ── FULLTECH RULE (2026-07-14): every email sent from Daphne's or the
-        # sales address must always CC admin@fulltech1.co.za. Hardcoded to
-        # these two sender addresses so no other tenant is ever affected.
+        # ── FULLTECH RULE (2026-07-14, extended 2026-07-16): every email sent
+        # from Daphne's or the sales address, OR sent while Daphne (or the
+        # sales user) is the logged-in user on the Fulltech business, must
+        # always CC admin@fulltech1.co.za. The from-address alone was not
+        # enough: all Fulltech mail goes out under one shared email_from, so
+        # the system must look at WHO is sending. Guarded to the Fulltech
+        # business only so no other tenant is ever affected.
         # The CC parser below dedupes and skips addresses already in To.
-        if (from_email or "").strip().lower() in ("daphne@fulltech1.co.za", "sales@fulltech1.co.za"):
+        _cc_admin = (from_email or "").strip().lower() in ("daphne@fulltech1.co.za", "sales@fulltech1.co.za")
+        if not _cc_admin:
+            try:
+                _FULLTECH_BIZ = "5e2700cc-eec8-4487-bf2c-83cbbab28ca8"
+                _cc_biz = business or Auth.get_current_business()
+                if _cc_biz and str(_cc_biz.get("id") or "") == _FULLTECH_BIZ:
+                    _cc_user = Auth.get_current_user() or {}
+                    _u_email = (_cc_user.get("email") or "").strip().lower()
+                    _u_name = (_cc_user.get("username") or _cc_user.get("name") or "").strip().lower()
+                    if (_u_email in ("daphne@fulltech1.co.za", "sales@fulltech1.co.za")
+                            or _u_name.startswith("daphne")
+                            or _u_name == "sales"):
+                        _cc_admin = True
+            except Exception:
+                pass  # background sends have no session — from-address rule still applies
+        if _cc_admin:
             _admin_cc = "admin@fulltech1.co.za"
             if not cc:
                 cc = _admin_cc
