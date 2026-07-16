@@ -1484,6 +1484,10 @@ def register_pos_routes(app, db, login_required, Auth, render_page,
                         <span>TOTAL</span>
                         <span id="grandTotal">R0.00</span>
                     </div>
+                    <button onclick="previewSlip()" id="btnPreviewSlip"
+                        style="width:100%;margin-top:8px;padding:10px;border-radius:8px;border:1px solid rgba(255,255,255,0.25);background:rgba(255,255,255,0.06);color:#f59e0b;font-weight:bold;font-size:13px;cursor:pointer;">
+                        PREVIEW SLIP (before you sell)
+                    </button>
                 </div>
             </div>
         </div>
@@ -4236,6 +4240,71 @@ def register_pos_routes(app, db, login_required, Auth, render_page,
             setTimeout(function() {
                 try { pf.contentWindow.focus(); pf.contentWindow.print(); } catch(e) { console.log('[POS] Quote print error:', e); }
             }, 250);
+        }
+        
+        // ═══ SLIP PREVIEW (2026-07-15) ═══
+        // Shows EXACTLY what the slip will look like, built from the current
+        // cart — BEFORE any sale is made. View-only: no sale, no journals,
+        // no stock movement, nothing is booked. Own modal, own state —
+        // completely separate from the real sale/print machinery.
+        function previewSlip() {
+            if (cart.length === 0) {
+                alert('Cart is empty — add items first to preview the slip.');
+                return;
+            }
+            applyCartDiscounts();
+            var subtotal = 0;
+            var itemsHtml = '';
+            var savedTotal = 0;
+            cart.forEach(function(item) {
+                var lineTotal = item.price * item.qty;
+                subtotal += lineTotal;
+                var name = (item.desc && String(item.desc).trim()) ? item.desc : (item.code || 'Item');
+                if (item.effPct > 0 && item.origPrice > item.price) {
+                    savedTotal += (item.origPrice - item.price) * item.qty;
+                    itemsHtml += '<tr><td style="padding:3px 0 0 0;font-size:13px;">' + item.qty + 'x ' + name + '</td><td style="text-align:right;padding:3px 0 0 0;font-size:13px;white-space:nowrap;">R' + lineTotal.toFixed(2) + '</td></tr>'
+                        + '<tr><td colspan="2" style="padding:0 0 4px 12px;font-size:13px;">'
+                        + '<span style="text-decoration:line-through;">Was R' + item.origPrice.toFixed(2) + '</span> '
+                        + '<span style="font-weight:bold;border:2px solid #000;padding:0 4px;">' + item.effPct + '% DISCOUNT</span> '
+                        + '<span style="font-weight:bold;">Now R' + item.price.toFixed(2) + '</span></td></tr>';
+                } else {
+                    itemsHtml += '<tr><td style="padding:3px 0;font-size:13px;">' + item.qty + 'x ' + name + '</td><td style="text-align:right;padding:3px 0;font-size:13px;white-space:nowrap;">R' + lineTotal.toFixed(2) + '</td></tr>';
+                }
+            });
+            subtotal = Math.round(subtotal * 100) / 100;
+            var vat = Math.round(subtotal * 0.15 * 100) / 100;
+            var total = Math.round((subtotal + vat) * 100) / 100;
+            var s = posSettings || {};
+            var slip = '<div style="font-family:Courier New, monospace;color:#000;background:#fff;padding:12px;border-radius:8px;max-width:320px;margin:0 auto;">'
+                + '<div style="text-align:center;border:2px dashed #dc2626;color:#dc2626;font-weight:bold;padding:4px;margin-bottom:8px;font-size:12px;">PREVIEW ONLY — NOT A SALE<br>Nothing has been booked</div>'
+                + '<div style="text-align:center;border-bottom:2px dashed #000;padding-bottom:8px;margin-bottom:8px;">'
+                + '<div style="font-size:16px;font-weight:bold;">' + (s.business_name || 'Business') + '</div>'
+                + (s.vat_number ? '<div style="font-size:11px;">VAT: ' + s.vat_number + '</div>' : '')
+                + '</div>'
+                + '<table style="width:100%;border-collapse:collapse;margin-bottom:8px;">' + itemsHtml + '</table>'
+                + '<div style="border-top:2px dashed #000;padding-top:6px;">'
+                + '<div style="display:flex;justify-content:space-between;font-size:12px;padding:2px 0;"><span>Subtotal (excl VAT)</span><span>R' + subtotal.toFixed(2) + '</span></div>'
+                + '<div style="display:flex;justify-content:space-between;font-size:12px;padding:2px 0;"><span>VAT (15%)</span><span>R' + vat.toFixed(2) + '</span></div>'
+                + '<div style="display:flex;justify-content:space-between;font-size:18px;font-weight:bold;margin-top:4px;"><span>TOTAL</span><span>R' + total.toFixed(2) + '</span></div>'
+                + '</div>'
+                + (savedTotal > 0.005 ? '<div style="text-align:center;margin-top:8px;padding:8px;border:3px double #000;font-size:14px;font-weight:bold;">*** SALE! YOU SAVED R' + savedTotal.toFixed(2) + ' ***</div>' : '')
+                + '</div>';
+            var old = document.getElementById('posSlipPreviewModal');
+            if (old) old.remove();
+            var modal = document.createElement('div');
+            modal.id = 'posSlipPreviewModal';
+            modal.style.cssText = 'position:fixed;inset:0;z-index:2147483000;background:rgba(0,0,0,0.75);display:flex;align-items:center;justify-content:center;padding:20px;overflow-y:auto;';
+            var inner = document.createElement('div');
+            inner.style.cssText = 'max-height:90vh;overflow-y:auto;';
+            inner.innerHTML = slip;
+            var closeBtn = document.createElement('button');
+            closeBtn.textContent = 'Close Preview';
+            closeBtn.style.cssText = 'display:block;width:100%;margin-top:12px;padding:12px;border-radius:8px;border:none;background:#10b981;color:#fff;font-weight:bold;font-size:15px;cursor:pointer;';
+            closeBtn.onclick = function() { modal.remove(); };
+            inner.appendChild(closeBtn);
+            modal.appendChild(inner);
+            modal.onclick = function(e) { if (e.target === modal) modal.remove(); };
+            document.body.appendChild(modal);
         }
         
         function doPrintSlip(format) {
