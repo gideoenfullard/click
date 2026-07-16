@@ -1757,9 +1757,16 @@ def register_pos_routes(app, db, login_required, Auth, render_page,
                     const row = document.querySelector('tr.stock-row[data-id="' + item.id + '"]');
                     item.campPct = row ? (parseFloat(row.getAttribute('data-disc')) || 0) : 0;
                 }
+                // A manually edited price (F11 price click) always wins — the
+                // discount engine must never overwrite the cashier's price.
+                if (item.priceLocked) {
+                    item.effPct = 0;
+                    return;
+                }
                 let eff = 0;
                 if (!item.isPOItem) {
-                    eff = item.campPct > 0 ? item.campPct : posManualDiscPct;
+                    var manual = (item.disc !== undefined && item.disc !== null) ? item.disc : posManualDiscPct;
+                    eff = item.campPct > 0 ? item.campPct : manual;
                 }
                 item.effPct = eff;
                 item.price = Math.round(item.origPrice * (1 - eff / 100) * 100) / 100;
@@ -5486,8 +5493,13 @@ def register_pos_routes(app, db, login_required, Auth, render_page,
                 html += '<td class="code">' + item.code + '</td>';
                 html += '<td>' + item.desc + '</td>';
                 html += '<td class="r qty" style="cursor:pointer;" onclick="event.stopPropagation();f11EditQty(' + idx + ')">' + item.qty + '</td>';
-                html += '<td class="r" style="cursor:pointer;" onclick="event.stopPropagation();f11EditPrice(' + idx + ')">R' + item.price.toFixed(2) + '</td>';
-                html += '<td class="r" style="color:#5a8aaa;cursor:pointer;" onclick="event.stopPropagation();f11EditDisc(' + idx + ')">' + (item.disc ? item.disc + '%' : '—') + '</td>';
+                var priceCell = 'R' + item.price.toFixed(2);
+                if (item.effPct > 0 && item.origPrice > item.price) {{
+                    priceCell = '<span style="text-decoration:line-through;opacity:0.55;">R' + item.origPrice.toFixed(2) + '</span> <span style="color:#f59e0b;font-weight:bold;">R' + item.price.toFixed(2) + '</span>';
+                }}
+                html += '<td class="r" style="cursor:pointer;" onclick="event.stopPropagation();f11EditPrice(' + idx + ')">' + priceCell + '</td>';
+                var discCell = item.effPct > 0 ? '<span style="color:#f59e0b;font-weight:bold;">' + item.effPct + '%</span>' : '—';
+                html += '<td class="r" style="color:#5a8aaa;cursor:pointer;" onclick="event.stopPropagation();f11EditDisc(' + idx + ')">' + discCell + '</td>';
                 html += '<td class="r tot">R' + lineTotal.toFixed(2) + '</td>';
                 html += '<td><span class="f11-onhand">' + onHand + '</span></td>';
                 html += '<td style="text-align:center;"><button class="f11-del-btn" onclick="event.stopPropagation();f11RemoveItem(' + idx + ')" title="Remove item">×</button></td>';
@@ -5526,18 +5538,29 @@ def register_pos_routes(app, db, login_required, Auth, render_page,
             var price = parseFloat(newPrice);
             if (isNaN(price) || price < 0) {{ alert('Invalid price'); return; }}
             item.price = price;
+            // Lock: a hand-entered price must not be overwritten by the
+            // sale-campaign discount engine.
+            item.priceLocked = true;
+            item.origPrice = price;
+            item.disc = 0;
             updateCart(); renderF11Table(); syncF11Buttons();
         }}
     
         async function f11EditDisc(idx) {{
             if (idx < 0 || idx >= cart.length) return;
             var item = cart[idx];
+            if (item.campPct > 0) {{
+                alert('This item already has the ' + item.campPct + '% sale campaign discount — manual discount cannot stack on top of it.');
+                return;
+            }}
             var cur = item.disc || 0;
-            var newDisc = await posPrompt('Discount % for ' + item.code + ':', cur);
+            var newDisc = await posPrompt('Discount % for ' + item.code + ' (max 10):', cur);
             if (newDisc === null) return;
             var disc = parseFloat(newDisc);
-            if (isNaN(disc) || disc < 0 || disc > 100) {{ alert('Invalid discount (0-100)'); return; }}
+            if (isNaN(disc) || disc < 0) {{ alert('Invalid discount'); return; }}
+            if (disc > 10) {{ alert('Maximum manual discount is 10%'); disc = 10; }}
             item.disc = disc;
+            item.priceLocked = false;
             updateCart(); renderF11Table(); syncF11Buttons();
         }}
     
