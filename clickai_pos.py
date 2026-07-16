@@ -67,6 +67,10 @@ def register_pos_routes(app, db, login_required, Auth, render_page,
         # serves a stale record and the POS silently sells at full price.
         _camp = {}
         try:
+            # NOTE: pos_page has a local `import json` further down, which makes
+            # `json` a LOCAL name for the whole function — using it here before
+            # that line raises UnboundLocalError. Import it here first.
+            import json
             _camp_raw = None
             try:
                 _fresh_biz = db.get_one("businesses", biz_id) if biz_id else None
