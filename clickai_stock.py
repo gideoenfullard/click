@@ -725,13 +725,17 @@ def register_stock_routes(app, db, login_required, Auth, render_page,
                         if cat_name:
                             cats[cat_name] = pct
                 campaign = {"active": active, "default_pct": default_pct, "categories": cats}
-                db.update_business(biz_id, user_id, {"discount_campaign": json.dumps(campaign)})
+                _ok = db.update_business(biz_id, user_id, {"discount_campaign": json.dumps(campaign)})
                 Auth.clear_cache()
-                flash("Sale campaign saved!" if active else "Sale campaign saved (not active).", "success")
+                # update_business returns (bool, str) or bool depending on version
+                _saved = _ok[0] if isinstance(_ok, tuple) else bool(_ok)
+                if _saved:
+                    return redirect("/stock/sale-campaign?saved=1")
+                logger.error("[SALE CAMPAIGN] update_business returned failure")
+                return redirect("/stock/sale-campaign?error=Save+failed+—+check+Fly+logs+for+DB+UPDATE+BUSINESS")
             except Exception as e:
                 logger.error(f"[SALE CAMPAIGN] Save failed: {e}")
-                flash(f"Error saving campaign: {e}", "error")
-            return redirect("/stock/sale-campaign")
+                return redirect("/stock/sale-campaign?error=" + str(e)[:80].replace(" ", "+"))
         
         # Load saved campaign
         camp = {}
@@ -773,10 +777,17 @@ def register_stock_routes(app, db, login_required, Auth, render_page,
         if not cat_rows:
             cat_rows = '<tr><td colspan="2" style="padding:15px;color:var(--text-muted);">No stock categories found — add categories to your stock items first.</td></tr>'
         
+        _banner = ""
+        if request.args.get("saved"):
+            _state = "ACTIVE — the POS will apply these discounts" if camp.get("active") else "saved but NOT active (tick Active to switch the sale on)"
+            _banner = f'<div style="background:#10b981;color:#fff;font-weight:bold;padding:12px 15px;border-radius:8px;margin-bottom:15px;">Sale campaign saved! Status: {_state}.</div>'
+        elif request.args.get("error"):
+            _banner = f'<div style="background:#dc2626;color:#fff;font-weight:bold;padding:12px 15px;border-radius:8px;margin-bottom:15px;">Save FAILED: {safe_string(request.args.get("error", ""))}</div>'
+        
         content = f'''
         <div style="max-width:700px;margin:0 auto;">
             <a href="/stock" style="color:var(--text-muted);display:block;margin-bottom:15px;">← Back to Stock</a>
-            
+            {_banner}
             <div class="card">
                 <h2 style="margin:0 0 5px 0;">Sale / Discount Campaign</h2>
                 <p style="color:var(--text-muted);margin:0 0 20px 0;font-size:14px;">
