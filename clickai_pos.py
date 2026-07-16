@@ -4367,6 +4367,7 @@ def register_pos_routes(app, db, login_required, Auth, render_page,
                 var bizBankBranch = biz.bank_branch || '';
                 
                 var itemsRows = '';
+                var a4SavedTotal = 0;
                 (sd.items || []).forEach(function(item) {
                     var qty = item.quantity || item.qty || 1;
                     var desc = item.description || item.desc || '-';
@@ -4374,6 +4375,12 @@ def register_pos_routes(app, db, login_required, Auth, render_page,
                     var lineTotal = parseFloat(item.total || (qty * price));
                     var vatAmt = Math.round(lineTotal * 0.15 * 100) / 100;
                     var inclTotal = Math.round((lineTotal + vatAmt) * 100) / 100;
+                    var dPct = parseFloat(item.discount_pct) || 0;
+                    var oPrice = parseFloat(item.original_price) || price;
+                    if (dPct > 0 && oPrice > price) {
+                        a4SavedTotal += (oPrice - price) * qty;
+                        desc += '<div style="font-size:10px;color:#dc2626;font-weight:600;margin-top:2px;">Was R' + oPrice.toFixed(2) + ' — ' + dPct + '% DISCOUNT — Now R' + price.toFixed(2) + '</div>';
+                    }
                     itemsRows += '<tr style="border-bottom:1px solid #e5e7eb;">' +
                         '<td style="padding:6px 8px;font-size:12px;">' + desc + '</td>' +
                         '<td style="text-align:center;padding:6px 8px;font-size:12px;">' + qty + '</td>' +
@@ -4453,6 +4460,7 @@ def register_pos_routes(app, db, login_required, Auth, render_page,
                     '<div style="font-size:12px;color:#666;max-width:55%;">' +
                     bankingHtml +
                     paymentInfo +
+                    (a4SavedTotal > 0.005 ? '<div style="margin-top:8px;padding:8px 12px;border:3px double #000;font-size:14px;font-weight:bold;color:#000;display:inline-block;">*** SALE! YOU SAVED R' + a4SavedTotal.toFixed(2) + ' ***</div>' : '') +
                     '<p style="margin:8px 0 2px;font-size:11px;color:#999;">Thank you for your purchase!</p>' +
                     '</div>' +
                     '<table style="width:220px;border-collapse:collapse;">' +
