@@ -94,6 +94,13 @@ def register_pos_routes(app, db, login_required, Auth, render_page,
             except (ValueError, TypeError):
                 _p = 0.0
             return max(0.0, min(90.0, _p))
+        # Truth line in the server logs on every POS load — shows exactly what
+        # campaign the server read from the DB for this session's business.
+        try:
+            _raw_dbg = str(locals().get("_camp_raw"))[:200]
+            logger.info(f"[POS CAMPAIGN] biz={biz_id} active={_camp_active} default={_camp_default} cats={_camp_cats} raw={_raw_dbg}")
+        except Exception:
+            pass
         
         # Sort stock by category then code
         stock = sorted(stock, key=lambda x: (x.get("category") or "ZZZ", x.get("code") or ""))
