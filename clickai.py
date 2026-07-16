@@ -29405,7 +29405,11 @@ def customer_view(customer_id):
             }});
             const data = await resp.json();
             if (data.success) {{
-                alert('✅ Email sent to ' + data.sent_to + ' recipients!');
+                let msg = '✅ Email sent to ' + data.sent_to + ' recipients!';
+                if (data.attachments && data.attachments.length) {{
+                    msg += '\\n\\n' + data.attachments.join('\\n');
+                }}
+                alert(msg);
                 hideEmailModal();
             }} else {{
                 alert('❌ Error: ' + (data.error || 'Failed to send'));
@@ -37716,15 +37720,48 @@ def api_customer_email_group():
         errors = []
         for recipient in recipients:
             try:
-                send_email(recipient, subject, html_body)
-                sent_count += 1
-                logger.info(f"[EMAIL GROUP] Sent to {recipient} for customer {customer.get('name')}")
+                _ok = Email.send(recipient, subject, html_body, business=business)
+                if _ok:
+                    sent_count += 1
+                    logger.info(f"[EMAIL GROUP] Sent to {recipient} for customer {customer.get('name')}")
+                else:
+                    errors.append(f"{recipient}: send failed (check SMTP settings)")
+                    logger.error(f"[EMAIL GROUP] Send returned False for {recipient}")
             except Exception as e:
                 errors.append(f"{recipient}: {str(e)}")
                 logger.error(f"[EMAIL GROUP] Failed to send to {recipient}: {e}")
         
         if sent_count > 0:
-            return jsonify({"success": True, "sent_to": sent_count, "total": len(recipients), "errors": errors})
+            # ── ATTACH OPTIONS (2026-07-16): the "Latest Statement" and
+            # "Latest Invoice" checkboxes now actually send the documents,
+            # reusing the standard statement email (with PDF) and the
+            # invoice-PDF email. Sent once to the first recipient with the
+            # remaining addresses on CC, so nobody gets duplicates.
+            attach_notes = []
+            _primary_rcpt = recipients[0]
+            _cc_rest = recipients[1:] if len(recipients) > 1 else None
+            if data.get("attach_statement"):
+                try:
+                    _cust_inv = db.get("invoices", {"business_id": biz_id, "customer_id": customer_id}) or []
+                    _open_inv = [i for i in _cust_inv if i.get("status") != "paid"]
+                    _ok = Email.send_statement(customer, _open_inv, business, to_email=_primary_rcpt, cc=_cc_rest)
+                    attach_notes.append("Statement sent" if _ok else "Statement FAILED to send")
+                except Exception as _att_e:
+                    logger.error(f"[EMAIL GROUP] Statement attach failed: {_att_e}")
+                    attach_notes.append(f"Statement FAILED: {str(_att_e)[:80]}")
+            if data.get("attach_invoice"):
+                try:
+                    _cust_inv2 = db.get("invoices", {"business_id": biz_id, "customer_id": customer_id}) or []
+                    _latest_inv = sorted(_cust_inv2, key=lambda i: (str(i.get("date") or ""), str(i.get("created_at") or "")))[-1] if _cust_inv2 else None
+                    if _latest_inv:
+                        _ok = Email.send_document_pdf("invoice", _latest_inv, business, customer, _primary_rcpt, cc=_cc_rest)
+                        attach_notes.append(f"Invoice {_latest_inv.get('invoice_number', '')} sent" if _ok else "Invoice FAILED to send")
+                    else:
+                        attach_notes.append("No invoices found for this customer")
+                except Exception as _att_e:
+                    logger.error(f"[EMAIL GROUP] Invoice attach failed: {_att_e}")
+                    attach_notes.append(f"Invoice FAILED: {str(_att_e)[:80]}")
+            return jsonify({"success": True, "sent_to": sent_count, "total": len(recipients), "errors": errors, "attachments": attach_notes})
         else:
             return jsonify({"success": False, "error": f"Failed to send to all recipients: {'; '.join(errors)}"})
     
