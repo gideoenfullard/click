@@ -2871,11 +2871,81 @@ class Email:
                 server.sendmail(from_email, _all_envelope, msg.as_string())
             
             logger.info(f"[EMAIL] Sent to {_to_header}{f' (cc: {_cc_header})' if _cc_header else ''}: {subject}")
+            Email._log_email(business, from_email, _recipients, _cc_recipients, subject, body_text, body_html, "sent")
             return True
             
         except Exception as e:
             logger.error(f"[EMAIL] Failed to send to {to_email!r}: {e}")
+            _lr = locals()
+            Email._log_email(business, from_email,
+                             _lr.get("_recipients") or [str(to_email)],
+                             _lr.get("_cc_recipients") or ([str(cc)] if cc else []),
+                             subject, body_text, body_html, "failed", str(e))
             return False
+    
+    @staticmethod
+    def _log_email(business, from_email, to_list, cc_list, subject, body_text, body_html, status, error=""):
+        """── CORRESPONDENCE LOG (2026-07-16) ──
+        Record every outgoing email in the email_log table and link it to the
+        matching customer/supplier by recipient address, so all correspondence
+        can be traced per customer/supplier. Metadata + text only — never
+        attachments (the documents themselves already live in the system).
+        Best-effort: must NEVER break or delay the actual send."""
+        try:
+            _biz = business
+            if not _biz:
+                try:
+                    _biz = Auth.get_current_business()
+                except Exception:
+                    _biz = None
+            biz_id = (_biz or {}).get("id")
+            if not biz_id:
+                return
+            _rcpts = [str(a).strip().lower() for a in (to_list or []) if a]
+            _ccs = [str(a).strip().lower() for a in (cc_list or []) if a]
+            _all_addrs = set(_rcpts + _ccs) - {""}
+            cust_id = supp_id = None
+            cust_name = supp_name = ""
+            try:
+                for _c in (db.get("customers", {"business_id": biz_id}) or []):
+                    _c_addrs = {(_c.get("email") or "").strip().lower(),
+                                (_c.get("accounts_contact_email") or "").strip().lower()} - {""}
+                    if _all_addrs & _c_addrs:
+                        cust_id, cust_name = _c.get("id"), _c.get("name") or ""
+                        break
+                for _s in (db.get("suppliers", {"business_id": biz_id}) or []):
+                    _s_addrs = {(_s.get("email") or "").strip().lower()} - {""}
+                    if _all_addrs & _s_addrs:
+                        supp_id, supp_name = _s.get("id"), _s.get("name") or ""
+                        break
+            except Exception:
+                pass  # linking is best-effort; the log entry still saves unlinked
+            _body = body_text or ""
+            if not _body and body_html:
+                import re as _re
+                _body = _re.sub(r"<style.*?</style>", " ", str(body_html), flags=_re.S | _re.I)
+                _body = _re.sub(r"<[^>]+>", " ", _body)
+                _body = _re.sub(r"\s+", " ", _body).strip()
+            db.save("email_log", {
+                "id": generate_id(),
+                "business_id": biz_id,
+                "direction": "out",
+                "date": today(),
+                "from_email": (from_email or "")[:200],
+                "to_email": ", ".join(_rcpts)[:500],
+                "cc_email": ", ".join(_ccs)[:500],
+                "subject": (subject or "")[:500],
+                "body_text": _body[:20000],
+                "status": status,
+                "error": (error or "")[:500],
+                "customer_id": cust_id,
+                "customer_name": cust_name,
+                "supplier_id": supp_id,
+                "supplier_name": supp_name,
+                "created_at": now(),
+            })
+        except Exception as _log_err:
+            logger.warning(f"[EMAIL LOG] Skipped: {_log_err}")
     
     @staticmethod
     def send_payment_reminder(customer: dict, business: dict) -> bool:
