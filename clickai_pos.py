@@ -5788,18 +5788,58 @@ def register_pos_routes(app, db, login_required, Auth, render_page,
         all_quotes = db.get("quotes", {"business_id": biz_id}) if biz_id else []
         quotes = [q for q in all_quotes if date_from <= (q.get("date") or "") <= date_to]
         
-        # Calculate totals — POS Sales
-        cash_total = sum(float(s.get("total", 0)) for s in sales if s.get("payment_method") == "cash")
-        card_total = sum(float(s.get("total", 0)) for s in sales if s.get("payment_method") == "card")
-        account_total = sum(float(s.get("total", 0)) for s in sales if s.get("payment_method") == "account")
-        invoice_total = sum(float(i.get("total", 0)) for i in invoices)
+        # ── Exclude refunded sales / reversed invoices from ALL day-end totals ──
+        # POS refunds are never written back to the sales table (schema varies per
+        # install) — refunded status lives ONLY in allocation_log (action=pos_refund /
+        # invoice_reverse). Derive the excluded IDs here so X-Read, Z-Read and
+        # Expected Cash never count a reversed transaction.
+        _reversed_invoice_ids = set()
+        _refunded_sale_ids = set()
+        try:
+            _alloc_log = db.get("allocation_log", {"business_id": biz_id}, select="source_id,source_table,extra") or []
+            for _al in _alloc_log:
+                _src_id = _al.get("source_id", "")
+                if not _src_id:
+                    continue
+                _extra_raw = _al.get("extra", "{}")
+                if isinstance(_extra_raw, str):
+                    try:
+                        _extra = json.loads(_extra_raw) if _extra_raw else {}
+                    except Exception:
+                        _extra = {}
+                elif isinstance(_extra_raw, dict):
+                    _extra = _extra_raw
+                else:
+                    _extra = {}
+                _action = _extra.get("action", "")
+                if _action == "invoice_reverse" and _al.get("source_table") == "invoices":
+                    _reversed_invoice_ids.add(_src_id)
+                elif _action == "pos_refund" and _al.get("source_table") == "sales":
+                    _refunded_sale_ids.add(_src_id)
+        except Exception:
+            pass
+        
+        def _sale_active(s):
+            return (s.get("status") or "").lower() not in ("refunded", "reversed") and s.get("id") not in _refunded_sale_ids
+        
+        def _inv_active(i):
+            return (i.get("status") or "").lower() not in ("credited", "reversed") and i.get("id") not in _reversed_invoice_ids
+        
+        active_sales = [s for s in sales if _sale_active(s)]
+        active_invoices = [i for i in invoices if _inv_active(i)]
+        
+        # Calculate totals — POS Sales (refunded sales excluded)
+        cash_total = sum(float(s.get("total", 0)) for s in active_sales if s.get("payment_method") == "cash")
+        card_total = sum(float(s.get("total", 0)) for s in active_sales if s.get("payment_method") == "card")
+        account_total = sum(float(s.get("total", 0)) for s in active_sales if s.get("payment_method") == "account")
+        invoice_total = sum(float(i.get("total", 0)) for i in active_invoices)
         quote_total = sum(float(q.get("total", 0)) for q in quotes)
         
-        # Calculate totals — Invoices by payment method
-        inv_cash_total = sum(float(i.get("total", 0)) for i in invoices if i.get("payment_method") == "cash")
-        inv_card_total = sum(float(i.get("total", 0)) for i in invoices if i.get("payment_method") == "card")
-        inv_eft_total = sum(float(i.get("total", 0)) for i in invoices if i.get("payment_method") == "eft")
-        inv_account_total = sum(float(i.get("total", 0)) for i in invoices if i.get("payment_method") in ("account", ""))
+        # Calculate totals — Invoices by payment method (reversed invoices excluded)
+        inv_cash_total = sum(float(i.get("total", 0)) for i in active_invoices if i.get("payment_method") == "cash")
+        inv_card_total = sum(float(i.get("total", 0)) for i in active_invoices if i.get("payment_method") == "card")
+        inv_eft_total = sum(float(i.get("total", 0)) for i in active_invoices if i.get("payment_method") == "eft")
+        inv_account_total = sum(float(i.get("total", 0)) for i in active_invoices if i.get("payment_method") in ("account", ""))
         
         # COMBINED totals — what actually matters for the cash drawer
         all_cash = cash_total + inv_cash_total
@@ -5807,25 +5847,26 @@ def register_pos_routes(app, db, login_required, Auth, render_page,
         all_account = account_total + inv_account_total
         
         grand_total = cash_total + card_total + account_total
-        transaction_count = len(sales)
+        transaction_count = len(active_sales)
         
         # === EXPECTED CASH FOR Z-READ ===
         # Cash in drawer = ALL cash received today (POS sales + cash-paid invoices)
+        # Refunded sales / reversed invoices are excluded — the cash went back out.
         today_str = today()
         today_cash_sales = sum(float(s.get("total", 0)) for s in all_sales 
-                              if s.get("payment_method") == "cash" and (s.get("date") or "") == today_str)
+                              if _sale_active(s) and s.get("payment_method") == "cash" and (s.get("date") or "") == today_str)
         today_cash_invoices = sum(float(i.get("total", 0)) for i in all_invoices 
-                                 if i.get("payment_method") in ("cash",) and (i.get("date") or "") == today_str)
+                                 if _inv_active(i) and i.get("payment_method") in ("cash",) and (i.get("date") or "") == today_str)
         expected_cash_drawer = today_cash_sales + today_cash_invoices
 
         # === TODAY-ONLY TOTALS FOR Z-READ SLIP (never use date-range totals) ===
-        today_sales = [s for s in all_sales if (s.get("date") or "") == today_str]
+        today_sales = [s for s in all_sales if (s.get("date") or "") == today_str and _sale_active(s)]
         zr_cash = sum(float(s.get("total", 0)) for s in today_sales if s.get("payment_method") == "cash")
         zr_card = sum(float(s.get("total", 0)) for s in today_sales if s.get("payment_method") == "card")
         zr_account = sum(float(s.get("total", 0)) for s in today_sales if s.get("payment_method") == "account")
         zr_total = zr_cash + zr_card + zr_account
         zr_count = len(today_sales)
-        today_invoices = [i for i in all_invoices if (i.get("date") or "") == today_str]
+        today_invoices = [i for i in all_invoices if (i.get("date") or "") == today_str and _inv_active(i)]
         zr_inv_cash = sum(float(i.get("total", 0)) for i in today_invoices if i.get("payment_method") == "cash")
         zr_inv_card = sum(float(i.get("total", 0)) for i in today_invoices if i.get("payment_method") == "card")
         zr_inv_eft = sum(float(i.get("total", 0)) for i in today_invoices if i.get("payment_method") == "eft")
@@ -5862,6 +5903,7 @@ def register_pos_routes(app, db, login_required, Auth, render_page,
                 "items": len(s_items) if s_items else 0,
                 "items_text": items_text,
                 "source": "sale",
+                "reversed": not _sale_active(s),
                 "created_at": s.get("created_at", "")
             })
         
@@ -5887,6 +5929,7 @@ def register_pos_routes(app, db, login_required, Auth, render_page,
                 "items": len(i_items) if i_items else 0,
                 "items_text": items_text,
                 "source": "invoice",
+                "reversed": not _inv_active(i),
                 "created_at": i.get("created_at", "")
             })
         
@@ -5947,15 +5990,18 @@ def register_pos_routes(app, db, login_required, Auth, render_page,
             else:
                 view_url = f"/quote/{t['id']}"
             
+            _rev_badge = ' <span style="background:#ef4444;color:white;padding:2px 8px;border-radius:4px;font-size:11px;">REVERSED</span>' if t.get("reversed") else ""
+            _amt_style = "text-align:right;font-weight:bold;text-decoration:line-through;color:var(--text-muted);" if t.get("reversed") else "text-align:right;font-weight:bold;"
+            
             rows += f'''
             <tr onclick="window.location='{view_url}'" style="cursor:pointer;">
                 <td><strong>{t["number"]}</strong></td>
                 {"" if is_single_day else f'<td>{t["date"]}</td>'}
                 <td>{t["time"]}</td>
-                <td><span style="background:{type_color};color:white;padding:2px 8px;border-radius:4px;font-size:11px;">{t["type"]}</span></td>
+                <td><span style="background:{type_color};color:white;padding:2px 8px;border-radius:4px;font-size:11px;">{t["type"]}</span>{_rev_badge}</td>
                 <td>{safe_string(t["customer"])}</td>
                 <td style="text-align:center;">{t["items"]}</td>
-                <td style="text-align:right;font-weight:bold;">{money(t["total"])}</td>
+                <td style="{_amt_style}">{money(t["total"])}</td>
             </tr>
             '''
         
@@ -6139,7 +6185,7 @@ def register_pos_routes(app, db, login_required, Auth, render_page,
                         Count the cash and enter quantities below
                     </div>
                 </div>
-                <div style="padding:15px;border-top:1px solid #eee;display:flex;gap:10px;">
+                <div id="zreadFooter" style="padding:15px;border-top:1px solid #eee;display:flex;gap:10px;">
                     <button onclick="confirmZRead()" class="btn btn-primary" style="flex:1;background:#ef4444;">GOOD: Close Day & Print</button>
                     <button onclick="closeModal('zreadModal')" class="btn btn-secondary" style="flex:1;">Cancel</button>
                 </div>
@@ -6149,6 +6195,8 @@ def register_pos_routes(app, db, login_required, Auth, render_page,
         <script>
         // ═══ TODAY'S CASH UPS ═══
         const TODAY_CASHUPS = {_today_cashups_json};
+        const IS_STAFF = {'true' if is_staff_pos else 'false'};
+        window._CASHUP_SORTED = [];
         try {{
         (function renderCashupHistory() {{
             const section = document.getElementById('cashupHistorySection');
@@ -6159,7 +6207,8 @@ def register_pos_routes(app, db, login_required, Auth, render_page,
             html += '<h3 style="margin:0 0 15px 0;font-size:16px;">Today&#39;s Cash Ups</h3>';
             
             const sorted = TODAY_CASHUPS.sort((a, b) => (b.created_at || '').localeCompare(a.created_at || ''));
-            sorted.forEach(h => {{
+            window._CASHUP_SORTED = sorted;
+            sorted.forEach((h, hIdx) => {{
                 const type = h.type || 'unknown';
                 let badge = '', detail = '';
                 
@@ -6186,6 +6235,9 @@ def register_pos_routes(app, db, login_required, Auth, render_page,
                     if (h.cash_counted) detail += ' | Counted: <strong>R' + n(h.cash_counted).toFixed(2) + '</strong> | ' + zStatus;
                     if (h.created_by_name) detail += ' | By: <strong>' + h.created_by_name + '</strong>';
                     detail += '</div>';
+                    if (!IS_STAFF) {{
+                        detail += '<div style="margin-top:10px;"><button onclick="showCompletedZRead(window._CASHUP_SORTED[' + hIdx + '])" class="btn btn-primary" style="padding:6px 16px;font-size:13px;">View / Print Z-Read</button></div>';
+                    }}
                 }}
                 
                 const time = h.created_at ? new Date(h.created_at).toLocaleTimeString() : '';
@@ -6334,7 +6386,8 @@ def register_pos_routes(app, db, login_required, Auth, render_page,
                     if (data.success && data.cash_ups) {{
                         const existing = (data.cash_ups || []).filter(c => c.type === 'z_reading');
                         if (existing.length > 0) {{
-                            alert('Day has already been closed with a Z-Read. You cannot do another Z-Read.');
+                            // Day already closed — show the COMPLETED Z-read (view + print)
+                            showCompletedZRead(existing[0]);
                             return;
                         }}
                     }}
@@ -6346,7 +6399,64 @@ def register_pos_routes(app, db, login_required, Auth, render_page,
                 }});
         }}
         
+        const ZREAD_FOOTER_DEFAULT = '<button onclick="confirmZRead()" class="btn btn-primary" style="flex:1;background:#ef4444;">GOOD: Close Day &amp; Print</button><button onclick="closeModal(\\'zreadModal\\')" class="btn btn-secondary" style="flex:1;">Cancel</button>';
+        
+        function showCompletedZRead(z) {{
+            const n = (v) => parseFloat(v || 0) || 0;
+            const closedTime = z.created_at ? new Date(z.created_at).toLocaleString() : '';
+            const diff = n(z.cash_difference);
+            const statusText = z.cash_status || (Math.abs(diff) < 0.01 ? 'Cash balances perfectly!' : 'R' + Math.abs(diff).toFixed(2) + (diff > 0 ? ' OVER (surplus)' : ' SHORT (deficit)'));
+            const content = `
+    <div style="text-align:center;margin-bottom:20px;">
+    <strong style="font-size:18px;">Z-READ (COMPLETED)</strong><br>
+    <span style="color:#666;">End of Day Report — Day Closed</span><br>
+    <span>${{z.date || '{date_desc}'}}</span><br>
+    <span style="font-size:11px;">Closed: ${{closedTime}}</span><br>
+    <span style="font-size:11px;">${{z.created_by_name ? 'By: ' + z.created_by_name : ''}}</span>
+    </div>
+    <hr style="border:1px dashed #000;margin:15px 0;">
+    <div style="margin-bottom:8px;">
+    <strong>POS SALES</strong>
+    </div>
+    <table style="width:100%;border-collapse:collapse;">
+    <tr><td>Cash (POS):</td><td style="text-align:right;">R${{n(z.system_cash).toFixed(2)}}</td></tr>
+    <tr><td>Card (POS):</td><td style="text-align:right;">R${{n(z.system_card).toFixed(2)}}</td></tr>
+    <tr><td>Account (POS):</td><td style="text-align:right;">R${{n(z.system_account).toFixed(2)}}</td></tr>
+    <tr style="font-weight:bold;border-top:1px solid #000;"><td>POS Total:</td><td style="text-align:right;">R${{n(z.system_total).toFixed(2)}}</td></tr>
+    <tr><td style="font-size:11px;">Transactions:</td><td style="text-align:right;font-size:11px;">${{z.sale_count || 0}}</td></tr>
+    </table>
+    <hr style="border:2px solid #000;margin:15px 0;">
+    <div style="margin-bottom:8px;">
+    <strong>CASH COUNT</strong>
+    </div>
+    <table style="width:100%;border-collapse:collapse;">
+    <tr style="font-weight:bold;"><td>Counted:</td><td style="text-align:right;">R${{n(z.cash_counted).toFixed(2)}}</td></tr>
+    <tr style="font-weight:bold;font-size:16px;"><td>Difference:</td><td style="text-align:right;">${{(diff >= 0 ? 'R' : '-R') + Math.abs(diff).toFixed(2)}}</td></tr>
+    </table>
+    <div style="text-align:center;margin:10px 0;font-weight:bold;">${{statusText}}</div>
+    <hr style="border:1px dashed #000;margin:15px 0;">
+    <div style="text-align:center;color:#666;font-size:11px;">
+    *** Z-READ - DAY CLOSED ***
+    </div>
+            `;
+            document.getElementById('zreadContent').innerHTML = content;
+            document.getElementById('cashCountSection').style.display = 'none';
+            document.getElementById('zreadFooter').innerHTML = '<button onclick="printCompletedZRead()" class="btn btn-primary" style="flex:1;">Print Z-Read</button><button onclick="closeModal(\\'zreadModal\\')" class="btn btn-secondary" style="flex:1;">Close</button>';
+            document.getElementById('zreadModal').style.display = 'flex';
+        }}
+        
+        function printCompletedZRead() {{
+            const zContent = document.getElementById('zreadContent').innerHTML;
+            const printWindow = window.open('', '_blank', 'width=400,height=700');
+            printWindow.document.write('<html><head><title>Z-Read</title><style>body {{ font-family: monospace; font-size: 14px; padding: 20px; color: #000; max-width: 80mm; margin: 0 auto; }} table {{ width: 100%; border-collapse: collapse; }} td {{ padding: 3px 0; }} @media print {{ @page {{ size: 80mm auto; margin: 5mm; }} }}</style></head><body>' + zContent + '<div style="text-align:center;margin-top:30px;"><div style="border-top:1px solid #000;width:200px;margin:0 auto;padding-top:5px;">Cashier Signature</div></div></body></html>');
+            printWindow.document.close();
+            setTimeout(function() {{ printWindow.print(); }}, 300);
+        }}
+        
         function _showZReadModal() {{
+            // Restore live-count mode (in case the completed view was shown before)
+            document.getElementById('cashCountSection').style.display = '';
+            document.getElementById('zreadFooter').innerHTML = ZREAD_FOOTER_DEFAULT;
             // Reset denomination inputs
             document.querySelectorAll('.denom-input').forEach(input => {{ input.value = 0; }});
             document.querySelectorAll('.denom-total').forEach(cell => {{ cell.textContent = 'R0.00'; }});
