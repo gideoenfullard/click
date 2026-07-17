@@ -43,6 +43,44 @@ def register_invoicing_routes(app, db, login_required, Auth, render_page,
         _u = _doc_logo_url(business)
         return f'<img src="{_u}" style="height:{height}px;max-width:170px;object-fit:contain;display:block;margin-bottom:6px;" alt="Logo">' if _u else ''
 
+    def _load_sale_campaign(business, biz_id):
+        """Load the /stock/sale-campaign config FRESH from the DB (per-worker
+        cache is up to 300s stale). Returns (active, pct_for) where
+        pct_for(category) gives the campaign % (0 when inactive), capped at 90."""
+        _camp = {}
+        _active = False
+        _cats = {}
+        _default = 0.0
+        try:
+            _raw = None
+            try:
+                _fresh = db.get_one("businesses", biz_id) if biz_id else None
+                if _fresh is not None:
+                    _raw = _fresh.get("discount_campaign")
+            except Exception:
+                _raw = None
+            if _raw is None:
+                _raw = business.get("discount_campaign") if business else None
+            if isinstance(_raw, str) and _raw.strip():
+                _camp = json.loads(_raw)
+            elif isinstance(_raw, dict):
+                _camp = _raw
+            _active = bool(_camp.get("active"))
+            _cats = {(k or "").strip().lower(): float(v or 0) for k, v in (_camp.get("categories") or {}).items()}
+            _default = float(_camp.get("default_pct") or 0)
+        except Exception:
+            _active = False
+        def _pct_for(_category):
+            if not _active:
+                return 0.0
+            _p = _cats.get((_category or "").strip().lower(), _default)
+            try:
+                _p = float(_p or 0)
+            except (ValueError, TypeError):
+                _p = 0.0
+            return max(0.0, min(90.0, _p))
+        return _active, _pct_for
+
     # === INVOICES + RECURRING INVOICES ===
 
     @app.route("/invoices")
@@ -776,7 +814,7 @@ def register_invoicing_routes(app, db, login_required, Auth, render_page,
     @app.route("/api/invoice/campaign-price")
     @login_required
     def api_invoice_campaign_price():
-        """Sale-campaign price for one stock item (invoice form typeahead).
+        """Sale-campaign price for one stock item (invoice/quote form typeahead).
         Same engine as the POS: category % from /stock/sale-campaign, capped
         at 90%. Stock prices themselves are never changed. Reads the campaign
         FRESH from the DB (worker cache is up to 300s stale)."""
@@ -3122,21 +3160,53 @@ def register_invoicing_routes(app, db, login_required, Auth, render_page,
             prices = request.form.getlist("item_price[]")
             units = request.form.getlist("item_unit[]")
             
+            # ═══ SALE / DISCOUNT CAMPAIGN (same engine as the POS and invoices) ═══
+            _camp_active, _camp_pct = _load_sale_campaign(business, biz_id)
+            _item_stock_ids = request.form.getlist("item_stock_id[]")
+            
             subtotal = Decimal("0")
             for i, desc in enumerate(descriptions):
                 if desc.strip():
                     qty = Decimal(quantities[i] or "1")
                     price = Decimal(prices[i] or "0")
+                    # Apply the sale-campaign discount to stock-linked lines.
+                    # A manually typed price (neither the full list price nor
+                    # the campaign price) is NEVER overwritten.
+                    discount_pct = 0.0
+                    original_price = 0.0
+                    _sid = _item_stock_ids[i] if i < len(_item_stock_ids) else ""
+                    if _sid and _camp_active:
+                        try:
+                            _st = db.get_one_stock(_sid)
+                        except Exception:
+                            _st = None
+                        if _st:
+                            _pct = _camp_pct(_st.get("category"))
+                            _full = float(_st.get("price") or _st.get("selling_price") or 0)
+                            if _pct > 0 and _full > 0:
+                                _disc_price = round(_full * (1 - _pct / 100.0), 2)
+                                _pf = float(price)
+                                if abs(_pf - _full) < 0.01:
+                                    price = Decimal(str(_disc_price))
+                                    discount_pct = _pct
+                                    original_price = _full
+                                elif abs(_pf - _disc_price) < 0.01:
+                                    discount_pct = _pct
+                                    original_price = _full
                     line_total = qty * price
                     subtotal += line_total
                     unit_val = units[i].strip() if i < len(units) else ""
-                    items.append({
+                    _item = {
                         "description": desc,
                         "unit": unit_val,
                         "quantity": float(qty),
                         "price": float(price),
                         "total": float(line_total)
-                    })
+                    }
+                    if discount_pct > 0:
+                        _item["discount_pct"] = discount_pct
+                        _item["original_price"] = original_price
+                    items.append(_item)
             
             if not items:
                 return redirect("/quote/new?error=No+items")
@@ -3347,6 +3417,20 @@ def register_invoicing_routes(app, db, login_required, Auth, render_page,
             const p=row.querySelector('input[name="item_price[]"]'); p.value=price;
             const u=row.querySelector('input[name="item_unit[]"]'); if(u&&unit) u.value=unit;
             el.closest('.stock-dropdown').style.display='none'; calcRow(p);
+            // Sale-campaign: swap in the discounted price (same engine as the POS)
+            const descCell=row.querySelector('input[name="item_desc[]"]').closest('td');
+            const oldHint=descCell.querySelector('.camp-hint'); if(oldHint) oldHint.remove();
+            fetch('/api/invoice/campaign-price?stock_id='+encodeURIComponent(stockId)).then(r=>r.json()).then(c=>{{
+                if(c && c.pct > 0){{
+                    p.value=c.price.toFixed(2);
+                    const hint=document.createElement('div');
+                    hint.className='camp-hint';
+                    hint.style.cssText='font-size:11px;color:#f59e0b;font-weight:600;margin-top:2px;';
+                    hint.innerHTML='<span style="text-decoration:line-through;">Was R'+c.original_price.toFixed(2)+'</span> — '+c.pct+'% OFF — Now R'+c.price.toFixed(2);
+                    descCell.appendChild(hint);
+                    calcRow(p);
+                }}
+            }}).catch(()=>{{}});
         }}
         document.addEventListener('click',function(e){{
             if(!e.target.closest('.stock-dropdown')&&!e.target.matches('input[name="item_desc[]"]'))
@@ -3450,6 +3534,7 @@ def register_invoicing_routes(app, db, login_required, Auth, render_page,
         items = raw_items
         
         items_html = ""
+        _qt_saved_total = 0.0
         for item in items:
             # Handle both qty and quantity field names
             qty = item.get("qty") or item.get("quantity") or 1
@@ -3458,14 +3543,21 @@ def register_invoicing_routes(app, db, login_required, Auth, render_page,
             total_excl = float(item.get("total") or item.get("line_total") or 0)
             if total_excl == 0 and price > 0:
                 total_excl = round(float(qty) * price, 2)
-            disc = float(item.get("discount") or item.get("disc") or 0)
+            # Sale-campaign / manual discounts are stored as discount_pct
+            # with the pre-discount price in original_price.
+            disc = float(item.get("discount_pct") or item.get("discount") or item.get("disc") or 0)
+            _o_price = float(item.get("original_price") or 0) or price
+            _desc_html = safe_string(desc)
+            if disc > 0 and _o_price > price:
+                _qt_saved_total += (_o_price - price) * float(qty)
+                _desc_html += f'<div style="font-size:10px;color:#dc2626;font-weight:600;margin-top:2px;"><span style="text-decoration:line-through;">Was {money(_o_price)}</span> — {disc:g}% DISCOUNT — Now {money(price)}</div>'
             vat_rate = 15.0
             vat_amount = round(total_excl * vat_rate / 100, 2)
             total_incl = round(total_excl + vat_amount, 2)
             unit = item.get("unit") or item.get("uom") or ""
             items_html += f'''
             <tr style="border-bottom:1px solid #e5e7eb;">
-                <td style="padding:4px 6px;font-size:11px;">{safe_string(desc)}</td>
+                <td style="padding:4px 6px;font-size:11px;">{_desc_html}</td>
                 <td style="text-align:center;padding:4px 6px;font-size:11px;">{safe_string(unit)}</td>
                 <td style="text-align:center;padding:4px 6px;font-size:11px;">{qty}</td>
                 <td style="text-align:right;padding:4px 6px;font-size:11px;">{money(price)}</td>
@@ -3748,12 +3840,17 @@ def register_invoicing_routes(app, db, login_required, Auth, render_page,
                         <div>Branch: {business.get("bank_branch", "")}</div>
                     </div>""" if business and business.get("bank_account") else ''}
                     <div style="margin-top:12px;font-size:11px;color:#999;">
+                        {f'<div style="margin-bottom:8px;padding:8px 12px;border:3px double #000;font-size:14px;font-weight:bold;color:#000;display:inline-block;">*** SALE! YOU SAVE R{_qt_saved_total:.2f} ***</div>' if _qt_saved_total > 0.005 else ''}
                         <p style="margin:2px 0;">Thank you for your business!</p>
                         <p style="margin:6px 0 2px 0;font-weight:600;color:#555;">Prices valid for 30 days from date of quote.</p>
                         {"<p style='margin:2px 0;color:#ef4444;font-weight:700;'>⚠ This quote has expired.</p>" if status == "expired" else f"<p style='margin:2px 0;color:#888;'>({days_remaining} day{'s' if days_remaining != 1 else ''} remaining)</p>" if days_remaining >= 0 and status in ("pending", "draft") else ""}
                     </div>
                 </div>
                 <table style="width:220px;border-collapse:collapse;">
+                    <tr style="border-bottom:1px solid #e5e7eb;">
+                        <td style="padding:4px 8px;color:#666;font-size:11px;">Total Discount</td>
+                        <td style="padding:4px 8px;text-align:right;color:#333;font-size:11px;">{money(_qt_saved_total)}</td>
+                    </tr>
                     <tr style="border-bottom:1px solid #e5e7eb;">
                         <td style="padding:4px 8px;color:#666;font-size:11px;">Total Exclusive</td>
                         <td style="padding:4px 8px;text-align:right;color:#333;font-size:11px;">{money(quote.get("subtotal", 0))}</td>
@@ -3920,21 +4017,73 @@ def register_invoicing_routes(app, db, login_required, Auth, render_page,
             prices = request.form.getlist("item_price[]")
             units = request.form.getlist("item_unit[]")
             
+            # ═══ SALE / DISCOUNT CAMPAIGN (same engine as the POS and invoices) ═══
+            _camp_active, _camp_pct = _load_sale_campaign(business, biz_id)
+            _item_stock_ids = request.form.getlist("item_stock_id[]")
+            
+            # Original items — preserve existing campaign tags on unchanged
+            # lines (existing edit-form rows carry no stock link, so the tags
+            # would otherwise be silently stripped on every edit)
+            _orig_items = quote.get("items", [])
+            if isinstance(_orig_items, str):
+                try:
+                    _orig_items = json.loads(_orig_items)
+                except Exception:
+                    _orig_items = []
+            _orig_by_desc = {}
+            for _oi in (_orig_items or []):
+                if float(_oi.get("discount_pct", 0) or 0) > 0:
+                    _orig_by_desc[(_oi.get("description") or "").strip()] = _oi
+            
             subtotal = Decimal("0")
             for i, desc in enumerate(descriptions):
                 if desc.strip():
                     qty = Decimal(quantities[i] or "1")
                     price = Decimal(prices[i] or "0")
+                    # Stock-linked (newly picked) lines: apply the campaign.
+                    # A manually typed price is NEVER overwritten.
+                    discount_pct = 0.0
+                    original_price = 0.0
+                    _sid = _item_stock_ids[i] if i < len(_item_stock_ids) else ""
+                    if _sid and _camp_active:
+                        try:
+                            _st = db.get_one_stock(_sid)
+                        except Exception:
+                            _st = None
+                        if _st:
+                            _pct = _camp_pct(_st.get("category"))
+                            _full = float(_st.get("price") or _st.get("selling_price") or 0)
+                            if _pct > 0 and _full > 0:
+                                _disc_price = round(_full * (1 - _pct / 100.0), 2)
+                                _pf = float(price)
+                                if abs(_pf - _full) < 0.01:
+                                    price = Decimal(str(_disc_price))
+                                    discount_pct = _pct
+                                    original_price = _full
+                                elif abs(_pf - _disc_price) < 0.01:
+                                    discount_pct = _pct
+                                    original_price = _full
+                    # Unlinked existing lines: carry the original tags over
+                    # when the price was left unchanged
+                    if discount_pct == 0.0 and not _sid:
+                        _oi = _orig_by_desc.get(desc.strip())
+                        if _oi and abs(float(price) - float(_oi.get("price") or 0)) < 0.01:
+                            discount_pct = float(_oi.get("discount_pct") or 0)
+                            original_price = float(_oi.get("original_price") or 0)
                     line_total = qty * price
                     subtotal += line_total
                     unit_val = units[i].strip() if i < len(units) else ""
-                    items.append({
+                    _item = {
                         "description": desc,
                         "unit": unit_val,
                         "quantity": float(qty),
                         "price": float(price),
                         "total": float(line_total)
-                    })
+                    }
+                    if discount_pct > 0:
+                        _item["discount_pct"] = discount_pct
+                        _item["original_price"] = original_price
+                    items.append(_item)
             
             if not items:
                 return redirect(f"/quote/{quote_id}/edit?error=No+items")
@@ -4174,6 +4323,20 @@ def register_invoicing_routes(app, db, login_required, Auth, render_page,
             const p=row.querySelector('input[name="item_price[]"]'); p.value=price;
             const u=row.querySelector('input[name="item_unit[]"]'); if(u&&unit) u.value=unit;
             el.closest('.stock-dropdown').style.display='none'; calcRow(p);
+            // Sale-campaign: swap in the discounted price (same engine as the POS)
+            const descCell=row.querySelector('input[name="item_desc[]"]').closest('td');
+            const oldHint=descCell.querySelector('.camp-hint'); if(oldHint) oldHint.remove();
+            fetch('/api/invoice/campaign-price?stock_id='+encodeURIComponent(stockId)).then(r=>r.json()).then(c=>{{
+                if(c && c.pct > 0){{
+                    p.value=c.price.toFixed(2);
+                    const hint=document.createElement('div');
+                    hint.className='camp-hint';
+                    hint.style.cssText='font-size:11px;color:#f59e0b;font-weight:600;margin-top:2px;';
+                    hint.innerHTML='<span style="text-decoration:line-through;">Was R'+c.original_price.toFixed(2)+'</span> — '+c.pct+'% OFF — Now R'+c.price.toFixed(2);
+                    descCell.appendChild(hint);
+                    calcRow(p);
+                }}
+            }}).catch(()=>{{}});
         }}
         document.addEventListener('click',function(e){{
             if(!e.target.closest('.stock-dropdown')&&!e.target.matches('input[name="item_desc[]"]'))
