@@ -32060,6 +32060,61 @@ Extract the recurring amount. Return valid JSON only."""
         return jsonify({"success": False, "error": str(e)})
 
 
+@app.route("/api/expense/<expense_id>/edit-date", methods=["POST"])
+@login_required
+def api_expense_edit_date(expense_id):
+    """Change an expense's date and move its GL journals with it. The
+    expense date and its journal dates must NEVER drift apart — that is
+    why plain row edits are not allowed and this endpoint exists."""
+    user = Auth.get_current_user()
+    business = Auth.get_current_business()
+    biz_id = business.get("id") if business else None
+    
+    expense = db.get_one("expenses", expense_id) if expense_id else None
+    if not expense or expense.get("business_id") != biz_id:
+        return jsonify({"success": False, "error": "Expense not found"})
+    
+    new_date = (request.get_json(silent=True) or {}).get("new_date", "").strip()[:10]
+    try:
+        _nd = datetime.strptime(new_date, "%Y-%m-%d")
+    except (ValueError, TypeError):
+        return jsonify({"success": False, "error": "Invalid date - use YYYY-MM-DD"})
+    if _nd.date() > datetime.now().date():
+        return jsonify({"success": False, "error": "Date cannot be in the future"})
+    
+    old_date = expense.get("date", "")
+    if new_date == old_date:
+        return jsonify({"success": True, "journals_moved": 0, "message": "Date unchanged"})
+    
+    # Journal reference candidates — scanned expenses use EXP-{slip_ref[:20]},
+    # others use EXP-{expense_id[:8]}. Try both, matched on the OLD date so
+    # only this expense's journals move.
+    _refs = []
+    _slip_ref = str(expense.get("reference", "") or "").strip()
+    if _slip_ref:
+        _refs.append(f"EXP-{_slip_ref[:20]}")
+    _refs.append(f"EXP-{expense_id[:8]}")
+    
+    journals_moved = 0
+    try:
+        for _ref in _refs:
+            _jrows = db.get("journals", {"business_id": biz_id, "reference": _ref}) or []
+            for _j in _jrows:
+                if _j.get("date") == old_date:
+                    if db.update("journals", _j.get("id"), {"date": new_date}):
+                        journals_moved += 1
+    except Exception as _je:
+        print(f"[EXPENSE DATE] Journal move failed for {expense_id}: {_je}", flush=True)
+        return jsonify({"success": False, "error": "Journal update failed - date NOT changed"})
+    
+    if not db.update("expenses", expense_id, {"date": new_date}):
+        print(f"[EXPENSE DATE] WARNING: {journals_moved} journals moved to {new_date} but expense {expense_id} update failed", flush=True)
+        return jsonify({"success": False, "error": "Expense update failed - check GL"})
+    
+    print(f"[EXPENSE DATE] {expense_id} ({expense.get('description','')[:40]}): {old_date} -> {new_date}, {journals_moved} journal lines moved, by {user.get('email','') if user else ''}", flush=True)
+    return jsonify({"success": True, "journals_moved": journals_moved})
+
+
 @app.route("/expense/<expense_id>")
 @login_required
 def expense_detail_page(expense_id):
@@ -32098,7 +32153,15 @@ def expense_detail_page(expense_id):
             </div>
             <div class="card" style="padding:24px;">
                 <table style="width:100%;border-collapse:collapse;">
-                    <tr><td style="padding:10px 0;color:var(--text-muted);width:140px;">Date</td><td style="padding:10px 0;font-weight:600;">{exp_date}</td></tr>
+                    <tr><td style="padding:10px 0;color:var(--text-muted);width:140px;">Date</td><td style="padding:10px 0;font-weight:600;">
+                        <span id="expDateText">{exp_date}</span>
+                        <button onclick="document.getElementById('expDateEdit').style.display='inline-flex';this.style.display='none';" class="btn btn-secondary" style="margin-left:10px;padding:4px 12px;font-size:12px;">Edit Date</button>
+                        <span id="expDateEdit" style="display:none;align-items:center;gap:8px;margin-left:10px;">
+                            <input type="date" id="expDateInput" value="{exp_date}" style="padding:6px;border:1px solid var(--border);border-radius:4px;background:var(--bg);color:var(--text);">
+                            <button onclick="saveExpenseDate()" class="btn btn-primary" style="padding:4px 12px;font-size:12px;">Save</button>
+                            <button onclick="location.reload()" class="btn btn-secondary" style="padding:4px 12px;font-size:12px;">Cancel</button>
+                        </span>
+                    </td></tr>
                     <tr><td style="padding:10px 0;color:var(--text-muted);">Description</td><td style="padding:10px 0;">{desc}</td></tr>
                     <tr><td style="padding:10px 0;color:var(--text-muted);">Category</td><td style="padding:10px 0;"><span style="background:var(--primary);color:white;padding:4px 10px;border-radius:4px;font-size:12px;">{cat}</span></td></tr>
                     <tr><td style="padding:10px 0;color:var(--text-muted);">Amount</td><td style="padding:10px 0;font-weight:700;font-size:18px;">R{amount:,.2f}</td></tr>
@@ -32109,6 +32172,28 @@ def expense_detail_page(expense_id):
                 </table>
             </div>
         </div>
+        <script>
+        async function saveExpenseDate() {{
+            const newDate = document.getElementById('expDateInput').value;
+            if (!newDate) {{ alert('Pick a date first'); return; }}
+            try {{
+                const resp = await fetch('/api/expense/{expense_id}/edit-date', {{
+                    method: 'POST',
+                    headers: {{'Content-Type': 'application/json'}},
+                    body: JSON.stringify({{new_date: newDate}})
+                }});
+                const data = await resp.json();
+                if (data.success) {{
+                    alert('Date updated. ' + (data.journals_moved || 0) + ' GL journal line(s) moved with it.');
+                    location.reload();
+                }} else {{
+                    alert('Error: ' + (data.error || 'Update failed'));
+                }}
+            }} catch (err) {{
+                alert('Error: ' + err.message);
+            }}
+        }}
+        </script>
     ''', user=user)
 
 
@@ -32175,7 +32260,7 @@ def expenses_page():
         cat = safe_string(e.get("category", "-"))
         
         rows += f'''
-        <tr>
+        <tr onclick="window.location='/expense/{e.get("id", "")}'" style="cursor:pointer;">
             <td>{e.get("expense_number", "") or "-"}</td>
             <td>{e.get("date", "-")}</td>
             <td>{safe_string(e.get("supplier_name", "") or e.get("supplier", "") or "-")}</td>
