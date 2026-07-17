@@ -56812,6 +56812,40 @@ def scan_page():
 
 
 
+def _sane_scan_date(raw_date):
+    """Fix AI-misread document dates. SA documents print DD.MM.YY (day first);
+    the AI sometimes reads the day as the year (slip "19.05.26" becomes
+    2019-05-26 instead of 2026-05-19). If the extracted date is implausible
+    (more than ~18 months back, or in the future) and swapping the day with
+    the 2-digit year lands inside the plausible window, use the swapped date.
+    A future date with no valid swap is clamped to today. Genuinely recent
+    dates are never touched. Returns (date_str, note) — note is "" when
+    nothing changed."""
+    from datetime import datetime as _dt, timedelta as _td
+    _s = str(raw_date or "").strip()[:10]
+    try:
+        _d = _dt.strptime(_s, "%Y-%m-%d")
+    except (ValueError, TypeError):
+        return _s, ""
+    _now = _dt.now()
+    _lo = _now - _td(days=550)
+    _hi = _now + _td(days=7)
+    if _lo <= _d <= _hi:
+        return _s, ""
+    _yy = _d.year % 100
+    _dd = _d.day
+    if _yy <= 31:
+        try:
+            _swapped = _dt(2000 + _dd, _d.month, _yy)
+            if _lo <= _swapped <= _hi:
+                return _swapped.strftime("%Y-%m-%d"), f"corrected {_s} -> {_swapped.strftime('%Y-%m-%d')} (day-first SA date)"
+        except ValueError:
+            pass
+    if _d > _hi:
+        return _now.strftime("%Y-%m-%d"), f"future date {_s} clamped to today"
+    return _s, ""
+
+
 @app.route("/api/scan/document", methods=["POST"])
 @login_required
 def api_scan_document():
@@ -57147,6 +57181,25 @@ If ANY number is not visible on the document, set it to 0 (or 1 for pack_size). 
 For document_type: use "invoice" by default, "credit_note" ONLY if you clearly see credit/return indicators.
 For original_invoice_ref: only fill it when document_type is "credit_note" AND you actually see the original invoice number; otherwise leave it as "" (empty string)."""
         
+        # ══════════════════════════════════════════════════════════════════════
+        # SA DATE RULES — appended to every document prompt. Without today's
+        # date, Sonnet reads day-first slips like "19.05.26" as 2019-05-26
+        # instead of 2026-05-19 (day taken as the year).
+        # ══════════════════════════════════════════════════════════════════════
+        _sa_date_rules = f"""
+
+CRITICAL DATE RULES:
+- TODAY is {today()}. Use this to sanity-check every date you extract.
+- South African documents print dates DAY-FIRST: DD.MM.YY, DD/MM/YYYY or DD-MM-YY.
+  "19.05.26" means 19 May 2026 -> "2026-05-19" (NOT 2019-05-26).
+  "26/07/25" means 26 July 2025 -> "2025-07-26".
+- A 2-digit year is ALWAYS 20xx (26 = 2026, 25 = 2025).
+- Document dates are almost always within the last 12 months and NEVER in the future.
+  If your reading gives a date years in the past or in the future, you have swapped
+  the day and the year - re-read the date day-first."""
+        if scan_type != 'timesheet':
+            prompt = prompt + _sa_date_rules
+        
         client = _anthropic_client
         
         # ══════════════════════════════════════════════════════════════════════
@@ -57429,6 +57482,19 @@ IMPORTANT: Read ALL numbers exactly as printed on the document. Do NOT calculate
                     logger.info(f"[SCAN] Memory enhanced: {memory_applied}")
             except Exception as mem_err:
                 logger.warning(f"[SCAN] Scanner memory failed (non-critical): {mem_err}")
+        
+        # ══════════════════════════════════════════════════════════════════════
+        # STEP 4B: DATE SANITY CHECK — SA documents are day-first (DD.MM.YY).
+        # Catches "19.05.26" read as 2019-05-26 and swaps it back to 2026-05-19.
+        # ══════════════════════════════════════════════════════════════════════
+        if extracted.get("date"):
+            try:
+                _fixed_date, _date_note = _sane_scan_date(extracted.get("date"))
+                if _date_note:
+                    extracted["date"] = _fixed_date
+                    print(f"[SCAN DATE] {_date_note}", flush=True)
+            except Exception:
+                pass
         
         # ══════════════════════════════════════════════════════════════════════
         # STEP 5: INVOICE VAT SANITY CHECK
