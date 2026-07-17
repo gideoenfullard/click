@@ -359,7 +359,7 @@ def register_jobcards_routes(app, db, login_required, Auth, render_page,
             if (!q || q.length < 2) {{ drop.style.display = 'none'; return; }}
             _stkTimer = setTimeout(() => {{
                 fetch('/api/stock/lookup?q=' + encodeURIComponent(q)).then(r => r.json()).then(items => {{
-                    drop.innerHTML = (items || []).slice(0, 12).map(s =>
+                    drop.innerHTML = (items || []).map(s =>
                         '<div style="padding:8px 10px;cursor:pointer;border-bottom:1px solid var(--border);font-size:13px;" ' +
                         'onclick="pickStk(\\'' + s.id + '\\',' + (s.price || 0) + ', this.textContent)">' +
                         (s.label || s.name || '') + '</div>').join('');
