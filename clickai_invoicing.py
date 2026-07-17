@@ -209,21 +209,93 @@ def register_invoicing_routes(app, db, login_required, Auth, render_page,
             prices = request.form.getlist("item_price[]")
             units = request.form.getlist("item_unit[]")
             
+            # ═══ SALE / DISCOUNT CAMPAIGN (same engine as the POS) ═══
+            # Category discounts from /stock/sale-campaign apply to invoices
+            # too. Read FRESH from the DB — the per-worker business cache
+            # (300s) otherwise serves a stale record and invoices silently
+            # sell at full price.
+            _camp = {}
+            _camp_active = False
+            _camp_cats = {}
+            _camp_default = 0.0
+            try:
+                _camp_raw = None
+                try:
+                    _fresh_biz = db.get_one("businesses", biz_id) if biz_id else None
+                    if _fresh_biz is not None:
+                        _camp_raw = _fresh_biz.get("discount_campaign")
+                except Exception:
+                    _camp_raw = None
+                if _camp_raw is None:
+                    _camp_raw = business.get("discount_campaign") if business else None
+                if isinstance(_camp_raw, str) and _camp_raw.strip():
+                    _camp = json.loads(_camp_raw)
+                elif isinstance(_camp_raw, dict):
+                    _camp = _camp_raw
+                _camp_active = bool(_camp.get("active"))
+                _camp_cats = {(k or "").strip().lower(): float(v or 0) for k, v in (_camp.get("categories") or {}).items()}
+                _camp_default = float(_camp.get("default_pct") or 0)
+            except Exception:
+                _camp_active = False
+            
+            def _camp_pct(_category):
+                if not _camp_active:
+                    return 0.0
+                _p = _camp_cats.get((_category or "").strip().lower(), _camp_default)
+                try:
+                    _p = float(_p or 0)
+                except (ValueError, TypeError):
+                    _p = 0.0
+                return max(0.0, min(90.0, _p))
+            
+            _item_stock_ids = request.form.getlist("item_stock_id[]")
+            
             subtotal = Decimal("0")
             for i, desc in enumerate(descriptions):
                 if desc.strip():
                     qty = Decimal(quantities[i] or "1")
                     price = Decimal(prices[i] or "0")
+                    # Apply the sale-campaign discount to stock-linked lines.
+                    # A manually typed price (neither the full list price nor
+                    # the campaign price) is NEVER overwritten — same rule as
+                    # the POS, where the engine never overrides the cashier.
+                    discount_pct = 0.0
+                    original_price = 0.0
+                    _sid = _item_stock_ids[i] if i < len(_item_stock_ids) else ""
+                    if _sid and _camp_active:
+                        try:
+                            _st = db.get_one_stock(_sid)
+                        except Exception:
+                            _st = None
+                        if _st:
+                            _pct = _camp_pct(_st.get("category"))
+                            _full = float(_st.get("price") or _st.get("selling_price") or 0)
+                            if _pct > 0 and _full > 0:
+                                _disc_price = round(_full * (1 - _pct / 100.0), 2)
+                                _pf = float(price)
+                                if abs(_pf - _full) < 0.01:
+                                    # Form submitted the full list price — apply the sale price
+                                    price = Decimal(str(_disc_price))
+                                    discount_pct = _pct
+                                    original_price = _full
+                                elif abs(_pf - _disc_price) < 0.01:
+                                    # Form already discounted (live form) — tag for the Was-price display
+                                    discount_pct = _pct
+                                    original_price = _full
                     line_total = qty * price
                     subtotal += line_total
                     unit_val = units[i].strip() if i < len(units) else ""
-                    items.append({
+                    _item = {
                         "description": desc,
                         "unit": unit_val,
                         "quantity": float(qty),
                         "price": float(price),
                         "total": float(line_total)
-                    })
+                    }
+                    if discount_pct > 0:
+                        _item["discount_pct"] = discount_pct
+                        _item["original_price"] = original_price
+                    items.append(_item)
             
             if not items:
                 return redirect("/invoice/new?error=No+items")
@@ -638,6 +710,20 @@ def register_invoicing_routes(app, db, login_required, Auth, render_page,
             const p=row.querySelector('input[name="item_price[]"]'); p.value=price;
             const u=row.querySelector('input[name="item_unit[]"]'); if(u&&unit) u.value=unit;
             el.closest('.stock-dropdown').style.display='none'; calcRow(p);
+            // Sale-campaign: swap in the discounted price (same engine as the POS)
+            const descCell=row.querySelector('input[name="item_desc[]"]').closest('td');
+            const oldHint=descCell.querySelector('.camp-hint'); if(oldHint) oldHint.remove();
+            fetch('/api/invoice/campaign-price?stock_id='+encodeURIComponent(stockId)).then(r=>r.json()).then(c=>{{
+                if(c && c.pct > 0){{
+                    p.value=c.price.toFixed(2);
+                    const hint=document.createElement('div');
+                    hint.className='camp-hint';
+                    hint.style.cssText='font-size:11px;color:#f59e0b;font-weight:600;margin-top:2px;';
+                    hint.innerHTML='<span style="text-decoration:line-through;">Was R'+c.original_price.toFixed(2)+'</span> — '+c.pct+'% OFF — Now R'+c.price.toFixed(2);
+                    descCell.appendChild(hint);
+                    calcRow(p);
+                }}
+            }}).catch(()=>{{}});
         }}
         document.addEventListener('click',function(e){{
             if(!e.target.closest('.stock-dropdown')&&!e.target.matches('input[name="item_desc[]"]'))
@@ -685,6 +771,63 @@ def register_invoicing_routes(app, db, login_required, Auth, render_page,
         '''
         
         return render_page("New Invoice", content, user, "invoices")
+    
+    
+    @app.route("/api/invoice/campaign-price")
+    @login_required
+    def api_invoice_campaign_price():
+        """Sale-campaign price for one stock item (invoice form typeahead).
+        Same engine as the POS: category % from /stock/sale-campaign, capped
+        at 90%. Stock prices themselves are never changed. Reads the campaign
+        FRESH from the DB (worker cache is up to 300s stale)."""
+        business = Auth.get_current_business()
+        biz_id = business.get("id") if business else None
+        stock_id = request.args.get("stock_id", "")
+        if not (biz_id and stock_id):
+            return jsonify({"pct": 0})
+        _camp = {}
+        try:
+            _camp_raw = None
+            try:
+                _fresh_biz = db.get_one("businesses", biz_id)
+                if _fresh_biz is not None:
+                    _camp_raw = _fresh_biz.get("discount_campaign")
+            except Exception:
+                _camp_raw = None
+            if _camp_raw is None:
+                _camp_raw = business.get("discount_campaign") if business else None
+            if isinstance(_camp_raw, str) and _camp_raw.strip():
+                _camp = json.loads(_camp_raw)
+            elif isinstance(_camp_raw, dict):
+                _camp = _camp_raw
+        except Exception:
+            _camp = {}
+        if not _camp.get("active"):
+            return jsonify({"pct": 0})
+        try:
+            _cats = {(k or "").strip().lower(): float(v or 0) for k, v in (_camp.get("categories") or {}).items()}
+            _default = float(_camp.get("default_pct") or 0)
+        except Exception:
+            return jsonify({"pct": 0})
+        try:
+            _st = db.get_one_stock(stock_id)
+        except Exception:
+            _st = None
+        if not _st:
+            return jsonify({"pct": 0})
+        _pct = _cats.get((_st.get("category") or "").strip().lower(), _default)
+        try:
+            _pct = max(0.0, min(90.0, float(_pct or 0)))
+        except (ValueError, TypeError):
+            _pct = 0.0
+        _full = float(_st.get("price") or _st.get("selling_price") or 0)
+        if _pct <= 0 or _full <= 0:
+            return jsonify({"pct": 0})
+        return jsonify({
+            "pct": _pct,
+            "original_price": round(_full, 2),
+            "price": round(_full * (1 - _pct / 100.0), 2)
+        })
     
     
     @app.route("/invoice/<invoice_id>")
