@@ -227,6 +227,12 @@ except ImportError:
     TIMESHEETS_ROUTES_LOADED = False
 
 try:
+    from clickai_jobcards import register_jobcards_routes
+    JOBCARDS_ROUTES_LOADED = True
+except ImportError:
+    JOBCARDS_ROUTES_LOADED = False
+
+try:
     from clickai_pay_conditions import register_pay_conditions_routes
     PAY_CONDITIONS_LOADED = True
 except ImportError:
@@ -22283,7 +22289,7 @@ def render_page(title: str, content: str, user: dict = None, active: str = "") -
             ("stock", "/stock", "Stock"),
             ("purchases", "/purchases", "Purchases"),
             ("delivery-notes", "/delivery-notes", "Delivery Notes"),
-            ("jobs", "/jobs", "Jobs"),
+            ("jobs", "/jobcards", "Job Cards"),
         ]
     elif role == "manager":
         # Managers can see most things except settings
@@ -22298,7 +22304,7 @@ def render_page(title: str, content: str, user: dict = None, active: str = "") -
             ("quotes", "/quotes", "Quotes"),
             ("purchases", "/purchases", "Purchases"),
             ("delivery-notes", "/delivery-notes", "Delivery Notes"),
-            ("jobs", "/jobs", "Jobs"),
+            ("jobs", "/jobcards", "Job Cards"),
             ("expenses", "/expenses", "Expenses"),
             ("banking", "/banking", "Banking"),
             ("reports", "/reports", "Reports"),
@@ -22321,7 +22327,7 @@ def render_page(title: str, content: str, user: dict = None, active: str = "") -
             ("quotes", "/quotes", "Quotes"),
             ("purchases", "/purchases", "Purchases"),
             ("delivery-notes", "/delivery-notes", "Delivery Notes"),
-            ("jobs", "/jobs", "Jobs"),
+            ("jobs", "/jobcards", "Job Cards"),
             ("expenses", "/expenses", "Expenses"),
             ("banking", "/banking", "Banking"),
             ("payroll", "/payroll", "Payroll"),
@@ -67797,6 +67803,19 @@ try:
         logger.info("[PURCHASES] Routes registered ✓")
 except Exception as e:
     logger.error(f"[PURCHASES] Failed to register routes: {e}")
+
+# Register Job Cards routes (separate module)
+try:
+    if JOBCARDS_ROUTES_LOADED:
+        register_jobcards_routes(
+            app, db, login_required, Auth, render_page,
+            generate_id, money, safe_string, now, today,
+            gl, create_journal_entry, log_allocation,
+            next_document_number, RecordFactory
+        )
+        logger.info("[JOBCARDS] Routes registered ✓")
+except Exception as e:
+    logger.error(f"[JOBCARDS] Failed to register routes: {e}")
 
 # Register Timesheet routes (separate module)
 try:

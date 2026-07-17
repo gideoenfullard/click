@@ -421,6 +421,15 @@ def register_purchases_routes(app, db, login_required, Auth, render_page,
         scanned_docs = [d for d in all_scanned_docs if d.get("supplier_id") == supplier_id]
         scanned_docs = sorted(scanned_docs, key=lambda x: x.get("created_at", ""), reverse=True)
         
+        # Open job cards — Capture Invoice can link a cost to a job card
+        try:
+            _open_job_cards = db.get("job_cards", {"business_id": biz_id, "status": "open"}) if biz_id else []
+        except Exception:
+            _open_job_cards = []
+        _jobcard_options = '<option value="">— No job card —</option>' + "".join(
+            f'<option value="{_jc.get("id")}">{_jc.get("job_number", "")} — {(_jc.get("trailer_reg") or "")[:12]} {(_jc.get("description") or "")[:40]}</option>'
+            for _jc in sorted(_open_job_cards or [], key=lambda x: x.get("job_number", ""), reverse=True))
+        
         # Fetch GL accounts - try ALL sources: accounts, chart_of_accounts, then full defaults
         _gl_options = ""
         _gl_json = []
@@ -1126,6 +1135,12 @@ def register_purchases_routes(app, db, login_required, Auth, render_page,
                         <input type="text" id="capInvDesc" placeholder="e.g. Diesel for bakkie, Stationery" style="width:100%;padding:10px;border:1px solid var(--border);border-radius:6px;background:var(--bg);color:var(--text);">
                     </div>
                     <div>
+                        <label style="display:block;margin-bottom:4px;font-weight:600;font-size:13px;">Link to Job Card (optional)</label>
+                        <select id="capInvJobCard" style="width:100%;padding:10px;border:1px solid var(--border);border-radius:6px;background:var(--bg);color:var(--text);font-size:13px;">
+                            {_jobcard_options}
+                        </select>
+                    </div>
+                    <div>
                         <label style="display:block;margin-bottom:4px;font-weight:600;font-size:13px;">GL Account (Expense Type)</label>
                         <div style="display:flex;gap:6px;">
                             <input type="text" id="capInvGLSearch" placeholder="Type to filter accounts..." oninput="filterGLDropdown(this.value)" style="flex:1;padding:10px;border:1px solid var(--border);border-radius:6px;background:var(--bg);color:var(--text);font-size:13px;">
@@ -1137,13 +1152,14 @@ def register_purchases_routes(app, db, login_required, Auth, render_page,
                         <div id="zaneSuggestMsg" style="display:none;margin-top:4px;padding:6px 10px;border-radius:6px;font-size:12px;background:rgba(99,102,241,0.1);border:1px solid rgba(99,102,241,0.3);"></div>
                     </div>
                     <div>
-                        <label style="display:block;margin-bottom:4px;font-weight:600;font-size:13px;">Amount (VAT Inclusive)</label>
+                        <label style="display:block;margin-bottom:4px;font-weight:600;font-size:13px;">{"Amount" if supplier.get("vat_registered") is False else "Amount (VAT Inclusive)"}</label>
                         <input type="number" id="capInvAmount" placeholder="0.00" step="0.01" min="0.01" oninput="updateCapInvDiscount()" style="width:100%;padding:10px;border:1px solid var(--border);border-radius:6px;background:var(--bg);color:var(--text);font-size:18px;font-weight:700;">
                     </div>
                     <div style="display:flex;align-items:center;gap:8px;">
-                        <input type="checkbox" id="capInvVat" checked onchange="updateCapInvDiscount()">
-                        <label for="capInvVat" style="font-size:13px;">VAT Inclusive (15%)</label>
+                        <input type="checkbox" id="capInvVat" {"disabled" if supplier.get("vat_registered") is False else "checked"} onchange="updateCapInvDiscount()">
+                        <label for="capInvVat" style="font-size:13px;{"color:var(--text-muted);" if supplier.get("vat_registered") is False else ""}">VAT Inclusive (15%)</label>
                     </div>
+                    {'<div style="padding:8px 12px;border-radius:6px;background:rgba(245,158,11,0.1);border:1px solid rgba(245,158,11,0.4);font-size:13px;font-weight:600;">This supplier is NOT VAT registered — no VAT will be added or claimed.</div>' if supplier.get("vat_registered") is False else ''}
                     <div id="capInvDiscountBox" style="display:none;padding:10px 12px;border-radius:6px;background:rgba(34,197,94,0.08);border:1px solid rgba(34,197,94,0.3);font-size:13px;">
                         <div style="display:flex;justify-content:space-between;"><span>Net (excl VAT)</span><span id="capInvNet">R0.00</span></div>
                         <div style="display:flex;justify-content:space-between;color:var(--green);font-weight:600;"><span id="capInvDiscLabel">Discount Received</span><span id="capInvDiscAmt">-R0.00</span></div>
@@ -1168,6 +1184,7 @@ def register_purchases_routes(app, db, login_required, Auth, render_page,
         document.getElementById('capInvDate').value = new Date().toISOString().split('T')[0];
         
         const _capInvDiscountPct = {float(supplier.get("discount_percentage", 0) or 0)};
+        const _capInvNoVat = {str(supplier.get("vat_registered") is False).lower()};
         
         function updateCapInvDiscount() {{
             const box = document.getElementById('capInvDiscountBox');
@@ -1176,7 +1193,7 @@ def register_purchases_routes(app, db, login_required, Auth, render_page,
                 box.style.display = 'none';
                 return;
             }}
-            const vatInclusive = document.getElementById('capInvVat').checked;
+            const vatInclusive = !_capInvNoVat && document.getElementById('capInvVat').checked;
             let net;
             if (vatInclusive) {{
                 net = Math.round((amount - amount * 15 / 115) * 100) / 100;
@@ -1185,7 +1202,7 @@ def register_purchases_routes(app, db, login_required, Auth, render_page,
             }}
             const discAmt = Math.round(net * _capInvDiscountPct / 100 * 100) / 100;
             const discountedNet = Math.round((net - discAmt) * 100) / 100;
-            const vatAmt = Math.round(discountedNet * 0.15 * 100) / 100;
+            const vatAmt = _capInvNoVat ? 0 : Math.round(discountedNet * 0.15 * 100) / 100;
             const total = Math.round((discountedNet + vatAmt) * 100) / 100;
             
             document.getElementById('capInvNet').textContent = 'R' + net.toFixed(2);
@@ -1203,7 +1220,8 @@ def register_purchases_routes(app, db, login_required, Auth, render_page,
             document.getElementById('capInvDesc').value = '';
             document.getElementById('capInvGLSearch').value = '';
             document.getElementById('capInvAmount').value = '';
-            document.getElementById('capInvVat').checked = true;
+            document.getElementById('capInvVat').checked = !_capInvNoVat;
+            if (document.getElementById('capInvJobCard')) document.getElementById('capInvJobCard').value = '';
             document.getElementById('capInvPaid').checked = false;
             document.getElementById('capInvMsg').style.display = 'none';
             document.getElementById('zaneSuggestMsg').style.display = 'none';
@@ -1339,7 +1357,8 @@ def register_purchases_routes(app, db, login_required, Auth, render_page,
                 gl_code: document.getElementById('capInvGL').value,
                 amount: parseFloat(document.getElementById('capInvAmount').value) || 0,
                 vat_inclusive: document.getElementById('capInvVat').checked,
-                is_paid: document.getElementById('capInvPaid').checked
+                is_paid: document.getElementById('capInvPaid').checked,
+                job_card_id: document.getElementById('capInvJobCard') ? document.getElementById('capInvJobCard').value : ''
             }};
             
             if (!data.amount) {{
@@ -5269,26 +5288,39 @@ Nothing else."""
             if amount <= 0:
                 return jsonify({"success": False, "error": "Amount must be greater than zero"})
             
-            # Read supplier discount % from the database (not trusting client)
+            # Read supplier discount % and VAT status from the database (not trusting client)
             discount_pct = 0.0
+            supplier_vat_registered = True
             if supplier_id:
                 try:
                     _sup = db.get_one("suppliers", supplier_id)
                     if _sup:
                         discount_pct = float(_sup.get("discount_percentage", 0) or 0)
+                        supplier_vat_registered = _sup.get("vat_registered") is not False
                 except Exception:
                     discount_pct = 0.0
             
-            # Calculate net, discount (on net, before VAT), then VAT on discounted net
-            if vat_inclusive:
-                gross_net = round(amount - round(amount * 15 / 115, 2), 2)
-            else:
+            # Calculate net, discount (on net, before VAT), then VAT on discounted net.
+            # NON-VAT-REGISTERED SUPPLIER: no VAT at all — the entered amount IS the
+            # cost. The supplier record is the source of truth; the checkbox is
+            # ignored (Sage behaviour). The VAT Input journal line is skipped
+            # automatically because vat_amount is 0.
+            if not supplier_vat_registered:
                 gross_net = round(amount, 2)
-            
-            discount_amount = round(gross_net * discount_pct / 100, 2) if discount_pct > 0 else 0.0
-            net_amount = round(gross_net - discount_amount, 2)
-            vat_amount = round(net_amount * 0.15, 2)
-            total_amount = round(net_amount + vat_amount, 2)
+                discount_amount = round(gross_net * discount_pct / 100, 2) if discount_pct > 0 else 0.0
+                net_amount = round(gross_net - discount_amount, 2)
+                vat_amount = 0.0
+                total_amount = net_amount
+            else:
+                if vat_inclusive:
+                    gross_net = round(amount - round(amount * 15 / 115, 2), 2)
+                else:
+                    gross_net = round(amount, 2)
+                
+                discount_amount = round(gross_net * discount_pct / 100, 2) if discount_pct > 0 else 0.0
+                net_amount = round(gross_net - discount_amount, 2)
+                vat_amount = round(net_amount * 0.15, 2)
+                total_amount = round(net_amount + vat_amount, 2)
             
             # Generate invoice number if not provided
             if not invoice_number:
@@ -5315,6 +5347,28 @@ Nothing else."""
             success, err = db.save("supplier_invoices", invoice)
             if not success:
                 return jsonify({"success": False, "error": f"Failed to save: {err}"})
+            
+            # ── Link to job card: tag the invoice and drop the cost on the card ──
+            job_card_id = (data.get("job_card_id") or "").strip()
+            if job_card_id:
+                try:
+                    _jc = db.get_one("job_cards", job_card_id)
+                    if _jc and _jc.get("business_id") == biz_id and _jc.get("status") == "open":
+                        db.update("supplier_invoices", inv_id, {"job_card_id": job_card_id})
+                        _markup = float(_jc.get("markup_pct") or 0)
+                        _jc_charge = round(net_amount * (1 + _markup / 100.0), 2)
+                        db.save("job_card_lines", {
+                            "id": generate_id(), "business_id": biz_id, "job_card_id": job_card_id,
+                            "line_type": "other", "date": inv_date,
+                            "description": f"{supplier_name} — {invoice_number}" + (f" — {description}" if description else ""),
+                            "amount_cost": net_amount, "amount_charge": _jc_charge,
+                            "source": "supplier_invoice", "source_id": inv_id,
+                            "created_by_name": user.get("name", "") if user else "",
+                            "created_at": now()
+                        })
+                        logger.info(f"[CAPTURE INV] Linked to job card {_jc.get('job_number')}: cost R{net_amount} charge R{_jc_charge}")
+                except Exception as _jce:
+                    logger.error(f"[CAPTURE INV] Job card link failed (invoice still saved): {_jce}")
             
             # Update supplier balance (if not paid, add to creditors)
             if supplier_id and not is_paid:
