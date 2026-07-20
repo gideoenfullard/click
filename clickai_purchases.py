@@ -3594,6 +3594,21 @@ def register_purchases_routes(app, db, login_required, Auth, render_page,
                     flash("No items to invoice — enter at least one quantity", "error")
                     return redirect(f"/api/purchase/{po_id}/create-invoice")
                 
+                # ── Settlement discount from Supplier Setup (same rules as the
+                # main capture flow): discount on the net first, then VAT on
+                # the discounted net. Read fresh from the DB — never trust the client.
+                _disc_pct = 0.0
+                try:
+                    if po.get("supplier_id"):
+                        _sup = db.get_one("suppliers", po.get("supplier_id"))
+                        if _sup:
+                            _disc_pct = float(_sup.get("discount_percentage", 0) or 0)
+                except Exception:
+                    _disc_pct = 0.0
+                
+                gross_net = round(subtotal, 2)
+                discount_amount = round(gross_net * _disc_pct / 100, 2) if _disc_pct > 0 else 0.0
+                subtotal = round(gross_net - discount_amount, 2)
                 vat = round(subtotal * 0.15, 2)
                 total = round(subtotal + vat, 2)
                 
@@ -3607,6 +3622,8 @@ def register_purchases_routes(app, db, login_required, Auth, render_page,
                     subtotal=subtotal,
                     vat=vat,
                     total=total,
+                    discount_percentage=_disc_pct,
+                    discount_amount=discount_amount,
                     items=json.dumps(invoice_items),
                     status="unpaid",
                     notes=f"From PO: {po.get('po_number', '')}"
@@ -3617,12 +3634,25 @@ def register_purchases_routes(app, db, login_required, Auth, render_page,
                 if success:
                     try:
                         # Dated on the invoice date so the GL lands in the
-                        # right month — same as the main capture flow
-                        create_journal_entry(biz_id, inv_date, f"Supplier Invoice {inv_number} - {po.get('supplier_name')}", inv_number, [
-                            {"account_code": gl(biz_id, "purchases"), "debit": float(subtotal), "credit": 0},  # Cost of Sales/Purchases
+                        # right month — same as the main capture flow.
+                        # Discount is journalled explicitly to Discount Received,
+                        # never netted silently: DR Purchases (full net) + VAT,
+                        # CR Discount Received + Creditors.
+                        _disc_recv_code = None
+                        if discount_amount > 0:
+                            try:
+                                import clickai as _main
+                                _disc_recv_code = _main.ensure_gl_account(biz_id, "discount_received", "Discount Received", "income", "Other Income")
+                            except Exception:
+                                _disc_recv_code = gl(biz_id, "discount_received")
+                        _je = [
+                            {"account_code": gl(biz_id, "purchases"), "debit": float(gross_net), "credit": 0},  # Cost of Sales/Purchases
                             {"account_code": gl(biz_id, "vat_input"), "debit": float(vat), "credit": 0},
-                            {"account_code": gl(biz_id, "creditors"), "debit": 0, "credit": float(total)},
-                        ])
+                        ]
+                        if discount_amount > 0:
+                            _je.append({"account_code": _disc_recv_code, "debit": 0, "credit": float(discount_amount)})
+                        _je.append({"account_code": gl(biz_id, "creditors"), "debit": 0, "credit": float(total)})
+                        create_journal_entry(biz_id, inv_date, f"Supplier Invoice {inv_number} - {po.get('supplier_name')}", inv_number, _je)
                         
                         # Supplier balance is now calculated dynamically — no manual update needed
                     except Exception as e:
@@ -3695,6 +3725,19 @@ def register_purchases_routes(app, db, login_required, Auth, render_page,
             
             suggested_inv = po.get("po_number", "").replace("PO", "SI").replace("po", "si")
             
+            # Settlement discount % from Supplier Setup — shown live on the form
+            _disc_pct_get = 0.0
+            try:
+                if po.get("supplier_id"):
+                    _sup_get = db.get_one("suppliers", po.get("supplier_id"))
+                    if _sup_get:
+                        _disc_pct_get = round(float(_sup_get.get("discount_percentage", 0) or 0), 2)
+            except Exception:
+                _disc_pct_get = 0.0
+            _disc_row_html = ""
+            if _disc_pct_get > 0:
+                _disc_row_html = f'<tr><td colspan="3" style="text-align:right;color:var(--green);font-weight:600;">Less: Discount Received ({_disc_pct_get:g}%):</td><td style="text-align:right;color:var(--green);font-weight:600;" id="discount">-R 0.00</td></tr>'
+            
             content = f'''
             <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:20px;">
                 <a href="/purchase/{po_id}" style="color:var(--text-muted);">&#8592; Back to PO {po.get("po_number", "")}</a>
@@ -3731,6 +3774,7 @@ def register_purchases_routes(app, db, login_required, Auth, render_page,
                         </tbody>
                         <tfoot>
                             <tr><td colspan="3" style="text-align:right;font-weight:bold;">Subtotal:</td><td style="text-align:right;" id="subtotal">R 0.00</td></tr>
+                            {_disc_row_html}
                             <tr><td colspan="3" style="text-align:right;color:var(--text-muted);">VAT (15%):</td><td style="text-align:right;" id="vat">R 0.00</td></tr>
                             <tr><td colspan="3" style="text-align:right;font-weight:bold;font-size:18px;">Total:</td><td style="text-align:right;font-weight:bold;font-size:18px;" id="total">R 0.00</td></tr>
                         </tfoot>
@@ -3744,6 +3788,7 @@ def register_purchases_routes(app, db, login_required, Auth, render_page,
             </div>
             
             <script>
+            const discPct = {_disc_pct_get};
             function calcTotals() {{{{
                 const rows = document.querySelectorAll('#invoiceTable tbody tr');
                 let subtotal = 0;
@@ -3754,10 +3799,17 @@ def register_purchases_routes(app, db, login_required, Auth, render_page,
                     subtotal += lineTotal;
                     row.querySelector('.line-total').textContent = 'R ' + lineTotal.toFixed(2);
                 }}}});
-                const vat = subtotal * 0.15;
-                document.getElementById('subtotal').textContent = 'R ' + subtotal.toFixed(2);
+                // Settlement discount from Supplier Setup: discount on the net
+                // first, then VAT on the discounted net — mirrors the server.
+                const grossNet = Math.round(subtotal * 100) / 100;
+                const disc = discPct > 0 ? Math.round(grossNet * discPct / 100 * 100) / 100 : 0;
+                const net = Math.round((grossNet - disc) * 100) / 100;
+                const vat = Math.round(net * 0.15 * 100) / 100;
+                document.getElementById('subtotal').textContent = 'R ' + grossNet.toFixed(2);
+                const discCell = document.getElementById('discount');
+                if (discCell) discCell.textContent = '-R ' + disc.toFixed(2);
                 document.getElementById('vat').textContent = 'R ' + vat.toFixed(2);
-                document.getElementById('total').textContent = 'R ' + (subtotal + vat).toFixed(2);
+                document.getElementById('total').textContent = 'R ' + (net + vat).toFixed(2);
             }}}}
             calcTotals();
             </script>

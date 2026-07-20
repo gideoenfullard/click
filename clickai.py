@@ -33338,6 +33338,263 @@ def api_business_wipe_transactions():
         return jsonify({"success": False, "error": str(e)[:200]}), 500
 
 
+# ==================== UNSAVED-WORK GUARD (CAPTURE DRAFTS) ====================
+# Shared "Save or Cancel current work" guard for capture pages (GRV, Invoice,
+# Delivery Note). When the user navigates away mid-capture, a modal asks
+# Save Draft / Discard / Stay. Drafts are stored in the capture_drafts table
+# with NO stock booking and NO GL — pure form data — and can be resumed and
+# edited later. One draft per user per document type.
+
+_CAPTURE_GUARD_TEMPLATE = r'''
+<!-- Unsaved Work Guard -->
+<div id="captureGuardModal" style="display:none;position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.7);z-index:10000;align-items:center;justify-content:center;">
+    <div class="card" style="width:100%;max-width:420px;margin:20px;">
+        <h3 style="margin:0 0 10px 0;">Unsaved Work</h3>
+        <p style="color:var(--text-muted);margin:0 0 20px 0;">You have unsaved changes on this page. What would you like to do?</p>
+        <div style="display:flex;flex-direction:column;gap:10px;">
+            <button type="button" class="btn btn-primary" onclick="captureGuardSave()" style="width:100%;">Save Draft &amp; Leave</button>
+            <button type="button" onclick="captureGuardDiscard()" style="width:100%;padding:10px;background:var(--red);color:white;border:none;border-radius:8px;cursor:pointer;font-weight:600;">Discard &amp; Leave</button>
+            <button type="button" class="btn btn-secondary" onclick="captureGuardStay()" style="width:100%;">Stay on Page</button>
+        </div>
+    </div>
+</div>
+<script>
+(function() {
+    var form = document.getElementById('__FORM_ID__');
+    if (!form) return;
+    var dirty = false;
+    var guardOff = false;
+    var draftId = '__DRAFT_ID__';
+    var pendingHref = null;
+    
+    form.addEventListener('input', function() { dirty = true; });
+    form.addEventListener('change', function() { dirty = true; });
+    
+    // Real save: switch the guard off so the server clears the draft.
+    // The hidden draft id is added up-front (harmless if the form never submits).
+    if (draftId && !form.querySelector('input[name="capture_draft_id"]')) {
+        var h = document.createElement('input');
+        h.type = 'hidden';
+        h.name = 'capture_draft_id';
+        h.value = draftId;
+        form.appendChild(h);
+    }
+    form.addEventListener('submit', function(e) {
+        if (e.defaultPrevented) return;
+        guardOff = true;
+    });
+    // Programmatic form.submit() fires no submit event — hook it too
+    var _origSubmit = form.submit.bind(form);
+    form.submit = function() {
+        guardOff = true;
+        _origSubmit();
+    };
+    
+    // Intercept in-app navigation (links) while there is unsaved work
+    document.addEventListener('click', function(e) {
+        if (guardOff || !dirty) return;
+        var a = e.target.closest ? e.target.closest('a[href]') : null;
+        if (!a) return;
+        var href = a.getAttribute('href') || '';
+        if (!href || href.charAt(0) === '#' || href.indexOf('javascript:') === 0 || a.target === '_blank' || a.hasAttribute('download')) return;
+        e.preventDefault();
+        e.stopPropagation();
+        pendingHref = a.href;
+        document.getElementById('captureGuardModal').style.display = 'flex';
+    }, true);
+    
+    // Browser close / external navigation: generic browser prompt only
+    window.addEventListener('beforeunload', function(e) {
+        if (guardOff || !dirty) return;
+        e.preventDefault();
+        e.returnValue = '';
+    });
+    
+    function serializeForm() {
+        var o = {};
+        new FormData(form).forEach(function(v, k) {
+            if (k.slice(-2) === '[]') { (o[k] = o[k] || []).push(v); } else { o[k] = v; }
+        });
+        return o;
+    }
+    
+    window.captureGuardSave = async function() {
+        try {
+            var r = await fetch('/api/capture-draft/save', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({
+                    doc_type: '__DOC_TYPE__',
+                    draft_id: draftId,
+                    form_data: serializeForm(),
+                    page: window.location.pathname + window.location.search
+                })
+            });
+            var d = await r.json();
+            if (d.success) {
+                guardOff = true;
+                window.location = pendingHref || '/';
+            } else {
+                alert('Could not save draft: ' + (d.error || 'unknown error'));
+            }
+        } catch (err) {
+            alert('Could not save draft: ' + err);
+        }
+    };
+    
+    window.captureGuardDiscard = async function() {
+        try {
+            if (draftId) {
+                await fetch('/api/capture-draft/delete', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({draft_id: draftId})
+                });
+            }
+        } catch (e) {}
+        guardOff = true;
+        window.location = pendingHref || '/';
+    };
+    
+    window.captureGuardStay = function() {
+        document.getElementById('captureGuardModal').style.display = 'none';
+    };
+    
+    // Restore a resumed draft into the form
+    var resume = __RESUME_JSON__;
+    if (resume) {
+        try {
+            __captureRestore(resume);
+            dirty = true;
+        } catch (e) {
+            console.error('Draft restore failed', e);
+        }
+    }
+    function __captureRestore(d) {
+__RESTORE_JS__
+    }
+})();
+</script>
+'''
+
+
+def build_capture_guard(doc_type: str, form_id: str, draft_id: str = "", resume_json: str = "null", restore_js: str = "") -> str:
+    """Build the shared unsaved-work guard (modal + script) for a capture page.
+    resume_json: the draft's form_data JSON string (or "null" when not resuming).
+    restore_js: page-specific JS body that fills the form from the draft object d."""
+    _resume = (resume_json or "null").strip() or "null"
+    # Guard against premature </script> termination in embedded JSON
+    _resume = _resume.replace("</", "<\\/")
+    return (_CAPTURE_GUARD_TEMPLATE
+            .replace("__FORM_ID__", form_id)
+            .replace("__DOC_TYPE__", doc_type)
+            .replace("__DRAFT_ID__", draft_id or "")
+            .replace("__RESUME_JSON__", _resume)
+            .replace("__RESTORE_JS__", restore_js or ""))
+
+
+def build_draft_banner(draft: dict, fallback_page: str) -> str:
+    """Banner shown on a capture page when an unfinished draft exists: Continue / Discard."""
+    _did = draft.get("id", "")
+    _page = (draft.get("page") or "").strip() or fallback_page
+    _sep = "&" if "?" in _page else "?"
+    _resume_url = f"{_page}{_sep}resume_draft={_did}"
+    _when = safe_string(str(draft.get("updated_at") or draft.get("created_at") or ""))[:16].replace("T", " ")
+    return f'''
+    <div class="card" style="border:1px solid var(--orange, #f59e0b);margin-bottom:15px;">
+        <div style="display:flex;justify-content:space-between;align-items:center;gap:15px;flex-wrap:wrap;">
+            <div>
+                <div style="font-weight:700;">Unfinished draft found</div>
+                <div style="color:var(--text-muted);font-size:13px;">You have unsaved work on this page{f" (saved {_when})" if _when else ""}. Continue where you left off, or discard it.</div>
+            </div>
+            <div style="display:flex;gap:10px;">
+                <a href="{_resume_url}" class="btn btn-primary">Continue Draft</a>
+                <button type="button" class="btn btn-secondary" onclick="(async function(){{try{{await fetch('/api/capture-draft/delete',{{method:'POST',headers:{{'Content-Type':'application/json'}},body:JSON.stringify({{draft_id:'{_did}'}})}});}}catch(e){{}}window.location.reload();}})()">Discard Draft</button>
+            </div>
+        </div>
+    </div>
+    '''
+
+
+@app.route("/api/capture-draft/save", methods=["POST"])
+@login_required
+def api_capture_draft_save():
+    """Save (or update) an unfinished-capture draft. Form data only — no stock, no GL."""
+    try:
+        user = Auth.get_current_user()
+        business = Auth.get_current_business()
+        biz_id = business.get("id") if business else None
+        if not biz_id:
+            return jsonify({"success": False, "error": "No business"})
+        
+        data = request.get_json() or {}
+        doc_type = (data.get("doc_type") or "").strip()
+        if not doc_type:
+            return jsonify({"success": False, "error": "doc_type required"})
+        form_data = data.get("form_data") or {}
+        page = (data.get("page") or "").strip()
+        draft_id = (data.get("draft_id") or "").strip()
+        uid = user.get("id", "") if user else ""
+        
+        # One draft per user per doc type — reuse the existing record
+        if not draft_id:
+            try:
+                _existing = db.get("capture_drafts", {"business_id": biz_id, "doc_type": doc_type, "user_id": uid}) or []
+            except Exception:
+                _existing = []
+            if _existing:
+                draft_id = _existing[0].get("id", "")
+        
+        if draft_id:
+            ok = db.update("capture_drafts", draft_id, {
+                "form_data": json.dumps(form_data),
+                "page": page,
+                "updated_at": now()
+            }, biz_id)
+            if ok:
+                return jsonify({"success": True, "draft_id": draft_id})
+            # Fall through to create if the update found nothing
+            draft_id = ""
+        
+        draft_id = generate_id()
+        success, err = db.save("capture_drafts", {
+            "id": draft_id,
+            "business_id": biz_id,
+            "user_id": uid,
+            "doc_type": doc_type,
+            "page": page,
+            "form_data": json.dumps(form_data),
+            "created_at": now(),
+            "updated_at": now()
+        })
+        if not success:
+            return jsonify({"success": False, "error": f"Failed to save draft: {err}"})
+        return jsonify({"success": True, "draft_id": draft_id})
+    except Exception as e:
+        print(f"[CAPTURE DRAFT] Save error: {e}", flush=True)
+        return jsonify({"success": False, "error": str(e)})
+
+
+@app.route("/api/capture-draft/delete", methods=["POST"])
+@login_required
+def api_capture_draft_delete():
+    """Discard an unfinished-capture draft."""
+    try:
+        business = Auth.get_current_business()
+        biz_id = business.get("id") if business else None
+        if not biz_id:
+            return jsonify({"success": False, "error": "No business"})
+        data = request.get_json() or {}
+        draft_id = (data.get("draft_id") or "").strip()
+        if not draft_id:
+            return jsonify({"success": False, "error": "draft_id required"})
+        db.delete("capture_drafts", draft_id, biz_id)
+        return jsonify({"success": True})
+    except Exception as e:
+        print(f"[CAPTURE DRAFT] Delete error: {e}", flush=True)
+        return jsonify({"success": False, "error": str(e)})
+
+
 # ==================== GOODS RECEIVED VOUCHERS (GRV) ====================
 
 @app.route("/grv")
@@ -33593,6 +33850,14 @@ def grv_new():
                 except Exception as gl_err:
                     logger.error(f"[GRV] GL entry failed (non-critical): {gl_err}")
             
+            # Clear the unfinished-work draft now that the GRV is properly saved
+            _dft_id = request.form.get("capture_draft_id", "")
+            if _dft_id:
+                try:
+                    db.delete("capture_drafts", _dft_id, biz_id)
+                except Exception:
+                    pass
+            
             flash(f"GRV {grv_num} created — {len(items)} items received from {supplier_name}", "success")
             return redirect(f"/grv/{grv_id}")
         
@@ -33605,6 +33870,25 @@ def grv_new():
     supplier_options += '<option value="NEW" style="color:var(--primary);">+ New Supplier</option>'
     for s in sorted(suppliers, key=lambda x: x.get("name", "")):
         supplier_options += f'<option value="{s.get("id")}">{safe_string(s.get("name", ""))}</option>'
+    
+    # ── Unfinished-work draft (Save or Cancel guard) ──
+    _uid = user.get("id", "") if user else ""
+    _resume_arg = request.args.get("resume_draft", "")
+    _draft_rec = None
+    try:
+        _drafts = db.get("capture_drafts", {"business_id": biz_id, "doc_type": "grv", "user_id": _uid}) if biz_id else []
+    except Exception:
+        _drafts = []
+    if _drafts:
+        _draft_rec = _drafts[0]
+    _guard_draft_id = _draft_rec.get("id", "") if _draft_rec else ""
+    _resume_json = "null"
+    _banner_html = ""
+    if _draft_rec:
+        if _resume_arg and _resume_arg == _guard_draft_id:
+            _resume_json = _draft_rec.get("form_data") or "null"
+        else:
+            _banner_html = build_draft_banner(_draft_rec, "/grv/new")
     
     # Stock list for the search-as-you-type dropdown on Description field
     _grv_stock = db.get_all_stock(biz_id) if biz_id else []
@@ -33623,9 +33907,10 @@ def grv_new():
     <div style="margin-bottom:15px;">
         <a href="/grv" style="color:var(--text-muted);">← Back to GRVs</a>
     </div>
+    {_banner_html}
     <div class="card">
         <h2 style="margin-top:0;">📦 New Goods Received Voucher</h2>
-        <form method="POST">
+        <form method="POST" id="grvForm">
             <div style="display:grid;grid-template-columns:1fr 1fr;gap:15px;margin-bottom:15px;">
                 <div>
                     <label>Supplier</label>
@@ -33817,6 +34102,35 @@ def grv_new():
     }}
     </script>
     '''
+    
+    _grv_restore_js = r'''
+        var f = document.getElementById('grvForm');
+        var sup = f.querySelector('select[name="supplier_id"]');
+        if (sup && d.supplier_id) {
+            sup.value = d.supplier_id;
+            if (d.supplier_id === 'NEW') document.getElementById('newSupName').style.display = 'block';
+        }
+        var nm = document.getElementById('newSupName');
+        if (nm && d.supplier_name) nm.value = d.supplier_name;
+        var nt = f.querySelector('input[name="notes"]');
+        if (nt && d.notes) nt.value = d.notes;
+        var cb = f.querySelector('input[name="add_stock"]');
+        if (cb) cb.checked = !!d.add_stock;
+        var descs = d['item_desc[]'] || [];
+        for (var i = 1; i < descs.length; i++) addGrvRow();
+        var cI = f.querySelectorAll('input[name="item_code[]"]');
+        var dI = f.querySelectorAll('input[name="item_desc[]"]');
+        var qI = f.querySelectorAll('input[name="item_qty[]"]');
+        var pI = f.querySelectorAll('input[name="item_cost[]"]');
+        for (var j = 0; j < descs.length; j++) {
+            if (cI[j]) cI[j].value = (d['item_code[]'] || [])[j] || '';
+            if (dI[j]) dI[j].value = descs[j] || '';
+            if (qI[j]) qI[j].value = (d['item_qty[]'] || [])[j] || '1';
+            if (pI[j]) pI[j].value = (d['item_cost[]'] || [])[j] || '';
+        }
+    '''
+    content += build_capture_guard("grv", "grvForm", _guard_draft_id, _resume_json, _grv_restore_js)
+    
     return render_page("New GRV", content, user, "purchases")
 
 

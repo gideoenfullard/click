@@ -460,6 +460,14 @@ def register_invoicing_routes(app, db, login_required, Auth, render_page,
                 except Exception:
                     pass
                 
+                # Clear the unfinished-work draft now that the invoice is properly saved
+                _dft_id = request.form.get("capture_draft_id", "")
+                if _dft_id:
+                    try:
+                        db.delete("capture_drafts", _dft_id, biz_id)
+                    except Exception:
+                        pass
+                
                 return redirect(f"/invoice/{invoice_id}")
             
             return redirect("/invoice/new?error=Failed+to+save")
@@ -491,6 +499,29 @@ def register_invoicing_routes(app, db, login_required, Auth, render_page,
             if tm_uid not in _inv_seen:
                 _inv_seen.add(tm_uid)
                 inv_salesman_opts += f'<option value="{tm_uid}" data-name="{safe_string(tm.get("name", ""))}">{safe_string(tm.get("name", ""))}</option>'
+        
+        # ── Unfinished-work draft (Save or Cancel guard) ──
+        _uid = user.get("id", "") if user else ""
+        _resume_arg = request.args.get("resume_draft", "")
+        _draft_rec = None
+        try:
+            _drafts = db.get("capture_drafts", {"business_id": biz_id, "doc_type": "invoice", "user_id": _uid}) if biz_id else []
+        except Exception:
+            _drafts = []
+        if _drafts:
+            _draft_rec = _drafts[0]
+        _guard_draft_id = _draft_rec.get("id", "") if _draft_rec else ""
+        _resume_json = "null"
+        _banner_html = ""
+        if _draft_rec:
+            if _resume_arg and _resume_arg == _guard_draft_id:
+                _resume_json = _draft_rec.get("form_data") or "null"
+            else:
+                try:
+                    import clickai as _main
+                    _banner_html = _main.build_draft_banner(_draft_rec, "/invoice/new")
+                except Exception:
+                    _banner_html = ""
         
         error_msg = request.args.get("error", "")
         error_html = f'<div style="background:var(--red);color:white;padding:10px;border-radius:8px;margin-bottom:15px;">{error_msg}</div>' if error_msg else ""
@@ -807,6 +838,51 @@ def register_invoicing_routes(app, db, login_required, Auth, render_page,
         }}
         </script>
         '''
+        
+        _inv_restore_js = r'''
+        var f = document.getElementById('invoiceForm');
+        var cs = document.getElementById('customerSelect');
+        if (cs && d.customer_id) {
+            cs.value = d.customer_id;
+            var _cn = cs.options[cs.selectedIndex] ? (cs.options[cs.selectedIndex].dataset.name || '') : '';
+            document.getElementById('customerName').value = d.customer_name || _cn;
+        }
+        var ss = document.getElementById('invSalesmanSelect');
+        if (ss && d.salesman_id) {
+            ss.value = d.salesman_id;
+            var _sn = ss.options[ss.selectedIndex] ? (ss.options[ss.selectedIndex].dataset.name || '') : '';
+            document.getElementById('invSalesmanName').value = d.salesman_name || _sn;
+        }
+        var pm = document.getElementById('paymentMethod');
+        if (pm && d.payment_method) pm.value = d.payment_method;
+        var dt = f.querySelector('input[name="invoice_date"]');
+        if (dt && d.invoice_date) dt.value = d.invoice_date;
+        var rf = f.querySelector('input[name="reference"]');
+        if (rf && d.reference) rf.value = d.reference;
+        var dn = f.querySelector('input[name="delivery_note"]');
+        if (dn && d.delivery_note) dn.value = d.delivery_note;
+        var descs = d['item_desc[]'] || [];
+        for (var i = 1; i < descs.length; i++) addRow();
+        var dI = f.querySelectorAll('[name="item_desc[]"]');
+        var uI = f.querySelectorAll('[name="item_unit[]"]');
+        var qI = f.querySelectorAll('input[name="item_qty[]"]');
+        var pI = f.querySelectorAll('input[name="item_price[]"]');
+        var sI = f.querySelectorAll('input[name="item_stock_id[]"]');
+        for (var j = 0; j < descs.length; j++) {
+            if (dI[j]) dI[j].value = descs[j] || '';
+            if (uI[j]) uI[j].value = (d['item_unit[]'] || [])[j] || '';
+            if (qI[j]) qI[j].value = (d['item_qty[]'] || [])[j] || '1';
+            if (pI[j]) pI[j].value = (d['item_price[]'] || [])[j] || '';
+            if (sI[j]) sI[j].value = (d['item_stock_id[]'] || [])[j] || '';
+        }
+        pI.forEach(function(p) { if (p.value) calcRow(p); });
+        '''
+        try:
+            import clickai as _main
+            content = _banner_html + content
+            content += _main.build_capture_guard("invoice", "invoiceForm", _guard_draft_id, _resume_json, _inv_restore_js)
+        except Exception as _cge:
+            logger.error(f"[DRAFT GUARD] invoice guard failed: {_cge}")
         
         return render_page("New Invoice", content, user, "invoices")
     
@@ -4836,6 +4912,14 @@ def register_invoicing_routes(app, db, login_required, Auth, render_page,
                                     ))
                                 except Exception as sm_err: logger.error(f"[STOCK MOVEMENT] Save failed: {sm_err}")
                 
+                # Clear the unfinished-work draft now that the delivery note is properly saved
+                _dft_id = request.form.get("capture_draft_id", "")
+                if _dft_id:
+                    try:
+                        db.delete("capture_drafts", _dft_id, biz_id)
+                    except Exception:
+                        pass
+                
                 return redirect(f"/delivery-note/{dn_id}")
             
             return redirect("/delivery-note/new?error=Failed+to+save")
@@ -4923,8 +5007,32 @@ def register_invoicing_routes(app, db, login_required, Auth, render_page,
         error_msg = request.args.get("error", "")
         error_html = f'<div style="background:var(--red);color:white;padding:10px;border-radius:8px;margin-bottom:15px;">{error_msg}</div>' if error_msg else ""
         
+        # ── Unfinished-work draft (Save or Cancel guard) ──
+        _uid = user.get("id", "") if user else ""
+        _resume_arg = request.args.get("resume_draft", "")
+        _draft_rec = None
+        try:
+            _drafts = db.get("capture_drafts", {"business_id": biz_id, "doc_type": "delivery_note", "user_id": _uid}) if biz_id else []
+        except Exception:
+            _drafts = []
+        if _drafts:
+            _draft_rec = _drafts[0]
+        _guard_draft_id = _draft_rec.get("id", "") if _draft_rec else ""
+        _resume_json = "null"
+        _banner_html = ""
+        if _draft_rec:
+            if _resume_arg and _resume_arg == _guard_draft_id:
+                _resume_json = _draft_rec.get("form_data") or "null"
+            else:
+                try:
+                    import clickai as _main
+                    _banner_html = _main.build_draft_banner(_draft_rec, "/delivery-note/new")
+                except Exception:
+                    _banner_html = ""
+        
         content = f'''
         {error_html}
+        {_banner_html}
         <div class="card">
             <h3 style="margin:0 0 20px 0;">New Delivery Note</h3>
             
@@ -5002,6 +5110,39 @@ def register_invoicing_routes(app, db, login_required, Auth, render_page,
         }}
         </script>
         '''
+        
+        _dn_restore_js = r'''
+        var f = document.getElementById('dnForm');
+        var cs = document.getElementById('customerSelect');
+        if (cs && d.customer_id) {
+            cs.value = d.customer_id;
+            var _cn = cs.options[cs.selectedIndex] ? (cs.options[cs.selectedIndex].dataset.name || '') : '';
+            document.getElementById('customerName').value = d.customer_name || _cn;
+        }
+        var si = f.querySelector('select[name="source_invoice_id"]');
+        if (si && d.source_invoice_id) si.value = d.source_invoice_id;
+        var da = f.querySelector('textarea[name="delivery_address"]');
+        if (da && d.delivery_address) da.value = d.delivery_address;
+        var nt = f.querySelector('textarea[name="notes"]');
+        if (nt && d.notes) nt.value = d.notes;
+        var rs = f.querySelector('input[name="reduce_stock"]');
+        if (rs) rs.checked = !!d.reduce_stock;
+        var descs = d['item_desc[]'] || [];
+        for (var i = 1; i < descs.length; i++) addLine();
+        var dI = f.querySelectorAll('input[name="item_desc[]"]');
+        var qI = f.querySelectorAll('input[name="item_qty[]"]');
+        var sI = f.querySelectorAll('select[name="item_stock_id[]"]');
+        for (var j = 0; j < descs.length; j++) {
+            if (dI[j]) dI[j].value = descs[j] || '';
+            if (qI[j]) qI[j].value = (d['item_qty[]'] || [])[j] || '1';
+            if (sI[j]) sI[j].value = (d['item_stock_id[]'] || [])[j] || '';
+        }
+        '''
+        try:
+            import clickai as _main
+            content += _main.build_capture_guard("delivery_note", "dnForm", _guard_draft_id, _resume_json, _dn_restore_js)
+        except Exception as _cge:
+            logger.error(f"[DRAFT GUARD] delivery note guard failed: {_cge}")
         
         return render_page("New Delivery Note", content, user, "delivery-notes")
     
