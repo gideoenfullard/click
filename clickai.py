@@ -36974,11 +36974,25 @@ def create_journal_entry(biz_id: str, date: str, description: str, reference: st
     if not biz_id:
         return
     
-    # Validate balance: total debits must equal total credits
-    total_debits = sum(float(e.get("debit", 0)) for e in entries)
-    total_credits = sum(float(e.get("credit", 0)) for e in entries)
-    if abs(total_debits - total_credits) > 0.02:
-        logger.error(f"[GL] UNBALANCED journal entry! ref={reference} debits={total_debits:.2f} credits={total_credits:.2f}")
+    # Validate balance: total debits must equal total credits.
+    # Cent-level differences (cash-rounding legs etc.) are auto-balanced to
+    # Cash Short/Over so the GL always balances to the cent. Anything larger
+    # is a real posting bug — BLOCK it and report loudly. No unbalanced
+    # journal may ever reach the ledger (Sage behaviour).
+    total_debits = round(sum(float(e.get("debit", 0)) for e in entries), 2)
+    total_credits = round(sum(float(e.get("credit", 0)) for e in entries), 2)
+    _imbalance = round(total_debits - total_credits, 2)
+    if _imbalance != 0:
+        if abs(_imbalance) <= 0.05:
+            _cs_code = gl(biz_id, "cash_short") or "7050"
+            _bal_line = {"account_code": _cs_code, "debit": 0, "credit": _imbalance} if _imbalance > 0 \
+                else {"account_code": _cs_code, "debit": abs(_imbalance), "credit": 0}
+            entries = list(entries) + [_bal_line]
+            print(f"[GL] Journal {reference} was {_imbalance:+.2f} out - auto-balanced to Cash Short/Over ({_cs_code})", flush=True)
+        else:
+            print(f"[GL] BLOCKED unbalanced journal! ref={reference} debits={total_debits:.2f} credits={total_credits:.2f} diff={_imbalance:+.2f} desc={str(description)[:80]}", flush=True)
+            logger.error(f"[GL] UNBALANCED journal entry BLOCKED! ref={reference} debits={total_debits:.2f} credits={total_credits:.2f}")
+            raise ValueError(f"Unbalanced journal blocked: {reference} (DR {total_debits:.2f} vs CR {total_credits:.2f})")
     
     for entry in entries:
         account_code = entry.get("account_code")
@@ -37531,15 +37545,29 @@ def api_cashup_move_to_petty():
         if amount > 1_000_000:
             return jsonify({"success": False, "error": "Amount looks too large — please verify"})
         
-        # Prevent double-post for the same day (sanity check)
+        # Prevent double-post for the same day (sanity check).
+        # NOTE: allocation_log has NO transaction_date column — that date is
+        # stored inside the extra JSON. The old check read non-existent
+        # columns and therefore never matched (dead guard).
         try:
             existing_logs = db.get("allocation_log", {"business_id": biz_id}) or []
-            already_posted = [
-                l for l in existing_logs
-                if l.get("allocation_type") == "cash_to_petty"
-                and (str(l.get("transaction_date") or "")[:10] == move_date
-                     or str(l.get("date") or "")[:10] == move_date)
-            ]
+            already_posted = []
+            for l in existing_logs:
+                if l.get("allocation_type") != "cash_to_petty":
+                    continue
+                _tx = ""
+                try:
+                    _lex = l.get("extra")
+                    if isinstance(_lex, str) and _lex.strip():
+                        _lex = json.loads(_lex)
+                    if isinstance(_lex, dict):
+                        _tx = str(_lex.get("transaction_date") or "")[:10]
+                except Exception:
+                    _tx = ""
+                if not _tx:
+                    _tx = str(l.get("created_at") or "")[:10]
+                if _tx == move_date:
+                    already_posted.append(l)
             if already_posted:
                 return jsonify({
                     "success": False,
@@ -55705,13 +55733,56 @@ def api_refund_pos_sale(sale_id):
         today_str = today()
         ref = f"REF-{sale_number}"
         
+        # ── DUPLICATE REFUND GUARD ──
+        # The sales-table status is never written back (schema varies across
+        # installs), so the status check above cannot be relied on. The GL is
+        # the source of truth: if a REF- journal for this sale already exists,
+        # it has been refunded — a sale may only be refunded ONCE.
+        try:
+            _prior_refund = db.get("journals", {"business_id": biz_id, "reference": ref}) or []
+        except Exception as _prg_err:
+            print(f"[REFUND POS] Duplicate-guard lookup failed (blocking to be safe): {_prg_err}", flush=True)
+            return jsonify({"success": False, "error": "Could not verify refund history — please try again."}), 500
+        if _prior_refund:
+            return jsonify({
+                "success": False,
+                "error": f"Sale {sale_number} has already been refunded — a sale can only be refunded once. If the refund itself was wrong, reverse it from the Ledger instead."
+            }), 400
+        
+        # ── CASH ROUNDING MIRROR ──
+        # A cash sale posts the ROUNDED amount (SA 10c cash rounding) to the
+        # drawer and the rounding difference to Cash Short/Over. The refund
+        # must mirror that exactly: hand back the rounded cash that physically
+        # entered the drawer, with the difference back to Cash Short/Over.
+        # Card/EFT/account refunds stay at the exact document total.
+        cash_credit = float(total)
+        rounding_back = 0.0
+        if payment_method == "cash":
+            _pt = 0.0
+            try:
+                _pt = float(sale.get("payment_total") or 0)
+            except (TypeError, ValueError):
+                _pt = 0.0
+            if _pt > 0:
+                cash_credit = round(_pt, 2)
+            else:
+                # payment_total not stored on older sales — nearest 10c (half up)
+                cash_credit = round(int(float(total) * 10 + 0.5) / 10.0, 2)
+            rounding_back = round(float(total) - cash_credit, 2)
+        
         # Reverse the sale's GL: original was DR Cash/Bank/Debtors, CR Sales, CR VAT
         # Refund:                     CR Cash/Bank/Debtors, DR Sales, DR VAT
         gl_entries = [
-            {"account_code": bank_account,             "debit": 0,                 "credit": float(total)},
+            {"account_code": bank_account,             "debit": 0,                 "credit": float(cash_credit)},
             {"account_code": gl(biz_id, "sales"),      "debit": float(subtotal),   "credit": 0},
             {"account_code": gl(biz_id, "vat_output"), "debit": float(vat_amount), "credit": 0},
         ]
+        if rounding_back > 0:
+            # Original sale rounded DOWN — drawer received less than the document total
+            gl_entries.append({"account_code": gl(biz_id, "cash_short"), "debit": 0, "credit": float(rounding_back)})
+        elif rounding_back < 0:
+            # Original sale rounded UP — drawer received more than the document total
+            gl_entries.append({"account_code": gl(biz_id, "cash_short"), "debit": float(abs(rounding_back)), "credit": 0})
         try:
             create_journal_entry(biz_id, today_str,
                                  f"REFUND of POS Sale {sale_number} ({reason[:60]})",
@@ -55805,7 +55876,7 @@ def api_refund_pos_sale(sale_id):
         
         return jsonify({
             "success": True,
-            "message": f"Sale {sale_number} refunded (R{total:,.2f} from {payment_method.upper()})",
+            "message": f"Sale {sale_number} refunded (R{(cash_credit if payment_method == 'cash' else total):,.2f} from {payment_method.upper()})",
             "reference": ref,
             "sale_number": sale_number,
             "stock_returned": len(stock_reversal_summary)

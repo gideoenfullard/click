@@ -56,6 +56,47 @@ def register_cashup_routes(app, db, login_required, Auth, generate_id, now, toda
         total_sales = total_cash + total_card + total_account
         sale_count = len(sales)
 
+        # ── DRAWER CASH for the Cash → Petty move ──
+        # The drawer's ACTUAL movement today per the GL (account 1050),
+        # excluding transfer journals. This includes POS cash sales (at the
+        # rounded cash amounts), cash invoice payments (PAY-INV), cash
+        # refunds (negative) and cash expenses paid from the drawer — not
+        # just POS sales. This is what must physically move to Petty Cash.
+        drawer_cash = round(total_cash, 2)
+        _dp_pos = _dp_pay = _dp_ref = _dp_exp = _dp_other = 0.0
+        try:
+            _jnls = db.get("journals", {"business_id": biz_id, "date": today(), "account_code": "1050"}) if biz_id else []
+            _dc = 0.0
+            for _j in (_jnls or []):
+                _jref = str(_j.get("reference", "") or "")
+                _jdesc = str(_j.get("description", "") or "")
+                if _jref.startswith("C2P-") or _jdesc.startswith("CORRECTION BETWEEN CASH ON HAND"):
+                    continue
+                _net = float(_j.get("debit", 0) or 0) - float(_j.get("credit", 0) or 0)
+                _dc += _net
+                if _jref.startswith("POS"):
+                    _dp_pos += _net
+                elif _jref.startswith("PAY-"):
+                    _dp_pay += _net
+                elif _jref.startswith("REF"):
+                    _dp_ref += _net
+                elif _jref.startswith("EXP-"):
+                    _dp_exp += _net
+                else:
+                    _dp_other += _net
+            drawer_cash = round(_dc, 2)
+        except Exception as _dc_err:
+            print(f"[CASHUP] Drawer cash calc failed, falling back to POS sales total: {_dc_err}", flush=True)
+            drawer_cash = round(total_cash, 2)
+            _dp_pos = round(total_cash, 2)
+        _drawer_breakdown = (
+            f"POS cash R{_dp_pos:,.2f}"
+            + (f" + invoice payments R{_dp_pay:,.2f}" if abs(_dp_pay) >= 0.01 else "")
+            + (f" − refunds R{abs(_dp_ref):,.2f}" if abs(_dp_ref) >= 0.01 else "")
+            + (f" − cash expenses R{abs(_dp_exp):,.2f}" if abs(_dp_exp) >= 0.01 else "")
+            + (f" + other R{_dp_other:,.2f}" if abs(_dp_other) >= 0.01 else "")
+        )
+
         # Get cashiers who made sales today — keyed by cashier_id for per-cashier cash-up
         cashier_sales = {}
         for s in sales:
@@ -820,8 +861,8 @@ select.form-input {{
         </p>
         <div style="display:grid; grid-template-columns: 1fr 1fr 1fr; gap:12px; margin-bottom:14px;">
             <div>
-                <label style="font-size:11px; color:var(--text-muted); display:block; margin-bottom:4px; text-transform:uppercase; letter-spacing:0.5px;">Today's POS Cash Sales</label>
-                <input type="text" id="c2pTodayCash" value="R{total_cash:,.2f}" readonly
+                <label style="font-size:11px; color:var(--text-muted); display:block; margin-bottom:4px; text-transform:uppercase; letter-spacing:0.5px;">Today's Drawer Cash (system)</label>
+                <input type="text" id="c2pTodayCash" value="R{drawer_cash:,.2f}" readonly
                        style="width:100%; padding:10px; border-radius:8px; border:1px solid var(--border); background:var(--bg); color:var(--text); font-size:15px; font-weight:600;">
             </div>
             <div>
@@ -831,7 +872,7 @@ select.form-input {{
             </div>
             <div>
                 <label style="font-size:11px; color:var(--text-muted); display:block; margin-bottom:4px; text-transform:uppercase; letter-spacing:0.5px;">Will move to Petty Cash</label>
-                <input type="text" id="c2pMoveAmount" value="R{total_cash:,.2f}" readonly
+                <input type="text" id="c2pMoveAmount" value="R{drawer_cash:,.2f}" readonly
                        style="width:100%; padding:10px; border-radius:8px; border:1px solid var(--border); background:var(--bg); color:var(--green); font-size:15px; font-weight:700;">
             </div>
         </div>
@@ -848,7 +889,8 @@ select.form-input {{
             <span id="c2pStatus" style="font-size:13px; color:var(--text-muted);"></span>
         </div>
         <div id="c2pHint" style="margin-top:12px; padding:10px 12px; background:var(--bg); border-radius:6px; font-size:12px; color:var(--text-muted);">
-            ℹ️ Posts a journal entry: <strong>DR 1100 Petty Cash / CR 1050 Cash On Hand</strong>. Only one move per day allowed.
+            ℹ️ Posts a journal entry: <strong>DR 1100 Petty Cash / CR 1050 Cash On Hand</strong>. Only one move per day allowed.<br>
+            Drawer cash today = {_drawer_breakdown}
         </div>
     </div>
 
@@ -1606,7 +1648,7 @@ async function c2pPostToPetty() {{
     var status = document.getElementById('c2pStatus');
     
     if (todayCash <= 0) {{
-        alert('No POS cash sales today — nothing to move.');
+        alert('No drawer cash movement today — nothing to move.');
         return;
     }}
     if (moveAmount <= 0) {{
