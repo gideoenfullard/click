@@ -2249,16 +2249,35 @@ def register_purchases_routes(app, db, login_required, Auth, render_page,
         except:
             items = []
         
+        # Stock list: used for the code fallback on older POs AND for the
+        # Receive-modal dropdown when Daphne adds extra lines
+        try:
+            _pv_stock = db.get_all_stock(biz_id) or []
+        except Exception:
+            _pv_stock = []
+        
         # Older POs stored no "code" on their items — resolve it from the
         # linked stock so Daphne always sees stock codes on the PO and GRV
         if any(not item.get("code") and item.get("stock_id") for item in items):
             try:
-                _pv_code_map = {str(_s.get("id", "")): (_s.get("code", "") or "") for _s in (db.get_all_stock(biz_id) or [])}
+                _pv_code_map = {str(_s.get("id", "")): (_s.get("code", "") or "") for _s in _pv_stock}
                 for item in items:
                     if not item.get("code") and item.get("stock_id"):
                         item["code"] = _pv_code_map.get(str(item.get("stock_id")), "")
             except Exception:
                 pass
+        
+        # Compact stock list for the search-as-you-type dropdown on extra lines
+        try:
+            _rcv_stock_json = json.dumps([
+                {"i": _s.get("id", ""),
+                 "c": _s.get("code", "") or "",
+                 "d": safe_string(str(_s.get("name") or _s.get("description") or "")),
+                 "p": float(_s.get("cost_price") or _s.get("cost") or 0)}
+                for _s in _pv_stock
+            ]).replace("</", "<\\/")
+        except Exception:
+            _rcv_stock_json = "[]"
         
         items_html = ""
         all_received = True
@@ -2453,8 +2472,13 @@ def register_purchases_routes(app, db, login_required, Auth, render_page,
         </div>
         
         <!-- Receive Goods Modal -->
+        <style>
+        .rcv-dd {{ position: absolute; top: 100%; left: 0; min-width: 300px; background: var(--card); border: 1px solid var(--border); border-radius: 6px; max-height: 220px; overflow-y: auto; z-index: 1200; box-shadow: 0 4px 12px rgba(0,0,0,0.3); display: none; }}
+        .rcv-dd-item {{ padding: 8px 10px; cursor: pointer; font-size: 13px; border-bottom: 1px solid var(--border); }}
+        .rcv-dd-item:hover {{ background: var(--primary); color: white; }}
+        </style>
         <div id="receiveModal" style="display: none; position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(0,0,0,0.7); z-index: 1000; align-items: center; justify-content: center;">
-            <div class="card" style="width: 100%; max-width: 650px; margin: 20px; max-height: 90vh; overflow-y: auto;">
+            <div class="card" style="width: 100%; max-width: 1000px; margin: 20px; max-height: 90vh; overflow-y: auto;">
                 <h3 style="margin: 0 0 20px 0;">📦 Receive Goods (GRV)</h3>
                 
                 <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:15px;">
@@ -2589,13 +2613,15 @@ def register_purchases_routes(app, db, login_required, Auth, render_page,
             document.getElementById(id).style.display = 'none';
         }}
         
+        const RCV_STOCK = {_rcv_stock_json};
+        
         function addReceiveLine() {{
             const tbody = document.getElementById('receiveModalBody');
             const row = document.createElement('tr');
             row.className = 'rcv-extra-row';
             row.innerHTML = `
-                <td><input type="text" class="form-input rcv-extra-code" placeholder="Code (optional)" style="width:100px;"></td>
-                <td><input type="text" class="form-input rcv-extra-desc" placeholder="Description" style="width:100%;"></td>
+                <td style="position:relative;"><input type="text" class="form-input rcv-extra-code" placeholder="Code" autocomplete="off" style="width:100px;"><input type="hidden" class="rcv-extra-sid" value=""></td>
+                <td style="position:relative;"><input type="text" class="form-input rcv-extra-desc" placeholder="Type to search stock, or enter a new item..." autocomplete="off" style="width:100%;"></td>
                 <td style="text-align:center;color:var(--text-muted);">-</td>
                 <td style="text-align:center;color:var(--text-muted);">-</td>
                 <td style="text-align:center;"><input type="number" class="form-input rcv-extra-qty" placeholder="0" min="0" step="any" style="width:80px;text-align:center;"></td>
@@ -2605,8 +2631,56 @@ def register_purchases_routes(app, db, login_required, Auth, render_page,
                 </td>
             `;
             tbody.appendChild(row);
-            row.querySelector('.rcv-extra-desc').focus();
+            const descInput = row.querySelector('.rcv-extra-desc');
+            const codeInput = row.querySelector('.rcv-extra-code');
+            [descInput, codeInput].forEach(inp => {{
+                inp.addEventListener('input', function() {{ rcvStockSearch(inp); }});
+                inp.addEventListener('focus', function() {{ rcvStockSearch(inp); }});
+                // Manual typing breaks the link — the server then matches or creates
+                inp.addEventListener('input', function() {{ row.querySelector('.rcv-extra-sid').value = ''; }});
+            }});
+            descInput.focus();
         }}
+        
+        function rcvStockSearch(input) {{
+            const td = input.closest('td');
+            let dd = td.querySelector('.rcv-dd');
+            if (!dd) {{
+                dd = document.createElement('div');
+                dd.className = 'rcv-dd';
+                td.appendChild(dd);
+            }}
+            const q = input.value.trim().toUpperCase();
+            dd.innerHTML = '';
+            if (q.length < 1) {{ dd.style.display = 'none'; return; }}
+            const hits = RCV_STOCK.filter(s =>
+                (s.c || '').toUpperCase().includes(q) || (s.d || '').toUpperCase().includes(q)
+            ).slice(0, 8);
+            if (!hits.length) {{ dd.style.display = 'none'; return; }}
+            const row = input.closest('tr');
+            hits.forEach(s => {{
+                const it = document.createElement('div');
+                it.className = 'rcv-dd-item';
+                it.textContent = (s.c ? s.c + ' \u2014 ' : '') + s.d + (s.p ? '  (R' + Number(s.p).toFixed(2) + ')' : '');
+                it.addEventListener('mousedown', function() {{
+                    row.querySelector('.rcv-extra-code').value = s.c || '';
+                    row.querySelector('.rcv-extra-desc').value = s.d || '';
+                    row.querySelector('.rcv-extra-sid').value = s.i || '';
+                    const pr = row.querySelector('.rcv-extra-price');
+                    if (pr && !pr.value && s.p) pr.value = Number(s.p).toFixed(2);
+                    dd.style.display = 'none';
+                    row.querySelector('.rcv-extra-qty').focus();
+                }});
+                dd.appendChild(it);
+            }});
+            dd.style.display = 'block';
+        }}
+        
+        document.addEventListener('click', function(e) {{
+            if (!e.target.closest('.rcv-dd') && !e.target.classList.contains('rcv-extra-desc') && !e.target.classList.contains('rcv-extra-code')) {{
+                document.querySelectorAll('.rcv-dd').forEach(d => d.style.display = 'none');
+            }}
+        }});
         
         async function receiveGoods() {{
             const inputs = document.querySelectorAll('#receiveModal input[name^="receive_"]');
@@ -2635,7 +2709,8 @@ def register_purchases_routes(app, db, login_required, Auth, render_page,
                 const qty = parseFloat(row.querySelector('.rcv-extra-qty').value) || 0;
                 const price = parseFloat(row.querySelector('.rcv-extra-price').value) || 0;
                 const code = (row.querySelector('.rcv-extra-code').value || '').trim();
-                if (desc && qty > 0) extraItems.push({{code: code, description: desc, qty: qty, price: price}});
+                const sid = (row.querySelector('.rcv-extra-sid').value || '').trim();
+                if (desc && qty > 0) extraItems.push({{code: code, description: desc, qty: qty, price: price, stock_id: sid}});
             }});
             
             if (Object.keys(quantities).length === 0 && extraItems.length === 0) {{
@@ -3326,6 +3401,7 @@ def register_purchases_routes(app, db, login_required, Auth, render_page,
                     _ex_qty = float(_ex.get("qty", 0) or 0)
                     _ex_price = float(_ex.get("price", 0) or 0)
                     _ex_code = str(_ex.get("code", "")).strip()
+                    _ex_sid = str(_ex.get("stock_id", "") or "").strip()
                 except (TypeError, ValueError, AttributeError):
                     continue
                 if not _ex_desc or _ex_qty <= 0:
@@ -3336,7 +3412,7 @@ def register_purchases_routes(app, db, login_required, Auth, render_page,
                     "qty": _ex_qty,
                     "price": _ex_price,
                     "total": round(_ex_qty * _ex_price, 2),
-                    "stock_id": "",
+                    "stock_id": _ex_sid,
                     "code": _ex_code,
                     "qty_received": 0,
                     "added_at_receive": True
