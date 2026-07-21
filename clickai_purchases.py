@@ -2473,12 +2473,12 @@ def register_purchases_routes(app, db, login_required, Auth, render_page,
         
         <!-- Receive Goods Modal -->
         <style>
-        .rcv-dd {{ position: absolute; top: 100%; left: 0; min-width: 300px; background: var(--card); border: 1px solid var(--border); border-radius: 6px; max-height: 220px; overflow-y: auto; z-index: 1200; box-shadow: 0 4px 12px rgba(0,0,0,0.3); display: none; }}
+        .rcv-dd {{ position: absolute; top: 100%; left: 0; min-width: 420px; background: var(--card); border: 1px solid var(--border); border-radius: 6px; max-height: 480px; overflow-y: auto; z-index: 1200; box-shadow: 0 4px 12px rgba(0,0,0,0.3); display: none; }}
         .rcv-dd-item {{ padding: 8px 10px; cursor: pointer; font-size: 13px; border-bottom: 1px solid var(--border); }}
         .rcv-dd-item:hover {{ background: var(--primary); color: white; }}
         </style>
         <div id="receiveModal" style="display: none; position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(0,0,0,0.7); z-index: 1000; align-items: center; justify-content: center;">
-            <div class="card" style="width: 100%; max-width: 1000px; margin: 20px; max-height: 90vh; overflow-y: auto;">
+            <div class="card" style="width: 95%; max-width: 1500px; margin: 20px; max-height: 92vh; overflow-y: auto;">
                 <h3 style="margin: 0 0 20px 0;">📦 Receive Goods (GRV)</h3>
                 
                 <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:15px;">
@@ -2655,7 +2655,7 @@ def register_purchases_routes(app, db, login_required, Auth, render_page,
             if (q.length < 1) {{ dd.style.display = 'none'; return; }}
             const hits = RCV_STOCK.filter(s =>
                 (s.c || '').toUpperCase().includes(q) || (s.d || '').toUpperCase().includes(q)
-            ).slice(0, 8);
+            ).slice(0, 100);
             if (!hits.length) {{ dd.style.display = 'none'; return; }}
             const row = input.closest('tr');
             hits.forEach(s => {{
