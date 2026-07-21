@@ -1901,6 +1901,15 @@ def register_purchases_routes(app, db, login_required, Auth, render_page,
             prices = request.form.getlist("item_price[]")
             stock_ids = request.form.getlist("item_stock_id[]")
             
+            # Resolve stock CODES for linked items so the code travels with
+            # the PO (Daphne must see codes when receiving and invoicing)
+            _stock_code_map = {}
+            try:
+                for _s in (db.get_all_stock(biz_id) or []):
+                    _stock_code_map[str(_s.get("id", ""))] = _s.get("code", "") or ""
+            except Exception:
+                _stock_code_map = {}
+            
             subtotal = 0
             for i, desc in enumerate(descriptions):
                 if desc.strip():
@@ -1908,12 +1917,14 @@ def register_purchases_routes(app, db, login_required, Auth, render_page,
                     price = float(prices[i] or 0)
                     line_total = qty * price
                     subtotal += line_total
+                    _sid = stock_ids[i] if i < len(stock_ids) else ""
                     items.append({
                         "description": desc.strip(),
                         "qty": qty,
                         "price": price,
                         "total": line_total,
-                        "stock_id": stock_ids[i] if i < len(stock_ids) else "",
+                        "stock_id": _sid,
+                        "code": _stock_code_map.get(str(_sid), ""),
                         "qty_received": 0
                     })
             
@@ -2238,6 +2249,17 @@ def register_purchases_routes(app, db, login_required, Auth, render_page,
         except:
             items = []
         
+        # Older POs stored no "code" on their items — resolve it from the
+        # linked stock so Daphne always sees stock codes on the PO and GRV
+        if any(not item.get("code") and item.get("stock_id") for item in items):
+            try:
+                _pv_code_map = {str(_s.get("id", "")): (_s.get("code", "") or "") for _s in (db.get_all_stock(biz_id) or [])}
+                for item in items:
+                    if not item.get("code") and item.get("stock_id"):
+                        item["code"] = _pv_code_map.get(str(item.get("stock_id")), "")
+            except Exception:
+                pass
+        
         items_html = ""
         all_received = True
         for item in items:
@@ -2311,6 +2333,7 @@ def register_purchases_routes(app, db, login_required, Auth, render_page,
             if remaining > 0:
                 receive_items_html += f'''
                 <tr>
+                    <td style="color:var(--text-muted);font-size:12px;white-space:nowrap;">{safe_string(item.get("code", "")) or "-"}</td>
                     <td>{safe_string(item.get("description", "-"))}</td>
                     <td style="text-align:center;">{qty_ordered}</td>
                     <td style="text-align:center;">{qty_received}</td>
@@ -2452,6 +2475,7 @@ def register_purchases_routes(app, db, login_required, Auth, render_page,
                 <table class="table">
                     <thead>
                         <tr>
+                            <th>Code</th>
                             <th>Item</th>
                             <th style="text-align: center;">Ordered</th>
                             <th style="text-align: center;">Received</th>
@@ -2460,7 +2484,7 @@ def register_purchases_routes(app, db, login_required, Auth, render_page,
                         </tr>
                     </thead>
                     <tbody>
-                        {receive_items_html or "<tr><td colspan='5' style='text-align:center;color:var(--green);'>All items received!</td></tr>"}
+                        {receive_items_html or "<tr><td colspan='6' style='text-align:center;color:var(--green);'>All items received!</td></tr>"}
                     </tbody>
                 </table>
                 
@@ -2794,6 +2818,15 @@ def register_purchases_routes(app, db, login_required, Auth, render_page,
             prices = request.form.getlist("item_price[]")
             stock_ids = request.form.getlist("item_stock_id[]")
             
+            # Resolve stock CODES for linked items so the code travels with
+            # the PO (same as purchase_new)
+            _stock_code_map = {}
+            try:
+                for _s in (db.get_all_stock(biz_id) or []):
+                    _stock_code_map[str(_s.get("id", ""))] = _s.get("code", "") or ""
+            except Exception:
+                _stock_code_map = {}
+            
             subtotal = 0
             for i, desc in enumerate(descriptions):
                 if desc.strip():
@@ -2801,12 +2834,14 @@ def register_purchases_routes(app, db, login_required, Auth, render_page,
                     price = float(prices[i] or 0)
                     line_total = qty * price
                     subtotal += line_total
+                    _sid = stock_ids[i] if i < len(stock_ids) else ""
                     items.append({
                         "description": desc.strip(),
                         "qty": qty,
                         "price": price,
                         "total": line_total,
-                        "stock_id": stock_ids[i] if i < len(stock_ids) else "",
+                        "stock_id": _sid,
+                        "code": _stock_code_map.get(str(_sid), ""),
                         "qty_received": 0
                     })
             
@@ -3690,10 +3725,20 @@ def register_purchases_routes(app, db, login_required, Auth, render_page,
             
             # GET - show form with items from PO
             # Manier A: only show what has been RECEIVED but not yet invoiced.
+            # Resolve missing stock codes from the linked stock (older POs)
+            if any(not _it.get("code") and _it.get("stock_id") for _it in po_items):
+                try:
+                    _ci_code_map = {str(_s.get("id", "")): (_s.get("code", "") or "") for _s in (db.get_all_stock(biz_id) or [])}
+                    for _it in po_items:
+                        if not _it.get("code") and _it.get("stock_id"):
+                            _it["code"] = _ci_code_map.get(str(_it.get("stock_id")), "")
+                except Exception:
+                    pass
             items_html = ""
             any_invoiceable = False
             for i, item in enumerate(po_items):
                 desc = item.get("description") or item.get("code") or "-"
+                item_code = item.get("code", "") or ""
                 qty_ordered = float(item.get("qty") or item.get("quantity") or 0)
                 qty_received = float(item.get("qty_received", 0) or 0)
                 qty_invoiced = float(item.get("qty_invoiced", 0) or 0)
@@ -3707,6 +3752,7 @@ def register_purchases_routes(app, db, login_required, Auth, render_page,
 
                 items_html += f'''
                 <tr>
+                    <td style="color:var(--text-muted);font-size:12px;white-space:nowrap;vertical-align:top;padding-top:14px;">{safe_string(item_code) or "-"}</td>
                     <td>
                         <input type="text" name="item_desc[]" class="form-input" value="{safe_string(desc)}" style="width:100%;">
                         <input type="hidden" name="item_index[]" value="{i}">
@@ -3736,7 +3782,7 @@ def register_purchases_routes(app, db, login_required, Auth, render_page,
                 _disc_pct_get = 0.0
             _disc_row_html = ""
             if _disc_pct_get > 0:
-                _disc_row_html = f'<tr><td colspan="3" style="text-align:right;color:var(--green);font-weight:600;">Less: Discount Received ({_disc_pct_get:g}%):</td><td style="text-align:right;color:var(--green);font-weight:600;" id="discount">-R 0.00</td></tr>'
+                _disc_row_html = f'<tr><td colspan="4" style="text-align:right;color:var(--green);font-weight:600;">Less: Discount Received ({_disc_pct_get:g}%):</td><td style="text-align:right;color:var(--green);font-weight:600;" id="discount">-R 0.00</td></tr>'
             
             content = f'''
             <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:20px;">
@@ -3763,6 +3809,7 @@ def register_purchases_routes(app, db, login_required, Auth, render_page,
                     <table style="width:100%;" id="invoiceTable">
                         <thead>
                             <tr>
+                                <th style="width:90px;text-align:left;">Code</th>
                                 <th style="text-align:left;">Description</th>
                                 <th style="width:80px;text-align:center;">Qty</th>
                                 <th style="width:120px;text-align:right;">Unit Price</th>
@@ -3773,12 +3820,13 @@ def register_purchases_routes(app, db, login_required, Auth, render_page,
                             {items_html}
                         </tbody>
                         <tfoot>
-                            <tr><td colspan="3" style="text-align:right;font-weight:bold;">Subtotal:</td><td style="text-align:right;" id="subtotal">R 0.00</td></tr>
+                            <tr><td colspan="4" style="text-align:right;font-weight:bold;">Subtotal:</td><td style="text-align:right;" id="subtotal">R 0.00</td></tr>
                             {_disc_row_html}
-                            <tr><td colspan="3" style="text-align:right;color:var(--text-muted);">VAT (15%):</td><td style="text-align:right;" id="vat">R 0.00</td></tr>
-                            <tr><td colspan="3" style="text-align:right;font-weight:bold;font-size:18px;">Total:</td><td style="text-align:right;font-weight:bold;font-size:18px;" id="total">R 0.00</td></tr>
+                            <tr><td colspan="4" style="text-align:right;color:var(--text-muted);">VAT (15%):</td><td style="text-align:right;" id="vat">R 0.00</td></tr>
+                            <tr><td colspan="4" style="text-align:right;font-weight:bold;font-size:18px;">Total:</td><td style="text-align:right;font-weight:bold;font-size:18px;" id="total">R 0.00</td></tr>
                         </tfoot>
                     </table>
+                    <button type="button" onclick="addInvLine()" style="margin-top:10px;width:100%;padding:10px;border:2px dashed var(--border);background:transparent;color:var(--text-muted);cursor:pointer;font-size:13px;font-weight:600;border-radius:6px;">+ Add Line (not on PO)</button>
                     
                     <div style="display:flex;gap:10px;margin-top:20px;">
                         <button type="submit" class="btn btn-primary">&#10003; Create Supplier Invoice</button>
@@ -3789,6 +3837,22 @@ def register_purchases_routes(app, db, login_required, Auth, render_page,
             
             <script>
             const discPct = {_disc_pct_get};
+            function addInvLine() {{
+                const tbody = document.querySelector('#invoiceTable tbody');
+                const row = document.createElement('tr');
+                row.innerHTML = `
+                    <td style="color:var(--text-muted);font-size:12px;vertical-align:top;padding-top:14px;">-</td>
+                    <td>
+                        <input type="text" name="item_desc[]" class="form-input" placeholder="Description (e.g. delivery fee, item not on PO)" style="width:100%;">
+                        <input type="hidden" name="item_index[]" value="">
+                    </td>
+                    <td><input type="number" name="item_qty[]" class="form-input" value="1" step="any" style="width:80px;text-align:center;" onchange="calcTotals()"></td>
+                    <td><input type="number" name="item_price[]" class="form-input" placeholder="0.00" step="0.01" style="width:120px;text-align:right;" onchange="calcTotals()"></td>
+                    <td style="text-align:right;" class="line-total">R 0.00</td>
+                `;
+                tbody.appendChild(row);
+                row.querySelector('input[name="item_desc[]"]').focus();
+            }}
             function calcTotals() {{{{
                 const rows = document.querySelectorAll('#invoiceTable tbody tr');
                 let subtotal = 0;
