@@ -4384,7 +4384,7 @@ def register_invoicing_routes(app, db, login_required, Auth, render_page,
                     let h='';
                     items.forEach(s=>{{
                         const lb=(s.label||'').replace(/'/g,"\\\\'"), un=(s.unit||'').replace(/'/g,"\\\\'");
-                        h+='<div class="stock-dd-item" onmousedown="pickStock(this,\\\\''+s.id+'\\\\',\\\\''+lb+'\\\\','+s.price+',\\\\''+un+'\\\\')">'
+                        h+='<div class="stock-dd-item" onmousedown="pickStock(this,\\''+s.id+'\\',\\''+lb+'\\','+s.price+',\\''+un+'\\')">'
                           +'<b>'+(s.code||'')+'</b> '+(s.desc||'')+' <span style="float:right;color:#22c55e;">R'+s.price.toFixed(2)+'</span>'
                           +(s.unit?'<span style="color:#888;font-size:11px;margin-left:4px;">'+s.unit+'</span>':'')+'</div>';
                     }});

@@ -2339,7 +2339,7 @@ def register_purchases_routes(app, db, login_required, Auth, render_page,
                     <td style="text-align:center;">{qty_received}</td>
                     <td style="text-align:center;">
                         <input type="number" name="receive_{i}" class="form-input" style="width: 80px; text-align: center;" 
-                               value="{remaining}" min="0" max="{remaining}" data-index="{i}">
+                               value="" placeholder="0" min="0" max="{remaining}" step="any" data-index="{i}">
                     </td>
                     <td style="text-align:center;">
                         <input type="number" name="price_{i}" class="form-input" style="width: 100px; text-align: center;" 
@@ -2483,10 +2483,11 @@ def register_purchases_routes(app, db, login_required, Auth, render_page,
                             <th style="text-align: center;">Unit Price</th>
                         </tr>
                     </thead>
-                    <tbody>
+                    <tbody id="receiveModalBody">
                         {receive_items_html or "<tr><td colspan='6' style='text-align:center;color:var(--green);'>All items received!</td></tr>"}
                     </tbody>
                 </table>
+                <button type="button" onclick="addReceiveLine()" style="margin-top:10px;width:100%;padding:10px;border:2px dashed var(--border);background:transparent;color:var(--text-muted);cursor:pointer;font-size:13px;font-weight:600;border-radius:6px;">+ Add Line (not on PO)</button>
                 
                 <div style="margin-top: 15px;">
                     <label style="display: flex; align-items: center; gap: 10px; cursor: pointer;">
@@ -2588,6 +2589,25 @@ def register_purchases_routes(app, db, login_required, Auth, render_page,
             document.getElementById(id).style.display = 'none';
         }}
         
+        function addReceiveLine() {{
+            const tbody = document.getElementById('receiveModalBody');
+            const row = document.createElement('tr');
+            row.className = 'rcv-extra-row';
+            row.innerHTML = `
+                <td><input type="text" class="form-input rcv-extra-code" placeholder="Code (optional)" style="width:100px;"></td>
+                <td><input type="text" class="form-input rcv-extra-desc" placeholder="Description" style="width:100%;"></td>
+                <td style="text-align:center;color:var(--text-muted);">-</td>
+                <td style="text-align:center;color:var(--text-muted);">-</td>
+                <td style="text-align:center;"><input type="number" class="form-input rcv-extra-qty" placeholder="0" min="0" step="any" style="width:80px;text-align:center;"></td>
+                <td style="text-align:center;display:flex;gap:4px;align-items:center;">
+                    <input type="number" class="form-input rcv-extra-price" placeholder="0.00" step="0.01" style="width:100px;text-align:center;">
+                    <button type="button" onclick="this.closest('tr').remove()" style="background:var(--red);color:white;border:none;padding:6px 8px;border-radius:4px;cursor:pointer;">✕</button>
+                </td>
+            `;
+            tbody.appendChild(row);
+            row.querySelector('.rcv-extra-desc').focus();
+        }}
+        
         async function receiveGoods() {{
             const inputs = document.querySelectorAll('#receiveModal input[name^="receive_"]');
             const quantities = {{}};
@@ -2595,7 +2615,7 @@ def register_purchases_routes(app, db, login_required, Auth, render_page,
             
             inputs.forEach(input => {{
                 const index = input.dataset.index;
-                const qty = parseInt(input.value) || 0;
+                const qty = parseFloat(input.value) || 0;
                 if (qty > 0) {{
                     quantities[index] = qty;
                 }}
@@ -2608,7 +2628,17 @@ def register_purchases_routes(app, db, login_required, Auth, render_page,
                 if (price > 0) prices[index] = price;
             }});
             
-            if (Object.keys(quantities).length === 0) {{
+            // Lines received that are not on the PO
+            const extraItems = [];
+            document.querySelectorAll('#receiveModal tr.rcv-extra-row').forEach(row => {{
+                const desc = (row.querySelector('.rcv-extra-desc').value || '').trim();
+                const qty = parseFloat(row.querySelector('.rcv-extra-qty').value) || 0;
+                const price = parseFloat(row.querySelector('.rcv-extra-price').value) || 0;
+                const code = (row.querySelector('.rcv-extra-code').value || '').trim();
+                if (desc && qty > 0) extraItems.push({{code: code, description: desc, qty: qty, price: price}});
+            }});
+            
+            if (Object.keys(quantities).length === 0 && extraItems.length === 0) {{
                 alert('Please enter quantities to receive');
                 return;
             }}
@@ -2621,7 +2651,7 @@ def register_purchases_routes(app, db, login_required, Auth, render_page,
             const response = await fetch('/api/purchase/{po_id}/receive', {{
                 method: 'POST',
                 headers: {{'Content-Type': 'application/json'}},
-                body: JSON.stringify({{quantities, prices, updateStock, supplier_invoice_number: supplierInvoiceNum, receive_date: receiveDate, supplier_name_override: grvSupplierName}})
+                body: JSON.stringify({{quantities, prices, extra_items: extraItems, updateStock, supplier_invoice_number: supplierInvoiceNum, receive_date: receiveDate, supplier_name_override: grvSupplierName}})
             }});
             
             const data = await response.json();
@@ -3283,6 +3313,39 @@ def register_purchases_routes(app, db, login_required, Auth, render_page,
             except:
                 items = []
             
+            # ── Lines received that were NOT on the PO ──
+            # Daphne can add them in the Receive modal. They are appended to
+            # the PO (ordered = received) so the paper trail, GRV and
+            # invoicing all stay in sync, and they run through the exact same
+            # stock match / auto-create logic as normal lines below.
+            extra_items = data.get("extra_items", []) or []
+            _extras_added = 0
+            for _ex in extra_items:
+                try:
+                    _ex_desc = str(_ex.get("description", "")).strip()
+                    _ex_qty = float(_ex.get("qty", 0) or 0)
+                    _ex_price = float(_ex.get("price", 0) or 0)
+                    _ex_code = str(_ex.get("code", "")).strip()
+                except (TypeError, ValueError, AttributeError):
+                    continue
+                if not _ex_desc or _ex_qty <= 0:
+                    continue
+                _new_idx = len(items)
+                items.append({
+                    "description": _ex_desc,
+                    "qty": _ex_qty,
+                    "price": _ex_price,
+                    "total": round(_ex_qty * _ex_price, 2),
+                    "stock_id": "",
+                    "code": _ex_code,
+                    "qty_received": 0,
+                    "added_at_receive": True
+                })
+                quantities[str(_new_idx)] = _ex_qty
+                if _ex_price > 0:
+                    prices[str(_new_idx)] = _ex_price
+                _extras_added += 1
+            
             items_received = 0
             all_received = True
             
@@ -3404,6 +3467,17 @@ def register_purchases_routes(app, db, login_required, Auth, render_page,
             clean_po = {k: v for k, v in po.items() if k in VALID_PO_FIELDS}
             
             clean_po["items"] = json.dumps(items)
+            # If lines were added at receive time, refresh the PO totals so
+            # the document reflects the extra lines
+            if _extras_added:
+                try:
+                    _new_sub = round(sum(float(i.get("qty", 0) or 0) * float(i.get("price", 0) or 0) for i in items), 2)
+                    _new_vat = round(_new_sub * 0.15, 2)
+                    clean_po["subtotal"] = _new_sub
+                    clean_po["vat"] = _new_vat
+                    clean_po["total"] = round(_new_sub + _new_vat, 2)
+                except Exception:
+                    pass
             clean_po["status"] = "received" if all_received else "partial"
             clean_po["updated_at"] = now()
             
