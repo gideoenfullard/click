@@ -6317,7 +6317,6 @@ def register_pos_routes(app, db, login_required, Auth, render_page,
     <tr><td>Card Sales:</td><td style="text-align:right;">{money(card_total)}</td></tr>
     <tr><td>Account Sales:</td><td style="text-align:right;">{money(account_total)}</td></tr>
     <tr><td>Invoices:</td><td style="text-align:right;">{money(invoice_total)}</td></tr>
-    <tr><td>Quotes:</td><td style="text-align:right;">{money(quote_total)}</td></tr>
     </table>
     <hr style="border:1px dashed #000;margin:15px 0;">
     <table style="width:100%;border-collapse:collapse;">
@@ -6326,6 +6325,13 @@ def register_pos_routes(app, db, login_required, Auth, render_page,
     <td style="text-align:right;">{money(grand_total)}</td>
     </tr>
     <tr><td>Transactions:</td><td style="text-align:right;">{transaction_count}</td></tr>
+    </table>
+    <hr style="border:1px dashed #000;margin:15px 0;">
+    <div style="text-align:center;font-size:11px;margin-bottom:5px;">
+    *** NOT SALES ***
+    </div>
+    <table style="width:100%;border-collapse:collapse;">
+    <tr><td>Quotes Issued:</td><td style="text-align:right;">{money(quote_total)}</td></tr>
     </table>
     <hr style="border:1px dashed #000;margin:15px 0;">
     <div style="text-align:center;color:#666;font-size:11px;">
