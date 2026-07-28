@@ -2836,6 +2836,13 @@ def register_stock_routes(app, db, login_required, Auth, render_page,
             data = request.get_json() or {}
             mode = data.get("mode", "debtors")  # default to debtors only
             
+            # Bulk statements ALWAYS close at the CURRENT month-end
+            _bulk_today = datetime.now().date()
+            _bulk_next = (datetime(_bulk_today.year + 1, 1, 1).date()
+                          if _bulk_today.month == 12
+                          else datetime(_bulk_today.year, _bulk_today.month + 1, 1).date())
+            _bulk_asat = (_bulk_next - timedelta(days=1)).isoformat()
+            
             business = Auth.get_current_business()
             biz_id = business.get("id") if business else None
             
@@ -2881,7 +2888,7 @@ def register_stock_routes(app, db, login_required, Auth, render_page,
                 cust_invoices = [inv for inv in all_invoices if inv.get("customer_id") == customer.get("id")]
                 
                 try:
-                    success = Email.send_statement(customer, cust_invoices, business)
+                    success = Email.send_statement(customer, cust_invoices, business, asat=_bulk_asat)
                     if success:
                         sent += 1
                         logger.info(f"[BULK-EMAIL] Statement sent to {customer.get('name')} ({email})")

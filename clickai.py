@@ -36377,7 +36377,7 @@ def bulk_statements_print():
     biz_id = business.get("id") if business else None
 
     mode = (request.args.get("mode") or "debtors").lower()
-    _stmt_month, _asat = _statement_asat(request.args.get("month"))
+    _stmt_month, _asat = _statement_asat(request.args.get("month"), default_current=True)
 
     customers = db.get("customers", {"business_id": biz_id}) if biz_id else []
     _all_bals = calc_all_customer_balances(biz_id)
