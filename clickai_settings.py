@@ -541,6 +541,11 @@ def register_settings_routes(app, db, login_required, Auth, render_page,
                             <div style="color:var(--text-muted);font-size:12px;">When on, hours worked over 8 per day are recorded as overtime. When off, all hours worked count as normal hours.</div>
                         </div>
                     </label>
+                    <div style="padding:10px;background:var(--bg);border-radius:8px;">
+                        <strong>Pay cycle start day</strong>
+                        <div style="color:var(--text-muted);font-size:12px;margin-bottom:8px;">The day of the month the timesheet period starts. 1 = the calendar month (1st to month end). 26 = the 26th of the previous month to the 25th of the pay month. The pay month is the month the period ends in.</div>
+                        <input type="number" name="payroll_period_start_day" min="1" max="28" value="{(business.get("payroll_period_start_day") or 1) if business else 1}" style="padding:10px;border-radius:6px;border:1px solid var(--border);background:var(--card);color:var(--text);width:120px;">
+                    </div>
                 </div>
                 <button type="submit" class="btn btn-secondary" style="margin-top:15px;">💾 Save Payroll Settings</button>
             </form>
@@ -773,8 +778,14 @@ def register_settings_routes(app, db, login_required, Auth, render_page,
         biz_id = session.get("business_id")
         user_id = user.get("id", "") if user else ""
         if biz_id:
+            try:
+                _start_day = int(request.form.get("payroll_period_start_day") or 1)
+            except Exception:
+                _start_day = 1
+            _start_day = max(1, min(28, _start_day))
             db.update_business(biz_id, user_id, {
-                "split_overtime": request.form.get("split_overtime") == "1"
+                "split_overtime": request.form.get("split_overtime") == "1",
+                "payroll_period_start_day": _start_day
             })
         return redirect("/settings")
     

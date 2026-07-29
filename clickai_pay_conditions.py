@@ -206,31 +206,61 @@ def derive_hourly_rate(emp, cond, period_workdays_hours):
     return monthly / divisor
 
 
-def _agreed_hours(cond, period):
-    """Agreed (scheduled) hours for every working day in the pay month.
-    Returns (agreed_per_date {'YYYY-MM-DD': hours}, total_agreed)."""
+def period_range(period, start_day=1):
+    """Real start and end dates for a pay month.
+
+    start_day 1  -> the calendar month (1st to last day). Unchanged behaviour.
+    start_day 26 -> the 26th of the PREVIOUS month to the 25th of the pay
+                    month, both inclusive. The pay month is the month the
+                    period ENDS in, so 2026-06-26..2026-07-25 is pay month
+                    '2026-07'.
+
+    Returns (start_datetime, end_datetime). Falls back to the current
+    calendar month if `period` cannot be read.
+    """
     try:
-        yr, mo = int(period[:4]), int(period[5:7])
+        yr, mo = int(str(period)[:4]), int(str(period)[5:7])
     except Exception:
         now = datetime.now()
         yr, mo = now.year, now.month
-    days_in_month = _calendar.monthrange(yr, mo)[1]
+    try:
+        start_day = int(start_day or 1)
+    except Exception:
+        start_day = 1
+
+    if start_day <= 1:
+        return (datetime(yr, mo, 1),
+                datetime(yr, mo, _calendar.monthrange(yr, mo)[1]))
+
+    p_yr, p_mo = (yr - 1, 12) if mo == 1 else (yr, mo - 1)
+    s_dom = min(start_day, _calendar.monthrange(p_yr, p_mo)[1])
+    e_dom = min(start_day - 1, _calendar.monthrange(yr, mo)[1])
+    return (datetime(p_yr, p_mo, s_dom), datetime(yr, mo, e_dom))
+
+
+def _agreed_hours(cond, period, start_day=1):
+    """Agreed (scheduled) hours for every working day in the pay period.
+    Returns (agreed_per_date {'YYYY-MM-DD': hours}, total_agreed)."""
+    p_start, p_end = period_range(period, start_day)
 
     agreed_per_date = {}
     total_agreed = 0.0
-    for d in range(1, days_in_month + 1):
-        dt = datetime(yr, mo, d)
+    dt = p_start
+    while dt <= p_end:
         in_m, out_m = _day_schedule(cond, dt.weekday())
         if in_m is None or out_m is None:
+            dt += timedelta(days=1)
             continue
         worked = out_m - in_m
         if cond["schedule"].get("lunch_deducted"):
             worked -= int(_safe_float(cond["schedule"].get("lunch_minutes", 0)))
         if worked <= 0:
+            dt += timedelta(days=1)
             continue
         hrs = worked / 60.0
         agreed_per_date[dt.strftime("%Y-%m-%d")] = hrs
         total_agreed += hrs
+        dt += timedelta(days=1)
     return agreed_per_date, total_agreed
 
 
@@ -283,7 +313,8 @@ def sa_public_holidays(year):
 
 # --------------------------------------------------------------- the engine --
 
-def calculate_pay_from_timesheet(emp, entries, period, public_holidays=None):
+def calculate_pay_from_timesheet(emp, entries, period, public_holidays=None,
+                                 start_day=1):
     """Pure calculation. No Flask, no DB.
 
     emp     : employee record (dict)
@@ -291,6 +322,8 @@ def calculate_pay_from_timesheet(emp, entries, period, public_holidays=None):
               ideally 'in'/'out' clock times; falls back to 'hours'/'overtime'.
     period  : 'YYYY-MM' for the pay month.
     public_holidays : optional set/list of 'YYYY-MM-DD' strings.
+    start_day : first day-of-month of the pay cycle. 1 = calendar month.
+              26 = 26th of the previous month to the 25th of the pay month.
 
     Returns a dict:
       {
@@ -300,11 +333,18 @@ def calculate_pay_from_timesheet(emp, entries, period, public_holidays=None):
       }
     'kind' is one of: base, ot, late, early, premium, holiday.
     """
+    p_start, p_end = period_range(period, start_day)
+    _p_start_s = p_start.strftime("%Y-%m-%d")
+    _p_end_s = p_end.strftime("%Y-%m-%d")
+
     if public_holidays is None:
-        # Default to the SA public holiday calendar for the pay-month's year
-        # so a blank cell on a public holiday is never deducted as absent.
+        # Default to the SA public holiday calendar for every year the period
+        # touches (a 26-to-25 cycle over New Year spans two years) so a blank
+        # cell on a public holiday is never deducted as absent.
         try:
-            public_holidays = sa_public_holidays(int(str(period)[:4]))
+            public_holidays = set()
+            for _y in range(p_start.year, p_end.year + 1):
+                public_holidays |= set(sa_public_holidays(_y))
         except Exception:
             public_holidays = set()
     else:
@@ -312,7 +352,7 @@ def calculate_pay_from_timesheet(emp, entries, period, public_holidays=None):
     cond = get_conditions(emp)
 
     # ---- agreed hours for every working day in the period --------------
-    agreed_per_date, total_agreed = _agreed_hours(cond, period)
+    agreed_per_date, total_agreed = _agreed_hours(cond, period, start_day)
 
     # ---- fallback: employee not set up -> old behaviour ----------------
     if not cond["is_setup"]:
@@ -334,7 +374,7 @@ def calculate_pay_from_timesheet(emp, entries, period, public_holidays=None):
     # ---- walk each timesheet entry -------------------------------------
     for e in entries:
         date_str = str(e.get("date", "")).strip()
-        if not date_str or not date_str.startswith(period):
+        if not date_str or not (_p_start_s <= date_str[:10] <= _p_end_s):
             continue
         try:
             dt = datetime.strptime(date_str, "%Y-%m-%d")
@@ -494,7 +534,7 @@ def calculate_pay_from_timesheet(emp, entries, period, public_holidays=None):
     }
 
 
-def build_entries_from_days(days, pay_month):
+def build_entries_from_days(days, pay_month, start_day=1):
     """Turn scanned day rows into engine entries with real calendar dates.
 
     The scanner returns each day as a label like 'Mon 6' / 'Wed 8' plus the
@@ -504,6 +544,9 @@ def build_entries_from_days(days, pay_month):
 
     days      : [{'date': 'Mon 6', 'in': '07:00', 'out': '16:00'}, ...]
     pay_month : 'YYYY-MM'.
+    start_day : first day-of-month of the pay cycle. With a shifted cycle
+                (e.g. 26), a day number at or above the start day belongs to
+                the PREVIOUS month — 'Mon 29' in pay month 2026-07 is 29 June.
     Returns   : [{'date': 'YYYY-MM-DD'|original, 'in': .., 'out': ..}, ...].
                 Days whose number cannot be resolved keep their original label
                 (the engine then leaves that day's base unchanged).
@@ -514,6 +557,10 @@ def build_entries_from_days(days, pay_month):
         dim = _calendar.monthrange(yr, mo)[1]
     except Exception:
         yr = mo = dim = None
+    try:
+        start_day = int(start_day or 1)
+    except Exception:
+        start_day = 1
 
     out = []
     for d in (days or []):
@@ -530,13 +577,19 @@ def build_entries_from_days(days, pay_month):
                 iso = f"{_y:04d}-{_m:02d}-{_dd:02d}"
             except Exception:
                 iso = label
-        # 2) Short label like 'Mon 6' -> rebuild from the pay month.
+        # 2) Short label like 'Mon 6' -> rebuild from the pay month, moving
+        #    day numbers at or above the cycle start day into the previous
+        #    month.
         elif yr and mo:
             m = re.search(r"(\d{1,2})", label)
             if m:
                 dom = int(m.group(1))
-                if 1 <= dom <= dim:
-                    iso = f"{yr:04d}-{mo:02d}-{dom:02d}"
+                _y, _m, _dim = yr, mo, dim
+                if start_day > 1 and dom >= start_day:
+                    _y, _m = (yr - 1, 12) if mo == 1 else (yr, mo - 1)
+                    _dim = _calendar.monthrange(_y, _m)[1]
+                if 1 <= dom <= _dim:
+                    iso = f"{_y:04d}-{_m:02d}-{dom:02d}"
 
         _entry = {"date": iso, "in": d.get("in"), "out": d.get("out")}
         if d.get("status_override"):
@@ -772,9 +825,16 @@ def build_payslip_gross(emp, employee_data, period, business=None,
         return calculate_hourly_pay(emp, period, worked)
 
     # salaried (and the not-set-up fallback) -> deviation engine
-    entries = build_entries_from_days(days, period)
+    _start_day = 1
+    if business:
+        try:
+            _start_day = int(business.get("payroll_period_start_day") or 1)
+        except Exception:
+            _start_day = 1
+    entries = build_entries_from_days(days, period, _start_day)
     result = calculate_pay_from_timesheet(emp, entries, period,
-                                          public_holidays=public_holidays)
+                                          public_holidays=public_holidays,
+                                          start_day=_start_day)
     result["pay_model"] = "salaried"
     return result
 
