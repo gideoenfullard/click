@@ -312,20 +312,29 @@ def register_purchases_routes(app, db, login_required, Auth, render_page,
             name = request.form.get("name", "").strip()
             code = request.form.get("code", "").strip()
             
+            # Codes already in use for this business — the suppliers_biz_code_unique
+            # constraint rejects the insert if the final code collides with one.
+            _existing = db.get("suppliers", {"business_id": biz_id}, limit=5000) if biz_id else []
+            _used_codes = {(s.get("code") or "").upper().strip() for s in _existing if (s.get("code") or "").strip()}
+            
             if not code and biz_id and name:
                 try:
                     import re
                     name_clean = re.sub(r'[^a-zA-Z]', '', name).upper()
                     prefix = name_clean[:3] if len(name_clean) >= 3 else name_clean.ljust(3, 'X')
-                    existing = db.get("suppliers", {"business_id": biz_id}, limit=5000)
+                    existing = _existing
                     max_num = 0
                     for s in existing:
-                        ec = s.get("code", "")
+                        ec = s.get("code") or ""
                         if ec.upper().startswith(prefix):
                             nums = re.findall(r'\d+', ec)
                             if nums and int(nums[-1]) > max_num:
                                 max_num = int(nums[-1])
-                    code = f"{prefix}{(max_num + 1):03d}"
+                    _next_num = max_num + 1
+                    code = f"{prefix}{_next_num:03d}"
+                    while code.upper() in _used_codes and _next_num < 100000:
+                        _next_num += 1
+                        code = f"{prefix}{_next_num:03d}"
                     logger.info(f"[SUPPLIER] Smart code for '{name}': {code}")
                 except Exception as e:
                     logger.error(f"[SUPPLIER] Smart code error: {e}")
@@ -333,6 +342,10 @@ def register_purchases_routes(app, db, login_required, Auth, render_page,
             
             if not name:
                 flash("Supplier name is required", "error")
+            elif code and code.upper() in _used_codes:
+                _clash_name = next((s.get("name", "") for s in _existing
+                                    if (s.get("code") or "").upper().strip() == code.upper()), "")
+                flash(f"Supplier code '{code}' is already used by '{_clash_name}'. Please enter a different code.", "error")
             else:
                 fields = _get_form_fields()
                 fields["address"] = fields.get("physical_address", "")
@@ -362,7 +375,11 @@ def register_purchases_routes(app, db, login_required, Auth, render_page,
                 else:
                     flash(f"Error creating supplier: {err}", "error")
         
-        content = _supplier_form()
+        _prefill = None
+        if request.method == "POST":
+            _prefill = request.form.to_dict()
+            _prefill["vat_registered"] = request.form.get("not_vat_registered") != "on"
+        content = _supplier_form(v=_prefill)
         return render_page("New Supplier", content, user, "suppliers")
     
     
