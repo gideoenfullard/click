@@ -27608,15 +27608,30 @@ def dashboard():
                 else:
                     _cutoff = (datetime.now() - timedelta(days=30)).strftime("%Y-%m-%d")
                     _u_sales = db.get("sales", {"business_id": biz_id}, limit=10000,
-                                      select="id,sale_number,date,total,status") or []
+                                      select="id,sale_number,date,total") or []
                     _u_refs = {str(_j.get("reference", "") or "").strip()
                                for _j in (db.get("journals", {"business_id": biz_id},
                                                  limit=100000, select="reference") or [])}
+                    # Refunded status lives ONLY in allocation_log — the sales
+                    # table has no status column (same rule as clickai_pos.py).
+                    _u_refunded = set()
+                    for _al in (db.get("allocation_log", {"business_id": biz_id},
+                                       select="source_id,source_table,extra") or []):
+                        if _al.get("source_table") != "sales" or not _al.get("source_id"):
+                            continue
+                        _ex = _al.get("extra", {})
+                        if isinstance(_ex, str):
+                            try:
+                                _ex = json.loads(_ex) if _ex else {}
+                            except Exception:
+                                _ex = {}
+                        if isinstance(_ex, dict) and _ex.get("action") == "pos_refund":
+                            _u_refunded.add(_al.get("source_id"))
                     _unposted = []
                     for _s in _u_sales:
                         if (_s.get("date") or "") < _cutoff:
                             continue
-                        if str(_s.get("status", "") or "").lower() in ("refunded", "reversed"):
+                        if _s.get("id") in _u_refunded:
                             continue
                         _ref = str(_s.get("sale_number", "") or "").strip()
                         if _ref and _ref not in _u_refs:

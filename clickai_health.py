@@ -26,6 +26,7 @@
 #   as an "info" finding; the runner always completes.
 # ==============================================================================
 
+import json
 import logging
 from collections import defaultdict
 from datetime import datetime, timedelta
@@ -142,8 +143,24 @@ def build_ctx(biz_id):
 
     sales = db.get(
         "sales", {"business_id": biz_id}, limit=100000,
-        select="id,sale_number,date,total,payment_method,customer_name,status"
+        select="id,sale_number,date,total,payment_method,customer_name"
     ) or []
+
+    # Refunded status lives ONLY in allocation_log — the sales table has no
+    # status column (same rule as clickai_pos.py). Checks read ctx, never the DB.
+    refunded_sale_ids = set()
+    for al in (db.get("allocation_log", {"business_id": biz_id}, limit=100000,
+                      select="source_id,source_table,extra") or []):
+        if al.get("source_table") != "sales" or not al.get("source_id"):
+            continue
+        extra = al.get("extra", {})
+        if isinstance(extra, str):
+            try:
+                extra = json.loads(extra) if extra else {}
+            except Exception:
+                extra = {}
+        if isinstance(extra, dict) and extra.get("action") == "pos_refund":
+            refunded_sale_ids.add(al.get("source_id"))
 
     return {
         "biz_id": biz_id,
@@ -161,6 +178,7 @@ def build_ctx(biz_id):
         "expenses": expenses,
         "bank_txns": bank_txns,
         "sales": sales,
+        "refunded_sale_ids": refunded_sale_ids,
     }
 
 
@@ -647,7 +665,7 @@ def chk_pos_unposted(ctx):
     money = _DEPS["money"]
     findings = []
     for sale in ctx["sales"]:
-        if str(sale.get("status", "") or "").lower() in ("refunded", "reversed"):
+        if sale.get("id") in ctx["refunded_sale_ids"]:
             continue
         total = _f(sale.get("total"))
         if total <= TOLERANCE:
