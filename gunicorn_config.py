@@ -12,10 +12,10 @@ bind = f"0.0.0.0:{os.environ.get('PORT', '8080')}"
 workers = int(os.environ.get("WEB_CONCURRENCY", "2"))
 
 # Threads per worker (good for I/O-bound work like API calls)
-threads = 2
+threads = 8
 
-# Timeout: 300s to handle PDF bank imports + Claude API calls
-timeout = 300
+# Timeout: 120s to handle PDF bank imports + Claude API calls
+timeout = 120
 
 # Graceful timeout for shutdown
 graceful_timeout = 30

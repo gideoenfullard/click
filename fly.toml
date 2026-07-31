@@ -15,6 +15,11 @@ primary_region = "lhr"
   processes = ["app"]
   sticky_sessions = true
 
+  [http_service.concurrency]
+    type = "requests"
+    soft_limit = 12
+    hard_limit = 16
+
   [[http_service.checks]]
     grace_period = "60s"
     interval = "30s"
