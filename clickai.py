@@ -27516,6 +27516,9 @@ def suspense_explainer():
     return render_page(title="Suspense Explainer", content=content, active="dashboard")
 
 
+_unposted_cache = {}      # {biz_id: (timestamp, [sales])}
+_UNPOSTED_CACHE_TTL = 300  # seconds — the dashboard is the busiest page
+
 @app.route("/")
 @login_required
 def dashboard():
@@ -27590,6 +27593,53 @@ def dashboard():
         '''
         except Exception as _e:
             logger.warning(f"[DASHBOARD] Could not compute suspense banner: {_e}")
+    
+    # Unposted POS Sales Banner - the sale saved but its GL journal did not
+    # (a dropped Supabase connection loses the journal silently). Surgical:
+    # last 30 days only, cached, never blocks page load on error.
+    unposted_banner_html = ""
+    if not is_staff:
+        try:
+            biz_id = business.get("id") if business else None
+            if biz_id:
+                _cached = _unposted_cache.get(biz_id)
+                if _cached and (time.time() - _cached[0]) < _UNPOSTED_CACHE_TTL:
+                    _unposted = _cached[1]
+                else:
+                    _cutoff = (datetime.now() - timedelta(days=30)).strftime("%Y-%m-%d")
+                    _u_sales = db.get("sales", {"business_id": biz_id}, limit=10000,
+                                      select="id,sale_number,date,total,status") or []
+                    _u_refs = {str(_j.get("reference", "") or "").strip()
+                               for _j in (db.get("journals", {"business_id": biz_id},
+                                                 limit=100000, select="reference") or [])}
+                    _unposted = []
+                    for _s in _u_sales:
+                        if (_s.get("date") or "") < _cutoff:
+                            continue
+                        if str(_s.get("status", "") or "").lower() in ("refunded", "reversed"):
+                            continue
+                        _ref = str(_s.get("sale_number", "") or "").strip()
+                        if _ref and _ref not in _u_refs:
+                            _unposted.append(_s)
+                    _unposted_cache[biz_id] = (time.time(), _unposted)
+                if _unposted:
+                    _u_total = sum(float(_s.get("total", 0) or 0) for _s in _unposted)
+                    unposted_banner_html = f'''
+        <div class="card" style="background:linear-gradient(135deg,rgba(239,68,68,0.18),rgba(245,158,11,0.10));border:1px solid rgba(239,68,68,0.45);margin-bottom:20px;cursor:pointer;" onclick="window.location='/system-health'">
+            <div style="display:flex;align-items:center;gap:15px;">
+                <div style="flex:1;">
+                    <h3 style="margin:0;color:var(--text);">POS Sales Not In The Ledger: R{_u_total:,.2f}</h3>
+                    <p style="margin:5px 0 0 0;color:var(--text-muted);font-size:14px;">
+                        {len(_unposted)} POS sale(s) in the last 30 days were taken at the till but
+                        never reached the general ledger &mdash; click to see which ones.
+                    </p>
+                </div>
+                <span style="color:var(--primary);font-size:14px;font-weight:600;">View →</span>
+            </div>
+        </div>
+        '''
+        except Exception as _e:
+            logger.warning(f"[DASHBOARD] Could not compute unposted POS banner: {_e}")
     
     # Getting Started section - show if no data yet
     getting_started_html = ""
@@ -27760,6 +27810,7 @@ def dashboard():
     
     content = f'''
     {suspense_banner_html}
+    {unposted_banner_html}
     
     {getting_started_html}
     
@@ -36999,7 +37050,7 @@ def create_journal_entry(biz_id: str, date: str, description: str, reference: st
         debit = float(entry.get("debit", 0))
         credit = float(entry.get("credit", 0))
         
-        success, err = db.save("journals", {
+        row = {
             "id": generate_id(),
             "business_id": biz_id,
             "date": date,
@@ -37009,9 +37060,24 @@ def create_journal_entry(biz_id: str, date: str, description: str, reference: st
             "debit": debit,
             "credit": credit,
             "created_at": now()
-        })
+        }
+        
+        # A dropped keep-alive connection to Supabase fails the save outright
+        # (the shared DB session is built with max_retries=0), which silently
+        # loses the journal while the source document is already saved. Retry
+        # twice before giving up. The row keeps the SAME id on every attempt,
+        # so if the first save actually reached Supabase and only the response
+        # was lost, the retry is rejected as a duplicate key instead of
+        # double-posting. Anything still failing is reported by CHK-011.
+        success, err = db.save("journals", row)
+        attempt = 1
+        while not success and attempt < 3:
+            time.sleep(0.5 * attempt)
+            attempt += 1
+            success, err = db.save("journals", row)
         
         if not success:
+            print(f"[GL] Journal line save FAILED after {attempt} attempts - ref={reference} account={account_code} err={err}", flush=True)
             logger.error(f"[GL] Failed to save journal entry: {err}")
 
 # 

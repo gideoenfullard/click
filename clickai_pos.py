@@ -5850,14 +5850,19 @@ def register_pos_routes(app, db, login_required, Auth, render_page,
         transaction_count = len(active_sales)
         
         # === EXPECTED CASH FOR Z-READ ===
-        # Cash in drawer = ALL cash received today (POS sales + cash-paid invoices)
+        # Cash in drawer = ALL cash received today (POS sales + cash-paid invoices
+        # + cash account payments from debtors settling at the counter).
         # Refunded sales / reversed invoices are excluded — the cash went back out.
+        # Reversed receipts are deleted from the table, so no exclusion is needed.
         today_str = today()
         today_cash_sales = sum(float(s.get("total", 0)) for s in all_sales 
                               if _sale_active(s) and s.get("payment_method") == "cash" and (s.get("date") or "") == today_str)
         today_cash_invoices = sum(float(i.get("total", 0)) for i in all_invoices 
                                  if _inv_active(i) and i.get("payment_method") in ("cash",) and (i.get("date") or "") == today_str)
-        expected_cash_drawer = today_cash_sales + today_cash_invoices
+        all_receipts = db.get("receipts", {"business_id": biz_id}) if biz_id else []
+        today_cash_receipts = sum(float(r.get("amount", 0)) for r in all_receipts
+                                 if (r.get("method") or "").lower() == "cash" and (r.get("date") or "") == today_str)
+        expected_cash_drawer = today_cash_sales + today_cash_invoices + today_cash_receipts
 
         # === TODAY-ONLY TOTALS FOR Z-READ SLIP (never use date-range totals) ===
         today_sales = [s for s in all_sales if (s.get("date") or "") == today_str and _sale_active(s)]
@@ -6040,6 +6045,7 @@ def register_pos_routes(app, db, login_required, Auth, render_page,
             _zr_inv_section = f'<hr style="border:1px dashed #000;margin:12px 0;"><div style="margin-bottom:8px;"><strong>INVOICES (Cash Paid)</strong></div><table style="width:100%;border-collapse:collapse;">{_zr_inv_rows}</table>'
         
         _zr_cash_inv_row = f'<tr><td style="font-size:12px;">+ Cash Invoices:</td><td style="text-align:right;font-size:12px;">{money(zr_inv_cash)}</td></tr>' if zr_inv_cash else ''
+        _zr_cash_receipt_row = f'<tr><td style="font-size:12px;">+ Account Payments:</td><td style="text-align:right;font-size:12px;">{money(today_cash_receipts)}</td></tr>' if today_cash_receipts else ''
         
         content = f'''
         <div class="card">
@@ -6500,6 +6506,7 @@ def register_pos_routes(app, db, login_required, Auth, render_page,
     <table style="width:100%;border-collapse:collapse;">
     <tr><td style="font-size:12px;">POS Cash Sales:</td><td style="text-align:right;font-size:12px;">{money(zr_cash)}</td></tr>
     {_zr_cash_inv_row}
+    {_zr_cash_receipt_row}
     <tr style="font-size:18px;font-weight:bold;border-top:1px solid #000;">
     <td>EXPECTED CASH:</td>
     <td style="text-align:right;">{money(expected_cash_drawer)}</td>

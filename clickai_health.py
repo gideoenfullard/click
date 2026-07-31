@@ -140,6 +140,11 @@ def build_ctx(biz_id):
         select="id,date,description,amount,matched"
     ) or []
 
+    sales = db.get(
+        "sales", {"business_id": biz_id}, limit=100000,
+        select="id,sale_number,date,total,payment_method,customer_name,status"
+    ) or []
+
     return {
         "biz_id": biz_id,
         "today": today(),
@@ -155,6 +160,7 @@ def build_ctx(biz_id):
         "invoices": invoices,
         "expenses": expenses,
         "bank_txns": bank_txns,
+        "sales": sales,
     }
 
 
@@ -630,6 +636,46 @@ def chk_stale_bank_lines(ctx):
 
 
 # ==============================================================================
+# CHK-011 — POS SALE NOT POSTED TO THE GL
+# The sale saved but its journal did not — a dropped Supabase connection
+# loses the journal silently while the till still prints the slip. The money
+# is in the drawer and on the Z-Read, but nowhere in the ledger.
+# ==============================================================================
+
+def chk_pos_unposted(ctx):
+    cid, cname = "CHK-011", "POS sales not posted to the GL"
+    money = _DEPS["money"]
+    findings = []
+    for sale in ctx["sales"]:
+        if str(sale.get("status", "") or "").lower() in ("refunded", "reversed"):
+            continue
+        total = _f(sale.get("total"))
+        if total <= TOLERANCE:
+            continue
+        ref = str(sale.get("sale_number", "") or "").strip()
+        if not ref:
+            continue
+        if ctx["by_ref"].get(ref):
+            continue
+        findings.append(_finding(
+            cid, cname, "critical",
+            f"POS sale {ref} was never posted to the GL",
+            f"The sale of {money(total)} on {sale.get('date', '')} "
+            f"({sale.get('payment_method', '')}) is in the sales table but no journal "
+            f"with reference {ref} exists. The money was taken at the till and counted "
+            f"on the Z-Read, but the ledger does not show it.",
+            refs=[{"table": "sales", "id": str(sale.get("id", "")), "label": ref}],
+            amounts={"total": round(total, 2)},
+        ))
+        if len(findings) >= MAX_FINDINGS_PER_CHECK:
+            findings.append(_finding(
+                cid, cname, "info", "More unposted POS sales exist",
+                f"Only the first {MAX_FINDINGS_PER_CHECK} are shown. Fix these and run again."))
+            break
+    return findings
+
+
+# ==============================================================================
 # REGISTER THE v1 CHECKS
 # ==============================================================================
 
@@ -643,6 +689,7 @@ register_check("CHK-007", "Posted to wrong account type", chk_wrong_side)
 register_check("CHK-008", "Duplicate journal postings", chk_duplicate_journals)
 register_check("CHK-009", "Opening balance suspense", chk_suspense)
 register_check("CHK-010", "Stale unallocated bank lines", chk_stale_bank_lines)
+register_check("CHK-011", "POS sales not posted to the GL", chk_pos_unposted)
 
 
 # ==============================================================================
