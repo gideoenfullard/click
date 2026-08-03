@@ -92,6 +92,37 @@ def _direction_safe_pattern_category(category, desc_upper, is_credit, extra_expe
     return category, False
 
 
+def _cust_disc_ok(db, invoice, outstanding, remaining_pay, cache):
+    """True when a payment shortfall is covered by the customer's OWN stored
+    Discount Allowed %. The shortfall is never allowed to exceed that %, so a
+    genuine under-payment can no longer be silently written off as discount.
+    A customer with no % set up gets no discount at all — Daphne must set the
+    customer up first. Returns False on any doubt (missing customer, 0%, or a
+    shortfall bigger than the percentage allows)."""
+    shortfall = round(outstanding - remaining_pay, 2)
+    if shortfall <= 0.01:
+        return False
+    cust_id = invoice.get("customer_id")
+    if not cust_id:
+        return False
+    if cust_id in cache:
+        pct = cache[cust_id]
+    else:
+        pct = 0.0
+        try:
+            cust = db.get_one("customers", cust_id)
+            if cust:
+                pct = float(cust.get("discount_percentage", 0) or 0)
+        except (TypeError, ValueError, AttributeError):
+            pct = 0.0
+        cache[cust_id] = pct
+    # Sane settlement-discount range only — same rule as the auto-matcher.
+    if pct <= 0 or pct > 50:
+        return False
+    allowed = round(outstanding * pct / 100.0, 2)
+    return shortfall <= allowed + 0.02
+
+
 # Module-level holders for the reconciliation engine, registered when the banking
 # routes load. This lets other modules (e.g. Zane in clickai.py) ask for the
 # reconciliation difference + plain-language explanation using the exact same
@@ -4735,6 +4766,7 @@ Return ONLY the JSON array. No markdown, no explanation."""
                         # Allocate payment amount across invoices in order — only mark paid if fully covered
                         if _picked_invoice_ids:
                             _remaining_pay = income_amount
+                            _dp_cache = {}   # {customer_id: discount_percentage}
                             for _inv_id in _picked_invoice_ids:
                                 _picked_inv = db.get_one("invoices", _inv_id)
                                 if _picked_inv and _picked_inv.get("status") not in ("paid", "credited"):
@@ -4750,9 +4782,12 @@ Return ONLY the JSON array. No markdown, no explanation."""
                                         db.save("invoices", _picked_inv)
                                         _remaining_pay -= _inv_outstanding
                                         logger.info(f"[BANK] Marked {_picked_inv.get('invoice_number','?')} as PAID (R{_inv_total})")
-                                    elif _discount_allowed and (_inv_outstanding - _remaining_pay) <= _inv_outstanding * 0.5:
+                                    elif _discount_allowed and _cust_disc_ok(db, _picked_inv, _inv_outstanding, _remaining_pay, _dp_cache):
                                         # Shortfall written off as Discount Allowed — invoice CLOSED.
-                                        # The remaining payment covers part; the gap becomes discount.
+                                        # Only reached when the shortfall is within the customer's
+                                        # own stored Discount Allowed % (see _cust_disc_ok). A larger
+                                        # gap means the customer also under-paid: that falls through
+                                        # to the partial-payment branch so the extra stays owing.
                                         _shortfall = round(_inv_outstanding - _remaining_pay, 2)
                                         _picked_inv["status"] = "paid"
                                         _picked_inv["paid_date"] = txn_date
