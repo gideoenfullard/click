@@ -4219,18 +4219,37 @@ class DB:
             "Prefer": "return=representation"
         }
     
-    def get(self, table: str, filters: dict = None, limit: int = 10000, select: str = "*") -> List[dict]:
-        """Get records from table"""
+    def get(self, table: str, filters: dict = None, limit: int = 50000, select: str = "*") -> List[dict]:
+        """Get records from table.
+        Supabase caps every REST response at 1000 rows regardless of the limit
+        we ask for, so anything larger is fetched page by page until the table
+        is exhausted or `limit` is reached."""
         try:
-            endpoint = f"{self.url}/rest/v1/{table}?select={select}&limit={limit}"
+            base = f"{self.url}/rest/v1/{table}?select={select}"
             if filters:
                 for k, v in filters.items():
-                    endpoint += f"&{k}=eq.{v}"
+                    base += f"&{k}=eq.{v}"
             
-            response = _DB_SESSION.get(endpoint, headers=self.headers, timeout=15)
-            if table == "users" and filters:
-                print(f"[DB DEBUG] GET {table} filters={filters} → status={response.status_code}, rows={len(response.json()) if response.status_code == 200 else 'N/A'}, body={response.text[:200]}", flush=True)
-            return response.json() if response.status_code == 200 else []
+            rows = []
+            page_size = 1000
+            while len(rows) < limit:
+                want = min(page_size, limit - len(rows))
+                endpoint = f"{base}&limit={want}&offset={len(rows)}"
+                response = _DB_SESSION.get(endpoint, headers=self.headers, timeout=15)
+                if table == "users" and filters:
+                    print(f"[DB DEBUG] GET {table} filters={filters} → status={response.status_code}, rows={len(response.json()) if response.status_code == 200 else 'N/A'}, body={response.text[:200]}", flush=True)
+                if response.status_code != 200:
+                    print(f"[DB] Get failed on {table} at offset {len(rows)}: status={response.status_code} body={response.text[:200]}", flush=True)
+                    return []
+                page = response.json()
+                if not isinstance(page, list):
+                    return []
+                rows.extend(page)
+                if len(page) < want:
+                    break
+            if len(rows) >= limit > page_size:
+                print(f"[DB] WARNING: {table} hit the {limit}-row read cap - result may be truncated", flush=True)
+            return rows
         except Exception as e:
             logger.error(f"[DB] Get error on {table}: {e}")
             return []
@@ -4560,33 +4579,20 @@ class DB:
             return 0
     
     def sum_column(self, table: str, column: str, filters: dict = None) -> float:
-        """Get sum of a column - only loads that column, not all data"""
+        """Get sum of a column - only loads that column, not all data.
+        Reads via get() so it pages past Supabase's 1000-row response cap."""
         try:
-            endpoint = f"{self.url}/rest/v1/{table}?select={column}"
-            if filters:
-                for k, v in filters.items():
-                    endpoint += f"&{k}=eq.{v}"
-            
-            response = _DB_SESSION.get(endpoint, headers=self.headers, timeout=30)
-            if response.status_code == 200:
-                rows = response.json()
-                return sum(float(r.get(column, 0) or 0) for r in rows)
-            return 0
+            rows = self.get(table, filters, select=column)
+            return sum(float(r.get(column, 0) or 0) for r in rows)
         except Exception as e:
             logger.error(f"[DB] Sum error: {e}")
             return 0
     
-    def get_columns(self, table: str, columns: list, filters: dict = None, limit: int = 10000) -> List[dict]:
-        """Get only specific columns - much faster than select=*"""
+    def get_columns(self, table: str, columns: list, filters: dict = None, limit: int = 50000) -> List[dict]:
+        """Get only specific columns - much faster than select=*.
+        Reads via get() so it pages past Supabase's 1000-row response cap."""
         try:
-            cols = ",".join(columns)
-            endpoint = f"{self.url}/rest/v1/{table}?select={cols}&limit={limit}"
-            if filters:
-                for k, v in filters.items():
-                    endpoint += f"&{k}=eq.{v}"
-            
-            response = _DB_SESSION.get(endpoint, headers=self.headers, timeout=20)
-            return response.json() if response.status_code == 200 else []
+            return self.get(table, filters, limit=limit, select=",".join(columns))
         except Exception as e:
             logger.error(f"[DB] Get columns error: {e}")
             return []
@@ -4752,33 +4758,25 @@ class DB:
         # whose code matches, so the POST acts as an UPDATE.
         if business_id and merge_key:
             try:
-                fetch_url = (f"{self.url}/rest/v1/{table}"
-                             f"?select=id,{merge_key}"
-                             f"&business_id=eq.{business_id}"
-                             f"&limit=50000")
-                resp = _DB_SESSION.get(fetch_url, headers=self.headers, timeout=60)
-                if resp.status_code == 200:
-                    existing = resp.json() or []
-                    code_to_id = {}
-                    for row in existing:
-                        k = row.get(merge_key)
-                        rid = row.get("id")
-                        if k and rid:
-                            code_to_id[str(k).strip().lower()] = rid
-                    
-                    matched = 0
-                    for rec in records:
-                        k = rec.get(merge_key)
-                        if k:
-                            existing_id = code_to_id.get(str(k).strip().lower())
-                            if existing_id:
-                                rec["id"] = existing_id
-                                matched += 1
-                    logger.info(f"[DB FAST] {table}: matched {matched}/{len(records)} "
-                                f"to existing rows by {merge_key}")
-                else:
-                    logger.warning(f"[DB FAST] {table}: bulk-fetch returned "
-                                   f"{resp.status_code}, proceeding without merge")
+                existing = self.get(table, {"business_id": business_id},
+                                    limit=50000, select=f"id,{merge_key}") or []
+                code_to_id = {}
+                for row in existing:
+                    k = row.get(merge_key)
+                    rid = row.get("id")
+                    if k and rid:
+                        code_to_id[str(k).strip().lower()] = rid
+                
+                matched = 0
+                for rec in records:
+                    k = rec.get(merge_key)
+                    if k:
+                        existing_id = code_to_id.get(str(k).strip().lower())
+                        if existing_id:
+                            rec["id"] = existing_id
+                            matched += 1
+                print(f"[DB FAST] {table}: {len(existing)} existing rows read, "
+                      f"matched {matched}/{len(records)} by {merge_key}", flush=True)
             except Exception as e:
                 logger.error(f"[DB FAST] {table}: bulk-fetch failed: {e}, "
                              f"proceeding without merge")
