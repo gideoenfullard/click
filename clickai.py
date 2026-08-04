@@ -2322,14 +2322,24 @@ def calc_supplier_balance(biz_id: str, supplier_id: str) -> float:
         return 0.0
 
 
-def calc_all_customer_balances(biz_id: str, customers=None, asat: str = None) -> dict:
-    """Calculate balances for ALL customers in one batch. Returns {customer_id: balance}.
-    Much more efficient than calling calc_customer_balance() per customer.
+def _customer_ledger_items(biz_id: str, customers=None, asat: str = None) -> dict:
+    """Per-customer debit/credit items built from source documents.
+    Returns {customer_id: [{"date", "debit", "credit", "invoice_id"}, ...]}.
+
+    This is the single definition of what counts as customer debt. The batch
+    balance and the aging analysis both read from it, so they cannot disagree.
     Excludes reversed invoices and refunded sales (derived from allocation_log).
-    asat: optional 'YYYY-MM-DD' cut-off. When given, only documents dated on or
-    before that date count, so the balance is what the customer owed on that day.
-    Documents with no date are always included.
+    asat: optional 'YYYY-MM-DD' cut-off. Documents with no date always count.
     """
+    items = {}
+
+    def _add(cid, date, debit, credit, invoice_id=None):
+        if not cid:
+            return
+        items.setdefault(cid, []).append({
+            "date": date, "debit": debit, "credit": credit, "invoice_id": invoice_id,
+        })
+
     try:
         all_invoices = db.get("invoices", {"business_id": biz_id}, select="id,customer_id,status,total,invoice_number,date") or []
         all_sales = db.get("sales", {"business_id": biz_id}, select="id,customer_id,payment_method,status,total,date") or []
@@ -2380,15 +2390,13 @@ def calc_all_customer_balances(biz_id: str, customers=None, asat: str = None) ->
             if _n:
                 _name_to_id[_n] = c.get("id", "")
 
-        balances = {}
-
         # Debits: invoices (excluding credited and reversed)
         for inv in all_invoices:
             if not _in_period(inv):
                 continue
             cid = inv.get("customer_id", "")
             if cid and inv.get("status") not in ("credited", "reversed") and inv.get("id") not in _reversed_invoice_ids:
-                balances[cid] = balances.get(cid, 0) + float(inv.get("total", 0))
+                _add(cid, inv.get("date"), float(inv.get("total", 0)), 0.0, inv.get("id"))
 
         # Debits: account sales (excluding refunded)
         for s in all_sales:
@@ -2397,7 +2405,7 @@ def calc_all_customer_balances(biz_id: str, customers=None, asat: str = None) ->
             if s.get("payment_method") == "account" and (s.get("status") or "").lower() not in ("refunded", "reversed") and s.get("id") not in _refunded_sale_ids:
                 cid = s.get("customer_id", "")
                 if cid:
-                    balances[cid] = balances.get(cid, 0) + float(s.get("total", 0))
+                    _add(cid, s.get("date"), float(s.get("total", 0)), 0.0)
 
         # Credits: receipts (skip payments whose ledger allocation was reversed).
         # A receipt settles cash + any settlement discount taken.
@@ -2413,7 +2421,8 @@ def calc_all_customer_balances(biz_id: str, customers=None, asat: str = None) ->
                 _rname = (r.get("customer_name") or "").upper().strip()
                 cid = _name_to_id.get(_rname, "")
             if cid:
-                balances[cid] = balances.get(cid, 0) - float(r.get("amount", 0)) - float(r.get("discount_total", 0) or 0)
+                _add(cid, r.get("date"), 0.0,
+                     float(r.get("amount", 0)) + float(r.get("discount_total", 0) or 0))
 
         # Credits: credit notes. A credit note linked to a credited invoice is
         # excluded — that invoice is already excluded above, so subtracting its
@@ -2429,11 +2438,53 @@ def calc_all_customer_balances(biz_id: str, customers=None, asat: str = None) ->
                 continue
             if cn.get("invoice_number") and (cid, cn.get("invoice_number", "")) in _credited_nums:
                 continue
-            balances[cid] = balances.get(cid, 0) - float(cn.get("total", 0))
+            _add(cid, cn.get("date"), 0.0, float(cn.get("total", 0)))
 
-        return {k: round(v, 2) for k, v in balances.items()}
+        return items
+    except Exception as e:
+        logger.error(f"[CALC BATCH] Customer ledger items error: {e}")
+        return {}
+
+
+def calc_all_customer_balances(biz_id: str, customers=None, asat: str = None) -> dict:
+    """Calculate balances for ALL customers in one batch. Returns {customer_id: balance}.
+    Much more efficient than calling calc_customer_balance() per customer.
+    asat: optional 'YYYY-MM-DD' cut-off — the balance as it stood on that day.
+    """
+    try:
+        balances = {}
+        for cid, rows in _customer_ledger_items(biz_id, customers=customers, asat=asat).items():
+            _b = 0.0
+            for _r in rows:
+                _b += _r["debit"] - _r["credit"]
+            balances[cid] = round(_b, 2)
+        return balances
     except Exception as e:
         logger.error(f"[CALC BATCH] Customer balances error: {e}")
+        return {}
+
+
+def calc_all_customer_aging(biz_id: str, asat: str = None, customers=None) -> dict:
+    """Age EVERY customer using exactly the rules a printed statement uses.
+    Returns {customer_id: {"current","30","60","90","120","total"}}.
+    Buckets always add up to that customer's balance on the asat date.
+    """
+    try:
+        if not asat:
+            asat = _statement_asat("", default_current=True)[1]
+        _alloc = _customer_real_allocations(biz_id, asat)
+        out = {}
+        for cid, rows in _customer_ledger_items(biz_id, customers=customers, asat=asat).items():
+            _bal = 0.0
+            for _r in rows:
+                _bal += _r["debit"] - _r["credit"]
+            _bal = round(_bal, 2)
+            _a = _statement_aging_from_ledger(rows, asat, _bal, _alloc)
+            _a["total"] = round(sum(_a.values()), 2)
+            out[cid] = _a
+        return out
+    except Exception as e:
+        logger.error(f"[AGING BATCH] Customer aging error: {e}")
         return {}
 
 
@@ -3132,6 +3183,7 @@ Thank you for your business!
                 "reference": inv.get("invoice_number", ""),
                 "debit": float(inv.get("total", 0) or 0),
                 "credit": 0,
+                "invoice_id": inv.get("id"),
             })
         _rev_pay_refs = _reversed_customer_payment_refs(biz_id)
         for r in cust_receipts:
@@ -3169,6 +3221,7 @@ Thank you for your business!
         # Close the statement at the selected month-end — exclude anything later
         transactions = [t for t in transactions if (t.get("date") or "")[:10] <= asat]
         # Roll everything before the 1st of the statement month into an opening balance
+        _aging_txns = list(transactions)
         _opening_balance, transactions, _period_start = _statement_split_opening(transactions, asat)
         
         # Calculate running balance and build ledger rows
@@ -3208,41 +3261,8 @@ Thank you for your business!
         # ════════════════════════════════════════════════════════════════
         # AGING BUCKETS (current / 30 / 60 / 90 / 120+ days) — Sage benchmark
         # ════════════════════════════════════════════════════════════════
-        from datetime import datetime as _dt, date as _date
-        try:
-            _today_obj = _dt.strptime(asat, "%Y-%m-%d").date()
-        except Exception:
-            _today_obj = _date.today()
-        aging = {"current": 0.0, "30": 0.0, "60": 0.0, "90": 0.0, "120": 0.0}
-        for inv in invoices:
-            if (inv.get("status") or "").lower() in ("reversed", "credited", "paid"):
-                continue
-            if (inv.get("date") or "")[:10] > asat:
-                continue
-            try:
-                inv_total = float(inv.get("total", 0) or 0)
-                inv_paid = float(inv.get("amount_paid", 0) or 0)
-                outstanding = inv_total - inv_paid
-                if outstanding <= 0.01:
-                    continue
-                _date_str = inv.get("date") or ""
-                try:
-                    inv_date = _dt.strptime(_date_str[:10], "%Y-%m-%d").date()
-                except Exception:
-                    continue
-                days_old = (_today_obj - inv_date).days
-                if days_old <= 30:
-                    aging["current"] += outstanding
-                elif days_old <= 60:
-                    aging["30"] += outstanding
-                elif days_old <= 90:
-                    aging["60"] += outstanding
-                elif days_old <= 120:
-                    aging["90"] += outstanding
-                else:
-                    aging["120"] += outstanding
-            except Exception:
-                continue
+        aging = _statement_aging_from_ledger(_aging_txns, asat, final_balance,
+                                             _customer_real_allocations(biz_id, asat))
         
         subject = f"Statement of Account - {biz_name}"
         cust_code = safe(customer.get("code", "") or customer.get("account_code", ""))
@@ -34928,6 +34948,117 @@ def _statement_asat(month_param: str = "", default_current: bool = False):
     return month_str, asat
 
 
+def _customer_real_allocations(biz_id: str, asat: str = None) -> dict:
+    """{invoice_id: amount actually allocated to it} from payment_allocations,
+    counting only allocations dated on or before asat."""
+    out = {}
+    if not biz_id:
+        return out
+    try:
+        rows = db.get("payment_allocations", {"business_id": biz_id},
+                      select="invoice_id,amount,date") or []
+    except Exception as e:
+        logger.warning(f"[AGING] payment_allocations load failed: {e}")
+        return out
+    _cut = (asat or "")[:10]
+    for r in rows:
+        _iid = r.get("invoice_id")
+        if not _iid:
+            continue
+        _d = (r.get("date") or "")[:10]
+        if _cut and _d and _d > _cut:
+            continue
+        out[_iid] = round(out.get(_iid, 0) + float(r.get("amount", 0) or 0), 2)
+    return out
+
+
+def _statement_aging_from_ledger(transactions, asat, final_balance, real_alloc=None):
+    """Age an account from the same ledger the statement displays.
+
+    Open-item aging, Sage style. Where a payment was actually allocated to a
+    specific invoice (payment_allocations), that allocation settles that
+    invoice. Whatever credit is left over — on-account receipts, credit notes,
+    old imported data with no allocation rows — is applied oldest-item-first.
+    Whatever remains of each debit is bucketed by that document's own age, so
+    the buckets always add up to the statement balance.
+
+    transactions: the full pre-opening-balance list, each {date, debit, credit, void}
+    real_alloc: optional {invoice_id: amount allocated}
+    """
+    from datetime import datetime as _dt, date as _date
+    aging = {"current": 0.0, "30": 0.0, "60": 0.0, "90": 0.0, "120": 0.0}
+    try:
+        _cut_obj = _dt.strptime((asat or "")[:10], "%Y-%m-%d").date()
+    except Exception:
+        _cut_obj = _date.today()
+
+    open_items = []
+    credit_pool = 0.0
+    for t in transactions:
+        if t.get("void"):
+            continue
+        try:
+            _d_obj = _dt.strptime((t.get("date") or "")[:10], "%Y-%m-%d").date()
+        except Exception:
+            _d_obj = _cut_obj
+        _debit = float(t.get("debit", 0) or 0)
+        _credit = float(t.get("credit", 0) or 0)
+        if _debit > 0:
+            open_items.append([_d_obj, _debit, t.get("invoice_id")])
+        if _credit > 0:
+            credit_pool += _credit
+
+    open_items.sort(key=lambda x: x[0])
+
+    # 1. Real allocations settle the invoice they were posted against
+    _alloc = real_alloc or {}
+    if _alloc:
+        for _item in open_items:
+            _iid = _item[2]
+            if not _iid:
+                continue
+            _allocated = float(_alloc.get(_iid, 0) or 0)
+            if _allocated <= 0.005 or credit_pool <= 0.005:
+                continue
+            _take = min(_allocated, _item[1], credit_pool)
+            _item[1] -= _take
+            credit_pool -= _take
+
+    # 2. Whatever credit is left settles the oldest open items first
+    for _item in open_items:
+        if credit_pool <= 0.005:
+            break
+        _take = min(credit_pool, _item[1])
+        _item[1] -= _take
+        credit_pool -= _take
+
+    for _d_obj, _remaining, _iid in open_items:
+        if _remaining <= 0.005:
+            continue
+        days_old = (_cut_obj - _d_obj).days
+        if days_old <= 30:
+            aging["current"] += _remaining
+        elif days_old <= 60:
+            aging["30"] += _remaining
+        elif days_old <= 90:
+            aging["60"] += _remaining
+        elif days_old <= 120:
+            aging["90"] += _remaining
+        else:
+            aging["120"] += _remaining
+
+    # Credit left over = the account is in credit; show it against Current
+    if credit_pool > 0.005:
+        aging["current"] -= credit_pool
+
+    # Absorb cent-level rounding so the buckets always tie to the balance shown
+    _diff = round(float(final_balance or 0) - sum(aging.values()), 2)
+    if abs(_diff) >= 0.01:
+        aging["current"] = aging["current"] + _diff
+
+    return {k: round(v, 2) for k, v in aging.items()}
+
+
 def _statement_split_opening(transactions, asat):
     """Roll every transaction dated before the 1st of the statement month into a
     single opening balance. Returns (opening_balance, current_month_transactions,
@@ -35655,6 +35786,7 @@ def customer_statement_print(customer_id):
             "reference": inv.get("invoice_number", ""),
             "debit": float(inv.get("total", 0) or 0),
             "credit": 0,
+            "invoice_id": inv.get("id"),
         })
     
     _rev_pay_refs = _reversed_customer_payment_refs(biz_id)
@@ -35714,6 +35846,7 @@ def customer_statement_print(customer_id):
     transactions = [t for t in transactions if (t.get("date") or "")[:10] <= _asat]
     
     # Calculate running balance and build rows
+    _aging_txns = list(transactions)
     _opening_balance, transactions, _period_start = _statement_split_opening(transactions, _asat)
     running_balance = _opening_balance
     rows_html = ""
@@ -35750,45 +35883,8 @@ def customer_statement_print(customer_id):
     
     # ── AGING BUCKETS (Sage/Xero benchmark) ───────────────────────────────
     # Calculate current/30/60/90+ based on invoice age vs today
-    from datetime import datetime as _dt, date as _date
-    try:
-        _today_obj = _dt.strptime(_asat, "%Y-%m-%d").date()
-    except Exception:
-        _today_obj = _date.today()
-    aging = {"current": 0.0, "30": 0.0, "60": 0.0, "90": 0.0, "120": 0.0}
-    
-    # Build per-invoice outstanding amounts (invoice total minus payments allocated to it minus credit notes against it)
-    for inv in cust_invoices:
-        if (inv.get("status") or "").lower() in ("reversed", "credited", "paid"):
-            continue
-        if (inv.get("date") or "")[:10] > _asat:
-            continue  # invoice dated after the statement month-end
-        try:
-            inv_total = float(inv.get("total", 0) or 0)
-            inv_paid = float(inv.get("amount_paid", 0) or 0)
-            outstanding = inv_total - inv_paid
-            if outstanding <= 0.01:
-                continue
-            
-            _date_str = inv.get("date") or ""
-            try:
-                inv_date = _dt.strptime(_date_str[:10], "%Y-%m-%d").date()
-            except Exception:
-                continue
-            
-            days_old = (_today_obj - inv_date).days
-            if days_old <= 30:
-                aging["current"] += outstanding
-            elif days_old <= 60:
-                aging["30"] += outstanding
-            elif days_old <= 90:
-                aging["60"] += outstanding
-            elif days_old <= 120:
-                aging["90"] += outstanding
-            else:
-                aging["120"] += outstanding
-        except Exception:
-            continue
+    aging = _statement_aging_from_ledger(_aging_txns, _asat, final_balance,
+                                         _customer_real_allocations(biz_id, _asat))
     
     # ── Business and customer info ─────────────────────────────────────────
     biz_name = safe_string(business.get("name", "Business")) if business else "Business"
@@ -36228,6 +36324,7 @@ def _build_statement_body_for_print(customer, business, biz_id, _asat):
             "reference": inv.get("invoice_number", ""),
             "debit": float(inv.get("total", 0) or 0),
             "credit": 0,
+            "invoice_id": inv.get("id"),
         })
 
     _rev_pay_refs = _reversed_customer_payment_refs(biz_id)
@@ -36287,6 +36384,7 @@ def _build_statement_body_for_print(customer, business, biz_id, _asat):
     transactions = [t for t in transactions if (t.get("date") or "")[:10] <= _asat]
 
     # Calculate running balance and build rows
+    _aging_txns = list(transactions)
     _opening_balance, transactions, _period_start = _statement_split_opening(transactions, _asat)
     running_balance = _opening_balance
     rows_html = ""
@@ -36322,42 +36420,8 @@ def _build_statement_body_for_print(customer, business, biz_id, _asat):
     final_balance = running_balance
 
     # ── AGING BUCKETS ──────────────────────────────────────────────────────
-    from datetime import datetime as _dt, date as _date
-    try:
-        _today_obj = _dt.strptime(_asat, "%Y-%m-%d").date()
-    except Exception:
-        _today_obj = _date.today()
-    aging = {"current": 0.0, "30": 0.0, "60": 0.0, "90": 0.0, "120": 0.0}
-
-    for inv in cust_invoices:
-        if (inv.get("status") or "").lower() in ("reversed", "credited", "paid"):
-            continue
-        if (inv.get("date") or "")[:10] > _asat:
-            continue
-        try:
-            inv_total = float(inv.get("total", 0) or 0)
-            inv_paid = float(inv.get("amount_paid", 0) or 0)
-            outstanding = inv_total - inv_paid
-            if outstanding <= 0.01:
-                continue
-            _date_str = inv.get("date") or ""
-            try:
-                inv_date = _dt.strptime(_date_str[:10], "%Y-%m-%d").date()
-            except Exception:
-                continue
-            days_old = (_today_obj - inv_date).days
-            if days_old <= 30:
-                aging["current"] += outstanding
-            elif days_old <= 60:
-                aging["30"] += outstanding
-            elif days_old <= 90:
-                aging["60"] += outstanding
-            elif days_old <= 120:
-                aging["90"] += outstanding
-            else:
-                aging["120"] += outstanding
-        except Exception:
-            continue
+    aging = _statement_aging_from_ledger(_aging_txns, _asat, final_balance,
+                                         _customer_real_allocations(biz_id, _asat))
 
     # ── Business and customer info ─────────────────────────────────────────
     biz_name = safe_string(business.get("name", "Business")) if business else "Business"

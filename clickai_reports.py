@@ -245,112 +245,40 @@ def register_report_routes(app, db, login_required, Auth, render_page,
         business = Auth.get_current_business()
         biz_id = business.get("id") if business else None
         
-        # Get all invoices — outstanding is calculated from the source
-        # documents: invoice total minus payments already allocated
-        # (paid_amount). Credited invoices are closed by their credit note.
-        invoices = db.get("invoices", {"business_id": biz_id}) if biz_id else []
-        outstanding = [inv for inv in invoices if inv.get("status") not in ("paid", "credited")]
-        
+        # Age every customer with the same engine and the same month-end close
+        # that the statements use, so the report ties to what customers receive.
+        _asat = today()
+        _aging = {}
+        try:
+            import clickai as _main
+            _asat = _main._statement_asat("", default_current=True)[1]
+            _aging = _main.calc_all_customer_aging(biz_id, asat=_asat) if biz_id else {}
+        except Exception as _ae:
+            logger.error(f"[AGING] Aging calculation failed: {_ae}")
+            _aging = {}
+
         # Get customers
         customers = db.get("customers", {"business_id": biz_id}) if biz_id else []
         customer_map = {c.get("id"): c for c in customers}
-        
-        # Calculate aging buckets
-        today_date = datetime.now().date()
-        
+
         aging_data = {}  # customer_id -> {current, 30, 60, 90, 120+, total}
-        
-        for inv in outstanding:
-            cust_id = inv.get("customer_id")
-            if not cust_id:
+
+        for _cid, _a in _aging.items():
+            if abs(float(_a.get("total", 0) or 0)) <= 0.01:
                 continue
-            
-            if cust_id not in aging_data:
-                cust = customer_map.get(cust_id, {})
-                aging_data[cust_id] = {
-                    "name": cust.get("name", "Unknown"),
-                    "current": 0,
-                    "d30": 0,
-                    "d60": 0,
-                    "d90": 0,
-                    "d120": 0,
-                    "total": 0
-                }
-            
-            # Parse invoice date
-            try:
-                inv_date = datetime.strptime(inv.get("date", today()), "%Y-%m-%d").date()
-            except:
-                inv_date = today_date
-            
-            # Statement-based aging (Sage): buckets by calendar MONTH.
-            # Current = this month's invoices; 31-60 = last month's, payable
-            # 30 days from statement; 61-90 = two months back, and so on.
-            months_old = (today_date.year - inv_date.year) * 12 + (today_date.month - inv_date.month)
-            amount = round(float(inv.get("total", 0) or 0) - float(inv.get("paid_amount", 0) or 0), 2)
-            if amount <= 0:
-                continue  # fully covered by payments — nothing left to age
-            
-            if months_old <= 0:
-                aging_data[cust_id]["current"] += amount
-            elif months_old == 1:
-                aging_data[cust_id]["d30"] += amount
-            elif months_old == 2:
-                aging_data[cust_id]["d60"] += amount
-            elif months_old == 3:
-                aging_data[cust_id]["d90"] += amount
-            else:
-                aging_data[cust_id]["d120"] += amount
-            
-            aging_data[cust_id]["total"] += amount
-        
-        # Reconcile each customer's aging to their CALCULATED ledger balance
-        # (invoices + account sales - receipts - credit notes), so on-account
-        # payments and credit notes reduce the aging too. Sage principle: the
-        # age analysis must tie back to the debtors control total.
-        if biz_id and calc_all_customer_balances:
-            try:
-                _ledger = calc_all_customer_balances(biz_id) or {}
-            except Exception as _abe:
-                logger.error(f"[AGING] Ledger reconcile failed: {_abe}")
-                _ledger = {}
-            if _ledger:
-                _oldest_first = ["d120", "d90", "d60", "d30", "current"]
-                for cust_id in list(aging_data.keys()):
-                    row = aging_data[cust_id]
-                    ledger_bal = round(float(_ledger.get(cust_id, row["total"]) or 0), 2)
-                    diff = round(row["total"] - ledger_bal, 2)
-                    if diff > 0.01:
-                        # Unallocated credits (on-account receipts / credit
-                        # notes) — allocate against the OLDEST buckets first
-                        for b in _oldest_first:
-                            if diff <= 0.01:
-                                break
-                            take = min(row[b], diff)
-                            row[b] = round(row[b] - take, 2)
-                            diff = round(diff - take, 2)
-                    elif diff < -0.01:
-                        # Ledger debt not in the invoices table (account sales,
-                        # brought-forward balances) — age it as oldest debt so
-                        # nothing hides from credit control
-                        row["d120"] = round(row["d120"] + (-diff), 2)
-                    row["total"] = round(row["current"] + row["d30"] + row["d60"] + row["d90"] + row["d120"], 2)
-                    if row["total"] <= 0.01:
-                        del aging_data[cust_id]
-                # Customers with a ledger balance but no open invoices at all
-                # (e.g. account sales or brought-forward debt) must still age
-                for _cid, _lb in _ledger.items():
-                    _lb = round(float(_lb or 0), 2)
-                    if _lb > 0.01 and _cid not in aging_data:
-                        _cust = customer_map.get(_cid)
-                        if not _cust:
-                            continue
-                        aging_data[_cid] = {
-                            "name": _cust.get("name", "Unknown"),
-                            "current": 0, "d30": 0, "d60": 0, "d90": 0,
-                            "d120": _lb, "total": _lb
-                        }
-        
+            _cust = customer_map.get(_cid)
+            if not _cust:
+                continue
+            aging_data[_cid] = {
+                "name": _cust.get("name", "Unknown"),
+                "current": _a.get("current", 0),
+                "d30": _a.get("30", 0),
+                "d60": _a.get("60", 0),
+                "d90": _a.get("90", 0),
+                "d120": _a.get("120", 0),
+                "total": _a.get("total", 0),
+            }
+
         # Sort alphabetically by customer name
         sorted_aging = sorted(aging_data.values(), key=lambda x: (x["name"] or "").upper())
         
@@ -395,7 +323,7 @@ def register_report_routes(app, db, login_required, Auth, render_page,
         <div id="printArea">
         <div class="card">
             <h2 style="margin-bottom:5px;"> Debtors Aging Report</h2>
-            <p style="color:var(--text-muted);margin-bottom:20px;">As at {today()}</p>
+            <p style="color:var(--text-muted);margin-bottom:20px;">As at {_asat}</p>
             
             <div class="stats-grid" style="margin-bottom:20px;">
                 <div class="stat-card green">
