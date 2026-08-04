@@ -2322,17 +2322,29 @@ def calc_supplier_balance(biz_id: str, supplier_id: str) -> float:
         return 0.0
 
 
-def calc_all_customer_balances(biz_id: str, customers=None) -> dict:
+def calc_all_customer_balances(biz_id: str, customers=None, asat: str = None) -> dict:
     """Calculate balances for ALL customers in one batch. Returns {customer_id: balance}.
     Much more efficient than calling calc_customer_balance() per customer.
     Excludes reversed invoices and refunded sales (derived from allocation_log).
+    asat: optional 'YYYY-MM-DD' cut-off. When given, only documents dated on or
+    before that date count, so the balance is what the customer owed on that day.
+    Documents with no date are always included.
     """
     try:
-        all_invoices = db.get("invoices", {"business_id": biz_id}, select="id,customer_id,status,total,invoice_number") or []
-        all_sales = db.get("sales", {"business_id": biz_id}, select="id,customer_id,payment_method,status,total") or []
-        all_receipts = db.get("receipts", {"business_id": biz_id}, select="customer_id,customer_name,amount,reference,discount_total") or []
-        all_credit_notes = db.get("credit_notes", {"business_id": biz_id}, select="customer_id,total,invoice_number") or []
+        all_invoices = db.get("invoices", {"business_id": biz_id}, select="id,customer_id,status,total,invoice_number,date") or []
+        all_sales = db.get("sales", {"business_id": biz_id}, select="id,customer_id,payment_method,status,total,date") or []
+        all_receipts = db.get("receipts", {"business_id": biz_id}, select="customer_id,customer_name,amount,reference,discount_total,date") or []
+        all_credit_notes = db.get("credit_notes", {"business_id": biz_id}, select="customer_id,total,invoice_number,date") or []
         all_customers = customers if customers is not None else (db.get("customers", {"business_id": biz_id}) or [])
+
+        # ── Statement cut-off ──
+        _cut = (asat or "")[:10]
+
+        def _in_period(rec):
+            if not _cut:
+                return True
+            _d = (rec.get("date") or "")[:10]
+            return (not _d) or _d <= _cut
 
         # ── Derive reversed invoice IDs and refunded sale IDs from allocation_log ──
         _reversed_invoice_ids = set()
@@ -2372,12 +2384,16 @@ def calc_all_customer_balances(biz_id: str, customers=None) -> dict:
 
         # Debits: invoices (excluding credited and reversed)
         for inv in all_invoices:
+            if not _in_period(inv):
+                continue
             cid = inv.get("customer_id", "")
             if cid and inv.get("status") not in ("credited", "reversed") and inv.get("id") not in _reversed_invoice_ids:
                 balances[cid] = balances.get(cid, 0) + float(inv.get("total", 0))
 
         # Debits: account sales (excluding refunded)
         for s in all_sales:
+            if not _in_period(s):
+                continue
             if s.get("payment_method") == "account" and (s.get("status") or "").lower() not in ("refunded", "reversed") and s.get("id") not in _refunded_sale_ids:
                 cid = s.get("customer_id", "")
                 if cid:
@@ -2387,6 +2403,8 @@ def calc_all_customer_balances(biz_id: str, customers=None) -> dict:
         # A receipt settles cash + any settlement discount taken.
         _rev_pay_refs = _reversed_customer_payment_refs(biz_id)
         for r in all_receipts:
+            if not _in_period(r):
+                continue
             if (r.get("reference") or "").strip() in _rev_pay_refs:
                 continue
             cid = r.get("customer_id", "")
@@ -2404,6 +2422,8 @@ def calc_all_customer_balances(biz_id: str, customers=None) -> dict:
                           for inv in all_invoices
                           if inv.get("status") == "credited" and inv.get("invoice_number")}
         for cn in all_credit_notes:
+            if not _in_period(cn):
+                continue
             cid = cn.get("customer_id", "")
             if not cid:
                 continue
@@ -34539,9 +34559,13 @@ def bulk_statements_page():
     business = Auth.get_current_business()
     biz_id = business.get("id") if business else None
     
+    # Statement period — one selection drives the counts, View and Send
+    _sel_month, _sel_asat = _statement_asat(request.args.get("month"), default_current=True)
+    _month_options = _statement_month_options(_sel_month)
+    
     # Get customer stats
     customers = db.get("customers", {"business_id": biz_id}) or []
-    _all_bals = calc_all_customer_balances(biz_id)
+    _all_bals = calc_all_customer_balances(biz_id, asat=_sel_asat)
     
     # Helper: a customer is "emailable" if they have either an accounts contact
     # email OR a primary email. Bulk statements ALWAYS prefer accounts over primary.
@@ -34631,6 +34655,20 @@ def bulk_statements_page():
         </div>
     </div>
     
+    <!-- STATEMENT PERIOD -->
+    <div class="card" style="margin-bottom:20px;">
+        <div style="display:flex;align-items:center;gap:15px;flex-wrap:wrap;">
+            <div>
+                <strong>Statement Period</strong><br>
+                <small style="color:var(--text-muted);">Statements close on the last day of the selected month. This applies to both View and Send.</small>
+            </div>
+            <select id="stmtMonth" class="form-input" style="max-width:220px;margin-left:auto;"
+                    onchange="location.href='/bulk-statements?month=' + encodeURIComponent(this.value);">
+                {_month_options}
+            </select>
+        </div>
+    </div>
+    
     <div style="display:grid;grid-template-columns:1fr 1fr;gap:20px;">
         <!-- SEND NOW -->
         <div class="card">
@@ -34646,6 +34684,7 @@ def bulk_statements_page():
                         <span style="font-size:24px;font-weight:bold;">{customers_with_email}</span>
                     </div>
                 </button>
+                <button onclick="viewStatements('all')" class="btn btn-secondary" style="width:100%;padding:8px;font-size:13px;margin-top:-8px;">View these statements first</button>
                 
                 <button onclick="sendStatements('debtors')" class="btn" style="width:100%;padding:20px;text-align:left;background:var(--orange);color:white;">
                     <div style="display:flex;justify-content:space-between;align-items:center;">
@@ -34656,6 +34695,7 @@ def bulk_statements_page():
                         <span style="font-size:24px;font-weight:bold;">{debtors_count}</span>
                     </div>
                 </button>
+                <button onclick="viewStatements('debtors')" class="btn btn-secondary" style="width:100%;padding:8px;font-size:13px;margin-top:-8px;">View these statements first</button>
                 
                 <button onclick="sendStatements('zero')" class="btn btn-secondary" style="width:100%;padding:20px;text-align:left;">
                     <div style="display:flex;justify-content:space-between;align-items:center;">
@@ -34666,6 +34706,7 @@ def bulk_statements_page():
                         <span style="font-size:24px;font-weight:bold;color:var(--text);">{zero_balance}</span>
                     </div>
                 </button>
+                <button onclick="viewStatements('zero')" class="btn btn-secondary" style="width:100%;padding:8px;font-size:13px;margin-top:-8px;">View these statements first</button>
             </div>
             
             <div id="sendProgress" style="display:none;margin-top:20px;padding:15px;background:var(--bg);border-radius:8px;text-align:center;">
@@ -34720,17 +34761,17 @@ def bulk_statements_page():
         <h3 style="margin-top:0;margin-bottom:8px;">🖨️ Print Statements</h3>
         <p style="color:var(--text-muted);margin:0 0 15px 0;">Open all statements in one document, each on its own A4 page, ready to print. No email address needed.</p>
         <div style="display:grid;grid-template-columns:repeat(auto-fit, minmax(150px, 1fr));gap:15px;">
-            <button onclick="window.open('/bulk-statements/print?mode=debtors', '_blank')" class="btn" style="padding:18px;text-align:left;background:var(--orange);color:white;">
+            <button onclick="viewStatements('debtors')" class="btn" style="padding:18px;text-align:left;background:var(--orange);color:white;">
                 <strong style="font-size:15px;">Debtors Only</strong><br>
                 <small style="opacity:0.8;">Customers who owe money</small><br>
                 <span style="font-size:22px;font-weight:bold;">{print_debtors_count}</span>
             </button>
-            <button onclick="window.open('/bulk-statements/print?mode=all', '_blank')" class="btn btn-secondary" style="padding:18px;text-align:left;">
+            <button onclick="viewStatements('all')" class="btn btn-secondary" style="padding:18px;text-align:left;">
                 <strong style="font-size:15px;">All Customers</strong><br>
                 <small style="color:var(--text-muted);">Every customer</small><br>
                 <span style="font-size:22px;font-weight:bold;color:var(--text);">{total_customers}</span>
             </button>
-            <button onclick="window.open('/bulk-statements/print?mode=zero', '_blank')" class="btn btn-secondary" style="padding:18px;text-align:left;">
+            <button onclick="viewStatements('zero')" class="btn btn-secondary" style="padding:18px;text-align:left;">
                 <strong style="font-size:15px;">Zero Balance</strong><br>
                 <small style="color:var(--text-muted);">No outstanding balance</small><br>
                 <span style="font-size:22px;font-weight:bold;color:var(--text);">{print_zero_count}</span>
@@ -34761,6 +34802,20 @@ def bulk_statements_page():
     </div>
     
     <script>
+    function selectedMonth() {{
+        const el = document.getElementById('stmtMonth');
+        return el ? el.value : '';
+    }}
+    
+    function selectedMonthLabel() {{
+        const el = document.getElementById('stmtMonth');
+        return (el && el.selectedIndex >= 0) ? el.options[el.selectedIndex].text : '';
+    }}
+    
+    function viewStatements(mode) {{
+        window.open('/bulk-statements/print?mode=' + mode + '&month=' + encodeURIComponent(selectedMonth()), '_blank');
+    }}
+    
     async function sendStatements(mode) {{
         const counts = {{
             'all': {customers_with_email},
@@ -34773,7 +34828,7 @@ def bulk_statements_page():
             'zero': 'zero balance customers'
         }};
         
-        if (!confirm(`📧 Send statements to ${{counts[mode]}} ${{labels[mode]}}?\\n\\nThis will email a statement to each customer.`)) {{
+        if (!confirm(`📧 Send ${{selectedMonthLabel()}} statements to ${{counts[mode]}} ${{labels[mode]}}?\\n\\nThis will email a statement to each customer.`)) {{
             return;
         }}
         
@@ -34784,7 +34839,7 @@ def bulk_statements_page():
             const response = await fetch('/api/customers/bulk-email-statements', {{
                 method: 'POST',
                 headers: {{'Content-Type': 'application/json'}},
-                body: JSON.stringify({{mode: mode}})
+                body: JSON.stringify({{mode: mode, month: selectedMonth()}})
             }});
             const result = await response.json();
             
@@ -36444,7 +36499,7 @@ def bulk_statements_print():
     _stmt_month, _asat = _statement_asat(request.args.get("month"), default_current=True)
 
     customers = db.get("customers", {"business_id": biz_id}) if biz_id else []
-    _all_bals = calc_all_customer_balances(biz_id)
+    _all_bals = calc_all_customer_balances(biz_id, asat=_asat)
 
     if mode == "all":
         selected = list(customers)

@@ -2836,12 +2836,21 @@ def register_stock_routes(app, db, login_required, Auth, render_page,
             data = request.get_json() or {}
             mode = data.get("mode", "debtors")  # default to debtors only
             
-            # Bulk statements ALWAYS close at the CURRENT month-end
-            _bulk_today = datetime.now().date()
-            _bulk_next = (datetime(_bulk_today.year + 1, 1, 1).date()
-                          if _bulk_today.month == 12
-                          else datetime(_bulk_today.year, _bulk_today.month + 1, 1).date())
-            _bulk_asat = (_bulk_next - timedelta(days=1)).isoformat()
+            # Statement period: close on the last day of the SELECTED month.
+            # Falls back to the current month-end when no month is supplied.
+            _bulk_month = ""
+            _bulk_asat = ""
+            try:
+                import clickai as _main
+                _bulk_month, _bulk_asat = _main._statement_asat(data.get("month"), default_current=True)
+            except Exception as _pe:
+                logger.error(f"[BULK-EMAIL] Period resolve failed: {_pe}")
+            if not _bulk_asat:
+                _bulk_today = datetime.now().date()
+                _bulk_next = (datetime(_bulk_today.year + 1, 1, 1).date()
+                              if _bulk_today.month == 12
+                              else datetime(_bulk_today.year, _bulk_today.month + 1, 1).date())
+                _bulk_asat = (_bulk_next - timedelta(days=1)).isoformat()
             
             business = Auth.get_current_business()
             biz_id = business.get("id") if business else None
@@ -2856,16 +2865,31 @@ def register_stock_routes(app, db, login_required, Auth, render_page,
             # Get all customers
             customers = db.get("customers", {"business_id": biz_id}) or []
             
+            # Balances are calculated from source documents, never read from the
+            # stored 'balance' field — this is the same figure the page shows.
+            _all_bals = {}
+            try:
+                import clickai as _main
+                _all_bals = _main.calc_all_customer_balances(biz_id, asat=_bulk_asat) or {}
+            except Exception as _be:
+                logger.error(f"[BULK-EMAIL] Balance calculation failed: {_be}")
+            
+            if mode != "all" and not _all_bals:
+                return jsonify({"success": False, "error": "Could not calculate customer balances - nothing was sent"})
+            
+            def _bal(c):
+                return float(_all_bals.get(c.get("id"), 0) or 0)
+            
             # Filter based on mode
             if mode == "all":
                 # All customers (with email)
                 target_customers = customers
             elif mode == "zero":
                 # Only zero balance customers
-                target_customers = [c for c in customers if float(c.get("balance", 0)) == 0]
+                target_customers = [c for c in customers if _bal(c) == 0]
             else:
                 # Only debtors (balance > 0)
-                target_customers = [c for c in customers if float(c.get("balance", 0)) > 0]
+                target_customers = [c for c in customers if _bal(c) > 0]
             
             if not target_customers:
                 return jsonify({"success": True, "sent": 0, "skipped": 0, "failed": 0, "message": "No customers to email"})
@@ -2878,7 +2902,12 @@ def register_stock_routes(app, db, login_required, Auth, render_page,
             failed = 0
             
             for customer in target_customers:
-                email = customer.get("email", "").strip()
+                # ALWAYS prefer the Accounts Department contact; fall back to the
+                # primary contact only when no accounts email is on file. This is
+                # the same rule the Bulk Statements preview table shows.
+                accounts_email = (customer.get("accounts_contact_email") or "").strip()
+                primary_email = (customer.get("email") or "").strip()
+                email = accounts_email if (accounts_email and "@" in accounts_email) else primary_email
                 
                 if not email or "@" not in email:
                     skipped += 1
@@ -2888,10 +2917,10 @@ def register_stock_routes(app, db, login_required, Auth, render_page,
                 cust_invoices = [inv for inv in all_invoices if inv.get("customer_id") == customer.get("id")]
                 
                 try:
-                    success = Email.send_statement(customer, cust_invoices, business, asat=_bulk_asat)
+                    success = Email.send_statement(customer, cust_invoices, business, to_email=email, asat=_bulk_asat)
                     if success:
                         sent += 1
-                        logger.info(f"[BULK-EMAIL] Statement sent to {customer.get('name')} ({email})")
+                        logger.info(f"[BULK-EMAIL] Statement sent to {customer.get('name')} ({email}) [{'accounts' if email == accounts_email else 'primary'}]")
                     else:
                         failed += 1
                         logger.error(f"[BULK-EMAIL] Failed to send to {customer.get('name')} ({email})")
@@ -2914,7 +2943,7 @@ def register_stock_routes(app, db, login_required, Auth, render_page,
             except:
                 pass
             
-            logger.info(f"[BULK-EMAIL] Complete: mode={mode}, sent={sent}, skipped={skipped}, failed={failed}")
+            print(f"[BULK-EMAIL] Complete: mode={mode}, period={_bulk_month or _bulk_asat}, asat={_bulk_asat}, sent={sent}, skipped={skipped}, failed={failed}", flush=True)
             
             return jsonify({
                 "success": True,
