@@ -3103,11 +3103,12 @@ Thank you for your business!
         
         to_email: optional override for recipient (defaults to customer.email)
         cc: optional CC list/string (carbon copy)
-        asat: statement closing date 'YYYY-MM-DD' (defaults to the previous month-end)
+        asat: statement closing date 'YYYY-MM-DD' (defaults to the current month-end,
+              matching the on-screen statement and the aging report)
         """
-        # Statement closes on the last day of the selected month (default: previous month)
+        # Statement closes on the last day of the selected month (default: current month)
         if not asat:
-            asat = _statement_asat("")[1]
+            asat = _statement_asat("", default_current=True)[1]
         
         # Allow caller to override the recipient; fall back to customer record
         email = to_email or customer.get("email")
@@ -36907,7 +36908,7 @@ def api_statement_email(customer_id):
                 business,
                 to_email=to_email,
                 cc=cc if cc else None,
-                asat=_statement_asat(data.get("month"))[1],
+                asat=_statement_asat(data.get("month"), default_current=True)[1],
             )
             
             if success:
@@ -38503,8 +38504,9 @@ def api_customer_email_group():
             if data.get("attach_statement"):
                 try:
                     _cust_inv = db.get("invoices", {"business_id": biz_id, "customer_id": customer_id}) or []
-                    _open_inv = [i for i in _cust_inv if i.get("status") != "paid"]
-                    _ok = Email.send_statement(customer, _open_inv, business, to_email=_primary_rcpt, cc=_cc_rest)
+                    _stmt_asat = _statement_asat(data.get("month"), default_current=True)[1]
+                    _ok = Email.send_statement(customer, _cust_inv, business,
+                                               to_email=_primary_rcpt, cc=_cc_rest, asat=_stmt_asat)
                     attach_notes.append("Statement sent" if _ok else "Statement FAILED to send")
                 except Exception as _att_e:
                     logger.error(f"[EMAIL GROUP] Statement attach failed: {_att_e}")
@@ -38584,8 +38586,9 @@ def api_bulk_statements():
     business = Auth.get_current_business()
     biz_id = business.get("id") if business else None
     
-    # Bulk statements close at the selected month-end (default: previous month)
-    _bulk_month, _bulk_asat = _statement_asat((request.get_json(silent=True) or {}).get("month"))
+    # Bulk statements close at the selected month-end (default: current month)
+    _bulk_month, _bulk_asat = _statement_asat((request.get_json(silent=True) or {}).get("month"),
+                                              default_current=True)
     
     try:
         # Get all customers with balance > 0 (calculated dynamically)
@@ -38615,7 +38618,7 @@ def api_bulk_statements():
                 continue
             
             # Get invoices for this customer
-            cust_invoices = [inv for inv in all_invoices if inv.get("customer_id") == customer.get("id") and inv.get("status") != "paid"]
+            cust_invoices = [inv for inv in all_invoices if inv.get("customer_id") == customer.get("id")]
             
             # Send statement using accounts email (override default customer.email)
             try:
