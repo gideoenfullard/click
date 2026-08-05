@@ -2333,11 +2333,12 @@ def _customer_ledger_items(biz_id: str, customers=None, asat: str = None) -> dic
     """
     items = {}
 
-    def _add(cid, date, debit, credit, invoice_id=None):
+    def _add(cid, date, debit, credit, invoice_id=None, kind=None, age_date=None):
         if not cid:
             return
         items.setdefault(cid, []).append({
             "date": date, "debit": debit, "credit": credit, "invoice_id": invoice_id,
+            "kind": kind, "age_date": age_date,
         })
 
     try:
@@ -2428,18 +2429,27 @@ def _customer_ledger_items(biz_id: str, customers=None, asat: str = None) -> dic
                 _rname = (r.get("customer_name") or "").upper().strip()
                 cid = _name_to_id.get(_rname, "")
             if cid:
-                _add(cid, r.get("date"), 0.0,
-                     float(r.get("amount", 0)) + float(r.get("discount_total", 0) or 0))
+                _add(cid, r.get("date"), 0.0, float(r.get("amount", 0)), kind="payment")
+                _r_disc = float(r.get("discount_total", 0) or 0)
+                if _r_disc > 0.005:
+                    _add(cid, r.get("date"), 0.0, _r_disc)
 
         # Credits: credit notes. Every credit note counts — the invoice it
         # credits is no longer removed above, so there is nothing to double up.
+        # Invoice number -> date, so a credit note ages with the invoice it credits
+        _inv_date_by_num = {}
+        for inv in all_invoices:
+            _num = (inv.get("invoice_number") or "").strip()
+            if _num:
+                _inv_date_by_num[_num] = inv.get("date")
         for cn in all_credit_notes:
             if not _in_period(cn):
                 continue
             cid = cn.get("customer_id", "")
             if not cid:
                 continue
-            _add(cid, cn.get("date"), 0.0, float(cn.get("total", 0)))
+            _add(cid, cn.get("date"), 0.0, float(cn.get("total", 0)),
+                 age_date=_inv_date_by_num.get((cn.get("invoice_number") or "").strip()))
 
         return items
     except Exception as e:
@@ -3193,10 +3203,17 @@ Thank you for your business!
             transactions.append({
                 "date": r.get("date"),
                 "type": "Payment",
+                "kind": "payment",
                 "reference": r.get("receipt_number") or r.get("reference") or "",
                 "debit": 0,
                 "credit": float(r.get("amount", 0) or 0),
             })
+        # Invoice number -> date, so a credit note ages with the invoice it credits
+        _inv_date_by_num = {}
+        for _inv in invoices:
+            _num = (_inv.get("invoice_number") or "").strip()
+            if _num:
+                _inv_date_by_num[_num] = _inv.get("date")
         for cn in credit_notes:
             transactions.append({
                 "date": cn.get("date"),
@@ -3204,6 +3221,7 @@ Thank you for your business!
                 "reference": cn.get("credit_note_number") or cn.get("number", ""),
                 "debit": 0,
                 "credit": float(cn.get("total", 0) or 0),
+                "age_date": _inv_date_by_num.get((cn.get("invoice_number") or "").strip()),
             })
         for s in sales:
             if s.get("id") in _refunded_sale_ids:
@@ -34995,14 +35013,21 @@ def _customer_real_allocations(biz_id: str, asat: str = None) -> dict:
 def _statement_aging_from_ledger(transactions, asat, final_balance, real_alloc=None):
     """Age an account from the same ledger the statement displays.
 
-    Open-item aging, Sage style. Where a payment was actually allocated to a
-    specific invoice (payment_allocations), that allocation settles that
-    invoice. Whatever credit is left over — on-account receipts, credit notes,
-    old imported data with no allocation rows — is applied oldest-item-first.
-    Whatever remains of each debit is bucketed by that document's own age, so
-    the buckets always add up to the statement balance.
+    Open-item aging, Sage style. Buckets are calendar periods relative to the
+    statement month, not rolling 30-day windows: on a 31 Aug statement every
+    July document sits in 30 Days, whether it is dated the 1st or the 31st.
 
-    transactions: the full pre-opening-balance list, each {date, debit, credit, void}
+    Payments settle the invoice a payment_allocations row names, then the oldest
+    open item first. Credit notes are NOT applied oldest-first: a credit note
+    ages in the period of the invoice it credits, so a correction raised in
+    August against a July invoice reduces July. Credit with no invoice behind it
+    -- a settlement discount passed against the whole account, or payment money
+    left over -- ages in its own period. A period left negative rolls forward
+    into the next newer one, so only Current can show a credit and the buckets
+    always add up to the statement balance.
+
+    transactions: the full pre-opening-balance list, each
+        {date, debit, credit, void, invoice_id, kind, age_date}
     real_alloc: optional {invoice_id: amount allocated}
     """
     from datetime import datetime as _dt, date as _date
@@ -35012,23 +35037,37 @@ def _statement_aging_from_ledger(transactions, asat, final_balance, real_alloc=N
     except Exception:
         _cut_obj = _date.today()
 
-    open_items = []
-    credit_pool = 0.0
+    def _parse(_s, _fallback):
+        try:
+            return _dt.strptime((_s or "")[:10], "%Y-%m-%d").date()
+        except Exception:
+            return _fallback
+
+    def _bucket(_d_obj):
+        _m = (_cut_obj.year - _d_obj.year) * 12 + (_cut_obj.month - _d_obj.month)
+        if _m <= 0:
+            return "current"
+        return {1: "30", 2: "60", 3: "90"}.get(_m, "120")
+
+    open_items = []   # [doc date, remaining, invoice_id]
+    payments = []     # [doc date, unapplied amount]
+    credits = []      # [aging date, amount]
     for t in transactions:
         if t.get("void"):
             continue
-        try:
-            _d_obj = _dt.strptime((t.get("date") or "")[:10], "%Y-%m-%d").date()
-        except Exception:
-            _d_obj = _cut_obj
+        _d_obj = _parse(t.get("date"), _cut_obj)
         _debit = float(t.get("debit", 0) or 0)
         _credit = float(t.get("credit", 0) or 0)
         if _debit > 0:
             open_items.append([_d_obj, _debit, t.get("invoice_id")])
         if _credit > 0:
-            credit_pool += _credit
+            if t.get("kind") == "payment":
+                payments.append([_d_obj, _credit])
+            else:
+                credits.append([_parse(t.get("age_date"), _d_obj), _credit])
 
     open_items.sort(key=lambda x: x[0])
+    payments.sort(key=lambda x: x[0])
 
     # 1. Real allocations settle the invoice they were posted against
     _alloc = real_alloc or {}
@@ -35038,38 +35077,43 @@ def _statement_aging_from_ledger(transactions, asat, final_balance, real_alloc=N
             if not _iid:
                 continue
             _allocated = float(_alloc.get(_iid, 0) or 0)
-            if _allocated <= 0.005 or credit_pool <= 0.005:
+            for _p in payments:
+                if _allocated <= 0.005 or _item[1] <= 0.005:
+                    break
+                if _p[1] <= 0.005:
+                    continue
+                _take = min(_allocated, _item[1], _p[1])
+                _item[1] -= _take
+                _p[1] -= _take
+                _allocated -= _take
+
+    # 2. Whatever payment money is left settles the oldest open items first
+    for _p in payments:
+        for _item in open_items:
+            if _p[1] <= 0.005:
+                break
+            if _item[1] <= 0.005:
                 continue
-            _take = min(_allocated, _item[1], credit_pool)
+            _take = min(_p[1], _item[1])
             _item[1] -= _take
-            credit_pool -= _take
+            _p[1] -= _take
 
-    # 2. Whatever credit is left settles the oldest open items first
-    for _item in open_items:
-        if credit_pool <= 0.005:
-            break
-        _take = min(credit_pool, _item[1])
-        _item[1] -= _take
-        credit_pool -= _take
-
+    # 3. Each remaining debit ages in its own period
     for _d_obj, _remaining, _iid in open_items:
-        if _remaining <= 0.005:
-            continue
-        days_old = (_cut_obj - _d_obj).days
-        if days_old <= 30:
-            aging["current"] += _remaining
-        elif days_old <= 60:
-            aging["30"] += _remaining
-        elif days_old <= 90:
-            aging["60"] += _remaining
-        elif days_old <= 120:
-            aging["90"] += _remaining
-        else:
-            aging["120"] += _remaining
+        if _remaining > 0.005:
+            aging[_bucket(_d_obj)] += _remaining
 
-    # Credit left over = the account is in credit; show it against Current
-    if credit_pool > 0.005:
-        aging["current"] -= credit_pool
+    # 4. Credit notes age with the invoice they credit; unallocated credit
+    #    (settlement discounts, leftover payment money) in its own period
+    for _d_obj, _remaining in credits + payments:
+        if _remaining > 0.005:
+            aging[_bucket(_d_obj)] -= _remaining
+
+    # 5. An over-credited old period rolls forward - only Current may show credit
+    for _older, _newer in (("120", "90"), ("90", "60"), ("60", "30"), ("30", "current")):
+        if aging[_older] < 0:
+            aging[_newer] += aging[_older]
+            aging[_older] = 0.0
 
     # Absorb cent-level rounding so the buckets always tie to the balance shown
     _diff = round(float(final_balance or 0) - sum(aging.values()), 2)
@@ -35816,6 +35860,7 @@ def customer_statement_print(customer_id):
         transactions.append({
             "date": r.get("date"),
             "type": "Payment",
+            "kind": "payment",
             "reference": r.get("receipt_number") or r.get("reference") or "",
             "debit": 0,
             "credit": float(r.get("amount", 0) or 0),
@@ -35831,6 +35876,13 @@ def customer_statement_print(customer_id):
                 "credit": _r_disc,
             })
     
+    # Invoice number -> date, so a credit note ages with the invoice it credits
+    _inv_date_by_num = {}
+    for _inv in cust_invoices:
+        _num = (_inv.get("invoice_number") or "").strip()
+        if _num:
+            _inv_date_by_num[_num] = _inv.get("date")
+
     for cn in credit_notes:
         transactions.append({
             "date": cn.get("date"),
@@ -35838,6 +35890,7 @@ def customer_statement_print(customer_id):
             "reference": cn.get("credit_note_number") or cn.get("number", ""),
             "debit": 0,
             "credit": float(cn.get("total", 0) or 0),
+            "age_date": _inv_date_by_num.get((cn.get("invoice_number") or "").strip()),
         })
     
     for s in sales:
@@ -36354,6 +36407,7 @@ def _build_statement_body_for_print(customer, business, biz_id, _asat):
         transactions.append({
             "date": r.get("date"),
             "type": "Payment",
+            "kind": "payment",
             "reference": r.get("receipt_number") or r.get("reference") or "",
             "debit": 0,
             "credit": float(r.get("amount", 0) or 0),
@@ -36369,6 +36423,13 @@ def _build_statement_body_for_print(customer, business, biz_id, _asat):
                 "credit": _r_disc,
             })
 
+    # Invoice number -> date, so a credit note ages with the invoice it credits
+    _inv_date_by_num = {}
+    for _inv in cust_invoices:
+        _num = (_inv.get("invoice_number") or "").strip()
+        if _num:
+            _inv_date_by_num[_num] = _inv.get("date")
+
     for cn in credit_notes:
         transactions.append({
             "date": cn.get("date"),
@@ -36376,6 +36437,7 @@ def _build_statement_body_for_print(customer, business, biz_id, _asat):
             "reference": cn.get("credit_note_number") or cn.get("number", ""),
             "debit": 0,
             "credit": float(cn.get("total", 0) or 0),
+            "age_date": _inv_date_by_num.get((cn.get("invoice_number") or "").strip()),
         })
 
     for s in sales:
