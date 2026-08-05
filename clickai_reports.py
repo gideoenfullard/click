@@ -5418,8 +5418,54 @@ def register_report_routes(app, db, login_required, Auth, render_page,
         total_output_vat = invoice_vat + pos_vat
         
         # INPUT VAT (what you can claim back)
-        expense_excl = sum(float(e.get("amount", 0)) / 1.15 for e in expenses)
-        expense_vat = sum(float(e.get("amount", 0)) * 0.15 / 1.15 for e in expenses)
+        # Claim only the VAT actually captured on the expense. Back-calculating
+        # 15% off every expense claims input tax on salaries, insurance, interest,
+        # income tax and PAYE, none of which SARS allows. Expenses captured with no
+        # VAT are kept out of field 15a and listed below so they can be fixed at
+        # source rather than guessed at here.
+        expense_excl = 0.0
+        expense_vat = 0.0
+        no_vat_expenses = []
+        for e in expenses:
+            _amt = float(e.get("amount", 0) or 0)
+            _evat = float(e.get("vat", 0) or 0)
+            if _evat > 0:
+                expense_excl += _amt - _evat
+                expense_vat += _evat
+            elif _amt != 0:
+                no_vat_expenses.append(e)
+        no_vat_total = sum(float(e.get("amount", 0) or 0) for e in no_vat_expenses)
+
+        # Expenses with no VAT captured - listed so they can be corrected at source
+        no_vat_rows = ""
+        for e in sorted(no_vat_expenses,
+                        key=lambda x: abs(float(x.get("amount", 0) or 0)), reverse=True)[:200]:
+            no_vat_rows += (
+                "<tr>"
+                f'<td>{(e.get("date") or "")[:10]}</td>'
+                f'<td>{safe_string(e.get("description", ""))[:70]}</td>'
+                f'<td>{safe_string(e.get("category", ""))}</td>'
+                f'<td>{safe_string(e.get("category_code", ""))}</td>'
+                f'<td style="text-align:right;">{money(float(e.get("amount", 0) or 0))}</td>'
+                "</tr>"
+            )
+        no_vat_block = ""
+        if no_vat_expenses:
+            no_vat_block = f'''
+        <div class="card" style="margin-top:20px;">
+            <h3 style="margin-bottom:5px;">No VAT captured &mdash; {len(no_vat_expenses)} expenses, {money(no_vat_total)}</h3>
+            <p style="color:var(--text-muted);font-size:13px;margin-bottom:15px;">
+                These are excluded from field 15a because no VAT was recorded on them.
+                Salaries, insurance, interest, income tax and PAYE belong here and are
+                not claimable. Anything else that should carry VAT must be corrected on
+                the expense itself &mdash; this report will not assume a rate.
+            </p>
+            <table class="table" style="font-size:13px;">
+                <thead><tr><th>Date</th><th>Description</th><th>Category</th><th>GL</th>
+                <th style="text-align:right;">Amount (Incl)</th></tr></thead>
+                <tbody>{no_vat_rows}</tbody>
+            </table>
+        </div>'''
         
         # Supplier invoices - also back-calculate if vat=0
         si_excl = 0
@@ -5545,6 +5591,7 @@ def register_report_routes(app, db, login_required, Auth, render_page,
                 </p>
             </div>
         </div>
+        {no_vat_block}
         '''
         
         return render_page("VAT Report", content, user, "reports")
