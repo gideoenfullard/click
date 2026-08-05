@@ -2342,7 +2342,10 @@ def _customer_ledger_items(biz_id: str, customers=None, asat: str = None) -> dic
 
     try:
         all_invoices = db.get("invoices", {"business_id": biz_id}, select="id,customer_id,status,total,invoice_number,date") or []
-        all_sales = db.get("sales", {"business_id": biz_id}, select="id,customer_id,payment_method,status,total,date") or []
+        # NOTE: 'sales' has no status column - asking for it makes PostgREST
+        # return 400 and this read silently comes back empty, which drops every
+        # POS account sale out of the balance. Refunds come from allocation_log.
+        all_sales = db.get("sales", {"business_id": biz_id}, select="id,customer_id,payment_method,total,date") or []
         all_receipts = db.get("receipts", {"business_id": biz_id}, select="customer_id,customer_name,amount,reference,discount_total,date") or []
         all_credit_notes = db.get("credit_notes", {"business_id": biz_id}, select="customer_id,total,invoice_number,date") or []
         all_customers = customers if customers is not None else (db.get("customers", {"business_id": biz_id}) or [])
@@ -2390,12 +2393,16 @@ def _customer_ledger_items(biz_id: str, customers=None, asat: str = None) -> dic
             if _n:
                 _name_to_id[_n] = c.get("id", "")
 
-        # Debits: invoices (excluding credited and reversed)
+        # Debits: invoices. A CREDITED invoice stays on the account as a debit —
+        # its credit note is a separate credit line below. Removing the pair only
+        # nets to zero when the credit note matches the invoice exactly; on a
+        # PARTIAL credit note it silently loses the amount still owed. This is
+        # the same rule the printed statement uses.
         for inv in all_invoices:
             if not _in_period(inv):
                 continue
             cid = inv.get("customer_id", "")
-            if cid and inv.get("status") not in ("credited", "reversed") and inv.get("id") not in _reversed_invoice_ids:
+            if cid and (inv.get("status") or "").lower() != "reversed" and inv.get("id") not in _reversed_invoice_ids:
                 _add(cid, inv.get("date"), float(inv.get("total", 0)), 0.0, inv.get("id"))
 
         # Debits: account sales (excluding refunded)
@@ -2424,19 +2431,13 @@ def _customer_ledger_items(biz_id: str, customers=None, asat: str = None) -> dic
                 _add(cid, r.get("date"), 0.0,
                      float(r.get("amount", 0)) + float(r.get("discount_total", 0) or 0))
 
-        # Credits: credit notes. A credit note linked to a credited invoice is
-        # excluded — that invoice is already excluded above, so subtracting its
-        # CN too would reduce the balance twice (same rule as calc_customer_balance)
-        _credited_nums = {(inv.get("customer_id", ""), inv.get("invoice_number", ""))
-                          for inv in all_invoices
-                          if inv.get("status") == "credited" and inv.get("invoice_number")}
+        # Credits: credit notes. Every credit note counts — the invoice it
+        # credits is no longer removed above, so there is nothing to double up.
         for cn in all_credit_notes:
             if not _in_period(cn):
                 continue
             cid = cn.get("customer_id", "")
             if not cid:
-                continue
-            if cn.get("invoice_number") and (cid, cn.get("invoice_number", "")) in _credited_nums:
                 continue
             _add(cid, cn.get("date"), 0.0, float(cn.get("total", 0)))
 
@@ -4272,21 +4273,40 @@ class DB:
             
             rows = []
             page_size = 1000
+            _order = ""
+            _no_order_col = False
             while len(rows) < limit:
                 want = min(page_size, limit - len(rows))
-                endpoint = f"{base}&limit={want}&offset={len(rows)}"
+                endpoint = f"{base}{_order}&limit={want}&offset={len(rows)}"
                 response = _DB_SESSION.get(endpoint, headers=self.headers, timeout=15)
                 if table == "users" and filters:
                     print(f"[DB DEBUG] GET {table} filters={filters} → status={response.status_code}, rows={len(response.json()) if response.status_code == 200 else 'N/A'}, body={response.text[:200]}", flush=True)
                 if response.status_code != 200:
+                    if _order and not _no_order_col:
+                        # No 'id' column on this table - page without a sort order
+                        print(f"[DB] {table} cannot sort by id, paging unordered", flush=True)
+                        _no_order_col = True
+                        _order = ""
+                        rows = []
+                        continue
                     print(f"[DB] Get failed on {table} at offset {len(rows)}: status={response.status_code} body={response.text[:200]}", flush=True)
                     return []
                 page = response.json()
                 if not isinstance(page, list):
                     return []
-                rows.extend(page)
                 if len(page) < want:
+                    rows.extend(page)
                     break
+                if not _order and not _no_order_col and want == page_size:
+                    # A full page means more rows are waiting. Postgres does NOT
+                    # guarantee the same row order across separate LIMIT/OFFSET
+                    # requests without an ORDER BY, so pages can repeat or skip
+                    # rows and the identical query returns a different answer on
+                    # every reload. Restart the read with an explicit sort.
+                    _order = "&order=id.asc"
+                    rows = []
+                    continue
+                rows.extend(page)
             if len(rows) >= limit > page_size:
                 print(f"[DB] WARNING: {table} hit the {limit}-row read cap - result may be truncated", flush=True)
             return rows
