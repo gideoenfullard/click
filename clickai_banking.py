@@ -55,6 +55,42 @@ _BANK_INCOME_CATEGORIES = frozenset({
 })
 
 
+# Text that identifies a card-machine settlement line on the bank statement. Kept in
+# one place so the categoriser, the guard on the income journal, and any future caller
+# all agree on what counts as a settlement.
+_CARD_SETTLEMENT_TOKENS = ("EFTPOS", "SETTLEMENT", "CARD SALES", "MERCHANT",
+                           "MERCH DISC", "CARD DEP")
+
+
+def _is_card_settlement_text(description):
+    """True when a bank line looks like a card-machine settlement or its fee."""
+    d = (description or "").upper()
+    return any(tok in d for tok in _CARD_SETTLEMENT_TOKENS)
+
+
+def _txn_ids_with_journals(biz_id, txn_ids):
+    """Bank transaction ids that already posted a GL journal.
+
+    Journals are written with reference 'BNK-' + the first 8 characters of the
+    transaction id. Deleting such a transaction leaves its journal in the ledger
+    with no source document, which is how 205 orphaned journal lines were created
+    in June 2026 — so both delete routes check this before removing anything.
+    """
+    if not txn_ids:
+        return set()
+    try:
+        from clickai import db as _db
+    except Exception:
+        _db = db
+    try:
+        rows = _db.get("journals", {"business_id": biz_id}) or []
+    except Exception as _e:
+        logger.error(f"[BANK DELETE] Journal lookup failed, refusing to delete: {_e}")
+        return set(txn_ids)          # fail closed - never delete on a failed check
+    refs = {str(r.get("reference") or "") for r in rows}
+    return {t for t in txn_ids if f"BNK-{str(t)[:8]}" in refs}
+
+
 def _category_is_expense(category, extra_expense_cats=()):
     """True if a category represents an expense. Wage/salary/payroll labels always
     count as expenses (so 'Staff Wages' is caught even if it isn't in the configured
@@ -5025,10 +5061,19 @@ Return ONLY the JSON array. No markdown, no explanation."""
                     pass  # No journal entry
                     
                 else:
-                    # Regular income
+                    # Regular income. A card-machine settlement is NOT income — the sale was
+                    # already recognised at the POS, which debited Card Clearing (1010).
+                    # Booking it to 4000 here counts the same turnover twice and inflates
+                    # VAT output, so force it to the clearing account whatever label it
+                    # arrived with (including one BankLearning taught itself).
+                    _income_code = gl_code
+                    if _is_card_settlement_text(description) and str(gl_code).startswith("4"):
+                        _income_code = "1010"
+                        print(f"[BANK] Card settlement forced off income GL {gl_code} to 1010: "
+                              f"{description[:60]}", flush=True)
                     _cje(biz_id, txn_date, desc_short, ref, [
                         {"account_code": gl(biz_id, "bank"), "debit": income_rounded, "credit": 0},
-                        {"account_code": gl_code, "debit": 0, "credit": income_rounded},
+                        {"account_code": _income_code, "debit": 0, "credit": income_rounded},
                     ])
             
             # === ALLOCATION LOG ===
@@ -5148,6 +5193,27 @@ Return ONLY the JSON array. No markdown, no explanation."""
                 except Exception as _e:
                     logger.error(f"[BANK ZANE] Expense match check error: {_e}")
             
+            # ═══ PRIORITY 1c: CARD SETTLEMENT — decided before BankLearning, because a
+            # single wrong manual categorisation teaches the pattern and then repeats it on
+            # every future settlement. Money direction decides, not the DR/CR in the text:
+            # on Standard Bank "DR EFTPOS"/"CR EFTPOS" means debit-card vs credit-card.
+            if not user_answer and _is_card_settlement_text(description):
+                if credit > 0:
+                    print(f"[BANK] Card settlement IN: {description[:50]} -> Card Settlement", flush=True)
+                    return jsonify({
+                        "success": True, "category": "Card Settlement",
+                        "reason": "Card machine settlement deposited — clears the Card Clearing account (income already booked at POS).",
+                        "confidence": 0.95, "source": "known_pattern",
+                        "needs_clarification": False, "all_categories": all_category_names
+                    })
+                print(f"[BANK] Card settlement OUT: {description[:50]} -> Card Machine Fees", flush=True)
+                return jsonify({
+                    "success": True, "category": "Card Machine Fees",
+                    "reason": "EFTPOS settlement fee charged by the bank.",
+                    "confidence": 0.95, "source": "known_pattern",
+                    "needs_clarification": False, "all_categories": all_category_names
+                })
+
             # ═══ PRIORITY 2: BANKLEARNING — user already categorized this type before ═══
             existing = BankLearning.suggest_category(biz_id, description)
             if existing and existing.get("confidence", 0) >= 0.85 and not user_answer:
@@ -5165,28 +5231,8 @@ Return ONLY the JSON array. No markdown, no explanation."""
             if not user_answer:
                 desc_upper = description.upper()
                 
-                # EFTPOS card settlements: use the money DIRECTION (bank column), NOT the
-                # DR/CR in the description — on Standard Bank "DR EFTPOS"/"CR EFTPOS" means
-                # debit-card vs credit-card, not money out vs in. Money IN clears the Card
-                # Clearing account (1010) since income was already booked at POS; money OUT
-                # is a card-machine fee.
-                if "EFTPOS" in desc_upper or "SETTLEMENT" in desc_upper:
-                    if credit > 0:
-                        logger.info(f"[BANK ZANE] EFTPOS settlement IN: '{description[:40]}' → Card Settlement")
-                        return jsonify({
-                            "success": True, "category": "Card Settlement",
-                            "reason": "Card machine settlement deposited — clears the Card Clearing account (income already booked at POS).",
-                            "confidence": 0.9, "source": "known_pattern",
-                            "needs_clarification": False, "all_categories": all_category_names
-                        })
-                    else:
-                        logger.info(f"[BANK ZANE] EFTPOS settlement OUT: '{description[:40]}' → Card Machine Fees")
-                        return jsonify({
-                            "success": True, "category": "Card Machine Fees",
-                            "reason": "EFTPOS settlement fee charged by the bank.",
-                            "confidence": 0.9, "source": "known_pattern",
-                            "needs_clarification": False, "all_categories": all_category_names
-                        })
+                # Card settlements are decided in Priority 1c, above BankLearning.
+
                 
                 is_income = credit > 0
                 
@@ -5756,14 +5802,18 @@ Return ONLY the JSON array. No markdown, no explanation."""
                 return jsonify({"success": False, "error": "No import selected"})
             
             all_txns = db.get("bank_transactions", {"business_id": biz_id}) or []
-            # Match this import by created_at minute; NEVER delete an allocated (matched) txn.
-            to_delete = [t["id"] for t in all_txns
-                         if "id" in t
-                         and str(t.get("created_at", "") or "")[:16] == batch
-                         and not t.get("matched")]
-            kept_allocated = len([t for t in all_txns
-                                  if str(t.get("created_at", "") or "")[:16] == batch
-                                  and t.get("matched")])
+            _batch_txns = [t for t in all_txns
+                           if "id" in t and str(t.get("created_at", "") or "")[:16] == batch]
+
+            # A transaction that posted a GL journal must never be deleted. "matched" only
+            # means it was linked to an invoice — a transaction categorised as Bank Charges
+            # or Card Settlement has a full journal but no invoice match, and deleting it
+            # strands that journal in the ledger forever.
+            _journal_ids = _txn_ids_with_journals(biz_id, [t["id"] for t in _batch_txns])
+            to_delete = [t["id"] for t in _batch_txns
+                         if not t.get("matched") and t["id"] not in _journal_ids]
+            kept_allocated = len([t for t in _batch_txns
+                                  if t.get("matched") or t["id"] in _journal_ids])
             if not to_delete:
                 _msg = ("Nothing to delete — every transaction in this import is allocated."
                         if kept_allocated else "No matching transactions found for this import.")
@@ -5797,12 +5847,30 @@ Return ONLY the JSON array. No markdown, no explanation."""
             if not biz_id:
                 return jsonify({"success": False, "error": "No business selected"})
             
+            data = request.get_json(silent=True) or {}
+
             # Get all transaction IDs
             all_txns = db.get("bank_transactions", {"business_id": biz_id}) or []
             if not all_txns:
                 return jsonify({"success": True, "deleted": 0, "message": "No transactions to delete"})
             
             ids = [t["id"] for t in all_txns if "id" in t]
+
+            # Deleting a transaction does NOT remove the GL journal it posted, so a
+            # blind delete-all leaves every journal stranded with no source document.
+            # Refuse unless the caller has seen the count and confirmed.
+            _with_journal = _txn_ids_with_journals(biz_id, ids)
+            if _with_journal and not data.get("confirm_journals"):
+                return jsonify({
+                    "success": False,
+                    "needs_confirmation": True,
+                    "with_journals": len(_with_journal),
+                    "error": (f"{len(_with_journal)} of these {len(ids)} transactions have posted GL "
+                              "journals. Deleting them leaves those journals with no source "
+                              "document and the ledger will no longer reconcile to the bank. "
+                              "Re-send with confirm_journals to proceed anyway.")
+                })
+
             success_count, failed_count = db.delete_many("bank_transactions", ids, business_id=biz_id)
             
             logger.info(f"[BANK DELETE ALL] Deleted {success_count} transactions for business {biz_id} ({failed_count} failed)")
