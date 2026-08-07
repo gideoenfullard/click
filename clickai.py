@@ -10675,7 +10675,9 @@ def build_zane_core_prompt(context: dict, user_message: str = "") -> str:
     
     _needs_printer = any(w in msg_lower for w in [
         "printer", "scanner", "smtp", "imap", "scan inbox", "scan-to-email",
-        "app password", "email setup", "drukker", "skandeer"
+        "app password", "email setup", "drukker", "skandeer",
+        "gmail", "apppasswords", "email password", "email wagwoord",
+        "app wagwoord", "wagwoord", "email settings", "email instellings"
     ])
     
     _needs_nav = any(w in msg_lower for w in [
@@ -11608,7 +11610,9 @@ Once you have a customer, you can invoice!"""
             "printer", "scanner", "smtp", "imap", "scan inbox", "scan-to-email",
             "app password", "email setup", "drukker", "skandeer", "scan setup",
             "gmail setup", "outlook setup", "office 365", "port 587", "port 465",
-            "hitachi", "ricoh", "canon", "brother", "epson", "xerox"
+            "hitachi", "ricoh", "canon", "brother", "epson", "xerox",
+            "gmail", "apppasswords", "email password", "email wagwoord",
+            "app wagwoord", "wagwoord", "email settings", "email instellings"
         ])
         
         _needs_nav_detail = any(w in msg_lower for w in [
