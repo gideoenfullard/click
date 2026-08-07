@@ -3620,7 +3620,8 @@ def render_document_pdf(doc_type: str, doc: dict, business: dict, party: dict = 
     from reportlab.lib import colors as _rl_colors
     from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
     from reportlab.lib.enums import TA_RIGHT, TA_CENTER
-    from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle
+    from reportlab.lib.utils import ImageReader
+    from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, Image as RLImage
     
     def _money(v):
         try:
@@ -3668,16 +3669,27 @@ def render_document_pdf(doc_type: str, doc: dict, business: dict, party: dict = 
         author=str((business or {}).get("name", "")),
     )
     
+    # Document template (Settings -> Invoice Template) holds the brand colour and
+    # logo. Same source the printed invoice/quote views read, so the emailed PDF
+    # matches what the user prints.
+    try:
+        _tpl = json.loads((business or {}).get("invoice_template") or "{}")
+    except (ValueError, TypeError):
+        _tpl = {}
+    _tpl_color = str(_tpl.get("primary_color") or "").strip()
+    if not re.fullmatch(r"#[0-9A-Fa-f]{6}", _tpl_color):
+        _tpl_color = "#0f766e"
+    
     styles = getSampleStyleSheet()
-    PRIMARY = _rl_colors.HexColor("#0f766e")
+    PRIMARY = _rl_colors.HexColor(_tpl_color)
     DARK = _rl_colors.HexColor("#1f2937")
     GREY = _rl_colors.HexColor("#6b7280")
     LIGHT_GREY = _rl_colors.HexColor("#e5e7eb")
     HEADER_BG = _rl_colors.HexColor("#f1f5f9")
     
-    s_company = ParagraphStyle("C", parent=styles["Normal"], fontName="Helvetica-Bold", fontSize=14, textColor=_rl_colors.white, leading=16)
-    s_company_sub = ParagraphStyle("CS", parent=styles["Normal"], fontName="Helvetica", fontSize=9, textColor=_rl_colors.white, leading=11)
-    s_doctitle = ParagraphStyle("DT", parent=styles["Normal"], fontName="Helvetica-Bold", fontSize=18, textColor=_rl_colors.white, alignment=TA_RIGHT, leading=22)
+    s_company = ParagraphStyle("C", parent=styles["Normal"], fontName="Helvetica-Bold", fontSize=14, textColor=DARK, leading=16)
+    s_company_sub = ParagraphStyle("CS", parent=styles["Normal"], fontName="Helvetica", fontSize=9, textColor=GREY, leading=11)
+    s_doctitle = ParagraphStyle("DT", parent=styles["Normal"], fontName="Helvetica-Bold", fontSize=18, textColor=PRIMARY, alignment=TA_RIGHT, leading=22)
     s_label = ParagraphStyle("L", parent=styles["Normal"], fontName="Helvetica", fontSize=8, textColor=GREY, leading=11)
     s_value = ParagraphStyle("V", parent=styles["Normal"], fontName="Helvetica-Bold", fontSize=10, textColor=DARK, leading=12)
     s_party_name = ParagraphStyle("PN", parent=styles["Normal"], fontName="Helvetica-Bold", fontSize=12, textColor=PRIMARY, leading=14)
@@ -3699,7 +3711,36 @@ def render_document_pdf(doc_type: str, doc: dict, business: dict, party: dict = 
     biz_phone = str(business.get("phone", "") or "")
     biz_email = str(business.get("email", "") or "")
     
-    company_block = [Paragraph(biz_name, s_company)]
+    def _logo_flowable(max_w_mm=45, max_h_mm=16):
+        """Logo from the saved invoice template, honouring the Show Logo toggle.
+        Accepts a base64 data URI (how Settings stores uploads) or an http(s) URL.
+        Returns None when there is no logo or it cannot be read."""
+        if not _tpl.get("show_logo", True):
+            return None
+        src = str(_tpl.get("logo_url") or "").strip()
+        if not src:
+            return None
+        try:
+            if src.startswith("data:"):
+                raw = base64.b64decode(src.split(",", 1)[1])
+            elif src.startswith("http://") or src.startswith("https://"):
+                raw = requests.get(src, timeout=5).content
+            else:
+                return None
+            iw, ih = ImageReader(io.BytesIO(raw)).getSize()
+            if not iw or not ih:
+                return None
+            scale = min((max_w_mm * mm) / iw, (max_h_mm * mm) / ih)
+            return RLImage(io.BytesIO(raw), width=iw * scale, height=ih * scale)
+        except Exception:
+            return None
+    
+    company_block = []
+    _logo_img = _logo_flowable()
+    if _logo_img is not None:
+        company_block.append(_logo_img)
+        company_block.append(Spacer(1, 6))
+    company_block.append(Paragraph(biz_name, s_company))
     if biz_address:
         company_block.append(Paragraph(biz_address, s_company_sub))
     meta_bits = []
@@ -3712,12 +3753,13 @@ def render_document_pdf(doc_type: str, doc: dict, business: dict, party: dict = 
     
     header_t = Table([[company_block, Paragraph(title, s_doctitle)]], colWidths=[110*mm, 70*mm])
     header_t.setStyle(TableStyle([
-        ("BACKGROUND", (0, 0), (-1, -1), PRIMARY),
-        ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
-        ("LEFTPADDING", (0, 0), (-1, -1), 10),
-        ("RIGHTPADDING", (0, 0), (-1, -1), 10),
-        ("TOPPADDING", (0, 0), (-1, -1), 10),
-        ("BOTTOMPADDING", (0, 0), (-1, -1), 10),
+        ("BACKGROUND", (0, 0), (-1, -1), _rl_colors.white),
+        ("VALIGN", (0, 0), (-1, -1), "TOP"),
+        ("LEFTPADDING", (0, 0), (-1, -1), 0),
+        ("RIGHTPADDING", (0, 0), (-1, -1), 0),
+        ("TOPPADDING", (0, 0), (-1, -1), 0),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 8),
+        ("LINEBELOW", (0, 0), (-1, -1), 1.2, PRIMARY),
     ]))
     elements.append(header_t)
     elements.append(Spacer(1, 8))
