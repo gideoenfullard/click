@@ -2222,11 +2222,11 @@ def register_settings_routes(app, db, login_required, Auth, render_page,
             user_id = user.get("id", "") if user else ""
             
             updates = {
-                "smtp_host": request.form.get("smtp_host", ""),
-                "smtp_port": request.form.get("smtp_port", ""),
-                "smtp_user": request.form.get("smtp_user", ""),
-                "email_from": request.form.get("email_from", ""),
-                "smtp_pass": request.form.get("smtp_pass", ""),
+                "smtp_host": request.form.get("smtp_host", "").strip(),
+                "smtp_port": request.form.get("smtp_port", "").strip(),
+                "smtp_user": request.form.get("smtp_user", "").strip(),
+                "email_from": request.form.get("email_from", "").strip(),
+                "smtp_pass": "".join(request.form.get("smtp_pass", "").split()),
             }
             
             # Only update password if provided
