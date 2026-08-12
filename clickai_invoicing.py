@@ -3219,6 +3219,7 @@ def register_invoicing_routes(app, db, login_required, Auth, render_page,
             valid_days = int(request.form.get("valid_days", 30))
             salesman_id = request.form.get("salesman_id", "")
             salesman_name_form = request.form.get("salesman_name", "")
+            reference = request.form.get("reference", "").strip()
             
             # FAILSAFE: If customer_name is empty but customer_id is set, look it up from DB
             if not customer_name and customer_id and customer_id not in ("", "WALKIN", "NEW"):
@@ -3310,7 +3311,8 @@ def register_invoicing_routes(app, db, login_required, Auth, render_page,
                 created_by=user.get("id") if user else None,
                 created_by_name=user.get("name", "") if user else "",
                 salesman=salesman_id,
-                salesman_name=salesman_name_form
+                salesman_name=salesman_name_form,
+                reference=reference
             )
             quote_id = quote["id"]
             
@@ -3364,7 +3366,7 @@ def register_invoicing_routes(app, db, login_required, Auth, render_page,
             <h3 style="margin:0 0 20px 0;">New Quote</h3>
             
             <form method="POST" id="quoteForm">
-                <div style="display:grid;grid-template-columns:1fr 1fr 1fr 1fr;gap:20px;margin-bottom:20px;">
+                <div style="display:grid;grid-template-columns:1fr 1fr 1fr 1fr 1fr;gap:20px;margin-bottom:20px;">
                     <div>
                         <label>Customer</label>
                         <select name="customer_id" id="customerSelect" onchange="handleCustomerChange()" style="width:100%;padding:10px;border-radius:6px;border:1px solid var(--border);background:var(--card);color:var(--text);">
@@ -3386,6 +3388,10 @@ def register_invoicing_routes(app, db, login_required, Auth, render_page,
                     <div>
                         <label>Valid For (Days)</label>
                         <input type="number" name="valid_days" value="30" style="width:100%;padding:10px;border-radius:6px;border:1px solid var(--border);background:var(--card);color:var(--text);">
+                    </div>
+                    <div>
+                        <label>Reference</label>
+                        <input type="text" name="reference" placeholder="e.g. registration no, order ref" style="width:100%;padding:10px;border-radius:6px;border:1px solid var(--border);background:var(--card);color:var(--text);">
                     </div>
                 </div>
                 
@@ -3875,6 +3881,7 @@ def register_invoicing_routes(app, db, login_required, Auth, render_page,
                         {f'<tr><td style="padding:4px 0;color:#888;">Our VAT No:</td><td style="padding:4px 0;">{biz_vat}</td></tr>' if biz_vat else ''}
                         {f'<tr><td style="padding:4px 0;color:#888;">Prepared By:</td><td style="padding:4px 0;font-weight:600;">{created_by_name}</td></tr>' if created_by_name else ''}
                         {f'<tr><td style="padding:4px 0;color:#888;">Salesman:</td><td style="padding:4px 0;font-weight:600;">{salesman_display}</td></tr>' if salesman_display else ''}
+                        {f'<tr><td style="padding:4px 0;color:#888;">Reference:</td><td style="padding:4px 0;font-weight:600;">{safe_string(quote.get("reference", ""))}</td></tr>' if quote.get("reference") else ''}
                     </table>
                     {f'<div style="margin-top:8px;font-size:10px;color:#666;">Tel: {biz_phone}</div>' if biz_phone else ''}
                     {f'<div style="font-size:10px;color:#666;">{biz_email}</div>' if biz_email else ''}
@@ -4081,6 +4088,7 @@ def register_invoicing_routes(app, db, login_required, Auth, render_page,
             customer_name = request.form.get("customer_name", "")
             salesman_id = request.form.get("salesman_id", "")
             salesman_name_form = request.form.get("salesman_name", "")
+            reference = request.form.get("reference", "").strip()
             
             # FAILSAFE: If customer_name is empty but customer_id is set, look it up from DB
             _resolved_cid = safe_uuid(customer_id) or quote.get("customer_id")
@@ -4182,6 +4190,7 @@ def register_invoicing_routes(app, db, login_required, Auth, render_page,
                 "total": float(total),
                 "salesman": salesman_id,
                 "salesman_name": salesman_name_form,
+                "reference": reference,
                 "updated_at": now()
             }
             
@@ -4213,6 +4222,7 @@ def register_invoicing_routes(app, db, login_required, Auth, render_page,
         existing_customer_name = quote.get("customer_name", "")
         existing_salesman_id = quote.get("salesman", "")
         existing_salesman_name = quote.get("salesman_name", "")
+        existing_reference = quote.get("reference", "") or ""
         
         # Build customer options
         customer_options = '<option value="">-- Select Customer --</option>'
@@ -4287,7 +4297,7 @@ def register_invoicing_routes(app, db, login_required, Auth, render_page,
             </div>
             
             <form method="POST" id="quoteForm">
-                <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:20px;margin-bottom:20px;">
+                <div style="display:grid;grid-template-columns:1fr 1fr 1fr 1fr;gap:20px;margin-bottom:20px;">
                     <div>
                         <label>Customer</label>
                         <select name="customer_id" id="customerSelect" onchange="handleCustomerChange()" style="width:100%;padding:10px;border-radius:6px;border:1px solid var(--border);background:var(--card);color:var(--text);">
@@ -4305,6 +4315,10 @@ def register_invoicing_routes(app, db, login_required, Auth, render_page,
                     <div>
                         <label>Date</label>
                         <input type="date" value="{quote.get('date', today())}" disabled style="width:100%;padding:10px;border-radius:6px;border:1px solid var(--border);background:var(--card);color:var(--text);">
+                    </div>
+                    <div>
+                        <label>Reference</label>
+                        <input type="text" name="reference" value="{safe_string(existing_reference)}" placeholder="e.g. registration no, order ref" style="width:100%;padding:10px;border-radius:6px;border:1px solid var(--border);background:var(--card);color:var(--text);">
                     </div>
                 </div>
                 
@@ -4699,7 +4713,8 @@ def register_invoicing_routes(app, db, login_required, Auth, render_page,
             created_by_name=quote.get("created_by_name", ""),
             salesman=quote.get("salesman", ""),
             salesman_name=quote.get("salesman_name", ""),
-            sales_rep=quote.get("salesman_name", "")
+            sales_rep=quote.get("salesman_name", ""),
+            reference=quote.get("reference", "") or ""
         )
         invoice_id = invoice["id"]
         

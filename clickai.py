@@ -5643,7 +5643,8 @@ class RecordFactory:
             "created_by": kwargs.get("created_by"),
             "created_by_name": kwargs.get("created_by_name", ""),
             "salesman": kwargs.get("salesman", ""),
-            "salesman_name": kwargs.get("salesman_name", "")
+            "salesman_name": kwargs.get("salesman_name", ""),
+            "reference": kwargs.get("reference", "")
         }
     
     @staticmethod
