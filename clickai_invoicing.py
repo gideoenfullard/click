@@ -3314,12 +3314,18 @@ def register_invoicing_routes(app, db, login_required, Auth, render_page,
             )
             quote_id = quote["id"]
             
-            success, _ = db.save("quotes", quote)
+            success, _save_err = db.save("quotes", quote)
             
             if success:
                 return redirect(f"/quote/{quote_id}")
             
-            return redirect("/quote/new?error=Failed+to+save")
+            print(f"[QUOTE NEW] SAVE FAILED biz={biz_id} err={_save_err}", flush=True)
+            print(f"[QUOTE NEW] PAYLOAD quote_number={quote.get('quote_number')!r} "
+                  f"customer_id={quote.get('customer_id')!r} customer_name={quote.get('customer_name')!r} "
+                  f"salesman={quote.get('salesman')!r} created_by={quote.get('created_by')!r} "
+                  f"valid_days={quote.get('valid_days')!r} status={quote.get('status')!r}", flush=True)
+            from urllib.parse import quote_plus as _urlq
+            return redirect("/quote/new?error=" + _urlq(f"Failed to save: {str(_save_err)[:300]}"))
         
         # GET - show form (stock via AJAX)
         from concurrent.futures import ThreadPoolExecutor
