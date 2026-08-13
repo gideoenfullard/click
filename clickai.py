@@ -55702,7 +55702,7 @@ def create_credit_note(invoice_id):
             </td>
             <td>{safe_string(item.get("description", "-"))}</td>
             <td style="text-align:center;">
-                <input type="number" name="credit_qty[]" value="{qty}" min="0.01" max="{qty}" step="0.01" class="cn-qty" onchange="updateCNTotal()" style="width:70px;padding:4px;border:1px solid var(--border);border-radius:4px;background:var(--bg);color:var(--text);text-align:center;">
+                <input type="number" name="credit_qty[]" value="{qty}" min="0.01" max="{qty}" step="any" class="cn-qty" onchange="updateCNTotal()" style="width:70px;padding:4px;border:1px solid var(--border);border-radius:4px;background:var(--bg);color:var(--text);text-align:center;">
                 <span style="color:var(--text-muted);font-size:11px;">/ {qty}</span>
             </td>
             <td style="text-align:right;">{money(price)}</td>
