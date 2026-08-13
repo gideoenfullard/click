@@ -55974,6 +55974,91 @@ def api_reverse_customer_invoice(invoice_id):
             logger.error(f"[REVERSE INV] Journal create failed: {je_err}")
             return jsonify({"success": False, "error": f"Journal creation failed: {str(je_err)[:200]}"}), 500
         
+        # ── REVERSE ANY SETTLED PAYMENT ON THIS INVOICE ──
+        # The journal above credits Debtors on the assumption the invoice is
+        # still unpaid. If a payment already cleared Debtors, that second
+        # credit leaves the customer in credit and the cash sitting in the
+        # till with no sale behind it. Reverse the payment too:
+        # DR Debtors, CR Cash/Bank — mirroring the POS refund.
+        payments_reversed = []
+        payments_reversed_total = 0.0
+        try:
+            _pay_ref = f"PAY-{inv_number}"
+            _cand_receipts = {}
+            # Source 1: receipts linked through payment_allocations
+            for _pa in (db.get("payment_allocations", {"business_id": biz_id, "invoice_id": invoice_id}) or []):
+                _rid = _pa.get("receipt_id") or ""
+                if _rid:
+                    _r = db.get_one("receipts", _rid)
+                    if _r and _r.get("business_id") == biz_id:
+                        _cand_receipts[_rid] = _r
+            # Source 2: markPaid receipts, matched on the PAY- reference
+            for _r in (db.get("receipts", {"business_id": biz_id, "reference": _pay_ref}) or []):
+                if _r.get("id"):
+                    _cand_receipts[_r.get("id")] = _r
+
+            for _rid, _r in _cand_receipts.items():
+                _amt = round(float(_r.get("amount", 0) or 0), 2)
+                if _amt <= 0:
+                    continue
+                _r_ref = (_r.get("reference") or "").strip() or _pay_ref
+                _method = (_r.get("method") or _r.get("payment_method") or invoice.get("payment_method") or "cash").lower()
+                if _method == "cash":
+                    _bank_acc = "1050"   # Cash On Hand
+                elif _method == "card":
+                    _bank_acc = "1010"   # Card Clearing
+                elif _method == "account":
+                    continue             # on-account is not a cash payment
+                else:
+                    _bank_acc = "1000"   # Bank (EFT / other)
+
+                _pay_rev_gl = [
+                    {"account_code": gl(biz_id, "debtors"), "debit": float(_amt), "credit": 0},
+                    {"account_code": _bank_acc,             "debit": 0,           "credit": float(_amt)},
+                ]
+                create_journal_entry(biz_id, today_str,
+                                     f"REVERSAL of Payment {_r_ref} - {customer_name} ({reason[:60]})",
+                                     f"REVPAY-{inv_number}", _pay_rev_gl)
+
+                # Mark the payment's allocation_log rows reversed so balances
+                # and statements drop it (same mechanism as /ledger/reverse)
+                for _al in (db.get("allocation_log", {"business_id": biz_id, "reference": _r_ref}) or []):
+                    if (_al.get("status") or "") == "reversed":
+                        continue
+                    try:
+                        db.update("allocation_log", _al.get("id"), {
+                            "status": "reversed",
+                            "reversed_at": now(),
+                            "reversed_by": user.get("name", "") if user else "",
+                        })
+                    except Exception as _alu_err:
+                        logger.warning(f"[REVERSE INV] Allocation status update failed: {_alu_err}")
+
+                # Remove the receipt, its payment row and allocation row — the
+                # REVPAY- journal and the reversed allocation_log keep the audit
+                # trail. Receipt and payment share the same id (markPaid mirror).
+                try:
+                    db.delete("receipts", _rid, biz_id)
+                except Exception as _rd_err:
+                    logger.warning(f"[REVERSE INV] Receipt delete failed: {_rd_err}")
+                try:
+                    if db.get_one("payments", _rid):
+                        db.delete("payments", _rid, biz_id)
+                except Exception as _pd_err:
+                    logger.warning(f"[REVERSE INV] Payment delete failed: {_pd_err}")
+                for _pa in (db.get("payment_allocations", {"business_id": biz_id, "receipt_id": _rid}) or []):
+                    try:
+                        db.delete("payment_allocations", _pa.get("id"), biz_id)
+                    except Exception as _pad_err:
+                        logger.warning(f"[REVERSE INV] Allocation row delete failed: {_pad_err}")
+
+                payments_reversed.append(_r_ref)
+                payments_reversed_total += _amt
+                print(f"[REVERSE INV] Payment {_r_ref} reversed with {inv_number} - R{_amt:.2f} to {_bank_acc}", flush=True)
+        except Exception as _pr_err:
+            logger.error(f"[REVERSE INV] Payment reversal failed: {_pr_err}")
+            print(f"[REVERSE INV] Payment reversal failed for {inv_number}: {_pr_err}", flush=True)
+
         # NOTE: We DO NOT write back to the invoices table. The 'invoices'
         # schema varies across customer Supabase instances. Reversed status
         # is derived purely from the allocation_log audit entry below —
@@ -56002,11 +56087,16 @@ def api_reverse_customer_invoice(invoice_id):
         
         logger.info(f"[REVERSE INV] {inv_number} reversed by {user.get('name', user.get('id', 'unknown')) if user else 'unknown'} - reason: {reason[:80]}")
         
+        _msg = f"Invoice {inv_number} reversed (R{total:,.2f})"
+        if payments_reversed:
+            _msg += f" — payment of R{payments_reversed_total:,.2f} also reversed, cash returned"
         return jsonify({
             "success": True,
-            "message": f"Invoice {inv_number} reversed (R{total:,.2f})",
+            "message": _msg,
             "reference": ref,
-            "invoice_number": inv_number
+            "invoice_number": inv_number,
+            "payments_reversed": payments_reversed,
+            "payments_reversed_total": round(payments_reversed_total, 2)
         })
     except Exception as e:
         logger.error(f"[REVERSE INV] Error: {e}")
