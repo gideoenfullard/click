@@ -403,12 +403,22 @@ def register_invoicing_routes(app, db, login_required, Auth, render_page,
                         ])
                         # Customer balance is now calculated dynamically — no manual update needed
                     else:
-                        # Cash/Card/EFT - Debit Bank/Cash, Credit Sales + VAT
+                        # Cash/Card/EFT — Pastel flow: the sale ALWAYS goes
+                        # through Debtors (DR Debtors / CR Sales + VAT), then a
+                        # separate payment journal settles it (DR Bank/Cash /
+                        # CR Debtors). Every cent runs through the debtors
+                        # control, so a wrongly-chosen payment method is fixed
+                        # with a normal payment reversal instead of a manual
+                        # correcting journal.
                         bank_account = "1050" if payment_method == "cash" else ("1010" if payment_method == "card" else "1000")
                         create_journal_entry(biz_id, invoice_date, f"Invoice {inv_num} - {customer_name} ({payment_method.upper()})", inv_num, [
-                            {"account_code": bank_account, "debit": float(total), "credit": 0},
+                            {"account_code": gl(biz_id, "debtors"), "debit": float(total), "credit": 0},
                             {"account_code": gl(biz_id, "sales"), "debit": 0, "credit": float(subtotal)},
                             {"account_code": gl(biz_id, "vat_output"), "debit": 0, "credit": float(vat)},
+                        ])
+                        create_journal_entry(biz_id, invoice_date, f"Payment for Invoice {inv_num} - {customer_name} ({payment_method.upper()})", f"PAY-{inv_num}", [
+                            {"account_code": bank_account, "debit": float(total), "credit": 0},
+                            {"account_code": gl(biz_id, "debtors"), "debit": 0, "credit": float(total)},
                         ])
                         # Paid at creation: record a receipt + allocation so the
                         # customer balance and statement see the settlement
@@ -449,10 +459,15 @@ def register_invoicing_routes(app, db, login_required, Auth, render_page,
                     if log_allocation:
                         _bank = "1050" if payment_method == "cash" else ("1010" if payment_method == "card" else "1000")
                         _gl = [
-                            {"account_code": _bank if payment_method != "account" else gl(biz_id, "debtors"), "debit": float(total), "credit": 0},
+                            {"account_code": gl(biz_id, "debtors"), "debit": float(total), "credit": 0},
                             {"account_code": gl(biz_id, "sales"), "debit": 0, "credit": float(subtotal)},
                             {"account_code": gl(biz_id, "vat_output"), "debit": 0, "credit": float(vat)},
                         ]
+                        if payment_method != "account":
+                            _gl += [
+                                {"account_code": _bank, "debit": float(total), "credit": 0},
+                                {"account_code": gl(biz_id, "debtors"), "debit": 0, "credit": float(total)},
+                            ]
                         log_allocation(
                             business_id=biz_id, allocation_type="invoice", source_table="invoices", source_id=invoice_id,
                             description=f"Invoice {inv_num} - {customer_name}",
@@ -637,12 +652,13 @@ def register_invoicing_routes(app, db, login_required, Auth, render_page,
                     </div>
                     <div>
                         <label>Payment Method</label>
-                        <select name="payment_method" id="paymentMethod" style="width:100%;padding:10px;border-radius:6px;border:1px solid var(--border);background:var(--card);color:var(--text);">
-                            <option value="account">[FORM] Account (Outstanding)</option>
-                            <option value="cash">💵 Cash</option>
-                            <option value="card">[PAY] Card</option>
-                            <option value="eft">[BANK] EFT</option>
+                        <select name="payment_method" id="paymentMethod" onchange="updatePayHint()" style="width:100%;padding:10px;border-radius:6px;border:1px solid var(--border);background:var(--card);color:var(--text);">
+                            <option value="account">Account — pay later (customer owes)</option>
+                            <option value="cash">Cash — received now</option>
+                            <option value="card">Card — received now</option>
+                            <option value="eft">EFT — received now (money already in bank)</option>
                         </select>
+                        <div id="payHint" style="font-size:11px;color:var(--text-muted);margin-top:4px;">Invoice stays outstanding — capture the payment later when it arrives.</div>
                     </div>
                     <div>
                         <label>Date</label>
@@ -711,7 +727,36 @@ def register_invoicing_routes(app, db, login_required, Auth, render_page,
         
         // Validate form before submit — block zero amount invoices
         let _skipZeroCheck = false;
+        let _payConfirmed = false;
+        
+        function updatePayHint() {{
+            _payConfirmed = false;
+            const m = document.getElementById('paymentMethod').value;
+            const hint = document.getElementById('payHint');
+            if (m === 'account') {{
+                hint.textContent = 'Invoice stays outstanding — capture the payment later when it arrives.';
+                hint.style.color = 'var(--text-muted)';
+            }} else {{
+                hint.textContent = 'The invoice will be marked PAID today — only choose this if the money has already been received.';
+                hint.style.color = 'var(--orange, #f59e0b)';
+            }}
+        }}
+        
         document.getElementById('invoiceForm').addEventListener('submit', function(e) {{
+            // Received-now methods mark the invoice PAID immediately — confirm
+            // so "he will pay by EFT later" is not captured as already paid
+            const _pm = document.getElementById('paymentMethod').value;
+            if (_pm !== 'account' && !_payConfirmed) {{
+                const _pmName = _pm.toUpperCase();
+                if (!confirm('Payment method: ' + _pmName + '\\n\\nThis marks the invoice as PAID today.\\n\\nHas the money ALREADY been received?\\n\\nOK = Yes, paid now\\nCancel = No, change to Account (pay later)')) {{
+                    e.preventDefault();
+                    document.getElementById('paymentMethod').value = 'account';
+                    updatePayHint();
+                    return false;
+                }}
+                _payConfirmed = true;
+            }}
+            
             // Check customer name is set
             const custName = document.getElementById('customerName').value.trim();
             const custSel = document.getElementById('customerSelect').value;
