@@ -333,6 +333,10 @@ def register_invoicing_routes(app, db, login_required, Auth, render_page,
                     if discount_pct > 0:
                         _item["discount_pct"] = discount_pct
                         _item["original_price"] = original_price
+                    # Keep the stock link on the line — an invoice edit needs it
+                    # to give the old quantity back before taking the new one
+                    if _sid:
+                        _item["stock_id"] = _sid
                     items.append(_item)
             
             if not items:
@@ -1077,6 +1081,10 @@ def register_invoicing_routes(app, db, login_required, Auth, render_page,
         # Delivery note button - hide if already delivered or paid
         dn_btn = "" if status in ("delivered", "paid", "credited") else f'<a href="/invoice/{invoice_id}/create-delivery-note" class="btn btn-secondary">Delivery Note</a>'
         
+        # Edit button - only while nothing has settled against the invoice
+        _edit_block = _invoice_edit_blocked(invoice, biz_id)
+        edit_btn = "" if _edit_block else f'<a href="/invoice/{invoice_id}/edit" class="btn btn-secondary">Edit Invoice</a>'
+        
         # Payment buttons - show for outstanding, delivered, or account invoices
         payment_btns = ""
         if status in ("outstanding", "delivered", "account"):
@@ -1361,6 +1369,7 @@ def register_invoicing_routes(app, db, login_required, Auth, render_page,
             </div>
             <div style="display:flex;gap:10px;flex-wrap:wrap;">
                 {payment_btns}
+                {edit_btn}
                 {dn_btn}
                 {cn_btn}
                 {email_btn}
@@ -1982,6 +1991,535 @@ def register_invoicing_routes(app, db, login_required, Auth, render_page,
         except Exception as e:
             logger.error(f"[INVOICE EDIT] Error: {e}")
             return jsonify({"success": False, "error": str(e)})
+    
+    
+    def _invoice_edit_blocked(invoice, biz_id):
+        """Return a blocking reason, or "" when the invoice may still be edited.
+        
+        An invoice may only be edited while NOTHING has settled against it.
+        Anything paid, part-paid, credited or reversed must be corrected with a
+        credit note — same rule as Pastel, which never lets a settled document
+        change under a payment that is already in the bank."""
+        _st = (invoice.get("status") or "").lower()
+        if _st in ("credited", "reversed"):
+            return f"Cannot edit a {_st} invoice - use a credit note"
+        if _st == "paid":
+            return "Cannot edit a paid invoice - reverse the payment first, or use a credit note"
+        try:
+            _allocs = db.get("payment_allocations", {"business_id": biz_id, "invoice_id": invoice.get("id")}) or []
+            if _allocs:
+                return "Cannot edit - a payment is already allocated to this invoice"
+        except Exception:
+            pass
+        return ""
+    
+    
+    @app.route("/invoice/<invoice_id>/edit", methods=["GET", "POST"])
+    @login_required
+    def invoice_edit(invoice_id):
+        """Edit a saved invoice — line items, customer, salesman, reference.
+        
+        The invoice number never changes. The original GL posting is reversed
+        and the corrected one re-posted, and stock is adjusted by the difference,
+        so an already-emailed invoice can be corrected without leaving the ledger
+        or the stock on hand wrong."""
+        user = Auth.get_current_user()
+        business = Auth.get_current_business()
+        biz_id = business.get("id") if business else None
+        
+        invoice = db.get_one("invoices", invoice_id)
+        if not invoice:
+            return redirect("/invoices")
+        
+        _blocked = _invoice_edit_blocked(invoice, biz_id)
+        if _blocked:
+            return redirect(f"/invoice/{invoice_id}?error=" + _blocked.replace(" ", "+"))
+        
+        inv_num = invoice.get("invoice_number", "")
+        inv_date = invoice.get("date") or today()
+        
+        # Original items — needed for the stock give-back and the GL reversal
+        _orig_items = invoice.get("items", [])
+        if isinstance(_orig_items, str):
+            try:
+                _orig_items = json.loads(_orig_items)
+            except Exception:
+                _orig_items = []
+        _orig_items = _orig_items or []
+        
+        if request.method == "POST":
+            customer_id = request.form.get("customer_id", "")
+            customer_name = request.form.get("customer_name", "")
+            salesman_id = request.form.get("salesman_id", "")
+            salesman_name_form = request.form.get("salesman_name", "")
+            reference = request.form.get("reference", "").strip()
+            delivery_note = request.form.get("delivery_note", "").strip()
+            
+            # FAILSAFE: If customer_name is empty but customer_id is set, look it up
+            _resolved_cid = safe_uuid(customer_id) or invoice.get("customer_id")
+            if not customer_name and _resolved_cid:
+                try:
+                    _cust = db.get_one("customers", _resolved_cid)
+                    if _cust:
+                        customer_name = _cust.get("name", "")
+                except Exception:
+                    pass
+            
+            items = []
+            descriptions = request.form.getlist("item_desc[]")
+            quantities = request.form.getlist("item_qty[]")
+            prices = request.form.getlist("item_price[]")
+            units = request.form.getlist("item_unit[]")
+            _item_stock_ids = request.form.getlist("item_stock_id[]")
+            
+            # ═══ SALE / DISCOUNT CAMPAIGN (same engine as the POS and invoices) ═══
+            _camp_active, _camp_pct = _load_sale_campaign(business, biz_id)
+            
+            # Preserve existing campaign tags on unchanged lines
+            _orig_by_desc = {}
+            for _oi in _orig_items:
+                if float(_oi.get("discount_pct", 0) or 0) > 0:
+                    _orig_by_desc[(_oi.get("description") or "").strip()] = _oi
+            
+            subtotal = Decimal("0")
+            for i, desc in enumerate(descriptions):
+                if desc.strip():
+                    qty = Decimal(quantities[i] or "1")
+                    price = Decimal(prices[i] or "0")
+                    discount_pct = 0.0
+                    original_price = 0.0
+                    _sid = _item_stock_ids[i] if i < len(_item_stock_ids) else ""
+                    if _sid and _camp_active:
+                        try:
+                            _st = db.get_one_stock(_sid)
+                        except Exception:
+                            _st = None
+                        if _st:
+                            _pct = _camp_pct(_st.get("category"))
+                            _full = float(_st.get("price") or _st.get("selling_price") or 0)
+                            if _pct > 0 and _full > 0:
+                                _disc_price = round(_full * (1 - _pct / 100.0), 2)
+                                _pf = float(price)
+                                if abs(_pf - _full) < 0.01:
+                                    price = Decimal(str(_disc_price))
+                                    discount_pct = _pct
+                                    original_price = _full
+                                elif abs(_pf - _disc_price) < 0.01:
+                                    discount_pct = _pct
+                                    original_price = _full
+                    if discount_pct == 0.0 and not _sid:
+                        _oi = _orig_by_desc.get(desc.strip())
+                        if _oi and abs(float(price) - float(_oi.get("price") or 0)) < 0.01:
+                            discount_pct = float(_oi.get("discount_pct") or 0)
+                            original_price = float(_oi.get("original_price") or 0)
+                    line_total = qty * price
+                    subtotal += line_total
+                    unit_val = units[i].strip() if i < len(units) else ""
+                    _item = {
+                        "description": desc,
+                        "unit": unit_val,
+                        "quantity": float(qty),
+                        "price": float(price),
+                        "total": float(line_total)
+                    }
+                    if discount_pct > 0:
+                        _item["discount_pct"] = discount_pct
+                        _item["original_price"] = original_price
+                    if _sid:
+                        _item["stock_id"] = _sid
+                    items.append(_item)
+            
+            if not items:
+                return redirect(f"/invoice/{invoice_id}/edit?error=No+items")
+            
+            vat = (subtotal * VAT_RATE).quantize(Decimal("0.01"))
+            total = subtotal + vat
+            
+            old_subtotal = float(invoice.get("subtotal", 0) or 0)
+            old_vat = float(invoice.get("vat", invoice.get("vat_amount", 0)) or 0)
+            old_total = float(invoice.get("total", 0) or 0)
+            old_customer_name = invoice.get("customer_name", "")
+            
+            updates = {
+                "customer_id": safe_uuid(customer_id) or invoice.get("customer_id"),
+                "customer_name": customer_name or invoice.get("customer_name"),
+                "items": items,
+                "subtotal": float(subtotal),
+                "vat": float(vat),
+                "total": float(total),
+                "salesman": salesman_id,
+                "salesman_name": salesman_name_form,
+                "sales_rep": salesman_name_form,
+                "reference": reference,
+                "delivery_note": delivery_note,
+            }
+            
+            try:
+                db.update("invoices", invoice_id, updates)
+                logger.info(f"[INVOICE EDIT] {inv_num}: {old_total:.2f} -> {float(total):.2f}")
+            except Exception as e:
+                logger.error(f"[INVOICE EDIT] Save failed for {inv_num}: {e}")
+                return redirect(f"/invoice/{invoice_id}/edit?error=Save+failed")
+            
+            # ── STOCK: give the old quantities back, take the new ones ──
+            # Only lines that carry a stock link move stock. Invoices captured
+            # before the stock link was stored simply leave stock untouched.
+            try:
+                _stock_delta = {}
+                for _oi in _orig_items:
+                    _osid = _oi.get("stock_id") or ""
+                    if _osid:
+                        _stock_delta[_osid] = _stock_delta.get(_osid, 0.0) + float(_oi.get("quantity") or _oi.get("qty") or 0)
+                for _ni in items:
+                    _nsid = _ni.get("stock_id") or ""
+                    if _nsid:
+                        _stock_delta[_nsid] = _stock_delta.get(_nsid, 0.0) - float(_ni.get("quantity") or 0)
+                for _sid, _delta in _stock_delta.items():
+                    if abs(_delta) < 0.0001:
+                        continue
+                    _st = db.get_one_stock(_sid)
+                    if not _st:
+                        continue
+                    _cur = float(_st.get("qty") or _st.get("quantity") or 0)
+                    _new_qty = _cur + _delta
+                    db.update_stock(_sid, {"qty": _new_qty, "quantity": _new_qty}, biz_id)
+                    logger.info(f"[INVOICE EDIT] Stock {_sid}: {_cur} {_delta:+} = {_new_qty}")
+            except Exception as _stk_err:
+                logger.error(f"[INVOICE EDIT] Stock adjustment failed for {inv_num}: {_stk_err}")
+            
+            # ── GL: reverse the original posting, then post the corrected one ──
+            # Dated on the invoice date so both legs land in the same month and
+            # the period nets to the corrected figure.
+            _new_gl = [
+                {"account_code": gl(biz_id, "debtors"), "debit": float(total), "credit": 0},
+                {"account_code": gl(biz_id, "sales"), "debit": 0, "credit": float(subtotal)},
+                {"account_code": gl(biz_id, "vat_output"), "debit": 0, "credit": float(vat)},
+            ]
+            try:
+                if old_total > 0:
+                    create_journal_entry(biz_id, inv_date,
+                                         f"EDIT REVERSAL of Invoice {inv_num} - {old_customer_name}",
+                                         f"REVEDIT-{inv_num}", [
+                        {"account_code": gl(biz_id, "debtors"), "debit": 0, "credit": old_total},
+                        {"account_code": gl(biz_id, "sales"), "debit": old_subtotal, "credit": 0},
+                        {"account_code": gl(biz_id, "vat_output"), "debit": old_vat, "credit": 0},
+                    ])
+                create_journal_entry(biz_id, inv_date,
+                                     f"Invoice {inv_num} - {customer_name} (edited)",
+                                     inv_num, _new_gl)
+            except Exception as _je_err:
+                logger.error(f"[INVOICE EDIT] Journal re-post failed for {inv_num}: {_je_err}")
+            
+            # ── ALLOCATION LOG ──
+            try:
+                if log_allocation:
+                    log_allocation(
+                        business_id=biz_id, allocation_type="invoice_edit", source_table="invoices",
+                        source_id=invoice_id,
+                        description=f"Invoice {inv_num} edited - was R{old_total:,.2f}, now R{float(total):,.2f}",
+                        amount=float(total), gl_entries=_new_gl,
+                        customer_name=customer_name, payment_method=invoice.get("payment_method", ""),
+                        reference=inv_num, transaction_date=inv_date,
+                        created_by=user.get("id") if user else "", created_by_name=user.get("name", "") if user else ""
+                    )
+            except Exception:
+                pass
+            
+            # ── AUDIT STAMP (best effort — columns may not exist yet) ──
+            try:
+                db.update("invoices", invoice_id, {
+                    "edited_at": now(),
+                    "edited_by": user.get("name", "") if user else "",
+                    "revision": int(invoice.get("revision") or 0) + 1,
+                })
+            except Exception:
+                pass
+            
+            return redirect(f"/invoice/{invoice_id}")
+        
+        # ── GET: show the edit form ──
+        with ThreadPoolExecutor(max_workers=2) as executor:
+            fut_customers = executor.submit(db.get, "customers", {"business_id": biz_id})
+            fut_team = executor.submit(db.get, "team_members", {"business_id": biz_id})
+        customers = fut_customers.result() if biz_id else []
+        team_members = fut_team.result() if biz_id else []
+        
+        existing_customer_id = invoice.get("customer_id", "")
+        existing_customer_name = invoice.get("customer_name", "")
+        existing_salesman_id = invoice.get("salesman", "")
+        existing_salesman_name = invoice.get("salesman_name", "") or invoice.get("sales_rep", "")
+        existing_reference = invoice.get("reference", "") or ""
+        existing_delivery_note = invoice.get("delivery_note", "") or ""
+        
+        customer_options = '<option value="">-- Select Customer --</option>'
+        customer_options += '<option value="WALKIN" style="color:var(--green);">Walk-in Customer (type name below)</option>'
+        for c in sorted(customers, key=lambda x: x.get("name", "")):
+            sel = "selected" if c.get("id") == existing_customer_id else ""
+            customer_options += f'<option value="{c.get("id")}" data-name="{safe_string(c.get("name", ""))}" {sel}>{safe_string(c.get("name", ""))}</option>'
+        
+        walkin_name_display = ""
+        customer_name_prefill = existing_customer_name
+        if existing_customer_name and not existing_customer_id:
+            walkin_name_display = existing_customer_name
+        
+        salesman_options = '<option value="">-- Select Salesman --</option>'
+        if user:
+            sel_me = "selected" if user.get("id", "") == existing_salesman_id else ""
+            salesman_options += f'<option value="{user.get("id", "")}" data-name="{safe_string(user.get("name", ""))}" {sel_me}>{safe_string(user.get("name", ""))} (me)</option>'
+        seen_ids = {user.get("id", "") if user else ""}
+        for tm in sorted(team_members, key=lambda x: x.get("name", "")):
+            tm_uid = tm.get("user_id") or tm.get("id", "")
+            if tm_uid not in seen_ids:
+                seen_ids.add(tm_uid)
+                sel_tm = "selected" if tm_uid == existing_salesman_id else ""
+                salesman_options += f'<option value="{tm_uid}" data-name="{safe_string(tm.get("name", ""))}" {sel_tm}>{safe_string(tm.get("name", ""))}</option>'
+        
+        existing_rows = ""
+        for item in _orig_items:
+            desc = safe_string(item.get("description") or item.get("desc") or "")
+            unit = safe_string(item.get("unit", ""))
+            qty = item.get("quantity") or item.get("qty") or 1
+            price = item.get("price") or item.get("unit_price") or 0
+            _row_sid = safe_string(item.get("stock_id", "") or "")
+            total_val = float(qty) * float(price)
+            existing_rows += f'''
+            <tr>
+                <td style="position:relative;"><input type="text" name="item_desc[]" value="{desc}" autocomplete="off" oninput="stockSearch(this)" onfocus="stockSearch(this)" placeholder="Type to search stock..." style="width:100%;padding:8px;border:1px solid var(--border);border-radius:4px;background:var(--bg);color:var(--text);"><input type="hidden" name="item_stock_id[]" value="{_row_sid}"><div class="stock-dropdown" style="display:none;"></div></td>
+                <td><input type="text" name="item_unit[]" value="{unit}" placeholder="ea" style="width:100%;padding:8px;border:1px solid var(--border);border-radius:4px;background:var(--bg);color:var(--text);text-align:center;"></td>
+                <td><input type="number" name="item_qty[]" value="{qty}" min="0.01" step="any" onchange="calcRow(this)" style="width:100%;padding:8px;border:1px solid var(--border);border-radius:4px;background:var(--bg);color:var(--text);"></td>
+                <td><input type="number" name="item_price[]" value="{price}" step="0.01" onchange="calcRow(this)" style="width:100%;padding:8px;border:1px solid var(--border);border-radius:4px;background:var(--bg);color:var(--text);"></td>
+                <td class="row-total">R{total_val:.2f}</td>
+                <td><button type="button" onclick="deleteRow(this)" style="background:var(--red);color:white;border:none;border-radius:4px;padding:6px 10px;cursor:pointer;">✕</button></td>
+            </tr>
+            '''
+        
+        if not existing_rows:
+            existing_rows = '''
+            <tr>
+                <td style="position:relative;"><input type="text" name="item_desc[]" autocomplete="off" oninput="stockSearch(this)" onfocus="stockSearch(this)" placeholder="Type to search stock..." style="width:100%;padding:8px;border:1px solid var(--border);border-radius:4px;background:var(--bg);color:var(--text);"><input type="hidden" name="item_stock_id[]" value=""><div class="stock-dropdown" style="display:none;"></div></td>
+                <td><input type="text" name="item_unit[]" placeholder="ea" style="width:100%;padding:8px;border:1px solid var(--border);border-radius:4px;background:var(--bg);color:var(--text);text-align:center;"></td>
+                <td><input type="number" name="item_qty[]" value="1" min="0.01" step="any" onchange="calcRow(this)" style="width:100%;padding:8px;border:1px solid var(--border);border-radius:4px;background:var(--bg);color:var(--text);"></td>
+                <td><input type="number" name="item_price[]" step="0.01" onchange="calcRow(this)" style="width:100%;padding:8px;border:1px solid var(--border);border-radius:4px;background:var(--bg);color:var(--text);"></td>
+                <td class="row-total">R0.00</td>
+                <td><button type="button" onclick="deleteRow(this)" style="background:var(--red);color:white;border:none;border-radius:4px;padding:6px 10px;cursor:pointer;">✕</button></td>
+            </tr>
+            '''
+        
+        error_msg = request.args.get("error", "")
+        error_html = f'<div style="background:var(--red);color:white;padding:10px;border-radius:8px;margin-bottom:15px;">{safe_string(error_msg)}</div>' if error_msg else ""
+        
+        _dd_css = '<style>.stock-dropdown{position:absolute;top:100%;left:0;right:0;background:var(--card);border:1px solid var(--border);border-radius:6px;max-height:220px;overflow-y:auto;z-index:999;box-shadow:0 4px 12px rgba(0,0,0,0.3);}.stock-dd-item{padding:8px 10px;cursor:pointer;font-size:13px;border-bottom:1px solid var(--border);}.stock-dd-item:hover{background:var(--primary);color:white;}</style>'
+        
+        content = f'''
+        {_dd_css}
+        {error_html}
+        <div class="card">
+            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:20px;">
+                <h3 style="margin:0;">Edit Invoice — {inv_num}</h3>
+                <span style="color:var(--text-muted);font-size:13px;">Status: {invoice.get("status", "outstanding").title()}</span>
+            </div>
+            
+            <div style="background:rgba(245,158,11,0.15);border:1px solid rgba(245,158,11,0.3);padding:10px 14px;border-radius:8px;margin-bottom:20px;font-size:13px;">
+                The invoice number stays the same. The original ledger posting is reversed and re-posted, and stock is corrected by the difference. Re-send the invoice to the customer after saving.
+            </div>
+            
+            <form method="POST" id="invoiceEditForm">
+                <div style="display:grid;grid-template-columns:1fr 1fr 1fr 1fr;gap:20px;margin-bottom:20px;">
+                    <div>
+                        <label>Customer</label>
+                        <select name="customer_id" id="customerSelect" onchange="handleCustomerChange()" style="width:100%;padding:10px;border-radius:6px;border:1px solid var(--border);background:var(--card);color:var(--text);">
+                            {customer_options}
+                        </select>
+                        <input type="text" name="customer_name" id="customerName" placeholder="Type walk-in customer name" value="{safe_string(customer_name_prefill)}" style="{"display:block" if walkin_name_display else "display:none"};width:100%;padding:10px;border-radius:6px;border:1px solid var(--border);background:var(--card);color:var(--text);margin-top:6px;">
+                    </div>
+                    <div>
+                        <label>Salesman</label>
+                        <select name="salesman_id" id="salesmanSelect" onchange="handleSalesmanChange()" style="width:100%;padding:10px;border-radius:6px;border:1px solid var(--border);background:var(--card);color:var(--text);">
+                            {salesman_options}
+                        </select>
+                        <input type="hidden" name="salesman_name" id="salesmanName" value="{safe_string(existing_salesman_name)}">
+                    </div>
+                    <div>
+                        <label>Date</label>
+                        <input type="date" value="{inv_date}" disabled style="width:100%;padding:10px;border-radius:6px;border:1px solid var(--border);background:var(--card);color:var(--text);">
+                    </div>
+                    <div>
+                        <label>Customer PO / Reference</label>
+                        <input type="text" name="reference" value="{safe_string(existing_reference)}" placeholder="e.g. PO12345" style="width:100%;padding:10px;border-radius:6px;border:1px solid var(--border);background:var(--card);color:var(--text);">
+                    </div>
+                </div>
+                <div style="display:grid;grid-template-columns:1fr 1fr;gap:20px;margin-bottom:20px;">
+                    <div>
+                        <label>Delivery Note No</label>
+                        <input type="text" name="delivery_note" value="{safe_string(existing_delivery_note)}" placeholder="e.g. DN-0045" style="width:100%;padding:10px;border-radius:6px;border:1px solid var(--border);background:var(--card);color:var(--text);">
+                    </div>
+                </div>
+                
+                <h4>Line Items</h4>
+                
+                <table class="table" id="lineItems">
+                    <thead>
+                        <tr>
+                            <th style="width:38%">Description</th>
+                            <th style="width:10%">Unit</th>
+                            <th style="width:10%">Qty</th>
+                            <th style="width:17%">Price (excl)</th>
+                            <th style="width:15%">Total</th>
+                            <th style="width:10%"></th>
+                        </tr>
+                    </thead>
+                    <tbody id="itemRows">
+                        {existing_rows}
+                    </tbody>
+                </table>
+                
+                <button type="button" onclick="addRow()" class="btn btn-secondary" style="margin:10px 0;">+ Add Line</button>
+                
+                <div style="text-align:right;margin-top:20px;padding:15px;background:rgba(0,0,0,0.2);border-radius:8px;">
+                    <div style="margin-bottom:10px;">Subtotal: <strong id="subtotal">R0.00</strong></div>
+                    <div style="margin-bottom:10px;">VAT (15%): <strong id="vat">R0.00</strong></div>
+                    <div style="font-size:24px;">Total: <strong id="total" style="color:var(--green);">R0.00</strong></div>
+                </div>
+                
+                <div style="display:flex;gap:10px;margin-top:20px;">
+                    <button type="submit" class="btn btn-primary" style="flex:1;">Save Changes</button>
+                    <a href="/invoice/{invoice_id}" class="btn btn-secondary">Cancel</a>
+                </div>
+            </form>
+        </div>
+        
+        <script>
+        document.addEventListener('DOMContentLoaded', function() {{
+            const form = document.getElementById('invoiceEditForm');
+            if (form) {{
+                form.addEventListener('submit', function() {{
+                    const sel = document.getElementById('customerSelect');
+                    const nameInput = document.getElementById('customerName');
+                    if (sel && nameInput && sel.value && sel.value !== 'WALKIN' && sel.value !== 'NEW') {{
+                        if (!nameInput.value.trim()) {{
+                            nameInput.value = sel.options[sel.selectedIndex]?.dataset?.name || '';
+                        }}
+                    }}
+                }});
+            }}
+        }});
+        
+        function handleCustomerChange() {{
+            const sel = document.getElementById('customerSelect');
+            const nameInput = document.getElementById('customerName');
+            if (sel.value === 'WALKIN') {{
+                nameInput.style.display = 'block';
+                nameInput.focus();
+                nameInput.value = '';
+                return;
+            }}
+            nameInput.style.display = 'none';
+            const name = sel.options[sel.selectedIndex]?.dataset?.name || '';
+            nameInput.value = name;
+        }}
+        
+        function handleSalesmanChange() {{
+            const sel = document.getElementById('salesmanSelect');
+            const nameInput = document.getElementById('salesmanName');
+            nameInput.value = sel.options[sel.selectedIndex]?.dataset?.name || '';
+        }}
+        
+        let _searchTimer = null;
+        function stockSearch(input) {{
+            const q = input.value.trim();
+            const dd = input.closest('td').querySelector('.stock-dropdown');
+            if (q.length < 1) {{ dd.style.display='none'; return; }}
+            clearTimeout(_searchTimer);
+            _searchTimer = setTimeout(()=>{{
+                fetch('/api/stock/lookup?q='+encodeURIComponent(q)).then(r=>r.json()).then(items=>{{
+                    if(!items.length){{ dd.style.display='none'; return; }}
+                    let h='';
+                    items.forEach(s=>{{
+                        const lb=(s.label||'').replace(/'/g,"\\\\'"), un=(s.unit||'').replace(/'/g,"\\\\'");
+                        h+='<div class="stock-dd-item" onmousedown="pickStock(this,\\''+s.id+'\\',\\''+lb+'\\','+s.price+',\\''+un+'\\')">'
+                          +'<b>'+(s.code||'')+'</b> '+(s.desc||'')+' <span style="float:right;color:#22c55e;">R'+s.price.toFixed(2)+'</span>'
+                          +(s.unit?'<span style="color:#888;font-size:11px;margin-left:4px;">'+s.unit+'</span>':'')+'</div>';
+                    }});
+                    dd.innerHTML=h; dd.style.display='block';
+                }});
+            }}, 200);
+        }}
+        function pickStock(el,stockId,label,price,unit){{
+            const row=el.closest('tr');
+            row.querySelector('input[name="item_desc[]"]').value=label;
+            const sid=row.querySelector('input[name="item_stock_id[]"]'); if(sid) sid.value=stockId;
+            const p=row.querySelector('input[name="item_price[]"]'); p.value=price;
+            const u=row.querySelector('input[name="item_unit[]"]'); if(u&&unit) u.value=unit;
+            el.closest('.stock-dropdown').style.display='none'; calcRow(p);
+            const descCell=row.querySelector('input[name="item_desc[]"]').closest('td');
+            const oldHint=descCell.querySelector('.camp-hint'); if(oldHint) oldHint.remove();
+            fetch('/api/invoice/campaign-price?stock_id='+encodeURIComponent(stockId)).then(r=>r.json()).then(c=>{{
+                if(c && c.pct > 0){{
+                    p.value=c.price.toFixed(2);
+                    const hint=document.createElement('div');
+                    hint.className='camp-hint';
+                    hint.style.cssText='font-size:11px;color:#f59e0b;font-weight:600;margin-top:2px;';
+                    hint.innerHTML='<span style="text-decoration:line-through;">Was R'+c.original_price.toFixed(2)+'</span> — '+c.pct+'% OFF — Now R'+c.price.toFixed(2);
+                    descCell.appendChild(hint);
+                    calcRow(p);
+                }}
+            }}).catch(()=>{{}});
+        }}
+        document.addEventListener('click',function(e){{
+            if(!e.target.closest('.stock-dropdown')&&!e.target.matches('input[name="item_desc[]"]'))
+                document.querySelectorAll('.stock-dropdown').forEach(d=>d.style.display='none');
+        }});
+        
+        function addRow() {{
+            const tbody = document.getElementById('itemRows');
+            const row = document.createElement('tr');
+            row.innerHTML = `
+                <td style="position:relative;"><input type="text" name="item_desc[]" autocomplete="off" oninput="stockSearch(this)" onfocus="stockSearch(this)" placeholder="Type to search stock..." style="width:100%;padding:8px;border:1px solid var(--border);border-radius:4px;background:var(--bg);color:var(--text);"><input type="hidden" name="item_stock_id[]" value=""><div class="stock-dropdown" style="display:none;"></div></td>
+                <td><input type="text" name="item_unit[]" placeholder="ea" style="width:100%;padding:8px;border:1px solid var(--border);border-radius:4px;background:var(--bg);color:var(--text);text-align:center;"></td>
+                <td><input type="number" name="item_qty[]" value="1" min="0.01" step="any" onchange="calcRow(this)" style="width:100%;padding:8px;border:1px solid var(--border);border-radius:4px;background:var(--bg);color:var(--text);"></td>
+                <td><input type="number" name="item_price[]" step="0.01" onchange="calcRow(this)" style="width:100%;padding:8px;border:1px solid var(--border);border-radius:4px;background:var(--bg);color:var(--text);"></td>
+                <td class="row-total">R0.00</td>
+                <td><button type="button" onclick="deleteRow(this)" style="background:var(--red);color:white;border:none;border-radius:4px;padding:6px 10px;cursor:pointer;">✕</button></td>
+            `;
+            tbody.appendChild(row);
+        }}
+        
+        function deleteRow(btn) {{
+            const tbody = document.getElementById('itemRows');
+            if (tbody.children.length > 1) {{
+                btn.closest('tr').remove();
+                calcTotals();
+            }} else {{
+                alert('Need at least one line item');
+            }}
+        }}
+        
+        function calcRow(input) {{
+            const row = input.closest('tr');
+            const qty = parseFloat(row.querySelector('input[name="item_qty[]"]').value) || 0;
+            const price = parseFloat(row.querySelector('input[name="item_price[]"]').value) || 0;
+            const total = qty * price;
+            row.querySelector('.row-total').textContent = 'R' + total.toFixed(2);
+            calcTotals();
+        }}
+        
+        function calcTotals() {{
+            let subtotal = 0;
+            document.querySelectorAll('.row-total').forEach(cell => {{
+                subtotal += parseFloat(cell.textContent.replace('R', '')) || 0;
+            }});
+            const vat = subtotal * 0.15;
+            const total = subtotal + vat;
+            document.getElementById('subtotal').textContent = 'R' + subtotal.toFixed(2);
+            document.getElementById('vat').textContent = 'R' + vat.toFixed(2);
+            document.getElementById('total').textContent = 'R' + total.toFixed(2);
+        }}
+        
+        calcTotals();
+        </script>
+        '''
+        
+        return render_page(f"Edit Invoice {inv_num}", content, user, "invoices")
     
     
     @app.route("/api/invoice/<invoice_id>/email", methods=["POST"])
@@ -3817,6 +4355,44 @@ def register_invoicing_routes(app, db, login_required, Auth, render_page,
         cust_vat = customer.get("vat_number", "") if customer else ""
         cust_tel = cust_phone or cust_cell
         
+        # ═══════════════════════════════════════════════════════════════
+        # BUILD CC OPTIONS for the quote email modal (same as invoices).
+        # ═══════════════════════════════════════════════════════════════
+        _qcc_options = []
+        _qcc_seen = set()
+        def _add_qcc(_label, _addr):
+            _addr = (_addr or "").strip()
+            if not _addr:
+                return
+            _key = _addr.lower()
+            if _key in _qcc_seen:
+                return
+            # Don't offer the same address as the primary "To" recipient
+            if _key == (cust_email or "").lower():
+                return
+            _qcc_seen.add(_key)
+            _qcc_options.append({"label": _label, "email": _addr})
+        
+        if customer:
+            _qsaved_ccs = (customer.get("cc_emails") or customer.get("email_cc") or "")
+            for _e in str(_qsaved_ccs).split(","):
+                _add_qcc("CC List", _e)
+            _add_qcc("Accounts Dept", customer.get("accounts_contact_email", ""))
+            _add_qcc("Sales Dept", customer.get("sales_contact_email", ""))
+        
+        _qcc_checkboxes_html = ""
+        if _qcc_options:
+            for _opt in _qcc_options:
+                _qcc_checkboxes_html += (
+                    f'<label style="display:flex;align-items:center;gap:8px;padding:6px 0;cursor:pointer;font-size:13px;border-bottom:1px solid var(--border);">'
+                    f'<input type="checkbox" class="cc-pick" data-email="{safe_string(_opt["email"])}" style="cursor:pointer;">'
+                    f'<span style="color:var(--text-muted);font-size:11px;min-width:90px;">{_opt["label"]}</span>'
+                    f'<span style="font-size:13px;">{safe_string(_opt["email"])}</span>'
+                    f'</label>'
+                )
+        else:
+            _qcc_checkboxes_html = '<div style="color:var(--text-muted);font-size:12px;padding:6px 0;">No saved CC addresses for this customer. Add them in customer edit, or type custom CCs below.</div>'
+        
         # Build "Linked Documents" panel — gives one-click access to related invoice/customer/etc.
         linked_docs_html = ""
         if build_linked_documents_panel:
@@ -3841,12 +4417,30 @@ def register_invoicing_routes(app, db, login_required, Auth, render_page,
         
         <!-- EMAIL MODAL -->
         <div id="emailModal" style="display:none;position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.7);z-index:9999;align-items:center;justify-content:center;">
-            <div style="background:var(--card);padding:30px;border-radius:12px;width:90%;max-width:450px;">
+            <div style="background:var(--card);padding:30px;border-radius:12px;width:90%;max-width:500px;max-height:90vh;overflow-y:auto;">
                 <h3 style="margin-top:0;">Email Quote</h3>
                 <p style="color:var(--text-muted);margin-bottom:20px;">Send quote <strong>{quote.get("quote_number", "")}</strong> to:</p>
                 
-                <input type="email" id="emailTo" value="{cust_email}" placeholder="customer@email.com" 
-                       style="width:100%;padding:12px;border-radius:8px;border:1px solid var(--border);background:var(--bg);color:var(--text);font-size:16px;margin-bottom:15px;">
+                <label style="font-size:12px;color:var(--text-muted);display:block;margin-bottom:4px;">To</label>
+                <input type="text" id="emailTo" value="{cust_email}" placeholder="customer@email.com" 
+                       style="width:100%;padding:12px;border-radius:8px;border:1px solid var(--border);background:var(--bg);color:var(--text);font-size:16px;margin-bottom:6px;">
+                <small style="color:var(--text-muted);display:block;margin-bottom:15px;">Multiple emails: separate with comma (e.g. john@co.za, admin@co.za)</small>
+                
+                <!-- CC TOGGLE -->
+                <div style="margin-bottom:10px;">
+                    <button type="button" onclick="toggleCcSection()" id="ccToggleBtn" class="btn btn-secondary" style="font-size:13px;padding:6px 12px;">+ CC</button>
+                </div>
+                
+                <!-- CC SECTION (collapsed by default) -->
+                <div id="ccSection" style="display:none;background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:12px;margin-bottom:15px;">
+                    <div style="font-size:12px;color:var(--text-muted);margin-bottom:8px;text-transform:uppercase;letter-spacing:0.5px;">Pick saved CC addresses</div>
+                    <div style="max-height:200px;overflow-y:auto;margin-bottom:10px;">
+                        {_qcc_checkboxes_html}
+                    </div>
+                    <label style="font-size:12px;color:var(--text-muted);display:block;margin-bottom:4px;">Custom CCs (optional)</label>
+                    <input type="text" id="ccCustom" placeholder="extra@email.com, another@email.com"
+                           style="width:100%;padding:8px;border-radius:6px;border:1px solid var(--border);background:var(--card);color:var(--text);font-size:13px;">
+                </div>
                 
                 <div style="display:flex;gap:10px;justify-content:flex-end;">
                     <button onclick="closeEmailModal()" class="btn btn-secondary">Cancel</button>
@@ -3980,12 +4574,48 @@ def register_invoicing_routes(app, db, login_required, Auth, render_page,
             document.getElementById('emailModal').style.display = 'none';
         }}
         
+        function toggleCcSection() {{
+            const sec = document.getElementById('ccSection');
+            const btn = document.getElementById('ccToggleBtn');
+            if (sec.style.display === 'none') {{
+                sec.style.display = 'block';
+                btn.textContent = '− Hide CC';
+            }} else {{
+                sec.style.display = 'none';
+                btn.textContent = '+ CC';
+            }}
+        }}
+        
+        function _collectCcAddresses() {{
+            const picked = [];
+            document.querySelectorAll('#ccSection input.cc-pick:checked').forEach(cb => {{
+                const e = (cb.dataset.email || '').trim();
+                if (e) picked.push(e);
+            }});
+            const customField = document.getElementById('ccCustom');
+            if (customField && customField.value.trim()) {{
+                customField.value.split(/[,;\\s\\n]+/).forEach(e => {{
+                    e = e.trim();
+                    if (e) picked.push(e);
+                }});
+            }}
+            const seen = new Set();
+            const out = [];
+            picked.forEach(e => {{
+                const k = e.toLowerCase();
+                if (!seen.has(k)) {{ seen.add(k); out.push(e); }}
+            }});
+            return out;
+        }}
+        
         async function sendQuoteEmail() {{
             const email = document.getElementById('emailTo').value.trim();
             if (!email || !email.includes('@')) {{
                 alert('Please enter a valid email address');
                 return;
             }}
+            
+            const ccList = _collectCcAddresses();
             
             const btn = event.target;
             btn.disabled = true;
@@ -3995,11 +4625,12 @@ def register_invoicing_routes(app, db, login_required, Auth, render_page,
                 const response = await fetch('/api/quote/{quote_id}/email', {{
                     method: 'POST',
                     headers: {{'Content-Type': 'application/json'}},
-                    body: JSON.stringify({{to_email: email}})
+                    body: JSON.stringify({{to_email: email, cc: ccList.join(',')}})
                 }});
                 const result = await response.json();
                 if (result.success) {{
-                    alert('✅ Quote emailed to ' + email);
+                    const ccMsg = ccList.length > 0 ? ' (CC: ' + ccList.join(', ') + ')' : '';
+                    alert('✅ Quote emailed to ' + email + ccMsg);
                     closeEmailModal();
                 }} else {{
                     alert('❌ ' + (result.error || 'Failed to send email'));
@@ -4512,13 +5143,30 @@ def register_invoicing_routes(app, db, login_required, Auth, render_page,
     @app.route("/api/quote/<quote_id>/email", methods=["POST"])
     @login_required
     def api_quote_email(quote_id):
-        """Send quote via email"""
+        """Send quote via email — supports CC (same behaviour as invoices)"""
         try:
             data = request.get_json()
             to_email = data.get("to_email", "").strip()
+            cc_raw = data.get("cc", "")
             
             if not to_email or "@" not in to_email:
                 return jsonify({"success": False, "error": "Valid email address required"})
+            
+            # Parse CC the same way the invoice email does (any address already
+            # in To is skipped so nobody gets two copies)
+            import re as _re_qcc
+            _qcc_pattern = _re_qcc.compile(r'^[A-Za-z0-9._%+\-]+@[A-Za-z0-9.\-]+\.[A-Za-z]{2,}$')
+            cc_emails_list = []
+            _qcc_seen_addr = set(e.strip().lower() for e in _re_qcc.split(r'[,;\s\n]+', to_email) if e.strip())
+            if cc_raw:
+                cc_raw_str = cc_raw if isinstance(cc_raw, str) else ",".join(cc_raw or [])
+                for c in _re_qcc.split(r'[,;\s\n]+', cc_raw_str):
+                    c = c.strip()
+                    if not c or c.lower() in _qcc_seen_addr:
+                        continue
+                    _qcc_seen_addr.add(c.lower())
+                    if _qcc_pattern.match(c):
+                        cc_emails_list.append(c)
             
             business = Auth.get_current_business()
             biz_id = business.get("id") if business else None
@@ -4657,11 +5305,12 @@ def register_invoicing_routes(app, db, login_required, Auth, render_page,
                 }
             
             # Send email
-            success = Email.send(to_email, subject, body_html, body_text, business=business, attachments=[quote_attachment])
+            success = Email.send(to_email, subject, body_html, body_text, business=business, attachments=[quote_attachment], cc=cc_emails_list or None)
             
             if success:
-                logger.info(f"[EMAIL] Quote {quote_no} sent to {to_email}")
-                return jsonify({"success": True, "message": f"Quote sent to {to_email}"})
+                _qcc_suffix = f" | CC: {', '.join(cc_emails_list)}" if cc_emails_list else ""
+                logger.info(f"[EMAIL] Quote {quote_no} sent to {to_email}{_qcc_suffix}")
+                return jsonify({"success": True, "message": f"Quote sent to {to_email}{_qcc_suffix}"})
             else:
                 return jsonify({"success": False, "error": "Failed to send email. Check SMTP settings in Settings page."})
             

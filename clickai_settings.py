@@ -199,6 +199,11 @@ def register_settings_routes(app, db, login_required, Auth, render_page,
                 </div>
                 
                 <div class="form-group">
+                    <label class="form-label">Bank Account Holder</label>
+                    <input type="text" name="bank_account_holder" class="form-input" value="{safe_string(business.get("bank_account_holder", "") if business else "")}" placeholder="Leave blank to use the business name">
+                </div>
+                
+                <div class="form-group">
                     <label class="form-label">Bank Account Number</label>
                     <input type="text" name="bank_account" class="form-input" value="{safe_string(business.get("bank_account", "") if business else "")}">
                 </div>
@@ -1833,6 +1838,7 @@ def register_settings_routes(app, db, login_required, Auth, render_page,
                     "email": request.form.get("email", ""),
                     "address": request.form.get("address", ""),
                     "bank_name": request.form.get("bank_name", ""),
+                    "bank_account_holder": request.form.get("bank_account_holder", ""),
                     "bank_account": request.form.get("bank_account", ""),
                     "bank_branch": request.form.get("bank_branch", ""),
                     "currency": "ZAR",
@@ -1884,6 +1890,7 @@ def register_settings_routes(app, db, login_required, Auth, render_page,
                 "email": request.form.get("email", ""),
                 "address": request.form.get("address", ""),
                 "bank_name": request.form.get("bank_name", ""),
+                "bank_account_holder": request.form.get("bank_account_holder", ""),
                 "bank_account": request.form.get("bank_account", ""),
                 "bank_branch": request.form.get("bank_branch", ""),
             }
