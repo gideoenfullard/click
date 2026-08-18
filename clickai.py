@@ -37572,17 +37572,34 @@ def journals_page():
     journals = db.get("journals", {"business_id": biz_id}) if biz_id else []
     journals = sorted(journals, key=lambda x: x.get("date", ""), reverse=True)
 
-    # Chart of accounts for the line dropdowns (exclude system accounts)
+    # Account list for the line dropdowns — merged from THREE sources so no
+    # code is ever missing (the old COA-only list hid accounts like 7050/7110
+    # that live in the accounts table, making misallocations impossible to fix):
+    #   1. accounts table (ClickAI chart, the names shown on the GL page)
+    #   2. chart_of_accounts (Sage import), excluding system accounts
+    #   3. every code actually used in this business's journals — so a wrongly
+    #      posted code can always be selected and moved off, even if it exists
+    #      nowhere else
+    _code_names = {}
+    _acc_tbl = db.get("accounts", {"business_id": biz_id}) if biz_id else []
+    for _acc in (_acc_tbl or []):
+        _ac = str(_acc.get("code", "") or "").strip()
+        _an = (_acc.get("name", "") or "").strip()
+        if _ac and _an and _ac not in _code_names:
+            _code_names[_ac] = _an
     _coa = db.get("chart_of_accounts", {"business_id": biz_id}) if biz_id else []
-    _coa_opts = []
-    for _acc in _coa:
+    for _acc in (_coa or []):
         if (_acc.get("source", "") == "System Account"):
             continue
         _ac = str(_acc.get("account_code", "") or _acc.get("code", "")).strip()
         _an = (_acc.get("account_name", "") or _acc.get("name", "")).strip()
-        if _ac and _an:
-            _coa_opts.append((_ac, _an))
-    _coa_opts.sort(key=lambda x: x[0])
+        if _ac and _an and _ac not in _code_names:
+            _code_names[_ac] = _an
+    for _j in journals:
+        _jc = str(_j.get("account_code", "") or "").strip()
+        if _jc and _jc not in _code_names:
+            _code_names[_jc] = "(code in use)"
+    _coa_opts = sorted(_code_names.items(), key=lambda x: x[0])
     # Pinned "Staff Wages" shortcut at the top of the account dropdown — used to
     # recharge another business (e.g. the pub) for wages Fulltech paid. Uses the
     # real wages/salaries account if one exists in the COA, else the standard

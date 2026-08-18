@@ -68,6 +68,20 @@ def _is_card_settlement_text(description):
     return any(tok in d for tok in _CARD_SETTLEMENT_TOKENS)
 
 
+_BANK_FEE_TOKENS = ("PURCHASE FEE", "SERVICE FEE", "MANAGEMENT FEE", "MONTHLY FEE",
+                    "ACCOUNT FEE", "ADMIN FEE", "ADMINISTRATION FEE", "CASH DEPOSIT FEE",
+                    "CASH HANDLING FEE", "OVERDRAFT FEE", "UNPAID ITEM FEE",
+                    "HONOURING FEE", "BANK CHARGES")
+
+
+def _is_bank_fee_text(description):
+    """True when a bank line is a fee the BANK charges on the account —
+    e.g. 'DEBIT CARD PURCHASE FEE ## ...'. These are Bank Charges (7100),
+    never Card Machine Fees (7110), even though the word CARD appears."""
+    d = (description or "").upper()
+    return any(tok in d for tok in _BANK_FEE_TOKENS)
+
+
 def _txn_ids_with_journals(biz_id, txn_ids):
     """Bank transaction ids that already posted a GL journal.
 
@@ -5193,6 +5207,19 @@ Return ONLY the JSON array. No markdown, no explanation."""
                 except Exception as _e:
                     logger.error(f"[BANK ZANE] Expense match check error: {_e}")
             
+            # ═══ PRIORITY 1b2: BANK FEES — decided before the card-settlement check AND
+            # before BankLearning. "DEBIT CARD PURCHASE FEE" is the BANK's fee on a card
+            # purchase (Bank Charges 7100), NOT a card-machine fee (7110) — the AI kept
+            # picking "Card Machine Fees" purely on the word "CARD". Fixed rule, no guessing.
+            if not user_answer and not (credit > 0) and _is_bank_fee_text(description):
+                print(f"[BANK] Bank fee: {description[:50]} -> Bank Charges", flush=True)
+                return jsonify({
+                    "success": True, "category": "Bank Charges",
+                    "reason": "Bank fee charged on the account (card purchase fee / service fee / account fee).",
+                    "confidence": 0.95, "source": "known_pattern",
+                    "needs_clarification": False, "all_categories": all_category_names
+                })
+            
             # ═══ PRIORITY 1c: CARD SETTLEMENT — decided before BankLearning, because a
             # single wrong manual categorisation teaches the pattern and then repeats it on
             # every future settlement. Money direction decides, not the DR/CR in the text:
@@ -5247,6 +5274,7 @@ Return ONLY the JSON array. No markdown, no explanation."""
                     "PREPAID ELEC": ("Electricity", "Prepaid electricity purchase."),
                     "BANK CHARGES": ("Bank Charges", "Monthly bank service fees."),
                     "SERVICE FEE": ("Bank Charges", "Bank service fee."),
+                    "PURCHASE FEE": ("Bank Charges", "Bank fee on a card purchase."),
                     "MONTHLY FEE": ("Bank Charges", "Monthly bank fee."),
                     "CASH DEPOSIT FEE": ("Bank Charges", "Bank cash deposit fee."),
                     "SARS": ("VAT Payment to SARS", "SARS tax payment."),
