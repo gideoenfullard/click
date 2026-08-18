@@ -906,6 +906,22 @@ def register_purchases_routes(app, db, login_required, Auth, render_page,
                 </div>
             </div>
             
+            <!-- Department Contacts (accounts + their sales rep) — visible without opening Edit -->
+            <div style="display:grid;grid-template-columns:repeat(auto-fit, minmax(240px, 1fr));gap:15px;margin-top:15px;padding-top:15px;border-top:1px solid var(--border);">
+                <div>
+                    <span style="color:var(--text-muted);font-size:11px;display:block;">ACCOUNTS CONTACT</span>
+                    <span style="font-size:14px;">{safe_string(supplier.get("accounts_contact_name") or "-")}</span>
+                    <span style="font-size:12px;color:var(--text-muted);display:block;">{safe_string(supplier.get("accounts_contact_phone") or "-")}</span>
+                    <span style="font-size:12px;color:var(--text-muted);display:block;">{safe_string(supplier.get("accounts_contact_email") or "-")}</span>
+                </div>
+                <div>
+                    <span style="color:var(--text-muted);font-size:11px;display:block;">THEIR SALES REP</span>
+                    <span style="font-size:14px;">{safe_string(supplier.get("sales_contact_name") or "-")}</span>
+                    <span style="font-size:12px;color:var(--text-muted);display:block;">{safe_string(supplier.get("sales_contact_phone") or "-")}</span>
+                    <span style="font-size:12px;color:var(--text-muted);display:block;">{safe_string(supplier.get("sales_contact_email") or "-")}</span>
+                </div>
+            </div>
+            
             <!-- Address -->
             <div style="margin-top:15px;padding-top:15px;border-top:1px solid var(--border);">
                 <span style="color:var(--text-muted);font-size:11px;display:block;">ADDRESS</span>
