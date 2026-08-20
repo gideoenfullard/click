@@ -1562,6 +1562,7 @@ def register_invoicing_routes(app, db, login_required, Auth, render_page,
                 <div style="font-size:12px;color:#666;max-width:55%;">
                     {f"""<div style="border:1px solid #e5e7eb;border-radius:6px;padding:12px;background:#fafafa;">
                         <div style="font-weight:600;color:#333;margin-bottom:6px;font-size:13px;">Banking Details</div>
+                        <div>Account Holder: {business.get("bank_account_holder", "") or business.get("account_holder", "") or business.get("name", "")}</div>
                         <div>Bank: {business.get("bank_name", "")}</div>
                         <div>Account: {business.get("bank_account", "")}</div>
                         <div>Branch: {business.get("bank_branch", "")}</div>
@@ -4563,6 +4564,7 @@ def register_invoicing_routes(app, db, login_required, Auth, render_page,
                 <div style="font-size:12px;color:#666;max-width:55%;">
                     {f"""<div style="border:1px solid #e5e7eb;border-radius:6px;padding:12px;background:#fafafa;">
                         <div style="font-weight:600;color:#333;margin-bottom:6px;font-size:13px;">Banking Details</div>
+                        <div>Account Holder: {business.get("bank_account_holder", "") or business.get("account_holder", "") or business.get("name", "")}</div>
                         <div>Bank: {business.get("bank_name", "")}</div>
                         <div>Account: {business.get("bank_account", "")}</div>
                         <div>Branch: {business.get("bank_branch", "")}</div>
