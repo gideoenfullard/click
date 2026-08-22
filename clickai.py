@@ -68497,8 +68497,19 @@ class RecurringInvoices:
         emailed = []
         errors = []
         
+        today_str = today()
+        
         for recurring in due:
             try:
+                # Safety net: re-read the template immediately before generating.
+                # generate_invoice() stamps last_generated with today's date, so if
+                # another process got here first this catches it. The scheduler run
+                # lock is the primary guard — this is the backstop.
+                fresh = db.get_one("recurring_invoices", recurring.get("id"))
+                if fresh and fresh.get("last_generated") == today_str:
+                    logger.info(f"[RECURRING] Skipping {recurring.get('customer_name')} - already invoiced today")
+                    continue
+                
                 # Generate the invoice
                 invoice = cls.generate_invoice(recurring)
                 
@@ -68790,10 +68801,66 @@ class NightlyScheduler:
                 time.sleep(300)  # Wait 5 min on error, then retry
     
     @classmethod
-    def _run_calculations(cls):
+    def _acquire_run_lock(cls, job_name: str, run_date: str) -> bool:
+        """Claim tonight's run across ALL processes and machines.
+
+        Fly.io runs more than one gunicorn worker, and each one imports this
+        module and starts its own scheduler thread. cls._running only guards
+        within a single process, so without this every nightly job ran twice.
+
+        Relies on the UNIQUE (job_name, run_date) constraint on scheduler_runs:
+        db.save() upserts on id only, so the second process hits a 409 and gets
+        False back. Exactly one caller wins.
+
+        Fails OPEN (returns True) if the lock itself is broken — better to fall
+        back to the old double-run behaviour than to silently skip every night.
+        """
+        try:
+            ok, _ = db.save("scheduler_runs", {
+                "id": generate_id(),
+                "job_name": job_name,
+                "run_date": run_date,
+                "status": "running",
+                "started_at": now(),
+            })
+            if ok:
+                logger.info(f"[SCHEDULER] Run lock acquired for {run_date}")
+                return True
+
+            existing = db.get("scheduler_runs", {"job_name": job_name, "run_date": run_date}) or []
+            if existing:
+                logger.info(f"[SCHEDULER] Run for {run_date} already claimed by another process - skipping")
+                return False
+
+            logger.error(f"[SCHEDULER] Could not acquire run lock for {run_date} and no existing row found - proceeding anyway")
+            return True
+        except Exception as e:
+            logger.error(f"[SCHEDULER] Run lock check failed: {e} - proceeding anyway")
+            return True
+
+    @classmethod
+    def _release_run_lock(cls, job_name: str, run_date: str, details: str):
+        """Mark tonight's run complete. Never raises."""
+        try:
+            rows = db.get("scheduler_runs", {"job_name": job_name, "run_date": run_date}) or []
+            if rows:
+                row = rows[0]
+                row["status"] = "complete"
+                row["completed_at"] = now()
+                row["details"] = details
+                db.save("scheduler_runs", row)
+        except Exception as e:
+            logger.error(f"[SCHEDULER] Could not release run lock: {e}")
+
+    @classmethod
+    def _run_calculations(cls, force: bool = False):
         """Run AI calculations for all businesses"""
         logger.info("[SCHEDULER] 🚀 Starting nightly AI calculations...")
         start_time = time.time()
+        
+        run_date = today()
+        if not force and not cls._acquire_run_lock("nightly", run_date):
+            return
         
         try:
             # === PROCESS RECURRING INVOICES FIRST ===
@@ -68845,6 +68912,9 @@ class NightlyScheduler:
             elapsed = time.time() - start_time
             logger.info(f"[SCHEDULER] 🏁 Complete! {success_count} success, {error_count} errors in {elapsed:.1f}s")
             
+            if not force:
+                cls._release_run_lock("nightly", run_date, f"{success_count} success, {error_count} errors in {elapsed:.1f}s")
+            
             # Log to audit for visibility
             try:
                 db.save("audit_log", {
@@ -68870,7 +68940,7 @@ class NightlyScheduler:
     @classmethod
     def run_now(cls):
         """Manually trigger calculations (for testing)"""
-        thread = threading.Thread(target=cls._run_calculations, daemon=True)
+        thread = threading.Thread(target=cls._run_calculations, kwargs={"force": True}, daemon=True)
         thread.start()
         return True
 
