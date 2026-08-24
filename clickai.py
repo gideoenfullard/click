@@ -1166,6 +1166,21 @@ def vat_rate_for(business) -> Decimal:
     return VAT_RATE
 
 
+def vat_rate_for_biz(biz_id) -> Decimal:
+    """VAT rate for a business id, looking the record up.
+
+    Use vat_rate_for() instead wherever the business dict is already to hand.
+    Falls back to the standard rate if the lookup fails, so a transient DB
+    problem can never silently strip VAT off a registered business's invoice.
+    """
+    if not biz_id:
+        return VAT_RATE
+    try:
+        return vat_rate_for(db.get_one("businesses", biz_id))
+    except Exception:
+        return VAT_RATE
+
+
 # OCR Settings
 ENABLE_IMAGE_PREPROCESSING = os.environ.get("ENABLE_IMAGE_PREPROCESSING", "true").lower() == "true"
 
@@ -3652,7 +3667,7 @@ def render_document_pdf(doc_type: str, doc: dict, business: dict, party: dict = 
     
     title_map = {
         "purchase_order": "PURCHASE ORDER",
-        "invoice": "TAX INVOICE",
+        "invoice": "TAX INVOICE" if vat_rate_for(business) else "INVOICE",
         "quote": "QUOTATION",
         "credit_note": "CREDIT NOTE",
     }
@@ -3950,7 +3965,7 @@ def render_document_pdf(doc_type: str, doc: dict, business: dict, party: dict = 
         
         totals_rows = [
             [Paragraph("Subtotal:", s_cell), Paragraph(_money(subtotal), s_cell_bold)],
-            [Paragraph("VAT (15%):", s_cell), Paragraph(_money(vat), s_cell_bold)],
+            [Paragraph("VAT (15%):" if vat_rate_for(business) else "VAT:", s_cell), Paragraph(_money(vat), s_cell_bold)],
             [Paragraph("TOTAL:", s_value), Paragraph(_money(total), s_total)],
         ]
         totals_t = Table(totals_rows, colWidths=[35*mm, 40*mm])
@@ -13732,7 +13747,7 @@ class Actions:
         # Prices are EXCL VAT - ADD VAT
         # 'amount' is sum of line items (EXCL VAT)
         subtotal = amount
-        vat_amount = (subtotal * VAT_RATE).quantize(Decimal("0.01"))
+        vat_amount = (subtotal * vat_rate_for_biz(biz_id)).quantize(Decimal("0.01"))
         total = subtotal + vat_amount
         
         # Generate invoice number (safe even after deletions)
@@ -13914,7 +13929,7 @@ class Actions:
         
         # Prices are EXCL VAT - ADD VAT
         subtotal = amount
-        vat_amount = (subtotal * VAT_RATE).quantize(Decimal("0.01"))
+        vat_amount = (subtotal * vat_rate_for_biz(biz_id)).quantize(Decimal("0.01"))
         total = subtotal + vat_amount
         
         # Generate quote number
@@ -14275,7 +14290,7 @@ class Actions:
         price = Decimal(str(item.get("selling_price", 0)))
         cost = Decimal(str(item.get("cost_price", 0)))
         subtotal = price * quantity  # EXCL VAT
-        vat_amount = (subtotal * VAT_RATE).quantize(Decimal("0.01"))
+        vat_amount = (subtotal * vat_rate_for_biz(biz_id)).quantize(Decimal("0.01"))
         total = subtotal + vat_amount
         
         # Find customer if specified
@@ -31586,7 +31601,7 @@ def api_rental_generate_invoice(rental_id):
         
         # Calculate totals
         subtotal = sum(item["total"] for item in items)
-        vat = round(subtotal * 0.15, 2)
+        vat = round(subtotal * float(vat_rate_for(business)), 2)
         total = round(subtotal + vat, 2)
         
         # Generate invoice number
@@ -33052,7 +33067,7 @@ def api_quotes_sync_offline():
                 
                 if subtotal == 0:
                     subtotal = sum(Decimal(str(item.get("total", 0))) for item in items)
-                    vat = (subtotal * VAT_RATE).quantize(Decimal("0.01"))
+                    vat = (subtotal * vat_rate_for(business)).quantize(Decimal("0.01"))
                     total = subtotal + vat
                 
                 quote_date = q.get("offline_date") or today()
@@ -35760,7 +35775,7 @@ def api_customer_credit(customer_id):
         kind = "credit_note"
 
     # Amount entered is VAT-INCLUSIVE — split out the VAT-excl portion
-    subtotal = round(amount / (1 + float(VAT_RATE)), 2)
+    subtotal = round(amount / (1 + float(vat_rate_for(business))), 2)
     vat = round(amount - subtotal, 2)
 
     is_discount = (kind == "discount_allowed")
@@ -51266,7 +51281,7 @@ def api_job_card_create_invoice(job_id):
             date=today(),
             due_date=(datetime.now() + timedelta(days=30)).strftime("%Y-%m-%d"),
             subtotal=job.get("quote_subtotal", 0),
-            vat=float(job.get("quote_subtotal", 0)) * 0.15,
+            vat=float(job.get("quote_subtotal", 0)) * float(vat_rate_for(business)),
             total=job.get("quote_value", 0),
             status="unpaid",
             job_card_id=job_id,
@@ -51421,7 +51436,7 @@ def api_job_card_create_both(job_id):
             date=today(),
             due_date=(datetime.now() + timedelta(days=30)).strftime("%Y-%m-%d"),
             subtotal=job.get("quote_subtotal", 0),
-            vat=float(job.get("quote_subtotal", 0)) * 0.15,
+            vat=float(job.get("quote_subtotal", 0)) * float(vat_rate_for(business)),
             total=job.get("quote_value", 0),
             status="unpaid",
             job_card_id=job_id,
@@ -54585,7 +54600,7 @@ def smart_quote():
         <div id="quoteTotal" class="quote-total" style="display:none;">
             <div style="font-size:14px;opacity:0.8;">Total (excl VAT)</div>
             <div style="font-size:32px;font-weight:bold;">R<span id="totalAmount">0.00</span></div>
-            <div style="font-size:14px;margin-top:5px;">VAT (15%): R<span id="vatAmount">0.00</span></div>
+            <div style="font-size:14px;margin-top:5px;">{"VAT (15%)" if vat_rate_for(business) else "VAT"}: R<span id="vatAmount">0.00</span></div>
             <div style="font-size:20px;margin-top:5px;">Total incl VAT: R<span id="totalInclVat">0.00</span></div>
         </div>
         
@@ -54751,7 +54766,7 @@ def smart_quote():
         
         container.innerHTML = html;
         
-        const vat = total * 0.15;
+        const vat = total * {float(vat_rate_for(business))};
         document.getElementById('totalAmount').textContent = total.toFixed(2);
         document.getElementById('vatAmount').textContent = vat.toFixed(2);
         document.getElementById('totalInclVat').textContent = (total + vat).toFixed(2);
@@ -54804,7 +54819,7 @@ def smart_quote():
         const customer = document.getElementById('customerName').value || 'Customer';
         const ref = document.getElementById('quoteRef').value || 'Q-' + Date.now();
         const total = quoteItems.reduce((sum, item) => sum + item.total, 0);
-        const vat = total * 0.15;
+        const vat = total * {float(vat_rate_for(business))};
         
         let itemsHtml = quoteItems.map((item, i) => 
             `<tr><td>${{i+1}}</td><td>${{item.description}}</td><td style="text-align:right">R${{item.total.toFixed(2)}}</td></tr>`
@@ -54834,7 +54849,7 @@ def smart_quote():
             
             <table style="width:300px;margin-left:auto;">
                 <tr><td>Subtotal:</td><td style="text-align:right">R${{total.toFixed(2)}}</td></tr>
-                <tr><td>VAT (15%):</td><td style="text-align:right">R${{vat.toFixed(2)}}</td></tr>
+                <tr><td>{"VAT (15%)" if vat_rate_for(business) else "VAT"}:</td><td style="text-align:right">R${{vat.toFixed(2)}}</td></tr>
                 <tr class="total"><td>Total:</td><td style="text-align:right">R${{(total+vat).toFixed(2)}}</td></tr>
             </table>
             
@@ -54880,7 +54895,7 @@ def api_smart_quote_save():
         
         # Calculate totals
         subtotal = sum(item.get("total", 0) for item in items)
-        vat = subtotal * 0.15
+        vat = subtotal * float(vat_rate_for(business))
         total = subtotal + vat
         
         # Format items for storage
@@ -55457,7 +55472,7 @@ def create_credit_note(invoice_id):
             _inv_vat_for_synth = float(invoice.get("vat", invoice.get("vat_amount", 0)) or 0)
             # If subtotal/vat not stored, derive (assume 15% VAT inclusive)
             if _inv_subtotal_for_synth <= 0 and _inv_vat_for_synth <= 0:
-                _inv_subtotal_for_synth = round(_inv_total_for_synth / 1.15, 2)
+                _inv_subtotal_for_synth = round(_inv_total_for_synth / (1 + float(vat_rate_for(business))), 2)
             _inv_num_str = invoice.get("invoice_number", "") or ""
             _synth_desc = "Opening Balance Adjustment" if _inv_num_str.startswith("OPENING") else f"Invoice {_inv_num_str} Adjustment"
             inv_items = [{
@@ -55500,7 +55515,7 @@ def create_credit_note(invoice_id):
                 return redirect(f"/invoice/{invoice_id}/credit-note?error=Enter+an+amount+greater+than+zero")
             if _inv_total_cap > 0 and _amt_incl > _inv_total_cap + 0.01:
                 return redirect(f"/invoice/{invoice_id}/credit-note?error=Amount+exceeds+invoice+total")
-            _amt_subtotal = round(_amt_incl / (1 + float(VAT_RATE)), 2)
+            _amt_subtotal = round(_amt_incl / (1 + float(vat_rate_for(business))), 2)
             _amt_vat = round(_amt_incl - _amt_subtotal, 2)
             _amt_existing = db.get("credit_notes", {"business_id": biz_id}) if biz_id else []
             _amt_cn_num = next_document_number("CN-", _amt_existing, "credit_note_number")
@@ -55630,14 +55645,14 @@ def create_credit_note(invoice_id):
         if _line_items_are_vat_inclusive:
             # Line totals are VAT INCLUSIVE — back-extract VAT from total
             _cn_total_decimal = cn_subtotal  # sum of line totals = VAT-incl total
-            _cn_subtotal_excl = (_cn_total_decimal / (Decimal("1") + VAT_RATE)).quantize(Decimal("0.01"))
+            _cn_subtotal_excl = (_cn_total_decimal / (Decimal("1") + vat_rate_for(business))).quantize(Decimal("0.01"))
             cn_vat = (_cn_total_decimal - _cn_subtotal_excl).quantize(Decimal("0.01"))
             cn_total = _cn_total_decimal
             cn_subtotal = _cn_subtotal_excl  # rewrite to be VAT-excl for storage consistency
             logger.info(f"[CREDIT NOTE] VAT-incl detected (Sage style): total={float(cn_total):.2f}, subtotal={float(cn_subtotal):.2f}, vat={float(cn_vat):.2f}")
         else:
             # Line totals are VAT EXCLUSIVE — add VAT on top (ClickAI style)
-            cn_vat = (cn_subtotal * VAT_RATE).quantize(Decimal("0.01"))
+            cn_vat = (cn_subtotal * vat_rate_for(business)).quantize(Decimal("0.01"))
             cn_total = cn_subtotal + cn_vat
             logger.info(f"[CREDIT NOTE] VAT-excl (ClickAI style): subtotal={float(cn_subtotal):.2f}, vat={float(cn_vat):.2f}, total={float(cn_total):.2f}")
         
@@ -55776,12 +55791,12 @@ def create_credit_note(invoice_id):
     if _form_vat_inclusive:
         # Line items already INCLUDE VAT — back-extract the VAT-excl portion
         _cn_form_total = round(_line_sum_form, 2)
-        _cn_form_subtotal_excl = round(_line_sum_form / 1.15, 2)
+        _cn_form_subtotal_excl = round(_line_sum_form / (1 + float(vat_rate_for(business))), 2)
         _cn_form_vat = round(_cn_form_total - _cn_form_subtotal_excl, 2)
     else:
         # Line items are VAT-excl — add VAT on top
         _cn_form_subtotal_excl = round(_line_sum_form, 2)
-        _cn_form_vat = round(_line_sum_form * 0.15, 2)
+        _cn_form_vat = round(_line_sum_form * float(vat_rate_for(business)), 2)
         _cn_form_total = round(_line_sum_form + _cn_form_vat, 2)
     
     # Pass detection flag to JS for live updates as user changes line selections
@@ -55855,7 +55870,7 @@ def create_credit_note(invoice_id):
             <!-- Credit Total Display -->
             <div style="text-align:right;margin-bottom:20px;padding:15px;background:rgba(239,68,68,0.05);border-radius:8px;border:1px solid rgba(239,68,68,0.2);">
                 <div style="margin-bottom:5px;">Subtotal: <strong id="cnSubtotal">{money(_cn_form_subtotal_excl)}</strong></div>
-                <div style="margin-bottom:5px;">VAT (15%): <strong id="cnVat">{money(_cn_form_vat)}</strong></div>
+                <div style="margin-bottom:5px;">{"VAT (15%)" if vat_rate_for(business) else "VAT"}: <strong id="cnVat">{money(_cn_form_vat)}</strong></div>
                 <div style="font-size:20px;color:var(--red);">Credit Amount: <strong id="cnTotal">{money(_cn_form_total)}</strong></div>
             </div>
             
@@ -55896,7 +55911,7 @@ def create_credit_note(invoice_id):
         const _mode = document.querySelector('input[name="credit_type"]:checked').value;
         if (_mode === 'amount') {{
             const amtIncl = parseFloat(document.getElementById('creditAmountField').value) || 0;
-            const sub = amtIncl / 1.15;
+            const sub = amtIncl / (1 + {float(vat_rate_for(business))});
             document.getElementById('cnSubtotal').textContent = 'R' + sub.toFixed(2);
             document.getElementById('cnVat').textContent = 'R' + (amtIncl - sub).toFixed(2);
             document.getElementById('cnTotal').textContent = 'R' + amtIncl.toFixed(2);
@@ -55934,12 +55949,12 @@ def create_credit_note(invoice_id):
         if (_vatIncl) {{
             // Line totals are already VAT-INCL → back-extract VAT
             displayTotal = subtotal;
-            displaySubtotal = subtotal / 1.15;
+            displaySubtotal = subtotal / (1 + {float(vat_rate_for(business))});
             displayVat = displayTotal - displaySubtotal;
         }} else {{
             // Line totals are VAT-EXCL → add VAT on top
             displaySubtotal = subtotal;
-            displayVat = subtotal * 0.15;
+            displayVat = subtotal * {float(vat_rate_for(business))};
             displayTotal = subtotal + displayVat;
         }}
         document.getElementById('cnSubtotal').textContent = 'R' + displaySubtotal.toFixed(2);
@@ -55998,7 +56013,7 @@ def api_reverse_customer_invoice(invoice_id):
         vat_amount = float(invoice.get("vat", invoice.get("vat_amount", 0)) or 0)
         # If subtotal/vat not stored, derive from total assuming 15% VAT inclusive
         if subtotal <= 0 and vat_amount <= 0 and total > 0:
-            subtotal = round(total / 1.15, 2)
+            subtotal = round(total / (1 + float(vat_rate_for(business))), 2)
             vat_amount = round(total - subtotal, 2)
         
         today_str = today()
@@ -56183,7 +56198,7 @@ def api_refund_pos_sale(sale_id):
         subtotal = float(sale.get("subtotal", 0) or 0)
         vat_amount = float(sale.get("vat", sale.get("vat_amount", 0)) or 0)
         if subtotal <= 0 and vat_amount <= 0 and total > 0:
-            subtotal = round(total / 1.15, 2)
+            subtotal = round(total / (1 + float(vat_rate_for(business))), 2)
             vat_amount = round(total - subtotal, 2)
         
         payment_method = (sale.get("payment_method", "cash") or "cash").lower()
@@ -56685,7 +56700,7 @@ def view_credit_note(cn_id):
         qty = item.get("qty") or item.get("quantity") or 1
         if total_excl == 0 and price > 0:
             total_excl = round(float(qty) * price, 2)
-        vat_amount = round(total_excl * 0.15, 2)
+        vat_amount = round(total_excl * float(vat_rate_for(business)), 2)
         total_incl = round(total_excl + vat_amount, 2)
         items_html += f'''
         <tr style="border-bottom:1px solid #e5e7eb;">
@@ -56939,7 +56954,7 @@ def api_credit_note_email(cn_id):
             </tr></thead><tbody>{att_items}</tbody>
         </table></div>
         <div style="padding:15px 25px;text-align:right;">
-            <table style="width:200px;margin-left:auto;"><tr style="border-bottom:1px solid #e5e7eb;"><td style="padding:4px 8px;color:#666;font-size:11px;">Subtotal</td><td style="padding:4px 8px;text-align:right;font-size:11px;">R{subtotal:,.2f}</td></tr><tr style="border-bottom:1px solid #e5e7eb;"><td style="padding:4px 8px;color:#666;font-size:11px;">VAT (15%)</td><td style="padding:4px 8px;text-align:right;font-size:11px;">R{vat:,.2f}</td></tr><tr style="background:#991b1b;"><td style="padding:8px;color:white;font-size:13px;font-weight:700;">CREDIT</td><td style="padding:8px;text-align:right;color:white;font-size:13px;font-weight:700;">R{total:,.2f}</td></tr></table>
+            <table style="width:200px;margin-left:auto;"><tr style="border-bottom:1px solid #e5e7eb;"><td style="padding:4px 8px;color:#666;font-size:11px;">Subtotal</td><td style="padding:4px 8px;text-align:right;font-size:11px;">R{subtotal:,.2f}</td></tr><tr style="border-bottom:1px solid #e5e7eb;"><td style="padding:4px 8px;color:#666;font-size:11px;">{"VAT (15%)" if vat_rate_for(business) else "VAT"}</td><td style="padding:4px 8px;text-align:right;font-size:11px;">R{vat:,.2f}</td></tr><tr style="background:#991b1b;"><td style="padding:8px;color:white;font-size:13px;font-weight:700;">CREDIT</td><td style="padding:8px;text-align:right;color:white;font-size:13px;font-weight:700;">R{total:,.2f}</td></tr></table>
         </div>
         <div style="padding:10px 25px;font-size:11px;color:#666;">This credit has been applied to your account.</div>
         </body></html>'''
@@ -58897,7 +58912,7 @@ def api_scan_create_quote_from_order():
             quote_items.append({"description": desc, "qty": qty, "price": price, "total": round(qty * price, 2)})
         
         subtotal = sum(item["total"] for item in quote_items)
-        vat = round(subtotal * 0.15, 2)
+        vat = round(subtotal * float(vat_rate_for(business)), 2)
         total = round(subtotal + vat, 2)
         
         existing_quotes = db.get("quotes", {"business_id": biz_id}) or []
@@ -66944,7 +66959,7 @@ def portal_invoice(invoice_id):
                     <td style="text-align:right;">R{float(invoice.get("subtotal", invoice.get("total", 0))) - float(invoice.get("vat", 0)):,.2f}</td>
                 </tr>
                 <tr>
-                    <td colspan="3" style="text-align:right;">VAT (15%)</td>
+                    <td colspan="3" style="text-align:right;">{"VAT (15%)" if vat_rate_for(business) else "VAT"}</td>
                     <td style="text-align:right;">R{float(invoice.get("vat", 0)):,.2f}</td>
                 </tr>
                 <tr class="total-row">
@@ -68254,7 +68269,7 @@ class RecurringInvoices:
         # Calculate totals
         items = data.get("items", [])
         subtotal = sum(float(item.get("quantity", 1)) * float(item.get("price", 0)) for item in items)
-        vat = subtotal * 0.15  # 15% VAT
+        vat = subtotal * float(vat_rate_for_biz(business_id))
         total = subtotal + vat
         
         # Determine next invoice date
@@ -68318,8 +68333,9 @@ class RecurringInvoices:
                     items = data["items"]
                     subtotal = sum(float(item.get("quantity", 1)) * float(item.get("price", 0)) for item in items)
                     recurring["subtotal"] = round(subtotal, 2)
-                    recurring["vat"] = round(subtotal * 0.15, 2)
-                    recurring["total"] = round(subtotal * 1.15, 2)
+                    _upd_vat_pct = float(vat_rate_for_biz(recurring.get("business_id")))
+                    recurring["vat"] = round(subtotal * _upd_vat_pct, 2)
+                    recurring["total"] = round(subtotal * (1 + _upd_vat_pct), 2)
                 else:
                     recurring[field] = data[field]
         
@@ -68417,8 +68433,9 @@ class RecurringInvoices:
                 subtotal_new = sum(float(item.get("quantity", 1)) * float(item.get("price", 0)) for item in items)
                 recurring["items"] = json.dumps(items)
                 recurring["subtotal"] = round(subtotal_new, 2)
-                recurring["vat"] = round(subtotal_new * 0.15, 2)
-                recurring["total"] = round(subtotal_new * 1.15, 2)
+                _gen_vat_pct = float(vat_rate_for_biz(recurring.get("business_id")))
+                recurring["vat"] = round(subtotal_new * _gen_vat_pct, 2)
+                recurring["total"] = round(subtotal_new * (1 + _gen_vat_pct), 2)
                 recurring["last_escalation_year"] = current_year
                 db.save("recurring_invoices", recurring)
                 escalation_applied = True
