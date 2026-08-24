@@ -24,8 +24,24 @@ def register_invoicing_routes(app, db, login_required, Auth, render_page,
                               has_reactor_hud, jarvis_hud_header, jarvis_techline,
                               RecordFactory, Email, FraudGuard, RecurringInvoices,
                               JARVIS_HUD_CSS, THEME_REACTOR_SKINS, VAT_RATE,
-                              build_linked_documents_panel=None):
+                              build_linked_documents_panel=None, vat_rate_for=None):
     """Register all Invoicing routes with the Flask app."""
+
+    if vat_rate_for is None:
+        def vat_rate_for(business):
+            return VAT_RATE
+
+    def _vat_pct(business):
+        """VAT rate as a float for the browser-side calculators."""
+        return float(vat_rate_for(business))
+
+    def _vat_label(business):
+        """VAT line heading — no percentage when the business charges no VAT."""
+        return "VAT (15%)" if vat_rate_for(business) else "VAT"
+
+    def _doc_title(business):
+        """A business that is not VAT registered may not issue a 'TAX INVOICE'."""
+        return "TAX INVOICE" if vat_rate_for(business) else "INVOICE"
 
     def _doc_logo_url(business):
         """Logo from the saved invoice template (settings stores it there), honouring the
@@ -344,7 +360,7 @@ def register_invoicing_routes(app, db, login_required, Auth, render_page,
             
             # Prices are EXCL VAT - ADD VAT to get total
             # subtotal = sum of line items (EXCL VAT)
-            vat = (subtotal * VAT_RATE).quantize(Decimal("0.01"))
+            vat = (subtotal * vat_rate_for(business)).quantize(Decimal("0.01"))
             total = subtotal + vat
             
             # Generate invoice number (safe even after deletions)
@@ -698,7 +714,7 @@ def register_invoicing_routes(app, db, login_required, Auth, render_page,
                 
                 <div style="text-align:right;margin-top:20px;padding:15px;background:rgba(0,0,0,0.2);border-radius:8px;">
                     <div style="margin-bottom:10px;">Subtotal: <strong id="subtotal">R0.00</strong></div>
-                    <div style="margin-bottom:10px;">VAT (15%): <strong id="vat">R0.00</strong></div>
+                    <div style="margin-bottom:10px;">{_vat_label(business)}: <strong id="vat">R0.00</strong></div>
                     <div style="font-size:24px;">Total: <strong id="total" style="color:var(--green);">R0.00</strong></div>
                 </div>
                 
@@ -879,7 +895,7 @@ def register_invoicing_routes(app, db, login_required, Auth, render_page,
             document.querySelectorAll('.row-total').forEach(cell => {{
                 subtotal += parseFloat(cell.textContent.replace('R', '')) || 0;
             }});
-            const vat = subtotal * 0.15;
+            const vat = subtotal * {_vat_pct(business)};
             const total = subtotal + vat;
             document.getElementById('subtotal').textContent = 'R' + subtotal.toFixed(2);
             document.getElementById('vat').textContent = 'R' + vat.toFixed(2);
@@ -1022,7 +1038,7 @@ def register_invoicing_routes(app, db, login_required, Auth, render_page,
             if line_total > 0:
                 # Line totals are EXCL VAT - ADD VAT
                 calculated_subtotal = line_total
-                calculated_vat = round(line_total * 0.15, 2)
+                calculated_vat = round(line_total * _vat_pct(business), 2)
                 calculated_total = round(line_total + calculated_vat, 2)
                 
                 # Use calculated values if stored values are missing or wrong
@@ -1502,7 +1518,7 @@ def register_invoicing_routes(app, db, login_required, Auth, render_page,
                     {f'<p style="margin:4px 0 0 0;font-size:10px;opacity:0.8;">{biz_address}</p>' if biz_address else ''}
                 </div>
                 <div style="text-align:right;">
-                    <h2 style="margin:0;font-size:20px;font-weight:700;letter-spacing:2px;">TAX INVOICE</h2>
+                    <h2 style="margin:0;font-size:20px;font-weight:700;letter-spacing:2px;">{_doc_title(business)}</h2>
                     {status_badge}
                 </div>
             </div>
@@ -2178,7 +2194,7 @@ def register_invoicing_routes(app, db, login_required, Auth, render_page,
             if not items:
                 return redirect(f"/invoice/{invoice_id}/edit?error=No+items")
             
-            vat = (subtotal * VAT_RATE).quantize(Decimal("0.01"))
+            vat = (subtotal * vat_rate_for(business)).quantize(Decimal("0.01"))
             total = subtotal + vat
             
             old_subtotal = float(invoice.get("subtotal", 0) or 0)
@@ -2423,7 +2439,7 @@ def register_invoicing_routes(app, db, login_required, Auth, render_page,
                 
                 <div style="text-align:right;margin-top:20px;padding:15px;background:rgba(0,0,0,0.2);border-radius:8px;">
                     <div style="margin-bottom:10px;">Subtotal: <strong id="subtotal">R0.00</strong></div>
-                    <div style="margin-bottom:10px;">VAT (15%): <strong id="vat">R0.00</strong></div>
+                    <div style="margin-bottom:10px;">{_vat_label(business)}: <strong id="vat">R0.00</strong></div>
                     <div style="font-size:24px;">Total: <strong id="total" style="color:var(--green);">R0.00</strong></div>
                 </div>
                 
@@ -2554,7 +2570,7 @@ def register_invoicing_routes(app, db, login_required, Auth, render_page,
             document.querySelectorAll('.row-total').forEach(cell => {{
                 subtotal += parseFloat(cell.textContent.replace('R', '')) || 0;
             }});
-            const vat = subtotal * 0.15;
+            const vat = subtotal * {_vat_pct(business)};
             const total = subtotal + vat;
             document.getElementById('subtotal').textContent = 'R' + subtotal.toFixed(2);
             document.getElementById('vat').textContent = 'R' + vat.toFixed(2);
@@ -2695,7 +2711,7 @@ def register_invoicing_routes(app, db, login_required, Auth, render_page,
                 unit = safe_string(item.get("unit") or "")
                 price = float(item.get("price", 0))
                 total_excl = float(item.get("total", 0)) or round(float(qty) * price, 2)
-                vat_amt = round(total_excl * 0.15, 2)
+                vat_amt = round(total_excl * _vat_pct(business), 2)
                 total_incl = round(total_excl + vat_amt, 2)
                 att_items += f'<tr style="border-bottom:1px solid #e5e7eb;"><td style="padding:5px 8px;font-size:11px;">{desc}</td><td style="text-align:center;padding:5px 8px;font-size:11px;">{unit}</td><td style="text-align:center;padding:5px 8px;font-size:11px;">{qty}</td><td style="text-align:right;padding:5px 8px;font-size:11px;">R{price:,.2f}</td><td style="text-align:center;padding:5px 8px;font-size:11px;">15%</td><td style="text-align:right;padding:5px 8px;font-size:11px;">R{total_excl:,.2f}</td><td style="text-align:right;padding:5px 8px;font-size:11px;font-weight:600;">R{total_incl:,.2f}</td></tr>'
             
@@ -2704,7 +2720,7 @@ def register_invoicing_routes(app, db, login_required, Auth, render_page,
             </head><body>
             <div style="background:#1a1a2e;color:white;padding:12px 25px;display:flex;justify-content:space-between;align-items:center;">
                 <div><div style="font-size:16px;font-weight:700;">{biz_name}</div>{f'<div style="font-size:10px;opacity:0.8;">{biz_address}</div>' if biz_address else ''}</div>
-                <div style="text-align:right;"><div style="font-size:20px;font-weight:700;letter-spacing:2px;">TAX INVOICE</div><span style="background:#10b981;color:white;padding:4px 12px;border-radius:20px;font-size:11px;">{method_label.upper()}</span></div>
+                <div style="text-align:right;"><div style="font-size:20px;font-weight:700;letter-spacing:2px;">{_doc_title(business)}</div><span style="background:#10b981;color:white;padding:4px 12px;border-radius:20px;font-size:11px;">{method_label.upper()}</span></div>
             </div>
             <div style="padding:10px 25px;display:flex;gap:40px;border-bottom:1px solid #e5e7eb;">
                 <div style="flex:1;border-right:1px solid #e5e7eb;padding-right:25px;">
@@ -2732,7 +2748,7 @@ def register_invoicing_routes(app, db, login_required, Auth, render_page,
                     {f'<div style="border:1px solid #e5e7eb;border-radius:6px;padding:10px;background:#fafafa;margin-bottom:8px;font-size:11px;"><strong>Banking Details</strong><br>{biz_bank} | Acc: {biz_bank_acc} | Branch: {biz_bank_branch}</div>' if biz_bank_acc else ''}
                     <p style="margin:4px 0;font-size:10px;color:#999;">Thank you for your business!</p>
                 </div>
-                <table style="width:200px;"><tr style="border-bottom:1px solid #e5e7eb;"><td style="padding:4px 8px;color:#666;font-size:11px;">Subtotal</td><td style="padding:4px 8px;text-align:right;font-size:11px;">R{subtotal:,.2f}</td></tr><tr style="border-bottom:1px solid #e5e7eb;"><td style="padding:4px 8px;color:#666;font-size:11px;">VAT (15%)</td><td style="padding:4px 8px;text-align:right;font-size:11px;">R{vat:,.2f}</td></tr><tr style="background:#1a1a2e;"><td style="padding:8px;color:white;font-size:13px;font-weight:700;">TOTAL</td><td style="padding:8px;text-align:right;color:white;font-size:13px;font-weight:700;">R{total:,.2f}</td></tr></table>
+                <table style="width:200px;"><tr style="border-bottom:1px solid #e5e7eb;"><td style="padding:4px 8px;color:#666;font-size:11px;">Subtotal</td><td style="padding:4px 8px;text-align:right;font-size:11px;">R{subtotal:,.2f}</td></tr><tr style="border-bottom:1px solid #e5e7eb;"><td style="padding:4px 8px;color:#666;font-size:11px;">{_vat_label(business)}</td><td style="padding:4px 8px;text-align:right;font-size:11px;">R{vat:,.2f}</td></tr><tr style="background:#1a1a2e;"><td style="padding:8px;color:white;font-size:13px;font-weight:700;">TOTAL</td><td style="padding:8px;text-align:right;color:white;font-size:13px;font-weight:700;">R{total:,.2f}</td></tr></table>
             </div>
             </body></html>'''
             
@@ -3170,7 +3186,7 @@ def register_invoicing_routes(app, db, login_required, Auth, render_page,
                         </tr>
                         <tr style="background: var(--bg);">
                             <td colspan="2"></td>
-                            <td style="text-align: right; font-weight: 500;">VAT (15%):</td>
+                            <td style="text-align: right; font-weight: 500;">{_vat_label(business)}:</td>
                             <td style="text-align: right;"><span id="vat">R0.00</span></td>
                         </tr>
                         <tr style="background: var(--bg);">
@@ -3228,7 +3244,7 @@ def register_invoicing_routes(app, db, login_required, Auth, render_page,
                 row.querySelector('.line-total').textContent = 'R' + lineTotal.toFixed(2);
             }});
             
-            const vat = subtotal * 0.15;
+            const vat = subtotal * {_vat_pct(business)};
             const total = subtotal + vat;
             
             document.getElementById('subtotal').textContent = 'R' + subtotal.toFixed(2);
@@ -3396,7 +3412,7 @@ def register_invoicing_routes(app, db, login_required, Auth, render_page,
                             <td style="text-align: right;">{money(recurring.get("subtotal", 0))}</td>
                         </tr>
                         <tr>
-                            <td colspan="3" style="text-align: right;">VAT (15%):</td>
+                            <td colspan="3" style="text-align: right;">{_vat_label(business)}:</td>
                             <td style="text-align: right;">{money(recurring.get("vat", 0))}</td>
                         </tr>
                         <tr>
@@ -3589,10 +3605,12 @@ def register_invoicing_routes(app, db, login_required, Auth, render_page,
                     item["price"] = round(float(item.get("price", 0)) * multiplier, 2)
                 
                 subtotal = sum(float(item.get("quantity", 1)) * float(item.get("price", 0)) for item in items)
+                esc_business = db.get_one("businesses", recurring.get("business_id"))
+                esc_vat_pct = float(vat_rate_for(esc_business))
                 recurring["items"] = json.dumps(items)
                 recurring["subtotal"] = round(subtotal, 2)
-                recurring["vat"] = round(subtotal * 0.15, 2)
-                recurring["total"] = round(subtotal * 1.15, 2)
+                recurring["vat"] = round(subtotal * esc_vat_pct, 2)
+                recurring["total"] = round(subtotal * (1 + esc_vat_pct), 2)
                 recurring["last_escalation_year"] = current_year
                 recurring["escalation_pending"] = False
                 
@@ -3873,7 +3891,7 @@ def register_invoicing_routes(app, db, login_required, Auth, render_page,
                 return redirect("/quote/new?error=No+items")
             
             # Prices are EXCL VAT - ADD VAT to get total
-            vat = (subtotal * VAT_RATE).quantize(Decimal("0.01"))
+            vat = (subtotal * vat_rate_for(business)).quantize(Decimal("0.01"))
             total = subtotal + vat
             
             existing = db.get("quotes", {"business_id": biz_id}) or []
@@ -4008,7 +4026,7 @@ def register_invoicing_routes(app, db, login_required, Auth, render_page,
                 
                 <div style="text-align:right;margin-top:20px;padding:15px;background:rgba(0,0,0,0.2);border-radius:8px;">
                     <div style="margin-bottom:10px;">Subtotal: <strong id="subtotal">R0.00</strong></div>
-                    <div style="margin-bottom:10px;">VAT (15%): <strong id="vat">R0.00</strong></div>
+                    <div style="margin-bottom:10px;">{_vat_label(business)}: <strong id="vat">R0.00</strong></div>
                     <div style="font-size:24px;">Total: <strong id="total" style="color:var(--green);">R0.00</strong></div>
                 </div>
                 
@@ -4147,7 +4165,7 @@ def register_invoicing_routes(app, db, login_required, Auth, render_page,
             document.querySelectorAll('.row-total').forEach(cell => {{
                 subtotal += parseFloat(cell.textContent.replace('R', '')) || 0;
             }});
-            const vat = subtotal * 0.15;
+            const vat = subtotal * {_vat_pct(business)};
             const total = subtotal + vat;
             document.getElementById('subtotal').textContent = 'R' + subtotal.toFixed(2);
             document.getElementById('vat').textContent = 'R' + vat.toFixed(2);
@@ -4187,7 +4205,7 @@ def register_invoicing_routes(app, db, login_required, Auth, render_page,
             if line_total > 0:
                 # Line totals are EXCL VAT - ADD VAT
                 calculated_subtotal = line_total
-                calculated_vat = round(line_total * 0.15, 2)
+                calculated_vat = round(line_total * _vat_pct(business), 2)
                 calculated_total = round(line_total + calculated_vat, 2)
                 
                 if not quote.get("subtotal") or float(quote.get("subtotal", 0)) == 0:
@@ -4856,7 +4874,7 @@ def register_invoicing_routes(app, db, login_required, Auth, render_page,
             if not items:
                 return redirect(f"/quote/{quote_id}/edit?error=No+items")
             
-            vat = (subtotal * VAT_RATE).quantize(Decimal("0.01"))
+            vat = (subtotal * vat_rate_for(business)).quantize(Decimal("0.01"))
             total = subtotal + vat
             
             updates = {
@@ -5022,7 +5040,7 @@ def register_invoicing_routes(app, db, login_required, Auth, render_page,
                 
                 <div style="text-align:right;margin-top:20px;padding:15px;background:rgba(0,0,0,0.2);border-radius:8px;">
                     <div style="margin-bottom:10px;">Subtotal: <strong id="subtotal">R0.00</strong></div>
-                    <div style="margin-bottom:10px;">VAT (15%): <strong id="vat">R0.00</strong></div>
+                    <div style="margin-bottom:10px;">{_vat_label(business)}: <strong id="vat">R0.00</strong></div>
                     <div style="font-size:24px;">Total: <strong id="total" style="color:var(--green);">R0.00</strong></div>
                 </div>
                 
@@ -5155,7 +5173,7 @@ def register_invoicing_routes(app, db, login_required, Auth, render_page,
             document.querySelectorAll('.row-total').forEach(cell => {{
                 subtotal += parseFloat(cell.textContent.replace('R', '')) || 0;
             }});
-            const vat = subtotal * 0.15;
+            const vat = subtotal * {_vat_pct(business)};
             const total = subtotal + vat;
             document.getElementById('subtotal').textContent = 'R' + subtotal.toFixed(2);
             document.getElementById('vat').textContent = 'R' + vat.toFixed(2);
@@ -5280,7 +5298,7 @@ def register_invoicing_routes(app, db, login_required, Auth, render_page,
                 desc = safe_string(item.get("description") or item.get("desc") or "-")
                 price = float(item.get("price", 0))
                 total_excl = float(item.get("total", 0)) or round(float(qty) * price, 2)
-                vat_amt = round(total_excl * 0.15, 2)
+                vat_amt = round(total_excl * _vat_pct(business), 2)
                 total_incl = round(total_excl + vat_amt, 2)
                 att_items += f'<tr style="border-bottom:1px solid #e5e7eb;"><td style="padding:5px 8px;font-size:11px;">{desc}</td><td style="text-align:center;padding:5px 8px;font-size:11px;">{qty}</td><td style="text-align:right;padding:5px 8px;font-size:11px;">R{price:,.2f}</td><td style="text-align:right;padding:5px 8px;font-size:11px;">R{total_excl:,.2f}</td><td style="text-align:right;padding:5px 8px;font-size:11px;font-weight:600;">R{total_incl:,.2f}</td></tr>'
             
@@ -5311,7 +5329,7 @@ def register_invoicing_routes(app, db, login_required, Auth, render_page,
                 </tr></thead><tbody>{att_items}</tbody>
             </table></div>
             <div style="padding:15px 25px;text-align:right;">
-                <table style="width:200px;margin-left:auto;"><tr style="border-bottom:1px solid #e5e7eb;"><td style="padding:4px 8px;color:#666;font-size:11px;">Subtotal</td><td style="padding:4px 8px;text-align:right;font-size:11px;">R{subtotal:,.2f}</td></tr><tr style="border-bottom:1px solid #e5e7eb;"><td style="padding:4px 8px;color:#666;font-size:11px;">VAT (15%)</td><td style="padding:4px 8px;text-align:right;font-size:11px;">R{vat:,.2f}</td></tr><tr style="background:#1e3a5f;"><td style="padding:8px;color:white;font-size:13px;font-weight:700;">TOTAL</td><td style="padding:8px;text-align:right;color:white;font-size:13px;font-weight:700;">R{total:,.2f}</td></tr></table>
+                <table style="width:200px;margin-left:auto;"><tr style="border-bottom:1px solid #e5e7eb;"><td style="padding:4px 8px;color:#666;font-size:11px;">Subtotal</td><td style="padding:4px 8px;text-align:right;font-size:11px;">R{subtotal:,.2f}</td></tr><tr style="border-bottom:1px solid #e5e7eb;"><td style="padding:4px 8px;color:#666;font-size:11px;">{_vat_label(business)}</td><td style="padding:4px 8px;text-align:right;font-size:11px;">R{vat:,.2f}</td></tr><tr style="background:#1e3a5f;"><td style="padding:8px;color:white;font-size:13px;font-weight:700;">TOTAL</td><td style="padding:8px;text-align:right;color:white;font-size:13px;font-weight:700;">R{total:,.2f}</td></tr></table>
             </div>
             </body></html>'''
             

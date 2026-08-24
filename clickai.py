@@ -1152,6 +1152,20 @@ VAT_RATE = Decimal("0.15")
 CURRENCY = "R"
 COUNTRY = "South Africa"
 
+
+def vat_rate_for(business) -> Decimal:
+    """VAT rate to charge for a business.
+
+    Returns 0 for businesses that are not VAT registered — they may not charge
+    VAT or issue tax invoices. Mirrors the supplier-level vat_registered check:
+    only an explicit False disables VAT, so existing businesses (where the field
+    is missing or None) keep charging 15%.
+    """
+    if isinstance(business, dict) and business.get("vat_registered") is False:
+        return Decimal("0")
+    return VAT_RATE
+
+
 # OCR Settings
 ENABLE_IMAGE_PREPROCESSING = os.environ.get("ENABLE_IMAGE_PREPROCESSING", "true").lower() == "true"
 
@@ -68576,7 +68590,7 @@ try:
             has_reactor_hud, jarvis_hud_header, jarvis_techline,
             RecordFactory, Email, FraudGuard, RecurringInvoices,
             JARVIS_HUD_CSS, THEME_REACTOR_SKINS, VAT_RATE,
-            build_linked_documents_panel
+            build_linked_documents_panel, vat_rate_for
         )
         logger.info("[INVOICING] Routes registered ✓")
 except Exception as e:

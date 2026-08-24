@@ -179,6 +179,14 @@ def register_settings_routes(app, db, login_required, Auth, render_page,
                 </div>
                 
                 <div class="form-group">
+                    <label class="form-label" style="display:flex;align-items:center;gap:8px;cursor:pointer;font-weight:normal;">
+                        <input type="checkbox" name="not_vat_registered" value="on" {"checked" if business and business.get("vat_registered") is False else ""} style="width:auto;margin:0;">
+                        This business is <strong style="margin:0 3px;">NOT</strong> VAT registered
+                    </label>
+                    <small style="color:var(--text-muted);">No VAT is charged on invoices, quotes or credit notes, and documents are titled "INVOICE" instead of "TAX INVOICE".</small>
+                </div>
+                
+                <div class="form-group">
                     <label class="form-label">Phone</label>
                     <input type="text" name="phone" class="form-input" value="{safe_string(business.get("phone", "") if business else "")}">
                 </div>
@@ -1886,6 +1894,7 @@ def register_settings_routes(app, db, login_required, Auth, render_page,
                 "industry_type": request.form.get("industry_type", "retail_general"),
                 "reg_number": request.form.get("reg_number", ""),
                 "vat_number": request.form.get("vat_number", ""),
+                "vat_registered": not request.form.get("not_vat_registered"),
                 "phone": request.form.get("phone", ""),
                 "email": request.form.get("email", ""),
                 "address": request.form.get("address", ""),
