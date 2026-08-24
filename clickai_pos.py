@@ -4402,7 +4402,7 @@ def register_pos_routes(app, db, login_required, Auth, render_page,
                         '<td style="padding:6px 8px;font-size:12px;">' + desc + '</td>' +
                         '<td style="text-align:center;padding:6px 8px;font-size:12px;">' + qty + '</td>' +
                         '<td style="text-align:right;padding:6px 8px;font-size:12px;">R' + price.toFixed(2) + '</td>' +
-                        '<td style="text-align:center;padding:6px 8px;font-size:12px;">15%</td>' +
+                        '<td style="text-align:center;padding:6px 8px;font-size:12px;">' + Math.round(VAT_RATE * 100) + '%</td>' +
                         '<td style="text-align:right;padding:6px 8px;font-size:12px;">R' + lineTotal.toFixed(2) + '</td>' +
                         '<td style="text-align:right;padding:6px 8px;font-size:12px;font-weight:600;">R' + inclTotal.toFixed(2) + '</td>' +
                         '</tr>';

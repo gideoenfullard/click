@@ -1097,7 +1097,7 @@ def register_invoicing_routes(app, db, login_required, Auth, render_page,
             if disc > 0 and _o_price > price:
                 _inv_saved_total += (_o_price - price) * float(qty)
                 _desc_html += f'<div style="font-size:10px;color:#dc2626;font-weight:600;margin-top:2px;"><span style="text-decoration:line-through;">Was {money(_o_price)}</span> — {disc:g}% DISCOUNT — Now {money(price)}</div>'
-            vat_rate = 15.0
+            vat_rate = float(vat_rate_for(business)) * 100
             vat_amount = round(total_excl * vat_rate / 100, 2)
             total_incl = round(total_excl + vat_amount, 2)
             items_html += f'''
@@ -2713,7 +2713,7 @@ def register_invoicing_routes(app, db, login_required, Auth, render_page,
                 total_excl = float(item.get("total", 0)) or round(float(qty) * price, 2)
                 vat_amt = round(total_excl * _vat_pct(business), 2)
                 total_incl = round(total_excl + vat_amt, 2)
-                att_items += f'<tr style="border-bottom:1px solid #e5e7eb;"><td style="padding:5px 8px;font-size:11px;">{desc}</td><td style="text-align:center;padding:5px 8px;font-size:11px;">{unit}</td><td style="text-align:center;padding:5px 8px;font-size:11px;">{qty}</td><td style="text-align:right;padding:5px 8px;font-size:11px;">R{price:,.2f}</td><td style="text-align:center;padding:5px 8px;font-size:11px;">15%</td><td style="text-align:right;padding:5px 8px;font-size:11px;">R{total_excl:,.2f}</td><td style="text-align:right;padding:5px 8px;font-size:11px;font-weight:600;">R{total_incl:,.2f}</td></tr>'
+                att_items += f'<tr style="border-bottom:1px solid #e5e7eb;"><td style="padding:5px 8px;font-size:11px;">{desc}</td><td style="text-align:center;padding:5px 8px;font-size:11px;">{unit}</td><td style="text-align:center;padding:5px 8px;font-size:11px;">{qty}</td><td style="text-align:right;padding:5px 8px;font-size:11px;">R{price:,.2f}</td><td style="text-align:center;padding:5px 8px;font-size:11px;">{_vat_pct(business) * 100:.0f}%</td><td style="text-align:right;padding:5px 8px;font-size:11px;">R{total_excl:,.2f}</td><td style="text-align:right;padding:5px 8px;font-size:11px;font-weight:600;">R{total_incl:,.2f}</td></tr>'
             
             attachment_html = f'''<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Invoice {inv_no}</title>
             <style>body{{font-family:Arial,sans-serif;margin:0;padding:0;color:#333;font-size:12px;}}table{{width:100%;border-collapse:collapse;}}@media print{{@page{{margin:10mm 12mm;}}body{{padding:0;}}}}</style>
@@ -4241,7 +4241,7 @@ def register_invoicing_routes(app, db, login_required, Auth, render_page,
             if disc > 0 and _o_price > price:
                 _qt_saved_total += (_o_price - price) * float(qty)
                 _desc_html += f'<div style="font-size:10px;color:#dc2626;font-weight:600;margin-top:2px;"><span style="text-decoration:line-through;">Was {money(_o_price)}</span> — {disc:g}% DISCOUNT — Now {money(price)}</div>'
-            vat_rate = 15.0
+            vat_rate = float(vat_rate_for(business)) * 100
             vat_amount = round(total_excl * vat_rate / 100, 2)
             total_incl = round(total_excl + vat_amount, 2)
             unit = item.get("unit") or item.get("uom") or ""
