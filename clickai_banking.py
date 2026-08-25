@@ -4724,8 +4724,21 @@ Return ONLY the JSON array. No markdown, no explanation."""
                     # supplier_payments record — NOT a second expense. The
                     # expense and its VAT were already posted when the supplier
                     # invoice was captured (Sage treatment).
+                    #
+                    # BUT: this may only override when the user did NOT deliberately
+                    # pick a specific expense category. If Daphne chose "Electricity"
+                    # for a prepaid-electricity purchase, that is a direct cost — it
+                    # must post to her chosen GL code, even if the linked supplier
+                    # (e.g. the municipality) happens to have unrelated open items.
+                    # A specific expense choice always wins over auto-settlement.
+                    # Auto-settlement stays available only for a generic/blank choice
+                    # or an explicit "Supplier Payment" (handled in its own branch above).
+                    _generic_expense_choice = (not category) or category.strip().lower() in (
+                        "expense", "expenses", "general expenses", "sundry expenses",
+                        "other", "supplier", "supplier payment", "payment",
+                    )
                     _settles_creditor = False
-                    if _exp_supplier_id:
+                    if _exp_supplier_id and _generic_expense_choice:
                         try:
                             _open_sinvs = db.get("supplier_invoices", {"business_id": biz_id, "supplier_id": _exp_supplier_id}) or []
                             for _osi in _open_sinvs:
