@@ -14204,7 +14204,8 @@ class Actions:
             return {"success": False, "message": "Need expense amount"}
         
         # Calculate VAT
-        vat_amount = (amount * VAT_RATE / (1 + VAT_RATE)).quantize(Decimal("0.01"))
+        _exp_rate = vat_rate_for_biz(biz_id)
+        vat_amount = (amount * _exp_rate / (1 + _exp_rate)).quantize(Decimal("0.01"))
         net_amount = amount - vat_amount
         
         expense = RecordFactory.expense(
@@ -14817,7 +14818,13 @@ class Actions:
         
         # Calculate VAT (assume VAT inclusive). Non-VAT-registered suppliers charge
         # no VAT, so the amount is the full net expense and no VAT is claimed.
-        if supplier and supplier.get("vat_registered") is False:
+        # A non-VAT-registered BUSINESS cannot claim input VAT either: the gross
+        # amount is the cost, so the full amount goes to purchases.
+        # SARS: no input VAT may be claimed on fuel (diesel/petrol) — the scan
+        # paths already enforce this; this direct path must too.
+        _si_text = f"{supplier_name} {description} {data.get('category', '')}".lower()
+        _si_is_fuel = any(k in _si_text for k in ("fuel", "diesel", "petrol", "paraffin", "unleaded"))
+        if (supplier and supplier.get("vat_registered") is False) or float(vat_rate_for_biz(biz_id)) == 0 or _si_is_fuel:
             vat_amount = 0.0
             subtotal = amount
         else:
@@ -15746,7 +15753,7 @@ class Actions:
                                         "description": li_desc,
                                         "category": expense_category,
                                         "amount": li_total,
-                                        "vat": li_total * 0.15 / 1.15,  # Extract VAT
+                                        "vat": li_total * float(vat_rate_for_biz(biz_id)) / (1 + float(vat_rate_for_biz(biz_id))),  # Extract VAT (0 when business not VAT registered)
                                         "supplier": supplier_name,
                                         "reference": inv.get("invoice_number", ""),
                                         "created_at": now()
@@ -15875,7 +15882,8 @@ class Actions:
                             category = "General Expenses"
                     
                     total = float(item_data.get("total", 0))
-                    vat_amount = total * 0.15 / 1.15 if category != "Fuel" else 0
+                    _sc_rate = float(vat_rate_for_biz(biz_id))
+                    vat_amount = total * _sc_rate / (1 + _sc_rate) if (category != "Fuel" and _sc_rate > 0) else 0
                     expense = RecordFactory.expense(
                         business_id=biz_id,
                         description=f"{supplier_name} - {item_data.get('invoice_number', '')}".strip(" -"),
@@ -17841,7 +17849,7 @@ class IndustryKnowledge:
         3. Final fallback: "7999" (General Expenses)
         """
         if not category_name:
-            return "7999"
+            return "7900"
         
         cat_lower = category_name.strip().lower()
         
@@ -17927,7 +17935,7 @@ class IndustryKnowledge:
             for cat_name, gl_code in group["items"]:
                 if cat_lower in cat_name.lower() or cat_name.lower() in cat_lower:
                     return gl_code
-        return "7999"
+        return "7900"
     
     @classmethod
     def get_all_category_names(cls, business_id=None):
@@ -18598,11 +18606,26 @@ class BankLearning:
         categorized = []
         auto_count = 0
         
+        # Categories that legitimately apply to money coming IN. Learned and
+        # keyword patterns are overwhelmingly expense-flavoured (learned from
+        # money-out), so an incoming payment whose description happens to match
+        # one (e.g. a customer called "Krag" matching an electricity pattern)
+        # must never be auto-suggested an expense category — that posts income
+        # as a credit against an expense account.
+        _money_in_ok = {"Customer Payment", "POS Deposit", "Card Settlement",
+                        "Owner Capital Introduced", "Loan", "Refund",
+                        "Interest Received", "Other Income", "Transfer",
+                        "Transfer Between Accounts", "Ignore"}
+        
         for txn in transactions:
             description = txn.get("description", "")
             suggestion = BankLearning.suggest_category(business_id, description)
             
             txn_copy = txn.copy()
+            
+            _is_money_in = float(txn.get("credit", 0) or 0) > 0 or float(txn.get("amount", 0) or 0) > 0
+            if _is_money_in and suggestion.get("category") and suggestion.get("category") not in _money_in_ok:
+                suggestion = {"category": None, "confidence": 0}
             
             if suggestion.get("confidence", 0) >= 0.7:
                 txn_copy["suggested_category"] = suggestion.get("category")
@@ -32893,11 +32916,12 @@ def api_expenses_quick_add():
         no_vat_cats = ["fuel", "entertainment", "meals", "membership"]
         is_no_vat = any(nv in category.lower() for nv in no_vat_cats)
         
-        if is_no_vat:
+        _qa_rate = float(vat_rate_for_biz(biz_id))
+        if is_no_vat or _qa_rate == 0:
             vat_amount = 0.0
             net_amount = total_amount
         else:
-            vat_amount = round(total_amount * 0.15 / 1.15, 2)
+            vat_amount = round(total_amount * _qa_rate / (1 + _qa_rate), 2)
             net_amount = round(total_amount - vat_amount, 2)
         
         # GL code
@@ -32998,7 +33022,8 @@ def api_expenses_sync_offline():
                 
                 no_vat_cats = ["fuel", "entertainment", "meals", "membership"]
                 is_no_vat = any(nv in category.lower() for nv in no_vat_cats)
-                vat_amount = 0.0 if is_no_vat else round(total_amount * 0.15 / 1.15, 2)
+                _so_rate = float(vat_rate_for_biz(biz_id))
+                vat_amount = 0.0 if (is_no_vat or _so_rate == 0) else round(total_amount * _so_rate / (1 + _so_rate), 2)
                 net_amount = round(total_amount - vat_amount, 2)
                 
                 expense_account = IndustryKnowledge.get_gl_code(category, business_id=biz_id)
@@ -43309,7 +43334,8 @@ def api_smart_import_batch():
                             sup_id = existing_supplier[0].get("id") if isinstance(existing_supplier, list) else existing_supplier.get("id")
                         
                         # Back-calculate VAT from inclusive total (Sage doesn't give separate VAT)
-                        si_subtotal = (total or outstanding) / 1.15
+                        _imp_rate = float(vat_rate_for_biz(biz_id))
+                        si_subtotal = (total or outstanding) / (1 + _imp_rate)
                         si_vat = (total or outstanding) - si_subtotal
                         
                         record = RecordFactory.supplier_invoice(
@@ -63063,7 +63089,7 @@ def api_scan_save_supplier_invoice():
                         "description": desc,
                         "category": expense_category,
                         "amount": line_total,
-                        "vat": line_total * 0.15 / 1.15,
+                        "vat": line_total * float(vat_rate_for_biz(biz_id)) / (1 + float(vat_rate_for_biz(biz_id))),
                         "supplier": supplier_name,
                         "reference": invoice_num,
                         "created_at": now()
@@ -63269,7 +63295,7 @@ def api_scan_save_supplier_invoice():
         if supplier_discount_pct > 0 and _scan_gross_net > 0:
             supplier_discount_amount = round(_scan_gross_net * supplier_discount_pct / 100, 2)
             _inv_subtotal = round(_scan_gross_net - supplier_discount_amount, 2)
-            _inv_vat = round(_inv_subtotal * 0.15, 2)
+            _inv_vat = round(_inv_subtotal * float(vat_rate_for_biz(biz_id)), 2)
             _inv_total = round(_inv_subtotal + _inv_vat, 2)
         else:
             supplier_discount_amount = 0.0
@@ -63283,6 +63309,16 @@ def api_scan_save_supplier_invoice():
         if supplier and supplier.get("vat_registered") is False:
             _inv_vat = 0.0
             _inv_total = round(_inv_subtotal, 2)
+        
+        # Non-VAT-registered BUSINESS: it cannot claim input VAT, so the gross
+        # (VAT-inclusive) amount IS the cost. Keep the supplier's total, zero the
+        # VAT, and lift the subtotal to gross so the full amount hits stock/COS
+        # (line_net stays gross too because vat_amount == 0 downstream).
+        if float(vat_rate_for_biz(biz_id)) == 0:
+            if _inv_total <= 0:
+                _inv_total = round(_inv_subtotal + _inv_vat, 2)
+            _inv_vat = 0.0
+            _inv_subtotal = _inv_total
         
         invoice = RecordFactory.supplier_invoice(
             business_id=biz_id,
@@ -63895,7 +63931,7 @@ def api_scan_save_expense():
         vat_amount = float(data.get("vat", 0))
         # Check if category matches any no-VAT category (partial match for safety)
         is_no_vat = any(nv.lower() in category.lower() or category.lower() in nv.lower() for nv in no_vat_categories)
-        vat_claimable = 0.0 if is_no_vat else vat_amount
+        vat_claimable = 0.0 if (is_no_vat or float(vat_rate_for_biz(biz_id)) == 0) else vat_amount
         
         # Check if marked as paid
         is_paid = data.get("paid", False)
@@ -64005,7 +64041,13 @@ def api_scan_save_expense():
                 journal_entries.append({"account_code": sp_gl, "debit": round(sp_amount, 2), "credit": 0})
                 split_total += sp_amount
                 
-                if not is_fuel_item and sp_amount > 0:
+                if not is_fuel_item and sp_amount > 0 and float(vat_rate_for_biz(biz_id)) == 0:
+                    # Business can't claim input VAT — the VAT on this line is part
+                    # of the cost. Add it to the line's own expense debit instead of
+                    # accumulating it for a VAT Input leg, so the journal still
+                    # balances against the VAT-inclusive credit.
+                    journal_entries[-1]["debit"] = round(journal_entries[-1]["debit"] + round(sp_amount * 0.15, 2), 2)
+                elif not is_fuel_item and sp_amount > 0:
                     # Non-fuel: VAT is claimable
                     sp_vat = round(sp_amount * 0.15, 2)
                     total_split_vat += sp_vat
