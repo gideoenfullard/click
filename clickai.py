@@ -37665,10 +37665,32 @@ def journals_page():
         _an = (_acc.get("account_name", "") or _acc.get("name", "")).strip()
         if _ac and _an and _ac not in _code_names:
             _code_names[_ac] = _an
+    # ClickAI default names for codes that exist only in journals (posted via
+    # BOOKING_CATEGORIES defaults, so they're in no table) — same fallback the
+    # Ledger/Reports pages use, so "6120" reads "Electricity" here too.
+    _default_gl_extra = {
+        "1000": "Bank", "1010": "Card Clearing", "1050": "Cash On Hand", "1100": "Petty Cash",
+        "1200": "Debtors Control", "1300": "Stock", "1400": "VAT Input",
+        "2000": "Creditors Control", "2100": "VAT Output", "2200": "PAYE Payable",
+        "2210": "UIF Payable", "2220": "SDL Payable", "2300": "Loan",
+        "3000": "Capital", "3100": "Retained Earnings", "3200": "Drawings",
+        "4000": "Sales - Cash", "4300": "Discount Received",
+        "7050": "Cash Short/Over", "7900": "Sundry Expenses", "7999": "General Expenses",
+        "8400": "Discount Allowed",
+    }
+    def _default_gl_name(_dc):
+        try:
+            for _grp in IndustryKnowledge.BOOKING_CATEGORIES.values():
+                for _cat_name, _gl_code in _grp.get("items", []):
+                    if str(_gl_code) == _dc and _cat_name:
+                        return _cat_name
+        except Exception:
+            pass
+        return _default_gl_extra.get(_dc, "(code in use)")
     for _j in journals:
         _jc = str(_j.get("account_code", "") or "").strip()
         if _jc and _jc not in _code_names:
-            _code_names[_jc] = "(code in use)"
+            _code_names[_jc] = _default_gl_name(_jc)
     _coa_opts = sorted(_code_names.items(), key=lambda x: x[0])
     # Pinned "Staff Wages" shortcut at the top of the account dropdown — used to
     # recharge another business (e.g. the pub) for wages Fulltech paid. Uses the

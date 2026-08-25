@@ -23,6 +23,22 @@ import traceback
 from datetime import datetime
 from collections import defaultdict
 
+
+def _default_gl_name(code):
+    """ClickAI default display name for codes that live only in journals —
+    the same fallback the Ledger and Journals pages use, so "6120" reads
+    "6120 - Electricity" here too. Runtime import avoids a circular import:
+    clickai imports this module at startup, but this only runs per request."""
+    try:
+        from clickai import IndustryKnowledge
+        for _grp in IndustryKnowledge.BOOKING_CATEGORIES.values():
+            for _cat_name, _gl_code in _grp.get("items", []):
+                if str(_gl_code) == str(code) and _cat_name:
+                    return f"{code} - {_cat_name}"
+    except Exception:
+        pass
+    return str(code)
+
 logger = logging.getLogger("clickai")
 
 
@@ -439,7 +455,7 @@ def build_accounts_from_own_data(db, biz_id):
                 accounts_map[code]["closing_credit"] = cr
             else:
                 accounts_map[code] = {
-                    "name": code,
+                    "name": _default_gl_name(code),
                     "_code": code,
                     "_category": "",
                     "opening_debit": dr,
@@ -462,7 +478,7 @@ def build_accounts_from_own_data(db, biz_id):
             
             if code not in accounts_map:
                 accounts_map[code] = {
-                    "name": code,
+                    "name": _default_gl_name(code),
                     "_code": code,
                     "_category": "",
                     "opening_debit": 0,
