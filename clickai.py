@@ -14226,7 +14226,7 @@ class Actions:
             biz_id = context.get("business_id")
             excl_amount = float(amount - vat_amount)
             # Use proper GL code based on category
-            expense_gl = IndustryKnowledge.get_gl_code(category, business_id=biz_id) if category else "7999"
+            expense_gl = IndustryKnowledge.get_gl_code(category, business_id=biz_id) if category else "7900"
             _exp_gl = [
                 {"account_code": expense_gl, "debit": excl_amount, "credit": 0},
                 {"account_code": gl(biz_id, "vat_input"), "debit": float(vat_amount), "credit": 0},
@@ -17846,7 +17846,7 @@ class IndustryKnowledge:
         Priority:
         1. If business has COA, search by name match → return Sage code (e.g. 3250/000)
         2. Fallback to BOOKING_CATEGORIES → return ClickAI code (e.g. 6140)
-        3. Final fallback: "7999" (General Expenses)
+        3. Final fallback: "7900" (Sundry Expenses)
         """
         if not category_name:
             return "7900"
