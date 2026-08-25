@@ -37723,19 +37723,94 @@ def journals_page():
     )
 
     rows = ""
-    for j in journals[:500]:
-        debit = float(j.get("debit", 0))
-        credit = float(j.get("credit", 0))
-        rows += f'''
-        <tr>
-            <td>{j.get("date", "-")}</td>
-            <td>{j.get("account_code", "-")}</td>
-            <td>{safe_string(j.get("description", "-"))}</td>
-            <td>{j.get("reference", "-")}</td>
-            <td style="text-align:right;color:var(--green);">{money(debit) if debit else "-"}</td>
-            <td style="text-align:right;color:var(--red);">{money(credit) if credit else "-"}</td>
-        </tr>
-        '''
+    # Group journal lines by reference so both legs of an entry sit together —
+    # Daphne could not trace the credit side because DR and CR posted as two
+    # separate date-sorted rows. Each group shows the full double-entry, and a
+    # credit note (CN-…) also links to its original invoice's journal (the
+    # "chain"), so the reversal and the thing it reverses are visible at once.
+    _cn_invoice_ref = {}   # credit_note_number -> original invoice_number
+    try:
+        for _cn in (db.get("credit_notes", {"business_id": biz_id}) if biz_id else []) or []:
+            _cnn = _cn.get("credit_note_number") or _cn.get("cn_number") or ""
+            _oin = _cn.get("invoice_number") or ""
+            if _cnn and _oin:
+                _cn_invoice_ref[_cnn] = _oin
+    except Exception:
+        pass
+
+    _groups = {}
+    _group_order = []
+    for j in journals:
+        _ref = j.get("reference", "") or "(no reference)"
+        if _ref not in _groups:
+            _groups[_ref] = {"ref": _ref, "date": j.get("date", ""), "lines": []}
+            _group_order.append(_ref)
+        _groups[_ref]["lines"].append(j)
+
+    def _render_group(_ref, _pinned=False):
+        _g = _groups.get(_ref)
+        if not _g:
+            return ""
+        _tot_d = sum(float(x.get("debit", 0) or 0) for x in _g["lines"])
+        _tot_c = sum(float(x.get("credit", 0) or 0) for x in _g["lines"])
+        _bal = abs(_tot_d - _tot_c) < 0.01
+        _bal_badge = ('<span style="color:var(--green);font-size:11px;">● balanced</span>'
+                      if _bal else
+                      f'<span style="color:var(--red);font-size:11px;">● out by {money(abs(_tot_d - _tot_c))}</span>')
+        _desc = safe_string(_g["lines"][0].get("description", "-")) if _g["lines"] else "-"
+        _line_rows = ""
+        for _ln in _g["lines"]:
+            _d = float(_ln.get("debit", 0) or 0)
+            _c = float(_ln.get("credit", 0) or 0)
+            _code = str(_ln.get("account_code", "-"))
+            _nm = _code_names.get(_code, "")
+            _acc_disp = f"{_code} - {_nm}" if _nm else _code
+            # Highlight the credit side — that is the leg Daphne hunts for
+            _cr_style = 'background:rgba(239,68,68,0.06);' if _c else ''
+            _line_rows += f'''
+            <tr style="{_cr_style}">
+                <td style="padding:5px 10px;font-size:12px;">{safe_string(_acc_disp)}</td>
+                <td style="padding:5px 10px;text-align:right;font-size:12px;color:var(--green);">{money(_d) if _d else ""}</td>
+                <td style="padding:5px 10px;text-align:right;font-size:12px;color:var(--red);font-weight:{"600" if _c else "400"};">{money(_c) if _c else ""}</td>
+            </tr>'''
+        # Chain: if this reference is a credit note, show a link to trace its original invoice
+        _chain = ""
+        _orig_inv = _cn_invoice_ref.get(_ref)
+        if _orig_inv and _orig_inv in _groups:
+            _chain = f'''<div style="margin-top:6px;font-size:11px;color:var(--text-muted);">
+                ↳ Reverses invoice <a href="#" onclick="jnlShowRef('{safe_string(_orig_inv)}');return false;" style="color:#22d3ee;">{safe_string(_orig_inv)}</a> — click to trace the original entry</div>'''
+        _pin_style = 'border:2px solid #22d3ee;' if _pinned else 'border:1px solid var(--border);'
+        return f'''
+        <div class="jnl-group" data-ref="{safe_string(_ref)}" data-search="{safe_string((_ref + ' ' + _desc).lower())}" style="{_pin_style}border-radius:8px;padding:10px 12px;margin-bottom:10px;background:var(--card);">
+            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;">
+                <div>
+                    <span style="font-weight:600;font-size:13px;">{safe_string(_ref)}</span>
+                    <span style="color:var(--text-muted);font-size:12px;margin-left:8px;">{_g["date"]}</span>
+                </div>
+                {_bal_badge}
+            </div>
+            <div style="font-size:12px;color:var(--text-muted);margin-bottom:8px;">{_desc}</div>
+            <table style="width:100%;border-collapse:collapse;">
+                <thead>
+                    <tr style="border-bottom:1px solid var(--border);">
+                        <th style="text-align:left;padding:4px 10px;font-size:10px;color:var(--text-muted);text-transform:uppercase;">Account</th>
+                        <th style="text-align:right;padding:4px 10px;font-size:10px;color:var(--text-muted);text-transform:uppercase;">Debit</th>
+                        <th style="text-align:right;padding:4px 10px;font-size:10px;color:var(--text-muted);text-transform:uppercase;">Credit</th>
+                    </tr>
+                </thead>
+                <tbody>{_line_rows}</tbody>
+                <tfoot>
+                    <tr style="border-top:2px solid var(--border);font-weight:600;">
+                        <td style="padding:5px 10px;text-align:right;font-size:11px;">Totals</td>
+                        <td style="padding:5px 10px;text-align:right;font-size:11px;color:var(--green);">{money(_tot_d)}</td>
+                        <td style="padding:5px 10px;text-align:right;font-size:11px;color:var(--red);">{money(_tot_c)}</td>
+                    </tr>
+                </tfoot>
+            </table>
+            {_chain}
+        </div>'''
+
+    rows = "".join(_render_group(_ref) for _ref in _group_order[:500])
     
     content = f'''
     <div class="card" style="margin-bottom:20px;">
@@ -37782,6 +37857,7 @@ def journals_page():
                 <button class="btn btn-primary" id="jnlSaveBtn" onclick="jnlSave()" disabled>Save Journal</button>
             </div>
         </div>
+        <div id="jnlPreview" style="margin-top:12px;padding:10px 12px;border:1px dashed var(--border);border-radius:8px;min-height:0;"></div>
     </div>
 
     <div class="card" style="margin-bottom:20px;">
@@ -37840,28 +37916,52 @@ def journals_page():
             <h3 class="card-title" style="margin:0;">Journal Entries</h3>
         </div>
 
-        <p style="color:var(--text-muted);margin-bottom:15px;font-size:12px;">
+        <p style="color:var(--text-muted);margin-bottom:12px;font-size:12px;">
+            Each entry shows both sides together — the credit side is shaded so it is easy to find.
             Tip: you can also ask the assistant - "Journal: Debit Bank R1000, Credit Sales R1000 for cash sale"
         </p>
 
-        <table class="table">
-            <thead>
-                <tr><th>Date</th><th>Account</th><th>Description</th><th>Ref</th><th style="text-align:right;">Debit</th><th style="text-align:right;">Credit</th></tr>
-            </thead>
-            <tbody>
-                {rows or "<tr><td colspan='6' style='text-align:center;color:var(--text-muted)'>No journal entries yet</td></tr>"}
-            </tbody>
-        </table>
+        <input type="text" id="jnlSearch" onkeyup="jnlFilter()" placeholder="Search by reference, account or description (e.g. CN-00033, 6120, electricity)"
+               style="width:100%;padding:9px 12px;margin-bottom:14px;border:1px solid var(--border);border-radius:8px;background:var(--bg);color:var(--text);font-size:13px;">
+
+        <div id="jnlGroups">
+            {rows or "<div style='text-align:center;color:var(--text-muted);padding:20px;'>No journal entries yet</div>"}
+        </div>
     </div>
 
     <script>
         var JNL_ACC_OPTIONS = {json.dumps(_acc_options_html)};
 
-        function jnlAddLine() {{
+        // Live filter over the grouped entries — matches reference, account or description
+        function jnlFilter() {{
+            var q = (document.getElementById('jnlSearch').value || '').toLowerCase().trim();
+            var groups = document.querySelectorAll('#jnlGroups .jnl-group');
+            groups.forEach(function(g) {{
+                var hay = (g.getAttribute('data-search') || '');
+                var txt = (g.textContent || '').toLowerCase();
+                g.style.display = (!q || hay.indexOf(q) !== -1 || txt.indexOf(q) !== -1) ? '' : 'none';
+            }});
+        }}
+
+        // Trace-chain helper: jump to and highlight a referenced entry (e.g. a credit
+        // note's original invoice), so the search box shows exactly that entry.
+        function jnlShowRef(ref) {{
+            var box = document.getElementById('jnlSearch');
+            box.value = ref;
+            jnlFilter();
+            var target = document.querySelector('#jnlGroups .jnl-group[data-ref="' + ref + '"]');
+            if (target) {{
+                target.scrollIntoView({{behavior:'smooth', block:'center'}});
+                target.style.transition = 'box-shadow 0.3s';
+                target.style.boxShadow = '0 0 0 3px #22d3ee';
+                setTimeout(function() {{ target.style.boxShadow = 'none'; }}, 1500);
+            }}
+        }}
+
             var tbody = document.getElementById('jnlLines');
             var tr = document.createElement('tr');
             tr.innerHTML =
-                '<td><select class="jnlAcc" style="width:100%;padding:7px;border:1px solid var(--border);border-radius:6px;background:var(--bg);color:var(--text);">' + JNL_ACC_OPTIONS + '</select></td>' +
+                '<td><select class="jnlAcc" onchange="jnlRecalc()" style="width:100%;padding:7px;border:1px solid var(--border);border-radius:6px;background:var(--bg);color:var(--text);">' + JNL_ACC_OPTIONS + '</select></td>' +
                 '<td><input type="number" step="0.01" min="0" class="jnlDebit" oninput="jnlOnDebit(this)" style="width:100%;padding:7px;text-align:right;border:1px solid var(--border);border-radius:6px;background:var(--bg);color:var(--text);"></td>' +
                 '<td><input type="number" step="0.01" min="0" class="jnlCredit" oninput="jnlOnCredit(this)" style="width:100%;padding:7px;text-align:right;border:1px solid var(--border);border-radius:6px;background:var(--bg);color:var(--text);"></td>' +
                 '<td style="text-align:center;"><button class="btn btn-secondary" style="padding:4px 8px;" onclick="this.closest(\\'tr\\').remove();jnlRecalc();">x</button></td>';
@@ -37903,6 +38003,28 @@ def journals_page():
                 msg.style.color = 'var(--red)';
             }}
             btn.disabled = !balanced;
+            jnlPreview();
+        }}
+
+        // Live "what will happen" summary under the form — reads the chosen accounts
+        // so Daphne can confirm the debit/credit sides before saving.
+        function jnlPreview() {{
+            var box = document.getElementById('jnlPreview');
+            if (!box) return;
+            var rows = document.querySelectorAll('#jnlLines tr');
+            var drs = [], crs = [];
+            rows.forEach(function(tr) {{
+                var sel = tr.querySelector('.jnlAcc');
+                var d = parseFloat((tr.querySelector('.jnlDebit') || {{}}).value) || 0;
+                var c = parseFloat((tr.querySelector('.jnlCredit') || {{}}).value) || 0;
+                var label = sel && sel.selectedIndex >= 0 ? sel.options[sel.selectedIndex].text : '';
+                if (!label || label.indexOf('Select') === 0) return;
+                if (d > 0) drs.push('<span style="color:var(--green);">DR</span> ' + label + ' <b>R' + d.toFixed(2) + '</b>');
+                if (c > 0) crs.push('<span style="color:var(--red);">CR</span> ' + label + ' <b>R' + c.toFixed(2) + '</b>');
+            }});
+            if (!drs.length && !crs.length) {{ box.innerHTML = ''; return; }}
+            box.innerHTML = '<div style="font-size:11px;color:var(--text-muted);text-transform:uppercase;margin-bottom:4px;">This entry will post</div>' +
+                drs.concat(crs).map(function(l) {{ return '<div style="font-size:12px;margin:2px 0;">' + l + '</div>'; }}).join('');
         }}
 
         function jnlSave() {{
