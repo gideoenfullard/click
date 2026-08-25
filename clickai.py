@@ -37958,6 +37958,7 @@ def journals_page():
             }}
         }}
 
+        function jnlAddLine() {{
             var tbody = document.getElementById('jnlLines');
             var tr = document.createElement('tr');
             tr.innerHTML =
