@@ -22486,6 +22486,7 @@ def render_page(title: str, content: str, user: dict = None, active: str = "") -
             ("reports", "/reports", "Reports"),
             ("ledger", "/ledger", "Ledger"),
             ("journals", "/journals", "Journals"),
+            ("sent-emails", "/sent-emails", "Sent Emails"),
             ("audit", "/audit", "Audit"),
             ("system-health", "/system-health", "System Health"),
             ("inbox", "/scan-inbox", "Inbox"),
@@ -22511,6 +22512,7 @@ def render_page(title: str, content: str, user: dict = None, active: str = "") -
             ("reports", "/reports", "Reports"),
             ("ledger", "/ledger", "Ledger"),
             ("journals", "/journals", "Journals"),
+            ("sent-emails", "/sent-emails", "Sent Emails"),
             ("audit", "/audit", "Audit"),
             ("system-health", "/system-health", "System Health"),
             ("intelligence", "/intelligence", "AI"),
@@ -28251,6 +28253,94 @@ def dashboard():
         '''
     
     return render_page("Dashboard", content, user, "dashboard")
+
+
+@app.route("/sent-emails")
+@login_required
+def sent_emails_page():
+    """Central log of every outgoing email — so Daphne can confirm what was
+    actually sent when a recipient claims they never received it. Reads the
+    existing email_log table (populated by Email._log_email on every send)."""
+    user = Auth.get_current_user()
+    business = Auth.get_current_business()
+    biz_id = business.get("id") if business else None
+
+    try:
+        emails = db.get("email_log", {"business_id": biz_id}, limit=2000) or []
+    except Exception as e:
+        logger.error(f"[SENT EMAILS] Error loading: {e}")
+        emails = []
+
+    # Newest first
+    emails = sorted(emails, key=lambda x: (x.get("created_at") or x.get("date") or ""), reverse=True)
+
+    _sent = sum(1 for e in emails if (e.get("status") or "").lower() in ("sent", "ok", "success"))
+    _failed = sum(1 for e in emails if (e.get("status") or "").lower() in ("failed", "error"))
+
+    rows = ""
+    for e in emails[:500]:
+        _status = (e.get("status") or "").lower()
+        if _status in ("sent", "ok", "success"):
+            _badge = '<span style="color:var(--green);font-size:11px;font-weight:600;">● Sent</span>'
+        elif _status in ("failed", "error"):
+            _err = safe_string(e.get("error", ""))[:120]
+            _badge = f'<span style="color:var(--red);font-size:11px;font-weight:600;" title="{_err}">● Failed</span>'
+        else:
+            _badge = f'<span style="color:var(--text-muted);font-size:11px;">{safe_string(e.get("status", "-"))}</span>'
+        _who = safe_string(e.get("customer_name") or e.get("supplier_name") or "")
+        _who_html = f'<div style="font-size:11px;color:var(--text-muted);">{_who}</div>' if _who else ''
+        rows += f'''
+        <tr data-search="{safe_string((str(e.get("to_email", "")) + " " + str(e.get("subject", "")) + " " + _who).lower())}">
+            <td style="padding:8px 10px;font-size:12px;white-space:nowrap;">{e.get("date", "-")}</td>
+            <td style="padding:8px 10px;font-size:12px;">{safe_string(e.get("to_email", "-"))}{_who_html}</td>
+            <td style="padding:8px 10px;font-size:12px;">{safe_string(e.get("subject", "-"))}</td>
+            <td style="padding:8px 10px;text-align:center;">{_badge}</td>
+        </tr>'''
+
+    content = f'''
+    <div style="margin-bottom:20px;">
+        <h2 style="margin:0 0 5px;">Sent Emails</h2>
+        <p style="color:var(--text-muted);margin:0;font-size:13px;">
+            Every email the system has sent. Use this to confirm an email went out when someone says they didn't receive it.
+        </p>
+    </div>
+
+    <div style="display:flex;gap:20px;margin-bottom:16px;">
+        <div class="card" style="padding:12px 18px;"><div style="font-size:11px;color:var(--text-muted);text-transform:uppercase;">Total logged</div><div style="font-size:22px;font-weight:700;">{len(emails)}</div></div>
+        <div class="card" style="padding:12px 18px;"><div style="font-size:11px;color:var(--text-muted);text-transform:uppercase;">Sent OK</div><div style="font-size:22px;font-weight:700;color:var(--green);">{_sent}</div></div>
+        <div class="card" style="padding:12px 18px;"><div style="font-size:11px;color:var(--text-muted);text-transform:uppercase;">Failed</div><div style="font-size:22px;font-weight:700;color:var(--red);">{_failed}</div></div>
+    </div>
+
+    <div class="card">
+        <input type="text" id="emSearch" onkeyup="emFilter()" placeholder="Search by recipient, subject or name..."
+               style="width:100%;padding:9px 12px;margin-bottom:14px;border:1px solid var(--border);border-radius:8px;background:var(--bg);color:var(--text);font-size:13px;">
+        <table class="table" style="width:100%;">
+            <thead>
+                <tr>
+                    <th style="text-align:left;">Date</th>
+                    <th style="text-align:left;">To</th>
+                    <th style="text-align:left;">Subject</th>
+                    <th style="text-align:center;">Status</th>
+                </tr>
+            </thead>
+            <tbody id="emRows">
+                {rows or "<tr><td colspan='4' style='text-align:center;color:var(--text-muted);padding:20px;'>No emails logged yet. Emails sent from the system will appear here.</td></tr>"}
+            </tbody>
+        </table>
+    </div>
+
+    <script>
+        function emFilter() {{
+            var q = (document.getElementById('emSearch').value || '').toLowerCase().trim();
+            var rows = document.querySelectorAll('#emRows tr');
+            rows.forEach(function(r) {{
+                var hay = r.getAttribute('data-search') || '';
+                r.style.display = (!q || hay.indexOf(q) !== -1) ? '' : 'none';
+            }});
+        }}
+    </script>
+    '''
+    return render_page("Sent Emails", content, user, "sent-emails")
 
 
 @app.route("/customers")
