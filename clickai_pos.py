@@ -41,6 +41,32 @@ def register_pos_routes(app, db, login_required, Auth, render_page,
                         AuditLog, Email):
     """Register all POS and Bar routes with the Flask app."""
 
+    def _pos_customer_detail(customer_id, fallback_name=""):
+        """Look the customer's details up from the DB for printing.
+
+        Sales and quotes both store customer_id, so the VAT number, address and
+        phone are always recoverable. The browser's cached customer list can be
+        stale or miss the lookup, which silently drops those details off the
+        printed slip / A4 — this is the authoritative source. Never raises.
+        """
+        try:
+            _cid = safe_uuid(customer_id)
+            if not _cid:
+                return {}
+            _c = db.get_one("customers", _cid)
+            if not _c:
+                return {}
+            return {
+                "name": _c.get("name", "") or fallback_name,
+                "vat_number": _c.get("vat_number", "") or "",
+                "address": _c.get("address", "") or "",
+                "phone": _c.get("phone", "") or _c.get("cell", "") or "",
+                "email": _c.get("email", "") or "",
+            }
+        except Exception as _cd_err:
+            logger.warning(f"[POS] Customer detail lookup skipped: {_cd_err}")
+            return {}
+
     @app.route("/pos")
     @login_required
     def pos_page():
@@ -2375,8 +2401,22 @@ def register_pos_routes(app, db, login_required, Auth, render_page,
                 const data = await response.json();
                 
                 if (data.success) {
+                    // Prefer the customer details the server looked up from the DB —
+                    // the browser's cached list can be stale or miss the lookup, which
+                    // silently drops the VAT number and address off the printout.
+                    var printCustomer = customer;
+                    if (data.customer_detail && data.customer_detail.name) {
+                        printCustomer = {
+                            id: customer.id,
+                            name: data.customer_detail.name || customer.name,
+                            address: data.customer_detail.address || customer.address || '',
+                            phone: data.customer_detail.phone || customer.phone || '',
+                            vat_number: data.customer_detail.vat_number || customer.vat_number || '',
+                            email: data.customer_detail.email || customer.email || ''
+                        };
+                    }
                     // Show print dialog based on settings - pass cash info and customer details
-                    showPrintDialog(data.sale_number, data.sale_id, method, customer, items, subtotal, vat, grandTotal, cashReceived, changeGiven, paymentTotal, roundingAdj);
+                    showPrintDialog(data.sale_number, data.sale_id, method, printCustomer, items, subtotal, vat, grandTotal, cashReceived, changeGiven, paymentTotal, roundingAdj);
                     clearCart();
                     // posLocked will be reset on page reload after print
                 } else {
@@ -2486,7 +2526,7 @@ def register_pos_routes(app, db, login_required, Auth, render_page,
                 if (data.success) {
                     alert('Quote ' + data.quote_number + ' created!');
                     if (confirm('Print thermal quote slip?')) {
-                        printQuoteThermal(data.quote_number, customerName, items, subtotal, vat, grandTotal);
+                        printQuoteThermal(data.quote_number, (data.customer_detail && data.customer_detail.name) || customerName, items, subtotal, vat, grandTotal, data.customer_detail);
                     }
                     clearCart();
                     if (confirm('Open quote now?')) {
@@ -3622,7 +3662,7 @@ def register_pos_routes(app, db, login_required, Auth, render_page,
                     if (confirm('Print thermal quote slip?')) {
                         const qqSub = Math.round(items.reduce((s, i) => s + i.total, 0) * 100) / 100;
                         const qqVat = Math.round(qqSub * VAT_RATE * 100) / 100;
-                        printQuoteThermal(data.quote_number, custName, items, qqSub, qqVat, qqSub + qqVat);
+                        printQuoteThermal(data.quote_number, (data.customer_detail && data.customer_detail.name) || custName, items, qqSub, qqVat, qqSub + qqVat, data.customer_detail);
                     }
                     if (confirm('Open quote now?')) {
                         window.location = '/quote/' + data.quote_id;
@@ -3984,7 +4024,7 @@ def register_pos_routes(app, db, login_required, Auth, render_page,
                     if (confirm('Print thermal quote slip?')) {
                         const cqSub = Math.round(total * 100) / 100;
                         const cqVat = Math.round(cqSub * VAT_RATE * 100) / 100;
-                        printQuoteThermal(data.quote_number, customerName, items, cqSub, cqVat, cqSub + cqVat);
+                        printQuoteThermal(data.quote_number, (data.customer_detail && data.customer_detail.name) || customerName, items, cqSub, cqVat, cqSub + cqVat, data.customer_detail);
                     }
                     clearCart();
                     if (confirm('Open quote now?')) {
@@ -4239,7 +4279,7 @@ def register_pos_routes(app, db, login_required, Auth, render_page,
         // the 80mm printer was unreadable. Completely separate from the sale
         // print machinery (own iframe, no shared state) so the fragile
         // sale-print flow is untouched.
-        function printQuoteThermal(quoteNum, custName, items, subtotal, vat, totalIncl) {
+        function printQuoteThermal(quoteNum, custName, items, subtotal, vat, totalIncl, custDetail) {
             var sub = parseFloat(subtotal) || 0;
             var vatAmt = parseFloat(vat) || 0;
             var incl = parseFloat(totalIncl) || 0;
@@ -4270,6 +4310,14 @@ def register_pos_routes(app, db, login_required, Auth, render_page,
                 + (currentCashierName ? '<div style="font-size:12px;margin-top:2px;">Salesman: ' + currentCashierName + '</div>' : '')
                 + '</div>'
                 + '<div style="margin-bottom:8px;font-size:13px;font-weight:bold;">For: ' + (custName || 'Customer') + '</div>'
+                + (function() {
+                    var d = custDetail || {};
+                    var out = '';
+                    if (d.address) out += '<div style="font-size:12px;margin-bottom:2px;">' + String(d.address).replace(/\\n/g, '<br>') + '</div>';
+                    if (d.phone) out += '<div style="font-size:12px;margin-bottom:2px;">Tel: ' + d.phone + '</div>';
+                    if (d.vat_number) out += '<div style="font-size:12px;margin-bottom:6px;">VAT: ' + d.vat_number + '</div>';
+                    return out;
+                  })()
                 + '<table style="width:100%;border-collapse:collapse;margin-bottom:8px;">' + itemsHtml + '</table>'
                 + '<div style="border-top:2px dashed #000;padding-top:6px;">'
                 + '<div style="display:flex;justify-content:space-between;font-size:13px;padding:2px 0;"><span>Subtotal (excl VAT)</span><span>R' + sub.toFixed(2) + '</span></div>'
@@ -7188,11 +7236,14 @@ def register_pos_routes(app, db, login_required, Auth, render_page,
             except Exception:
                 pass
             
+            _cust_detail = _pos_customer_detail(customer_id, customer_name)
+            
             return jsonify({
                 "success": True,
                 "message": f"R{total:.2f} - {len(items)} items",
                 "sale_id": sale_id,
-                "sale_number": sale_num
+                "sale_number": sale_num,
+                "customer_detail": _cust_detail
             })
             
         except Exception as e:
@@ -7421,7 +7472,8 @@ def register_pos_routes(app, db, login_required, Auth, render_page,
                 return jsonify({
                     "success": True,
                     "quote_id": quote_id,
-                    "quote_number": quote_num
+                    "quote_number": quote_num,
+                    "customer_detail": _pos_customer_detail(safe_customer_id, customer_name)
                 })
             else:
                 return jsonify({"success": False, "error": str(err)})
@@ -7551,7 +7603,8 @@ def register_pos_routes(app, db, login_required, Auth, render_page,
                     "success": True,
                     "quote_id": quote_id,
                     "quote_number": quote_num,
-                    "customer_id": customer_id
+                    "customer_id": customer_id,
+                    "customer_detail": _pos_customer_detail(customer_id, customer_name)
                 })
             else:
                 return jsonify({"success": False, "error": str(err)})
