@@ -6739,6 +6739,20 @@ def register_pos_routes(app, db, login_required, Auth, render_page,
         method_label = {"cash": "CASH", "card": "CARD", "account": "ACCOUNT"}.get(payment_method, payment_method.upper())
         customer_name = safe_string(sale.get("customer_name") or {"cash": "Countersale", "card": "Countersale", "account": "Countersale"}.get(payment_method, "Countersale"))
         
+        # Reprints must show the same customer details as the original slip.
+        # The sale stores customer_id, so look the VAT number / address / phone
+        # up rather than relying on the name that was captured at the time.
+        _rp_cust = _pos_customer_detail(sale.get("customer_id"), customer_name)
+        if _rp_cust.get("name"):
+            customer_name = safe_string(_rp_cust["name"])
+        _cust_lines = ""
+        if _rp_cust.get("address"):
+            _cust_lines += f'<div style="font-size:11px;color:#666;margin-top:4px;margin-left:4px;">{safe_string(_rp_cust["address"])}</div>'
+        if _rp_cust.get("phone"):
+            _cust_lines += f'<div style="font-size:11px;color:#666;margin-left:4px;">Tel: {safe_string(_rp_cust["phone"])}</div>'
+        if _rp_cust.get("vat_number"):
+            _cust_lines += f'<div style="font-size:11px;color:#666;margin-left:4px;font-weight:bold;">VAT: {safe_string(_rp_cust["vat_number"])}</div>'
+        
         # Extract sale date/time
         sale_date = sale.get("date", "-")
         sale_time = extract_time(sale.get("created_at", ""))
@@ -6792,6 +6806,7 @@ def register_pos_routes(app, db, login_required, Auth, render_page,
                 <div style="margin-bottom:8px;font-size:13px;">
                     <span style="background:#333;color:white;padding:3px 8px;border-radius:3px;font-size:12px;">{method_label}</span>
                     <span style="margin-left:8px;font-size:13px;">{customer_name}</span>
+                    {_cust_lines}
                 </div>
                 
                 <table style="width:100%;border-collapse:collapse;margin-bottom:8px;">
