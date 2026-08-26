@@ -4091,7 +4091,7 @@ def register_pos_routes(app, db, login_required, Auth, render_page,
             // paymentTotal defaults to total when not provided (card/account/legacy callers)
             if (paymentTotal === null || paymentTotal === undefined) paymentTotal = total;
             
-            lastSaleData = { saleNum, saleId, method, customerName, items, subtotal, vat, total, cashReceived, changeGiven, paymentTotal, roundingAdj };
+            lastSaleData = { saleNum, saleId, method, customerName, customerAddress, customerPhone, customerVat, items, subtotal, vat, total, cashReceived, changeGiven, paymentTotal, roundingAdj };
             
             // Build slip content
             const now = new Date();
@@ -4458,6 +4458,9 @@ def register_pos_routes(app, db, login_required, Auth, render_page,
                     '<div style="flex:1;padding-left:25px;">' +
                     '<div style="font-size:11px;color:#888;text-transform:uppercase;letter-spacing:1px;margin-bottom:4px;font-weight:600;">Bill To</div>' +
                     '<div style="font-size:13px;font-weight:700;color:#1a1a2e;">' + (sd.customerName || 'Cash Customer') + '</div>' +
+                    (sd.customerAddress ? '<div style="font-size:11px;color:#555;margin-top:3px;">' + sd.customerAddress.replace(/\\n/g, '<br>') + '</div>' : '') +
+                    (sd.customerPhone ? '<div style="font-size:11px;color:#555;margin-top:3px;">Tel: ' + sd.customerPhone + '</div>' : '') +
+                    (sd.customerVat ? '<div style="font-size:11px;color:#555;margin-top:3px;">VAT No: ' + sd.customerVat + '</div>' : '') +
                     '</div></div>' +
                     
                     '<div style="padding:0 25px;">' +
