@@ -20,6 +20,49 @@ from flask import request, jsonify, session, redirect, flash
 logger = logging.getLogger(__name__)
 
 
+# SARS: categories that carry no input VAT. Wages, statutory payments and
+# exempt financial/municipal charges are not taxable supplies, so no input
+# tax may be claimed on them. Matched as substrings against the category name.
+# STOPGAP: this is a blacklist — anything not listed still has VAT stripped
+# out. To be replaced by a per-account vat_treatment field on chart_of_accounts.
+NO_VAT_KEYWORDS = [
+    "fuel", "entertainment", "meals", "membership",
+    "salar", "wage", "loon", "payroll", "remunerat",
+    "paye", "uif", "sdl", "skills development",
+    "levy", "heffing", "coida", "workmen",
+    "sars", "penalty", "fine", "interest", "donation",
+    "rates", "municipal rates",
+]
+
+
+def _is_no_vat_category(category):
+    """True when the category carries no VAT and none may be claimed."""
+    return any(kw in (category or "").lower() for kw in NO_VAT_KEYWORDS)
+
+
+def _bank_vat_rate(biz_id):
+    """VAT rate for a business as a float; 0.0 when not VAT registered.
+
+    Lazy import of clickai to avoid a circular import at module load.
+    Falls back to the standard rate if the lookup fails, matching
+    vat_rate_for_biz()'s own behaviour.
+    """
+    try:
+        import clickai as _main
+        return float(_main.vat_rate_for_biz(biz_id))
+    except Exception:
+        return 0.15
+
+
+def _split_vat(amount, biz_id, is_no_vat):
+    """Return (vat, net) for a VAT-inclusive amount."""
+    rate = 0.0 if is_no_vat else _bank_vat_rate(biz_id)
+    if rate <= 0:
+        return 0.0, round(amount, 2)
+    vat = round(amount * rate / (1 + rate), 2)
+    return vat, round(amount - vat, 2)
+
+
 def _bank_fingerprint(date, description, amount=0.0, debit=0.0, credit=0.0, balance=None):
     """Dedup fingerprint for a bank transaction: (date, description, SIGNED amount, balance).
 
@@ -4508,9 +4551,8 @@ Return ONLY the JSON array. No markdown, no explanation."""
             # Get GL code from comprehensive lookup
             gl_code = IndustryKnowledge.get_gl_code(category, business_id=biz_id)
             
-            # SARS: No VAT claim on fuel or entertainment
-            no_vat_cats = ["fuel", "entertainment", "meals", "membership"]
-            is_no_vat = any(nv in category.lower() for nv in no_vat_cats)
+            # SARS: No VAT claim on wages, statutory payments, fuel, entertainment
+            is_no_vat = _is_no_vat_category(category)
             
             # === SPECIAL CATEGORIES with custom GL logic ===
             # These need specific double-entry treatment, not generic expense/income
@@ -4795,8 +4837,7 @@ Return ONLY the JSON array. No markdown, no explanation."""
                         db.save("expenses", expense)
                         
                         # Create journal entry with proper GL code
-                        vat_amount = round(expense_amount * 15 / 115, 2) if not is_no_vat else 0
-                        net_amount = round(expense_amount - vat_amount, 2)
+                        vat_amount, net_amount = _split_vat(expense_amount, biz_id, is_no_vat)
                         
                         journal_entries = [
                             {"account_code": gl_code, "debit": net_amount, "credit": 0},
@@ -5584,8 +5625,7 @@ Return ONLY the JSON array. No markdown, no explanation."""
                 txn["linked_expense_id"] = matched_expense_id
             db.save("bank_transactions", txn)
             
-            # SARS: No VAT claim categories
-            no_vat_cats = ["fuel", "entertainment", "meals", "membership"]
+            # SARS: No VAT claim categories — see NO_VAT_KEYWORDS
             
             if is_debit:
                 # ═══ MONEY OUT — Split expense across multiple GL codes ═══
@@ -5596,15 +5636,14 @@ Return ONLY the JSON array. No markdown, no explanation."""
                     sp_category = sp.get("category", "Sundry Expenses")
                     sp_gl = IndustryKnowledge.get_gl_code(sp_category, business_id=biz_id)
                     
-                    is_no_vat = any(nv in sp_category.lower() for nv in no_vat_cats)
+                    is_no_vat = _is_no_vat_category(sp_category)
                     
                     if is_no_vat:
                         # No VAT claim — full amount to expense
                         journal_entries.append({"account_code": sp_gl, "debit": sp_amount, "credit": 0})
                     else:
                         # VAT inclusive — split out VAT
-                        vat = round(sp_amount * 15 / 115, 2)
-                        net = round(sp_amount - vat, 2)
+                        vat, net = _split_vat(sp_amount, biz_id, False)
                         journal_entries.append({"account_code": sp_gl, "debit": net, "credit": 0})
                         if vat > 0:
                             journal_entries.append({"account_code": gl(biz_id, "vat_input"), "debit": vat, "credit": 0})
@@ -5650,8 +5689,7 @@ Return ONLY the JSON array. No markdown, no explanation."""
                     sp_gl = IndustryKnowledge.get_gl_code(sp_category, business_id=biz_id)
                     
                     # VAT on income
-                    vat = round(sp_amount * 15 / 115, 2)
-                    net = round(sp_amount - vat, 2)
+                    vat, net = _split_vat(sp_amount, biz_id, _is_no_vat_category(sp_category))
                     
                     journal_entries.append({"account_code": sp_gl, "debit": 0, "credit": net})
                     if vat > 0:
