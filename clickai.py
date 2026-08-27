@@ -18495,7 +18495,17 @@ class BankLearning:
         
         # Remove common variable parts (dates, reference numbers)
         norm = re.sub(r'\d{2}[/-]\d{2}[/-]\d{2,4}', '', norm)  # Dates
-        norm = re.sub(r'\b\d{6,}\b', '', norm)  # Long numbers (references) — only standalone
+        # Per-transaction junk that split one payee across many patterns: the Standard
+        # Bank EFT payment reference (FFM2113:25), the time stamp glued onto the merchant
+        # name on card lines (AUREUS FILLING13H09), the prepaid electricity voucher number
+        # (VAS00219921652) and the month marker on bank-charge lines (APR 26). Customer and
+        # supplier codes such as DAP001 or ISA00 are deliberately NOT stripped — they are
+        # what identifies the payee.
+        norm = re.sub(r'FFM\d+:\d+', '', norm)  # SB EFT payment reference
+        norm = re.sub(r'\d{2}H\d{2}\b', '', norm)  # Time stamp on card lines
+        norm = re.sub(r'\bVAS\d{4,}', '', norm)  # Prepaid electricity voucher
+        norm = re.sub(r'\b(JAN|FEB|MAR|APR|MAY|JUN|JUL|AUG|SEP|OCT|NOV|DEC) ?\d{2}\b', '', norm)  # Month marker
+        norm = re.sub(r'\b\d{4,}\b', '', norm)  # Long numbers (references) — only standalone
         norm = re.sub(r'REF[:\s]*\w+', '', norm)  # References
         # Remove ERY/EFTPOS reference numbers
         norm = re.sub(r'\b(ERY|CR EFTPOS|DR EFTPOS)\s*\d+[:\s]*\d*', '', norm)
