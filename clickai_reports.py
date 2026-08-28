@@ -4972,68 +4972,108 @@ def register_report_routes(app, db, login_required, Auth, render_page,
             end_date = today_date.strftime("%Y-%m-%d")
             period_label = today_date.strftime("%B %Y")
         
-        # Get data filtered by date
-        invoices = db.get("invoices", {"business_id": biz_id}) if biz_id else []
-        invoices = [i for i in invoices if start_date <= i.get("date", "") <= end_date]
+        # Get GL journals filtered by date + the business chart of accounts
+        journals = db.get("journals", {"business_id": biz_id}) if biz_id else []
+        journals = [j for j in journals if start_date <= str(j.get("date", "") or "")[:10] <= end_date]
         
-        sales = db.get("sales", {"business_id": biz_id}) if biz_id else []
-        sales = [s for s in sales if start_date <= s.get("date", "") <= end_date]
+        coa = db.get("chart_of_accounts", {"business_id": biz_id}) if biz_id else []
+        acc_lookup = {}
+        for a in coa:
+            _code = str(a.get("account_code", "") or "").strip()
+            if _code:
+                acc_lookup[_code] = a
         
-        expenses = db.get("expenses", {"business_id": biz_id}) if biz_id else []
-        expenses = [e for e in expenses if start_date <= e.get("date", "") <= end_date]
+        # Which P&L section an account belongs to: account_type first, then the
+        # Sage category, then the code range. Returns None for balance sheet accounts.
+        CAT_SECTION = {
+            "sales": "income", "revenue": "income", "other income": "income",
+            "cost of sales": "cost_of_sales",
+            "expenses": "expense", "operating expenses": "expense",
+            "other expenses": "expense", "finance costs": "expense",
+        }
         
-        payslips = db.get("payslips", {"business_id": biz_id}) if biz_id else []
-        payslips = [p for p in payslips if start_date <= p.get("date", "") <= end_date]
+        def pnl_section(code, acc):
+            acc_type = str((acc or {}).get("account_type", "") or "").strip().lower()
+            if acc_type in ("income", "revenue"):
+                return "income"
+            if acc_type in ("cost_of_sales", "cost of sales"):
+                return "cost_of_sales"
+            if acc_type == "expense":
+                return "expense"
+            if acc_type in ("asset", "liability", "equity"):
+                return None
+            category = str((acc or {}).get("category", "") or "").strip().lower()
+            if category in CAT_SECTION:
+                return CAT_SECTION[category]
+            if category:
+                return None
+            first = code[:1]
+            if first == "4":
+                return "income"
+            if first == "5":
+                return "cost_of_sales"
+            if first in ("6", "7", "8", "9"):
+                return "expense"
+            return None
         
-        supplier_invoices = db.get("supplier_invoices", {"business_id": biz_id}) if biz_id else []
-        supplier_invoices = [si for si in supplier_invoices if start_date <= si.get("date", "") <= end_date]
+        # Aggregate the GL by account code
+        income_totals = {}
+        cos_totals = {}
+        expense_totals = {}
+        for j in journals:
+            code = str(j.get("account_code", "") or "").strip()
+            if not code:
+                continue
+            section = pnl_section(code, acc_lookup.get(code))
+            if not section:
+                continue
+            debit = float(j.get("debit", 0) or 0)
+            credit = float(j.get("credit", 0) or 0)
+            if section == "income":
+                income_totals[code] = income_totals.get(code, 0.0) + (credit - debit)
+            elif section == "cost_of_sales":
+                cos_totals[code] = cos_totals.get(code, 0.0) + (debit - credit)
+            else:
+                expense_totals[code] = expense_totals.get(code, 0.0) + (debit - credit)
         
-        # REVENUE
-        invoice_income = sum(float(inv.get("subtotal", 0)) for inv in invoices)
-        sales_income = sum(float(s.get("subtotal", 0)) for s in sales)
-        total_revenue = invoice_income + sales_income
+        def account_label(code):
+            name = str((acc_lookup.get(code) or {}).get("account_name", "") or "").strip()
+            return f"{code} - {name}" if name else f"{code} - Unmapped account"
         
-        # COST OF SALES (from supplier invoices marked as stock/inventory)
-        cost_of_sales = sum(float(si.get("total", 0)) for si in supplier_invoices if si.get("category", "").lower() in ("stock", "inventory", "cost of sales", "purchases"))
+        def rounded_lines(totals):
+            return [(code, round(totals[code], 2)) for code in sorted(totals.keys()) if round(totals[code], 2) != 0]
         
-        # If no supplier invoices categorized, estimate from stock movements
-        if cost_of_sales == 0:
-            stock_movements = db.get("stock_movements", {"business_id": biz_id}) if biz_id else []
-            stock_out = [sm for sm in stock_movements if sm.get("type") == "out" and start_date <= sm.get("date", "") <= end_date]
-            cost_of_sales = sum(float(sm.get("cost", 0)) * float(sm.get("quantity", 0)) for sm in stock_out)
+        def build_rows(lines, negative=False):
+            rows = ""
+            for code, amount in lines:
+                value = f"({money(amount)})" if negative else money(amount)
+                colour = "color:var(--red);" if negative else ""
+                rows += f'''
+            <tr>
+                <td style="padding-left:40px;">{account_label(code)}</td>
+                <td style="text-align:right;{colour}">{value}</td>
+            </tr>
+            '''
+            return rows
         
+        income_lines = rounded_lines(income_totals)
+        cos_lines = rounded_lines(cos_totals)
+        expense_lines = rounded_lines(expense_totals)
+        
+        total_revenue = sum(amount for _, amount in income_lines)
+        cost_of_sales = sum(amount for _, amount in cos_lines)
         gross_profit = total_revenue - cost_of_sales
         gross_margin = (gross_profit / total_revenue * 100) if total_revenue > 0 else 0
         
-        # OPERATING EXPENSES by category
-        expense_categories = {}
-        for e in expenses:
-            cat = e.get("category", "General Expenses")
-            if cat.lower() not in ("stock", "inventory", "cost of sales", "purchases"):  # Exclude COS
-                if cat not in expense_categories:
-                    expense_categories[cat] = 0
-                expense_categories[cat] += float(e.get("amount", 0))
-        
-        # Add payroll to expenses
-        payroll_total = sum(float(p.get("gross", 0)) for p in payslips)
-        if payroll_total > 0:
-            expense_categories["Salaries & Wages"] = payroll_total
-        
-        total_expenses = sum(expense_categories.values())
+        total_expenses = sum(amount for _, amount in expense_lines)
         
         # NET PROFIT
         net_profit = gross_profit - total_expenses
         net_margin = (net_profit / total_revenue * 100) if total_revenue > 0 else 0
         
-        # Build expense rows
-        expense_rows = ""
-        for cat, amount in sorted(expense_categories.items(), key=lambda x: x[1], reverse=True):
-            expense_rows += f'''
-            <tr>
-                <td style="padding-left:40px;">{cat}</td>
-                <td style="text-align:right;">{money(amount)}</td>
-            </tr>
-            '''
+        revenue_rows = build_rows(income_lines)
+        cos_rows = build_rows(cos_lines, negative=True)
+        expense_rows = build_rows(expense_lines)
         
         content = f'''
         <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:20px;">
@@ -5060,14 +5100,7 @@ def register_report_routes(app, db, login_required, Auth, render_page,
                         <td><strong>REVENUE</strong></td>
                         <td></td>
                     </tr>
-                    <tr>
-                        <td style="padding-left:40px;">Sales - Invoices</td>
-                        <td style="text-align:right;">{money(invoice_income)}</td>
-                    </tr>
-                    <tr>
-                        <td style="padding-left:40px;">Sales - Cash/POS</td>
-                        <td style="text-align:right;">{money(sales_income)}</td>
-                    </tr>
+                    {revenue_rows or "<tr><td style='padding-left:40px;color:var(--text-muted);' colspan='2'>No income recorded</td></tr>"}
                     <tr style="font-weight:bold;">
                         <td style="padding-left:20px;">Total Revenue</td>
                         <td style="text-align:right;">{money(total_revenue)}</td>
@@ -5078,10 +5111,7 @@ def register_report_routes(app, db, login_required, Auth, render_page,
                         <td><strong>COST OF SALES</strong></td>
                         <td></td>
                     </tr>
-                    <tr>
-                        <td style="padding-left:40px;">Purchases / Stock Cost</td>
-                        <td style="text-align:right;color:var(--red);">({money(cost_of_sales)})</td>
-                    </tr>
+                    {cos_rows or "<tr><td style='padding-left:40px;color:var(--text-muted);' colspan='2'>No cost of sales recorded</td></tr>"}
                     <tr style="font-weight:bold;">
                         <td style="padding-left:20px;">Total Cost of Sales</td>
                         <td style="text-align:right;color:var(--red);">({money(cost_of_sales)})</td>
