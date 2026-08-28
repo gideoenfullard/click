@@ -45,6 +45,27 @@ def _industry_fund_label(provident_fund_type):
     return "Pension Fund"
 
 
+def _deduction_journal_lines(medical=0, union_fees=0, pension=0, provident=0,
+                             loan=0, other_ded=0, rma_funeral=0):
+    """Split employee deductions into their own GL accounts instead of one lump
+    credit. Staff loans are an asset (1250) — the credit reduces what the
+    employee still owes; the rest are amounts owed to a fund or third party."""
+    lines = []
+    for amount, code in (
+        (medical, "2310"),
+        (union_fees, "2320"),
+        (pension, "2330"),
+        (provident, "2340"),
+        (rma_funeral, "2350"),
+        (other_ded, "2360"),
+        (loan, "1250"),
+    ):
+        amount = round(safe_float(amount), 2)
+        if amount > 0:
+            lines.append({"account_code": code, "debit": 0, "credit": amount})
+    return lines
+
+
 def calc_monthly_paye(basic, age=0, pension=0, provident=0, medical_members=0, travel=0):
     """Monthly PAYE — SARS 2026/27 tax tables.
 
@@ -1016,9 +1037,9 @@ def register_payroll_routes(app, db, login_required, Auth, render_page,
             payroll_entries.append({"account_code": "2210", "debit": 0, "credit": round(uif + employer_uif_amount, 2)})
         if employer_sdl_amount > 0:
             payroll_entries.append({"account_code": "2220", "debit": 0, "credit": round(employer_sdl_amount, 2)})
-        other_deduction_total = round(medical + union_fees + pension + provident + loan + other_ded, 2)
-        if other_deduction_total > 0:
-            payroll_entries.append({"account_code": gl(biz_id, "loan"), "debit": 0, "credit": other_deduction_total})
+        payroll_entries.extend(_deduction_journal_lines(
+            medical=medical, union_fees=union_fees, pension=pension,
+            provident=provident, loan=loan, other_ded=other_ded))
         payroll_entries.append({"account_code": gl(biz_id, "bank"), "debit": 0, "credit": round(net, 2)})
         try:
             create_journal_entry(biz_id, pay_date, f"Salary - {emp.get('name')}", f"PAY-{payslip_id[:8]}", payroll_entries)
@@ -1061,9 +1082,10 @@ def register_payroll_routes(app, db, login_required, Auth, render_page,
             entries.append({"account_code": "2210", "debit": 0, "credit": round(uif + employer_uif_amount, 2)})
         if employer_sdl_amount > 0:
             entries.append({"account_code": "2220", "debit": 0, "credit": round(employer_sdl_amount, 2)})
-        other_deduction_total = round(medical + union_fees + pension + provident + loan + other_ded + rma_funeral, 2)
-        if other_deduction_total > 0:
-            entries.append({"account_code": gl(biz_id, "loan"), "debit": 0, "credit": other_deduction_total})
+        entries.extend(_deduction_journal_lines(
+            medical=medical, union_fees=union_fees, pension=pension,
+            provident=provident, loan=loan, other_ded=other_ded,
+            rma_funeral=rma_funeral))
         entries.append({"account_code": gl(biz_id, "bank"), "debit": 0, "credit": round(net, 2)})
         return entries
 
@@ -1390,10 +1412,12 @@ def register_payroll_routes(app, db, login_required, Auth, render_page,
                         if employer_sdl_amount > 0:
                             payroll_entries.append({"account_code": "2220", "debit": 0, "credit": round(employer_sdl_amount, 2)})  # SDL Payable
                         
-                        # Other deductions as liabilities (medical, pension, provident, union, loan, RMA)
-                        other_deduction_total = round(medical + union_fees + pension + provident + loan + other_ded + rma_funeral, 2)
-                        if other_deduction_total > 0:
-                            payroll_entries.append({"account_code": gl(biz_id, "loan"), "debit": 0, "credit": round(other_deduction_total, 2)})  # Other payroll deductions payable
+                        # Other deductions as liabilities (medical, pension, provident, union, RMA)
+                        # and staff loans as an asset reduction — one GL line per type
+                        payroll_entries.extend(_deduction_journal_lines(
+                            medical=medical, union_fees=union_fees, pension=pension,
+                            provident=provident, loan=loan, other_ded=other_ded,
+                            rma_funeral=rma_funeral))
                         
                         # Net pay to bank
                         payroll_entries.append({"account_code": gl(biz_id, "bank"), "debit": 0, "credit": round(net, 2)})  # Bank (NET pay)
@@ -2234,9 +2258,10 @@ def register_payroll_routes(app, db, login_required, Auth, render_page,
             payroll_entries.append({"account_code": "2210", "debit": 0, "credit": round(uif + employer_uif_amount, 2)})
         if employer_sdl_amount > 0:
             payroll_entries.append({"account_code": "2220", "debit": 0, "credit": round(employer_sdl_amount, 2)})
-        other_deduction_total = round(medical + union_fees + pension + provident + loan + other_ded + rma_funeral, 2)
-        if other_deduction_total > 0:
-            payroll_entries.append({"account_code": gl(biz_id, "loan"), "debit": 0, "credit": other_deduction_total})
+        payroll_entries.extend(_deduction_journal_lines(
+            medical=medical, union_fees=union_fees, pension=pension,
+            provident=provident, loan=loan, other_ded=other_ded,
+            rma_funeral=rma_funeral))
         payroll_entries.append({"account_code": gl(biz_id, "bank"), "debit": 0, "credit": round(net, 2)})
 
         try:
@@ -2500,9 +2525,10 @@ def register_payroll_routes(app, db, login_required, Auth, render_page,
                 payroll_entries.append({"account_code": "2210", "debit": 0, "credit": round(uif + employer_uif_amount, 2)})
             if employer_sdl_amount > 0:
                 payroll_entries.append({"account_code": "2220", "debit": 0, "credit": round(employer_sdl_amount, 2)})
-            other_deduction_total = round(medical + union_fees + pension + provident + loan + other_ded + rma_funeral, 2)
-            if other_deduction_total > 0:
-                payroll_entries.append({"account_code": gl(biz_id, "loan"), "debit": 0, "credit": other_deduction_total})
+            payroll_entries.extend(_deduction_journal_lines(
+                medical=medical, union_fees=union_fees, pension=pension,
+                provident=provident, loan=loan, other_ded=other_ded,
+                rma_funeral=rma_funeral))
             payroll_entries.append({"account_code": gl(biz_id, "bank"), "debit": 0, "credit": round(net, 2)})
 
             try:

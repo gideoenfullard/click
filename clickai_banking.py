@@ -4602,13 +4602,13 @@ Return ONLY the JSON array. No markdown, no explanation."""
                         ])
                     elif category == "Loan Repayment":
                         _cje(biz_id, txn_date, desc_short, ref, [
-                            {"account_code": gl(biz_id, "uif"), "debit": expense_rounded, "credit": 0},  # Loan liability down
+                            {"account_code": gl(biz_id, "loan"), "debit": expense_rounded, "credit": 0},  # Loan liability down
                             {"account_code": gl(biz_id, "bank"), "debit": 0, "credit": expense_rounded},   # Bank
                         ])
                     elif category == "Loan":
                         # Money OUT as Loan = repaying loan principal
                         _cje(biz_id, txn_date, desc_short, ref, [
-                            {"account_code": gl(biz_id, "uif"), "debit": expense_rounded, "credit": 0},  # Loan liability down
+                            {"account_code": gl(biz_id, "loan"), "debit": expense_rounded, "credit": 0},  # Loan liability down
                             {"account_code": gl(biz_id, "bank"), "debit": 0, "credit": expense_rounded},   # Bank
                         ])
                     elif category == "Customer Payment":
@@ -5115,7 +5115,7 @@ Return ONLY the JSON array. No markdown, no explanation."""
                     # Receiving loan funds
                     _cje(biz_id, txn_date, desc_short, ref, [
                         {"account_code": gl(biz_id, "bank"), "debit": income_rounded, "credit": 0},   # Bank up
-                        {"account_code": gl(biz_id, "uif"), "debit": 0, "credit": income_rounded},    # Loan liability up
+                        {"account_code": gl(biz_id, "loan"), "debit": 0, "credit": income_rounded},    # Loan liability up
                     ])
                     
                 elif category == "Refund":
