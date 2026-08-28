@@ -246,6 +246,22 @@ def register_payroll_routes(app, db, login_required, Auth, render_page,
         </div>
         '''
 
+        # Open pay month banners (Finish Payroll) — every month that has
+        # payslips but is not closed, so a month can still be finished after
+        # leaving the payslip print screen.
+        _open_months = sorted({str(p.get("date", ""))[:7] for p in payslips
+                               if str(p.get("date", ""))[:7]} - set(_closed_months), reverse=True)
+        for _om in _open_months:
+            _om_count = len([p for p in payslips if str(p.get("date", ""))[:7] == _om])
+            closed_banner += f'''
+        <div class="card" style="border:2px solid var(--warning, #f59e0b);background:rgba(245,158,11,0.08);display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px;">
+            <strong>Payroll for {_om} is OPEN — {_om_count} payslip(s). Finish it to close the month.</strong>
+            <form method="POST" action="/payroll/finish-month/{_om}" style="margin:0;" onsubmit="return confirm('Finish payroll for {_om}? The month will be closed — no more payslips can be created for it until it is reopened.');">
+                <button type="submit" class="btn" style="background:var(--green);color:white;">Finish Payroll ({_om})</button>
+            </form>
+        </div>
+        '''
+
         content = f'''
         {closed_banner}
         <div class="stats-grid">
