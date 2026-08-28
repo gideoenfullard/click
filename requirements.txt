@@ -9,3 +9,4 @@ pdfplumber
 pandas
 openpyxl
 reportlab
+anthropic==1.2.0
