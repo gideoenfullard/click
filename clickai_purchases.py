@@ -1404,12 +1404,25 @@ def register_purchases_routes(app, db, login_required, Auth, render_page,
             }}
             
             try {{
-                const resp = await fetch('/api/supplier/capture-invoice', {{
+                let resp = await fetch('/api/supplier/capture-invoice', {{
                     method: 'POST',
                     headers: {{'Content-Type': 'application/json'}},
                     body: JSON.stringify(data)
                 }});
-                const result = await resp.json();
+                let result = await resp.json();
+                // Duplicate warn-and-confirm (blank invoice number): re-post
+                // with force_duplicate after the user confirms.
+                if (!result.success && result.duplicate_warning) {{
+                    if (confirm(result.error + '\\n\\nSave it anyway?')) {{
+                        data.force_duplicate = true;
+                        resp = await fetch('/api/supplier/capture-invoice', {{
+                            method: 'POST',
+                            headers: {{'Content-Type': 'application/json'}},
+                            body: JSON.stringify(data)
+                        }});
+                        result = await resp.json();
+                    }}
+                }}
                 if (result.success) {{
                     msg.style.display = 'block';
                     msg.style.color = 'var(--green)';
@@ -3771,9 +3784,16 @@ def register_purchases_routes(app, db, login_required, Auth, render_page,
                 if not inv_number:
                     inv_number = po.get("po_number", "").replace("PO", "SI").replace("po", "si")
                 
-                existing = db.get("supplier_invoices", {"business_id": biz_id, "invoice_number": inv_number})
-                if existing:
-                    flash(f"Invoice {inv_number} already exists", "error")
+                # ── DUPLICATE GUARD (enforced) ──────────────────────────
+                # Shared helper: case-insensitive number match, scoped to the
+                # supplier (incl. name variants), cancelled/void never block.
+                # inv_number is never blank here (derived from the PO number),
+                # so only the exact check applies.
+                import clickai as _main
+                _dup_mode, _dup_rec = _main.find_duplicate_supplier_invoice(
+                    biz_id, po.get("supplier_id", ""), po.get("supplier_name", ""), inv_number)
+                if _dup_mode == "exact":
+                    flash(f"Invoice {inv_number} for {_dup_rec.get('supplier_name') or po.get('supplier_name', '')} already exists (dated {_dup_rec.get('date') or '?'}, R{float(_dup_rec.get('total', 0) or 0):.2f}). Not saved.", "error")
                     return redirect(f"/purchase/{po_id}")
                 
                 invoice_items = []
@@ -5621,6 +5641,26 @@ Nothing else."""
                 vat_amount = round(net_amount * 0.15, 2)
                 total_amount = round(net_amount + vat_amount, 2)
             
+            # ── DUPLICATE GUARD (enforced) ──────────────────────────────
+            # Same supplier + same invoice number = hard block. Blank invoice
+            # number = warn-and-confirm: the frontend re-posts with
+            # force_duplicate=true after the user confirms.
+            import clickai as _main
+            _dup_mode, _dup_rec = _main.find_duplicate_supplier_invoice(
+                biz_id, supplier_id, supplier_name, invoice_number,
+                total=total_amount, inv_date=inv_date)
+            if _dup_mode == "exact":
+                return jsonify({"success": False, "error": (
+                    f"Invoice {invoice_number} for {_dup_rec.get('supplier_name') or supplier_name} "
+                    f"already exists (dated {_dup_rec.get('date') or '?'}, "
+                    f"R{float(_dup_rec.get('total', 0) or 0):.2f}). Not saved.")})
+            if _dup_mode == "fuzzy" and not data.get("force_duplicate"):
+                return jsonify({"success": False, "duplicate_warning": True, "error": (
+                    f"An invoice for {_dup_rec.get('supplier_name') or supplier_name} with the same "
+                    f"amount (R{float(_dup_rec.get('total', 0) or 0):.2f}) and date "
+                    f"({_dup_rec.get('date') or '?'}) already exists "
+                    f"({_dup_rec.get('invoice_number') or 'no number'}).")})
+            
             # Generate invoice number if not provided
             if not invoice_number:
                 existing = db.get("supplier_invoices", {"business_id": biz_id}) or []
@@ -7124,6 +7164,47 @@ Nothing else."""
                 ok, _ = db.save("suppliers", new_sup)
                 supplier = new_sup
             supplier_id = supplier.get("id")
+            
+            # ── DUPLICATE GUARD (enforced) ──────────────────────────────
+            # The credit note's printed number lives in META inside 'reason'
+            # (supplier_cn_number), not in a column — so this check is local
+            # to this route. Same supplier + same printed number = hard block.
+            # Blank printed number = warn-and-confirm on amount + date (the
+            # frontend re-posts with force_duplicate=true after confirming).
+            _existing_cns = db.get("supplier_credit_notes", {"business_id": biz_id}) or []
+            _cn_num_norm = cn_doc_number.lower()
+            for _ecn in _existing_cns:
+                if (_ecn.get("status") or "").lower() in ("cancelled", "void", "reversed"):
+                    continue
+                _same_sup = bool(supplier_id and _ecn.get("supplier_id") == supplier_id)
+                if not _same_sup:
+                    _en = (_ecn.get("supplier_name") or "").strip().lower()
+                    _sn = supplier_name.strip().lower()
+                    _same_sup = bool(_en and _sn and (_en == _sn or _en in _sn or _sn in _en))
+                if not _same_sup:
+                    continue
+                if _cn_num_norm:
+                    _ecn_num = ""
+                    _reason = _ecn.get("reason") or ""
+                    if "META:" in _reason:
+                        try:
+                            _ecn_num = (json.loads(_reason.split("META:", 1)[1]).get("supplier_cn_number") or "").strip().lower()
+                        except Exception:
+                            _ecn_num = ""
+                    if _ecn_num and _ecn_num == _cn_num_norm:
+                        return jsonify({"success": False, "error": (
+                            f"Credit note {cn_doc_number} for {_ecn.get('supplier_name') or supplier_name} "
+                            f"already exists (dated {_ecn.get('date') or '?'}, "
+                            f"R{float(_ecn.get('total', 0) or 0):.2f}). Not saved.")})
+                elif not data.get("force_duplicate"):
+                    try:
+                        _ecn_total = round(float(_ecn.get("total", 0) or 0), 2)
+                    except (TypeError, ValueError):
+                        continue
+                    if _ecn_total == round(credit_amount, 2) and (_ecn.get("date") or "") == cn_date:
+                        return jsonify({"success": False, "duplicate_warning": True, "error": (
+                            f"A credit note for {_ecn.get('supplier_name') or supplier_name} with the same "
+                            f"amount (R{_ecn_total:.2f}) and date ({cn_date}) already exists.")})
             
             # ── Look up the target invoice (if any) for full/partial decision
             target_invoice = None
