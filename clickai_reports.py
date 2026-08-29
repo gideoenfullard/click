@@ -1222,6 +1222,10 @@ def register_report_routes(app, db, login_required, Auth, render_page,
                     continue
                 
                 coa_codes_shown.add(code)
+                # Net balance per account (Sage TB style): one figure, one side
+                _net = round(combined_debit - combined_credit, 2)
+                combined_debit = _net if _net > 0 else 0
+                combined_credit = -_net if _net < 0 else 0
                 total_debit_all += combined_debit
                 total_credit_all += combined_credit
                 
@@ -1375,6 +1379,10 @@ def register_report_routes(app, db, login_required, Auth, render_page,
                     continue
 
                 coa_codes_shown.add(code)
+                # Net balance per account (Sage TB style): one figure, one side
+                _net = round(debit - credit, 2)
+                debit = _net if _net > 0 else 0
+                credit = -_net if _net < 0 else 0
                 total_debit_all += debit
                 total_credit_all += credit
 
@@ -1478,6 +1486,10 @@ def register_report_routes(app, db, login_required, Auth, render_page,
                 td = sum(e.get("debit", 0) for e in entries)
                 tc = sum(e.get("credit", 0) for e in entries)
                 if not entries: continue
+                # Net balance per account (Sage TB style): one figure, one side
+                _net = round(td - tc, 2)
+                td = _net if _net > 0 else 0
+                tc = -_net if _net < 0 else 0
                 total_debit_all += td
                 total_credit_all += tc
                 trans_rows = ""
@@ -1488,8 +1500,8 @@ def register_report_routes(app, db, login_required, Auth, render_page,
                     <summary style="cursor:pointer;padding:8px 12px;list-style:none;">
                         <div style="display:grid;grid-template-columns:2fr 1fr 1fr;align-items:center;font-size:13px;">
                             <span><strong>{code}</strong> - {acc["name"]} ({len(entries)})</span>
-                            <span style="text-align:right;color:var(--green);">{money(td)}</span>
-                            <span style="text-align:right;color:var(--red);">{money(tc)}</span>
+                            <span style="text-align:right;color:var(--green);">{money(td) if td else "-"}</span>
+                            <span style="text-align:right;color:var(--red);">{money(tc) if tc else "-"}</span>
                         </div>
                     </summary>
                     <div style="padding:0 10px 8px 10px;">
@@ -1598,6 +1610,10 @@ def register_report_routes(app, db, login_required, Auth, render_page,
                 td = sum(e.get("debit", 0) for e in entries)
                 tc = sum(e.get("credit", 0) for e in entries)
                 acc_name = acc_name_map.get(code, f"Account {code}")
+                # Net balance per account (Sage TB style): one figure, one side
+                _net = round(td - tc, 2)
+                td = _net if _net > 0 else 0
+                tc = -_net if _net < 0 else 0
                 total_debit_all += td
                 total_credit_all += tc
                 trans_rows = ""
@@ -1610,8 +1626,8 @@ def register_report_routes(app, db, login_required, Auth, render_page,
                     <summary style="cursor:pointer;padding:8px 12px;list-style:none;">
                         <div style="display:grid;grid-template-columns:2fr 1fr 1fr;align-items:center;font-size:13px;">
                             <span><strong>{code}</strong> - {safe_string(acc_name)} <span style="color:var(--text-muted);font-size:11px;">(GL Journals: {len(entries)})</span></span>
-                            <span style="text-align:right;color:var(--green);">{money(td)}</span>
-                            <span style="text-align:right;color:var(--red);">{money(tc)}</span>
+                            <span style="text-align:right;color:var(--green);">{money(td) if td else "-"}</span>
+                            <span style="text-align:right;color:var(--red);">{money(tc) if tc else "-"}</span>
                         </div>
                     </summary>
                     <div style="padding:0 10px 8px 10px;">
@@ -2031,8 +2047,6 @@ def register_report_routes(app, db, login_required, Auth, render_page,
             <tr>
                 <td style="font-family:monospace;color:var(--text-muted);">{code}</td>
                 <td>{safe_string(name)}</td>
-                <td style="text-align:right;color:var(--text-muted);font-size:12px;">{debit_str}</td>
-                <td style="text-align:right;color:var(--text-muted);font-size:12px;">{credit_str}</td>
                 <td style="text-align:right;font-weight:600;">{net_dr_str}</td>
                 <td style="text-align:right;font-weight:600;">{net_cr_str}</td>
             </tr>
@@ -2112,8 +2126,6 @@ def register_report_routes(app, db, login_required, Auth, render_page,
                     <tr style="background:var(--bg);">
                         <th style="width:100px;">Code</th>
                         <th>Account</th>
-                        <th style="text-align:right;width:130px;color:var(--text-muted);font-weight:normal;">Movement Dr</th>
-                        <th style="text-align:right;width:130px;color:var(--text-muted);font-weight:normal;">Movement Cr</th>
                         <th style="text-align:right;width:140px;">Balance Dr</th>
                         <th style="text-align:right;width:140px;">Balance Cr</th>
                     </tr>
@@ -2125,8 +2137,6 @@ def register_report_routes(app, db, login_required, Auth, render_page,
                     <tr style="font-weight:bold;background:var(--bg);border-top:2px solid var(--border);">
                         <td></td>
                         <td>TOTAL</td>
-                        <td style="text-align:right;border-top:2px solid var(--text);color:var(--text-muted);font-size:12px;">R {total_debit:,.2f}</td>
-                        <td style="text-align:right;border-top:2px solid var(--text);color:var(--text-muted);font-size:12px;">R {total_credit:,.2f}</td>
                         <td style="text-align:right;border-top:2px solid var(--text);">R {total_net_dr:,.2f}</td>
                         <td style="text-align:right;border-top:2px solid var(--text);">R {total_net_cr:,.2f}</td>
                     </tr>
@@ -2177,11 +2187,12 @@ def register_report_routes(app, db, login_required, Auth, render_page,
                 const code = (row.code || '').replace(/"/g, '""');
                 const name = (row.name || '').replace(/"/g, '""');
                 const type = '';
-                const dr = row.debit > 0 ? row.debit.toFixed(2) : '';
-                const cr = row.credit > 0 ? row.credit.toFixed(2) : '';
+                const net = Math.round(((row.debit || 0) - (row.credit || 0)) * 100) / 100;
+                const dr = net > 0 ? net.toFixed(2) : '';
+                const cr = net < 0 ? (-net).toFixed(2) : '';
                 csv += `"${{code}}","${{name}}","${{type}}",${{dr}},${{cr}}\\n`;
-                totDr += row.debit || 0;
-                totCr += row.credit || 0;
+                totDr += net > 0 ? net : 0;
+                totCr += net < 0 ? -net : 0;
             }});
             
             csv += `,,TOTAL,${{totDr.toFixed(2)}},${{totCr.toFixed(2)}}\\n`;
