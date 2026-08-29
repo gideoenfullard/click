@@ -2001,6 +2001,9 @@ def register_report_routes(app, db, login_required, Auth, render_page,
         # Calculate totals
         total_debit = sum(acc.get("debit", 0) for acc in tb_accounts.values())
         total_credit = sum(acc.get("credit", 0) for acc in tb_accounts.values())
+        # Net-balance totals for the Balance columns (Sage-style TB check)
+        total_net_dr = sum(max(round(a.get("debit", 0) - a.get("credit", 0), 2), 0) for a in tb_accounts.values())
+        total_net_cr = sum(max(round(a.get("credit", 0) - a.get("debit", 0), 2), 0) for a in tb_accounts.values())
         difference = abs(total_debit - total_credit)
         is_balanced = difference < 0.01
         
@@ -2018,12 +2021,20 @@ def register_report_routes(app, db, login_required, Auth, render_page,
             debit_str = f"R {debit:,.2f}" if debit > 0 else ""
             credit_str = f"R {credit:,.2f}" if credit > 0 else ""
             
+            # NET BALANCE - what a trial balance actually shows (Sage behaviour):
+            # one figure per account, on the side where the balance sits.
+            _net = round(debit - credit, 2)
+            net_dr_str = f"R {_net:,.2f}" if _net > 0.004 else ""
+            net_cr_str = f"R {-_net:,.2f}" if _net < -0.004 else ""
+            
             rows_html += f'''
             <tr>
                 <td style="font-family:monospace;color:var(--text-muted);">{code}</td>
                 <td>{safe_string(name)}</td>
-                <td style="text-align:right;">{debit_str}</td>
-                <td style="text-align:right;">{credit_str}</td>
+                <td style="text-align:right;color:var(--text-muted);font-size:12px;">{debit_str}</td>
+                <td style="text-align:right;color:var(--text-muted);font-size:12px;">{credit_str}</td>
+                <td style="text-align:right;font-weight:600;">{net_dr_str}</td>
+                <td style="text-align:right;font-weight:600;">{net_cr_str}</td>
             </tr>
             '''
         
@@ -2101,8 +2112,10 @@ def register_report_routes(app, db, login_required, Auth, render_page,
                     <tr style="background:var(--bg);">
                         <th style="width:100px;">Code</th>
                         <th>Account</th>
-                        <th style="text-align:right;width:150px;">Debit (Dr)</th>
-                        <th style="text-align:right;width:150px;">Credit (Cr)</th>
+                        <th style="text-align:right;width:130px;color:var(--text-muted);font-weight:normal;">Movement Dr</th>
+                        <th style="text-align:right;width:130px;color:var(--text-muted);font-weight:normal;">Movement Cr</th>
+                        <th style="text-align:right;width:140px;">Balance Dr</th>
+                        <th style="text-align:right;width:140px;">Balance Cr</th>
                     </tr>
                 </thead>
                 <tbody>
@@ -2112,8 +2125,10 @@ def register_report_routes(app, db, login_required, Auth, render_page,
                     <tr style="font-weight:bold;background:var(--bg);border-top:2px solid var(--border);">
                         <td></td>
                         <td>TOTAL</td>
-                        <td style="text-align:right;border-top:2px solid var(--text);">R {total_debit:,.2f}</td>
-                        <td style="text-align:right;border-top:2px solid var(--text);">R {total_credit:,.2f}</td>
+                        <td style="text-align:right;border-top:2px solid var(--text);color:var(--text-muted);font-size:12px;">R {total_debit:,.2f}</td>
+                        <td style="text-align:right;border-top:2px solid var(--text);color:var(--text-muted);font-size:12px;">R {total_credit:,.2f}</td>
+                        <td style="text-align:right;border-top:2px solid var(--text);">R {total_net_dr:,.2f}</td>
+                        <td style="text-align:right;border-top:2px solid var(--text);">R {total_net_cr:,.2f}</td>
                     </tr>
                 </tfoot>
             </table>
