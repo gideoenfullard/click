@@ -1024,6 +1024,96 @@ def register_report_routes(app, db, login_required, Auth, render_page,
 
     # === GL REPORT, TRIAL BALANCE, PnL, BALANCE SHEET, VAT ===
 
+    @app.route("/api/reports/gl/move-lines", methods=["POST"])
+    @login_required
+    def api_gl_move_lines():
+        """Reclassify selected GL journal lines to another account.
+
+        The line's account_code is changed IN PLACE - no reversal, no contra
+        journal. The ledger keeps one entry per transaction telling the truth,
+        which is what an accountant expects from Sage and what keeps the GL
+        report readable. The audit trail of the move lives in allocation_log.
+
+        Only real journal rows can move. Sage opening balances live on
+        chart_of_accounts, not in journals, and are not touched here.
+        """
+        business = Auth.get_current_business()
+        biz_id = business.get("id") if business else None
+        if not biz_id:
+            return jsonify({"success": False, "error": "No business"})
+
+        try:
+            data = request.get_json() or {}
+            ids = [str(i) for i in (data.get("journal_ids") or []) if i]
+            target = str(data.get("target_code") or "").strip()
+            reason = (data.get("reason") or "").strip()
+
+            if not ids:
+                return jsonify({"success": False, "error": "No lines selected"})
+            if not target:
+                return jsonify({"success": False, "error": "No destination account chosen"})
+
+            coa = db.get("chart_of_accounts", {"business_id": biz_id}) or []
+            target_acc = None
+            for a in coa:
+                if str(a.get("account_code", "")) == target:
+                    target_acc = a
+                    break
+            if not target_acc:
+                return jsonify({"success": False, "error": f"Account {target} does not exist in the chart of accounts"})
+
+            journals = db.get("journals", {"business_id": biz_id}) or []
+            by_id = {str(j.get("id")): j for j in journals if j.get("id")}
+
+            moved, skipped, from_codes, total = 0, 0, {}, 0.0
+            for jid in ids:
+                j = by_id.get(jid)
+                if not j:
+                    skipped += 1
+                    continue
+                old_code = str(j.get("account_code", ""))
+                if old_code == target:
+                    skipped += 1
+                    continue
+                try:
+                    db.update("journals", jid, {"account_code": target}, biz_id)
+                    moved += 1
+                    from_codes[old_code] = from_codes.get(old_code, 0) + 1
+                    total += float(j.get("debit", 0) or 0) + float(j.get("credit", 0) or 0)
+                except Exception as e:
+                    logger.error(f"[GL MOVE] Line {jid} failed: {e}")
+                    skipped += 1
+
+            if moved:
+                try:
+                    from clickai_allocation_log import log_allocation as _log_alloc
+                except Exception:
+                    _log_alloc = None
+                if _log_alloc:
+                    try:
+                        _user = Auth.get_current_user() or {}
+                        _src = ", ".join(f"{k} ({v})" for k, v in sorted(from_codes.items()))
+                        _log_alloc(
+                            business_id=biz_id, allocation_type="gl_reclassification",
+                            source_table="journals", source_id=ids[0],
+                            description=f"Reclassified {moved} GL line(s) from {_src} to {target} {target_acc.get('account_name','')}",
+                            amount=round(total, 2),
+                            category="GL Reclassification", category_code=target,
+                            ai_reasoning=(f"Reason: {reason}" if reason else "No reason given"),
+                            reference=f"GLMOVE-{target}",
+                            transaction_date=today(),
+                            created_by=_user.get("id", ""), created_by_name=_user.get("name", ""),
+                        )
+                    except Exception as e:
+                        logger.error(f"[GL MOVE] Audit log failed: {e}")
+
+            print(f"[GL MOVE] biz={biz_id[:8]} moved={moved} skipped={skipped} to={target}", flush=True)
+            return jsonify({"success": True, "moved": moved, "skipped": skipped,
+                            "target_code": target, "target_name": target_acc.get("account_name", "")})
+        except Exception as e:
+            logger.error(f"[GL MOVE] Failed: {e}")
+            return jsonify({"success": False, "error": str(e)})
+
     @app.route("/reports/gl")
     @login_required
     def report_gl():
@@ -1072,6 +1162,10 @@ def register_report_routes(app, db, login_required, Auth, render_page,
             # Pre-load ALL journals for merging with COA
             _all_journals_for_merge = db.get("journals", {"business_id": biz_id}) or []
             _journal_by_code = {}
+            _glmv_options = "".join(
+                f'<option value="{safe_string(str(_a.get("account_code","")))}">'
+                f'{safe_string(str(_a.get("account_code","")))} - {safe_string(str(_a.get("account_name","")))}</option>'
+                for _a in coa if _a.get("account_code"))
             for _jl in _all_journals_for_merge:
                 _ac = _jl.get("account_code", "")
                 if not _ac:
@@ -1141,11 +1235,17 @@ def register_report_routes(app, db, login_required, Auth, render_page,
                     for _j in sorted_j:
                         _jdr = money(float(_j.get("debit", 0) or 0)) if float(_j.get("debit", 0) or 0) else "-"
                         _jcr = money(float(_j.get("credit", 0) or 0)) if float(_j.get("credit", 0) or 0) else "-"
-                        j_rows += f'<tr><td>{_j.get("date","-")}</td><td>{safe_string(_j.get("description","-"))}</td><td>{safe_string(_j.get("reference","-"))}</td><td style="text-align:right;color:var(--green);">{_jdr}</td><td style="text-align:right;color:var(--red);">{_jcr}</td></tr>'
+                        j_rows += f'<tr><td style="width:26px;"><input type="checkbox" class="glmv" data-acc="{safe_string(code)}" value="{safe_string(_j.get("id",""))}"></td><td>{_j.get("date","-")}</td><td>{safe_string(_j.get("description","-"))}</td><td>{safe_string(_j.get("reference","-"))}</td><td style="text-align:right;color:var(--green);">{_jdr}</td><td style="text-align:right;color:var(--red);">{_jcr}</td></tr>'
                     ob_label = f"Sage Opening Balance: DR {money(balance_debit)} / CR {money(balance_credit)}" if (balance_debit or balance_credit) else ""
                     detail_html = f'''<div style="padding:0 10px 8px 10px;">
                         <div style="font-size:11px;color:var(--text-muted);padding:4px 0;">{ob_label} | {len(code_journals)} GL journal entries</div>
-                        <table class="table" style="font-size:11px;"><thead><tr><th>Date</th><th>Description</th><th>Ref</th><th style="text-align:right;">Debit</th><th style="text-align:right;">Credit</th></tr></thead><tbody>{j_rows}</tbody></table>
+                        <table class="table" style="font-size:11px;"><thead><tr><th style="width:26px;"><input type="checkbox" onclick="glmvAll(this,'{safe_string(code)}')" title="Select all"></th><th>Date</th><th>Description</th><th>Ref</th><th style="text-align:right;">Debit</th><th style="text-align:right;">Credit</th></tr></thead><tbody>{j_rows}</tbody></table>
+                        <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;padding:8px 0 2px 0;">
+                            <span style="font-size:11px;color:var(--text-muted);">Move selected to</span>
+                            <select id="glmvTo_{safe_string(code)}" style="font-size:11px;padding:5px;background:var(--bg);color:var(--text);border:1px solid var(--border);border-radius:5px;max-width:280px;">{_glmv_options}</select>
+                            <input id="glmvWhy_{safe_string(code)}" placeholder="Reason (optional)" style="font-size:11px;padding:5px;background:var(--bg);color:var(--text);border:1px solid var(--border);border-radius:5px;flex:1;min-width:140px;">
+                            <button id="glmvBtn_{safe_string(code)}" onclick="glmvMove('{safe_string(code)}')" style="font-size:11px;padding:5px 12px;background:var(--primary);color:white;border:none;border-radius:5px;cursor:pointer;">Move</button>
+                        </div>
                     </div>'''
                 else:
                     detail_html = f'<div style="padding:8px 12px;font-size:12px;color:var(--text-muted);">Opening Balance: {money(opening)} | Category: {safe_string(category)}</div>'
@@ -1250,6 +1350,10 @@ def register_report_routes(app, db, login_required, Auth, render_page,
             # once as Balance Brought Forward and once as bare journal lines.
             _all_journals_for_merge = db.get("journals", {"business_id": biz_id}) or []
             _journal_by_code = {}
+            _glmv_options = "".join(
+                f'<option value="{safe_string(str(_a.get("account_code","")))}">'
+                f'{safe_string(str(_a.get("account_code","")))} - {safe_string(str(_a.get("account_name","")))}</option>'
+                for _a in coa if _a.get("account_code"))
             for _jl in _all_journals_for_merge:
                 _ac = _jl.get("account_code", "")
                 if not _ac:
@@ -1292,10 +1396,16 @@ def register_report_routes(app, db, login_required, Auth, render_page,
                     for _j in sorted_j:
                         _jdr = money(float(_j.get("debit", 0) or 0)) if float(_j.get("debit", 0) or 0) else "-"
                         _jcr = money(float(_j.get("credit", 0) or 0)) if float(_j.get("credit", 0) or 0) else "-"
-                        j_rows += f'<tr><td>{_j.get("date","-")}</td><td>{safe_string(_j.get("description","-"))}</td><td>{safe_string(_j.get("reference","-"))}</td><td style="text-align:right;color:var(--green);">{_jdr}</td><td style="text-align:right;color:var(--red);">{_jcr}</td></tr>'
+                        j_rows += f'<tr><td style="width:26px;"><input type="checkbox" class="glmv" data-acc="{safe_string(code)}" value="{safe_string(_j.get("id",""))}"></td><td>{_j.get("date","-")}</td><td>{safe_string(_j.get("description","-"))}</td><td>{safe_string(_j.get("reference","-"))}</td><td style="text-align:right;color:var(--green);">{_jdr}</td><td style="text-align:right;color:var(--red);">{_jcr}</td></tr>'
                     detail_html = f'''<div style="padding:0 10px 8px 10px;">
                         <div style="font-size:11px;color:var(--text-muted);padding:4px 0;">Imported Opening Balance: DR {money(ob_debit)} / CR {money(ob_credit)} | {len(code_journals)} GL journal entries</div>
-                        <table class="table" style="font-size:11px;"><thead><tr><th>Date</th><th>Description</th><th>Ref</th><th style="text-align:right;">Debit</th><th style="text-align:right;">Credit</th></tr></thead><tbody>{j_rows}</tbody></table>
+                        <table class="table" style="font-size:11px;"><thead><tr><th style="width:26px;"><input type="checkbox" onclick="glmvAll(this,'{safe_string(code)}')" title="Select all"></th><th>Date</th><th>Description</th><th>Ref</th><th style="text-align:right;">Debit</th><th style="text-align:right;">Credit</th></tr></thead><tbody>{j_rows}</tbody></table>
+                        <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;padding:8px 0 2px 0;">
+                            <span style="font-size:11px;color:var(--text-muted);">Move selected to</span>
+                            <select id="glmvTo_{safe_string(code)}" style="font-size:11px;padding:5px;background:var(--bg);color:var(--text);border:1px solid var(--border);border-radius:5px;max-width:280px;">{_glmv_options}</select>
+                            <input id="glmvWhy_{safe_string(code)}" placeholder="Reason (optional)" style="font-size:11px;padding:5px;background:var(--bg);color:var(--text);border:1px solid var(--border);border-radius:5px;flex:1;min-width:140px;">
+                            <button id="glmvBtn_{safe_string(code)}" onclick="glmvMove('{safe_string(code)}')" style="font-size:11px;padding:5px 12px;background:var(--primary);color:white;border:none;border-radius:5px;cursor:pointer;">Move</button>
+                        </div>
                     </div>'''
                 else:
                     detail_html = '''<div style="padding:8px 12px;font-size:12px;color:var(--text-muted);">
@@ -1650,6 +1760,45 @@ def register_report_routes(app, db, login_required, Auth, render_page,
             }} else {{
                 results.innerHTML = '<span style="color:var(--text-muted);font-size:13px;">No entries found for "' + query + '"</span>';
                 results.style.display = 'block';
+            }}
+        }}
+
+        function glmvAll(box, code) {{
+            document.querySelectorAll('input.glmv[data-acc="' + code + '"]').forEach(c => c.checked = box.checked);
+        }}
+
+        async function glmvMove(code) {{
+            const boxes = Array.from(document.querySelectorAll('input.glmv[data-acc="' + code + '"]:checked'));
+            if (!boxes.length) {{ alert('Select at least one line to move.'); return; }}
+            const sel = document.getElementById('glmvTo_' + code);
+            const target = sel ? sel.value : '';
+            if (!target) {{ alert('Choose a destination account.'); return; }}
+            if (target === code) {{ alert('That is the same account.'); return; }}
+            const whyEl = document.getElementById('glmvWhy_' + code);
+            const why = whyEl ? whyEl.value : '';
+            const label = sel.options[sel.selectedIndex].text;
+            if (!confirm('Move ' + boxes.length + ' line(s) from ' + code + ' to ' + label + '?\\n\\nThe lines are moved in place - no reversal entries are created.')) return;
+
+            const btn = document.getElementById('glmvBtn_' + code);
+            if (btn) {{ btn.disabled = true; btn.textContent = 'Moving...'; }}
+            try {{
+                const r = await fetch('/api/reports/gl/move-lines', {{
+                    method: 'POST',
+                    headers: {{'Content-Type': 'application/json'}},
+                    body: JSON.stringify({{journal_ids: boxes.map(b => b.value), target_code: target, reason: why}})
+                }});
+                const d = await r.json();
+                if (d.success) {{
+                    alert('Moved ' + d.moved + ' line(s) to ' + d.target_code + ' ' + d.target_name +
+                          (d.skipped ? ('\\nSkipped: ' + d.skipped) : ''));
+                    location.reload();
+                }} else {{
+                    alert(d.error || 'Move failed');
+                    if (btn) {{ btn.disabled = false; btn.textContent = 'Move'; }}
+                }}
+            }} catch (e) {{
+                alert('Error: ' + e.message);
+                if (btn) {{ btn.disabled = false; btn.textContent = 'Move'; }}
             }}
         }}
         </script>
