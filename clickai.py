@@ -37325,7 +37325,10 @@ def build_gl_map(biz_id: str) -> dict:
     gl_map = {}
     
     # Scan ALL COA records, match by keyword + category
-    for acc in coa:
+    # Sorted by code so matching is deterministic; inactive accounts are skipped
+    for acc in sorted(coa, key=lambda a: str(a.get("account_code", "") or a.get("code", "") or "")):
+        if not acc.get("is_active", True):
+            continue
         code = str(acc.get("account_code", "") or acc.get("code", "")).strip()
         name = str(acc.get("account_name", "") or acc.get("name", "")).lower()
         category = str(acc.get("category", "") or "").lower().strip()
