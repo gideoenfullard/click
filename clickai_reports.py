@@ -1898,8 +1898,39 @@ def register_report_routes(app, db, login_required, Auth, render_page,
             tb_accounts[code]["debit"] += debit
             tb_accounts[code]["credit"] += credit
         
-        # Load imported opening balances
-        if opening_entries:
+        # Same source priority as the GL report: chart_of_accounts (with its
+        # balance fields) + journals when a COA exists; journal_entries OB is
+        # only used for businesses without a COA. Keeps GL and TB identical.
+        tb_coa = db.get("chart_of_accounts", {"business_id": biz_id}) or []
+        if tb_coa:
+            logger.info(f"[TB] COA present ({len(tb_coa)} accounts) - using COA balances + journals, ignoring journal_entries OB")
+            for acc in tb_coa:
+                if not acc.get("is_active", True):
+                    continue
+                _code = str(acc.get("account_code", "") or "").strip()
+                if not _code:
+                    continue
+                _name = acc.get("account_name", "Unknown")
+                _category = acc.get("category", "")
+                _debit = float(acc.get("debit", 0) or 0)
+                _credit = float(acc.get("credit", 0) or 0)
+                _opening = float(acc.get("opening_balance", 0) or 0)
+                if _debit > 0 or _credit > 0:
+                    _bd, _bc = _debit, _credit
+                elif _opening != 0:
+                    _acct_type = (_category or "").lower()
+                    if any(t in _acct_type for t in ("asset", "expense", "cost of sale", "other expense")):
+                        _bd, _bc = abs(_opening), 0
+                    elif _opening > 0:
+                        _bd, _bc = _opening, 0
+                    else:
+                        _bd, _bc = 0, abs(_opening)
+                else:
+                    continue
+                add_account(_code, _name, _bd, _bc)
+
+        # Load imported opening balances (only when no COA exists)
+        elif opening_entries:
             logger.info(f"[TB] Loading {len(opening_entries)} imported opening balances")
             for oe in opening_entries:
                 acc_name = oe.get("account", "Unknown")
