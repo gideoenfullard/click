@@ -30971,6 +30971,7 @@ def _supplier_form(v=None, is_edit=False):
             </div>
             <div class="fs"><h3>💰 Payment Terms</h3>
                 <div class="fg3"><div><label class="fl">Payment Terms</label><select name="payment_terms" class="fi">{_pt_opts(val('payment_terms'),'30 Days')}</select></div><div><label class="fl">Discount %</label><input type="number" name="discount_percentage" class="fi" value="{val('discount_percentage','0')}" step="0.5" min="0" max="100"></div><div><label class="fl">Credit Limit (R)</label><input type="number" name="credit_limit" class="fi" value="{val('credit_limit','0')}" step="100"></div></div>
+                <div class="fg1"><label class="fl"><input type="checkbox" name="is_cash_account" {'checked' if v.get('is_cash_account') else ''}> Cash account (paid at the counter)</label><div class="fh">Purchases from this supplier post straight to the bank, not to creditors.</div></div>
                 {bal}
             </div>
             <div class="fs"><h3>📝 Notes</h3><div class="fg1"><textarea name="notes" class="fi" rows="3" placeholder="Any additional notes...">{val('notes')}</textarea></div></div>
@@ -31029,7 +31030,6 @@ def _customer_form(v=None, is_edit=False):
             <div class="fs"><h3>💰 Pricing & Payment Terms</h3>
                 <div class="fg3"><div><label class="fl">Price List</label><select name="price_list" class="fi">{_pl_opts(val('price_list','retail'))}</select></div><div><label class="fl">Payment Terms</label><select name="payment_terms" class="fi">{_pt_opts(val('payment_terms'),'COD')}</select></div><div><label class="fl">Credit Limit (R)</label><input type="number" name="credit_limit" class="fi" value="{val('credit_limit','0')}" step="100"></div></div>
                 <div class="fg2"><div><label class="fl">Discount %</label><input type="number" name="discount_percentage" class="fi" value="{val('discount_percentage','0')}" step="0.5" min="0" max="100"></div><div><label class="fl">VAT Type</label><select name="vat_type" class="fi">{_vat_opts(val('vat_type'))}</select></div></div>
-                <div class="fg1"><label class="fl"><input type="checkbox" name="is_cash_account" {'checked' if v.get('is_cash_account') else ''}> Cash account (paid at the counter)</label><div class="fh">Purchases from this supplier are posted straight to the bank, not to creditors.</div></div>
                 {bal}
             </div>
             <div class="fs"><h3>📝 Notes</h3><div class="fg1"><textarea name="notes" class="fi" rows="3" placeholder="Any additional notes...">{val('notes')}</textarea></div></div>
