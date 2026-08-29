@@ -581,7 +581,7 @@ def register_banking_routes(app, db, login_required, Auth, render_page,
             
             _done_extra_cls = " done-extra done-hidden" if _done_i >= _DONE_INITIAL else ""
             done_rows_html += f'''
-            <tr data-id="{txn_id}" class="done-row{_done_extra_cls}">
+            <tr data-id="{txn_id}" class="done-row{_done_extra_cls}" onclick="openReallocPanel('{txn_id}')" style="cursor:pointer;" title="Click to view or reallocate">
                 <td style="white-space:nowrap;">{t.get("date", "-")}</td>
                 <td><div style="max-width:300px;">{desc}</div></td>
                 <td style="text-align:right;color:var(--red);white-space:nowrap;">{money(debit) if debit > 0 else "-"}</td>
@@ -879,6 +879,8 @@ def register_banking_routes(app, db, login_required, Auth, render_page,
                 if (entityId && entityId !== '__skip__') {{ payload.entity_id = entityId; payload.entity_name = entityName || ''; }}
                 if (invoiceIds && invoiceIds.length > 0) {{ payload.invoice_ids = invoiceIds; payload.invoice_nums = invoiceNums || []; }}
                 if (discountAllowed) {{ payload.discount_allowed = true; }}
+                // Reallocation: only rewrite the learned rule when the user asked for it.
+                if (window._reallocLearn !== undefined) {{ payload.learn = window._reallocLearn; window._reallocLearn = undefined; }}
                 
                 const response = await fetch('/api/banking/categorize', {{
                     method: 'POST',
@@ -1765,6 +1767,17 @@ def register_banking_routes(app, db, login_required, Auth, render_page,
         }}
         </script>
         
+        <!-- REALLOCATE TRANSACTION PANEL -->
+        <div id="reallocOverlay" class="split-overlay" onclick="if(event.target===this)closeReallocPanel()">
+            <div class="split-modal">
+                <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:15px;">
+                    <h3>Transaction Detail</h3>
+                    <button onclick="closeReallocPanel()" style="background:none;border:none;color:var(--text-muted);cursor:pointer;font-size:22px;">&times;</button>
+                </div>
+                <div id="reallocBody" style="font-size:13px;">Loading...</div>
+            </div>
+        </div>
+
         <!-- ═══ SPLIT TRANSACTION MODAL ═══ -->
         <div id="splitOverlay" class="split-overlay" onclick="if(event.target===this)closeSplitModal()">
             <div class="split-modal">
@@ -1810,6 +1823,157 @@ def register_banking_routes(app, db, login_required, Auth, render_page,
         let _entityCustomers = {_entity_json_customers};
         let _entitySuppliers = {_entity_json_suppliers};
         
+        let _reallocTxn = null;
+
+        async function openReallocPanel(txnId) {{
+            document.getElementById('reallocOverlay').classList.add('active');
+            document.getElementById('reallocBody').innerHTML = 'Loading...';
+            try {{
+                const r = await fetch('/api/banking/transaction-detail', {{
+                    method: 'POST', headers: {{'Content-Type': 'application/json'}},
+                    body: JSON.stringify({{id: txnId}})
+                }});
+                const d = await r.json();
+                if (!d.success) {{
+                    document.getElementById('reallocBody').textContent = d.error || 'Could not load transaction';
+                    return;
+                }}
+                _reallocTxn = d;
+                renderReallocPanel(d);
+            }} catch (e) {{
+                document.getElementById('reallocBody').textContent = 'Error: ' + e.message;
+            }}
+        }}
+
+        function closeReallocPanel() {{
+            document.getElementById('reallocOverlay').classList.remove('active');
+            _reallocTxn = null;
+        }}
+
+        function _rMoney(v) {{
+            return (v || 0).toLocaleString('en-ZA', {{minimumFractionDigits: 2, maximumFractionDigits: 2}});
+        }}
+
+        function renderReallocPanel(d) {{
+            const t = d.txn;
+            const amt = t.debit > 0 ? t.debit : t.credit;
+            const col = t.debit > 0 ? 'var(--red)' : 'var(--green)';
+            let h = '';
+
+            h += '<div style="background:rgba(99,102,241,0.08);border-radius:8px;padding:12px;margin-bottom:14px;">';
+            h += '<div style="font-size:14px;font-weight:600;">' + (t.description || '') + '</div>';
+            h += '<div style="display:flex;gap:15px;margin-top:6px;align-items:center;">';
+            h += '<span style="font-size:12px;color:var(--text-muted);">' + (t.date || '') + '</span>';
+            h += '<span style="font-size:15px;font-weight:700;color:' + col + ';">R ' + _rMoney(amt) + '</span>';
+            h += '</div>';
+            h += '<div style="margin-top:8px;font-size:12px;">Currently posted to: <b>' + (t.category || 'Not allocated') + '</b>';
+            if (t.matched_name) h += ' &mdash; ' + t.matched_name;
+            h += '</div>';
+            if (t.matched_at) h += '<div style="font-size:11px;color:var(--text-muted);margin-top:3px;">Allocated ' + t.matched_at + '</div>';
+            if (d.is_split) h += '<div style="font-size:12px;color:#f59e0b;margin-top:6px;">This is a SPLIT transaction. Reallocating removes the split &mdash; use Re-split to rebuild it.</div>';
+            h += '</div>';
+
+            h += '<div style="font-size:12px;font-weight:600;color:var(--text-muted);margin-bottom:6px;">GENERAL LEDGER ENTRIES POSTED</div>';
+            if (!d.journal_lines.length) {{
+                h += '<div style="color:var(--text-muted);margin-bottom:14px;">No journal entries found for this transaction.</div>';
+            }} else {{
+                h += '<div style="border:1px solid var(--border);border-radius:8px;overflow:hidden;margin-bottom:14px;">';
+                h += '<table style="width:100%;font-size:12px;border-collapse:collapse;">';
+                h += '<tr style="background:var(--bg);"><th style="padding:6px;text-align:left;">Account</th><th style="padding:6px;text-align:right;">Debit</th><th style="padding:6px;text-align:right;">Credit</th></tr>';
+                d.journal_lines.forEach(l => {{
+                    h += '<tr style="border-top:1px solid var(--border);">';
+                    h += '<td style="padding:6px;"><b>' + l.code + '</b> ' + (l.name || '') + '<div style="font-size:10px;color:var(--text-muted);">' + (l.description || '') + '</div></td>';
+                    h += '<td style="padding:6px;text-align:right;">' + (l.debit ? _rMoney(l.debit) : '-') + '</td>';
+                    h += '<td style="padding:6px;text-align:right;">' + (l.credit ? _rMoney(l.credit) : '-') + '</td>';
+                    h += '</tr>';
+                }});
+                h += '</table></div>';
+            }}
+
+            if (d.documents.length) {{
+                h += '<div style="font-size:12px;font-weight:600;color:var(--text-muted);margin-bottom:6px;">LINKED DOCUMENTS</div>';
+                h += '<div style="margin-bottom:14px;">';
+                d.documents.forEach(doc => {{
+                    h += '<div style="padding:6px 0;border-bottom:1px solid var(--border);">' + doc.kind + ' ';
+                    h += doc.url ? ('<a href="' + doc.url + '" style="color:var(--primary);">' + doc.label + '</a>') : ('<b>' + doc.label + '</b>');
+                    h += ' &mdash; R ' + _rMoney(doc.amount) + ' (' + doc.status + ')';
+                    h += '<div style="font-size:11px;color:#f59e0b;">Reallocating resets this document to outstanding.</div></div>';
+                }});
+                h += '</div>';
+            }}
+
+            const c = d.counts;
+            h += '<div style="font-size:11px;color:var(--text-muted);margin-bottom:14px;">Reallocating removes: ' +
+                 c.journals + ' journal line(s), ' + c.receipts + ' receipt(s), ' +
+                 c.supplier_payments + ' supplier payment(s), ' + c.expenses + ' expense(s). ' +
+                 'The entries are removed, not reversed, so the ledger keeps one entry per transaction.</div>';
+
+            h += '<div style="margin-bottom:10px;"><label style="font-size:12px;color:var(--text-muted);">Reason (kept in the audit trail)</label>';
+            h += '<input id="reallocReason" class="fi" style="width:100%;padding:8px;margin-top:4px;" placeholder="e.g. posted to the wrong expense account"></div>';
+
+            h += '<label style="display:flex;align-items:center;gap:8px;font-size:12px;margin-bottom:14px;cursor:pointer;">';
+            h += '<input type="checkbox" id="reallocLearn"> Also apply this to future transactions like this one</label>';
+
+            h += '<div style="display:flex;gap:10px;">';
+            h += '<button onclick="startReallocate()" class="btn btn-primary" style="flex:1;padding:12px;">Reallocate</button>';
+            h += '<button onclick="startResplit()" class="btn" style="padding:12px 18px;background:rgba(245,158,11,0.2);border:1px solid #f59e0b;color:#f59e0b;">Re-split</button>';
+            h += '<button onclick="closeReallocPanel()" class="btn btn-secondary" style="padding:12px 18px;">Close</button>';
+            h += '</div>';
+
+            document.getElementById('reallocBody').innerHTML = h;
+        }}
+
+        async function _doUnallocate() {{
+            const t = _reallocTxn.txn;
+            const reason = (document.getElementById('reallocReason') || {{}}).value || '';
+            const r = await fetch('/api/banking/unallocate', {{
+                method: 'POST', headers: {{'Content-Type': 'application/json'}},
+                body: JSON.stringify({{id: t.id, reason: reason}})
+            }});
+            const d = await r.json();
+            if (!d.success) {{
+                alert(d.error || 'Could not unallocate');
+                return null;
+            }}
+            return d;
+        }}
+
+        async function startReallocate() {{
+            if (!_reallocTxn) return;
+            const t = _reallocTxn.txn;
+            const learn = !!(document.getElementById('reallocLearn') || {{}}).checked;
+            if (!confirm('Remove the current allocation for this transaction and post it somewhere else?')) return;
+            const btns = document.querySelectorAll('#reallocBody button');
+            btns.forEach(b => b.disabled = true);
+            try {{
+                const d = await _doUnallocate();
+                if (!d) {{ btns.forEach(b => b.disabled = false); return; }}
+                window._reallocLearn = learn;
+                closeReallocPanel();
+                showAllCategories(t.id, t.description, window._allCategories || [], 'Post this transaction to:');
+            }} catch (e) {{
+                alert('Error: ' + e.message);
+                btns.forEach(b => b.disabled = false);
+            }}
+        }}
+
+        async function startResplit() {{
+            if (!_reallocTxn) return;
+            const t = _reallocTxn.txn;
+            if (!confirm('Remove the current allocation and split this transaction again?')) return;
+            const btns = document.querySelectorAll('#reallocBody button');
+            btns.forEach(b => b.disabled = true);
+            try {{
+                const d = await _doUnallocate();
+                if (!d) {{ btns.forEach(b => b.disabled = false); return; }}
+                closeReallocPanel();
+                openSplitModal(t.id, t.description, t.debit, t.credit, t.date);
+            }} catch (e) {{
+                alert('Error: ' + e.message);
+                btns.forEach(b => b.disabled = false);
+            }}
+        }}
+
         function openSplitModal(txnId, desc, debit, credit, date) {{
             _splitTxnId = txnId;
             _splitIsDebit = debit > 0;
@@ -4499,6 +4663,222 @@ Return ONLY the JSON array. No markdown, no explanation."""
             return jsonify({"success": False, "error": str(e)})
     
     
+    def _find_txn_allocation_records(biz_id, txn_id):
+        """Every record a single bank transaction's allocation created.
+
+        Allocations write journals under 'BNK-<txn_id[:8]>' (or
+        'BNK-SPLIT-<txn_id[:8]>' for splits), and stamp that same reference onto
+        the receipts, supplier payments, expenses and allocation-log rows they
+        create, plus the payment_reference of any invoice they settled. Matching
+        is on that reference only — never on amount — so nothing unrelated is
+        ever picked up. Returns ids per table plus the invoices to reset.
+        """
+        prefix = str(txn_id or "")[:8]
+        if not prefix:
+            return None
+
+        def _mine(ref):
+            r = str(ref or "").strip().upper()
+            if not r:
+                return False
+            for head in ("BNK-", "BNK-SPLIT-", "REV-BNK-"):
+                if r.startswith(head) and r[len(head):].split("-")[0][:8] == prefix.upper():
+                    return True
+            return False
+
+        out = {}
+        for tbl in ("journals", "receipts", "supplier_payments", "expenses", "allocation_log"):
+            try:
+                rows = db.get(tbl, {"business_id": biz_id}) or []
+            except Exception as e:
+                logger.error(f"[REALLOC] Could not read {tbl}: {e}")
+                rows = []
+            out[tbl] = [r["id"] for r in rows if r.get("id") and _mine(r.get("reference"))]
+
+        try:
+            invs = db.get("invoices", {"business_id": biz_id}) or []
+        except Exception:
+            invs = []
+        out["reset_invoices"] = [i for i in invs if i.get("id") and _mine(i.get("payment_reference"))]
+
+        try:
+            sinvs = db.get("supplier_invoices", {"business_id": biz_id}) or []
+        except Exception:
+            sinvs = []
+        out["reset_supplier_invoices"] = [s for s in sinvs if s.get("id") and _mine(s.get("payment_reference"))]
+
+        return out
+
+    @app.route("/api/banking/transaction-detail", methods=["POST"])
+    @login_required
+    def api_banking_transaction_detail():
+        """Everything known about one bank transaction, for the reallocation panel:
+        the transaction itself, the exact journal lines it posted (with account
+        names), and every document it touched."""
+        business = Auth.get_current_business()
+        biz_id = business.get("id") if business else None
+        if not biz_id:
+            return jsonify({"success": False, "error": "No business"})
+
+        try:
+            txn_id = (request.get_json() or {}).get("id")
+            if not txn_id:
+                return jsonify({"success": False, "error": "Missing transaction id"})
+
+            txn = db.get_one("bank_transactions", txn_id)
+            if not txn or txn.get("business_id") != biz_id:
+                return jsonify({"success": False, "error": "Transaction not found"})
+
+            found = _find_txn_allocation_records(biz_id, txn_id) or {}
+
+            names = {}
+            try:
+                for a in (db.get("chart_of_accounts", {"business_id": biz_id}) or []):
+                    names[str(a.get("account_code", ""))] = a.get("account_name", "")
+            except Exception:
+                pass
+
+            j_ids = set(found.get("journals") or [])
+            lines = []
+            if j_ids:
+                for j in (db.get("journals", {"business_id": biz_id}) or []):
+                    if j.get("id") in j_ids:
+                        code = str(j.get("account_code", ""))
+                        lines.append({
+                            "date": str(j.get("date", ""))[:10],
+                            "code": code,
+                            "name": names.get(code, ""),
+                            "description": j.get("description", ""),
+                            "debit": round(float(j.get("debit", 0) or 0), 2),
+                            "credit": round(float(j.get("credit", 0) or 0), 2),
+                            "reference": j.get("reference", ""),
+                        })
+            lines.sort(key=lambda x: (x["date"], x["code"]))
+
+            docs = []
+            for inv in (found.get("reset_invoices") or []):
+                docs.append({"kind": "Customer invoice", "label": inv.get("invoice_number", "?"),
+                             "amount": round(float(inv.get("total", 0) or 0), 2),
+                             "status": inv.get("status", ""), "url": f"/invoices/{inv.get('id')}"})
+            for sinv in (found.get("reset_supplier_invoices") or []):
+                docs.append({"kind": "Supplier invoice", "label": sinv.get("invoice_number", "?"),
+                             "amount": round(float(sinv.get("total", 0) or 0), 2),
+                             "status": sinv.get("status", ""), "url": ""})
+
+            counts = {k: len(found.get(k) or []) for k in
+                      ("journals", "receipts", "supplier_payments", "expenses", "allocation_log")}
+            is_split = any(str(l.get("reference", "")).upper().startswith("BNK-SPLIT-") for l in lines)
+
+            return jsonify({
+                "success": True,
+                "txn": {
+                    "id": txn_id,
+                    "date": txn.get("date", ""),
+                    "description": txn.get("description", ""),
+                    "debit": round(float(txn.get("debit", 0) or 0), 2),
+                    "credit": round(float(txn.get("credit", 0) or 0), 2),
+                    "category": txn.get("category", ""),
+                    "matched": bool(txn.get("matched")),
+                    "matched_at": txn.get("matched_at", ""),
+                    "matched_name": txn.get("matched_name", ""),
+                },
+                "journal_lines": lines,
+                "documents": docs,
+                "counts": counts,
+                "is_split": is_split,
+            })
+        except Exception as e:
+            logger.error(f"[REALLOC] Detail failed: {e}")
+            return jsonify({"success": False, "error": str(e)})
+
+    @app.route("/api/banking/unallocate", methods=["POST"])
+    @login_required
+    def api_banking_unallocate():
+        """Undo a bank transaction's allocation so it can be posted somewhere else.
+
+        The wrong allocation is REMOVED, not reversed: the general ledger must
+        show one entry per transaction telling the truth, not a correction trail
+        that makes the GL report unreadable. The audit trail of the change lives
+        in allocation_log, which is what that ledger is for.
+        """
+        business = Auth.get_current_business()
+        biz_id = business.get("id") if business else None
+        if not biz_id:
+            return jsonify({"success": False, "error": "No business"})
+
+        try:
+            data = request.get_json() or {}
+            txn_id = data.get("id")
+            reason = (data.get("reason") or "").strip()
+            if not txn_id:
+                return jsonify({"success": False, "error": "Missing transaction id"})
+
+            txn = db.get_one("bank_transactions", txn_id)
+            if not txn or txn.get("business_id") != biz_id:
+                return jsonify({"success": False, "error": "Transaction not found"})
+
+            old_category = txn.get("category", "")
+            found = _find_txn_allocation_records(biz_id, txn_id) or {}
+
+            # Log BEFORE deleting — the log rows for this txn are about to go.
+            try:
+                if log_allocation:
+                    log_allocation(
+                        business_id=biz_id, allocation_type="bank_reallocation",
+                        source_table="bank_transactions", source_id=txn_id,
+                        description=f"Unallocated from '{old_category or 'uncategorised'}': {txn.get('description', '')[:60]}",
+                        amount=float(txn.get("debit", 0) or 0) or float(txn.get("credit", 0) or 0),
+                        category=old_category,
+                        ai_reasoning=(f"Reason: {reason}" if reason else "No reason given"),
+                        reference=f"UNALLOC-{str(txn_id)[:8]}",
+                        transaction_date=txn.get("date", ""),
+                        created_by=(Auth.get_current_user() or {}).get("id", ""),
+                        created_by_name=(Auth.get_current_user() or {}).get("name", ""),
+                    )
+            except Exception as e:
+                logger.error(f"[REALLOC] Audit log failed (continuing): {e}")
+
+            removed = {}
+            for tbl in ("journals", "receipts", "supplier_payments", "expenses", "allocation_log"):
+                ids = found.get(tbl) or []
+                if ids:
+                    try:
+                        ok, _ = db.delete_many(tbl, ids, business_id=biz_id)
+                        removed[tbl] = ok
+                    except Exception as e:
+                        logger.error(f"[REALLOC] Delete from {tbl} failed: {e}")
+
+            reset = 0
+            for inv in (found.get("reset_invoices") or []):
+                try:
+                    db.update("invoices", inv["id"],
+                              {"status": "outstanding", "paid_date": "", "paid_amount": 0,
+                               "paid_via": "", "payment_reference": ""}, biz_id)
+                    reset += 1
+                except Exception as e:
+                    logger.error(f"[REALLOC] Invoice reset failed: {e}")
+            for sinv in (found.get("reset_supplier_invoices") or []):
+                try:
+                    db.update("supplier_invoices", sinv["id"],
+                              {"status": "outstanding", "paid_date": "", "paid_amount": 0,
+                               "payment_reference": ""}, biz_id)
+                    reset += 1
+                except Exception as e:
+                    logger.error(f"[REALLOC] Supplier invoice reset failed: {e}")
+
+            for f in ("category", "matched_at", "matched_name", "matched_entity_type",
+                      "matched_entity_id", "matched_invoice_id", "matched_invoice_number"):
+                txn[f] = ""
+            txn["matched"] = False
+            db.save("bank_transactions", txn)
+
+            print(f"[REALLOC] txn={txn_id[:8]} was='{old_category}' removed={removed} reset={reset}", flush=True)
+            return jsonify({"success": True, "removed": removed, "invoices_reset": reset,
+                            "old_category": old_category})
+        except Exception as e:
+            logger.error(f"[REALLOC] Unallocate failed: {e}")
+            return jsonify({"success": False, "error": str(e)})
+
     @app.route("/api/banking/categorize", methods=["POST"])
     @login_required
     def api_banking_categorize():
@@ -4541,7 +4921,8 @@ Return ONLY the JSON array. No markdown, no explanation."""
             
             # LEARN from this categorization!
             if description:
-                BankLearning.learn_from_categorization(biz_id, description, category)
+                if data.get("learn", True):
+                    BankLearning.learn_from_categorization(biz_id, description, category)
             
             # Handle based on category type
             debit = float(txn.get("debit", 0))
