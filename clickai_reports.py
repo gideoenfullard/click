@@ -1141,6 +1141,13 @@ def register_report_routes(app, db, login_required, Auth, render_page,
         # 1. Get chart of accounts (the real Sage data)
         coa = db.get("chart_of_accounts", {"business_id": biz_id}) or []
         coa = sorted(coa, key=lambda x: x.get("account_code", "") or "")
+
+        # Destination list for the GL reclassification bar (built once, used by the
+        # floating bar so the user never has to scroll to the bottom of an account).
+        _glmv_options = "".join(
+            f'<option value="{safe_string(str(_a.get("account_code","")))}">'
+            f'{safe_string(str(_a.get("account_code","")))} - {safe_string(str(_a.get("account_name","")))}</option>'
+            for _a in coa if _a.get("account_code"))
         
         # 2. Get imported opening balances from journal_entries (TB import)
         journal_entries = db.get("journal_entries", {"business_id": biz_id}) or []
@@ -1162,10 +1169,6 @@ def register_report_routes(app, db, login_required, Auth, render_page,
             # Pre-load ALL journals for merging with COA
             _all_journals_for_merge = db.get("journals", {"business_id": biz_id}) or []
             _journal_by_code = {}
-            _glmv_options = "".join(
-                f'<option value="{safe_string(str(_a.get("account_code","")))}">'
-                f'{safe_string(str(_a.get("account_code","")))} - {safe_string(str(_a.get("account_name","")))}</option>'
-                for _a in coa if _a.get("account_code"))
             for _jl in _all_journals_for_merge:
                 _ac = _jl.get("account_code", "")
                 if not _ac:
@@ -1240,12 +1243,6 @@ def register_report_routes(app, db, login_required, Auth, render_page,
                     detail_html = f'''<div style="padding:0 10px 8px 10px;">
                         <div style="font-size:11px;color:var(--text-muted);padding:4px 0;">{ob_label} | {len(code_journals)} GL journal entries</div>
                         <table class="table" style="font-size:11px;"><thead><tr><th style="width:26px;"><input type="checkbox" onclick="glmvAll(this,'{safe_string(code)}')" title="Select all"></th><th>Date</th><th>Description</th><th>Ref</th><th style="text-align:right;">Debit</th><th style="text-align:right;">Credit</th></tr></thead><tbody>{j_rows}</tbody></table>
-                        <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;padding:8px 0 2px 0;">
-                            <span style="font-size:11px;color:var(--text-muted);">Move selected to</span>
-                            <select id="glmvTo_{safe_string(code)}" style="font-size:11px;padding:5px;background:var(--bg);color:var(--text);border:1px solid var(--border);border-radius:5px;max-width:280px;">{_glmv_options}</select>
-                            <input id="glmvWhy_{safe_string(code)}" placeholder="Reason (optional)" style="font-size:11px;padding:5px;background:var(--bg);color:var(--text);border:1px solid var(--border);border-radius:5px;flex:1;min-width:140px;">
-                            <button id="glmvBtn_{safe_string(code)}" onclick="glmvMove('{safe_string(code)}')" style="font-size:11px;padding:5px 12px;background:var(--primary);color:white;border:none;border-radius:5px;cursor:pointer;">Move</button>
-                        </div>
                     </div>'''
                 else:
                     detail_html = f'<div style="padding:8px 12px;font-size:12px;color:var(--text-muted);">Opening Balance: {money(opening)} | Category: {safe_string(category)}</div>'
@@ -1350,10 +1347,6 @@ def register_report_routes(app, db, login_required, Auth, render_page,
             # once as Balance Brought Forward and once as bare journal lines.
             _all_journals_for_merge = db.get("journals", {"business_id": biz_id}) or []
             _journal_by_code = {}
-            _glmv_options = "".join(
-                f'<option value="{safe_string(str(_a.get("account_code","")))}">'
-                f'{safe_string(str(_a.get("account_code","")))} - {safe_string(str(_a.get("account_name","")))}</option>'
-                for _a in coa if _a.get("account_code"))
             for _jl in _all_journals_for_merge:
                 _ac = _jl.get("account_code", "")
                 if not _ac:
@@ -1400,12 +1393,6 @@ def register_report_routes(app, db, login_required, Auth, render_page,
                     detail_html = f'''<div style="padding:0 10px 8px 10px;">
                         <div style="font-size:11px;color:var(--text-muted);padding:4px 0;">Imported Opening Balance: DR {money(ob_debit)} / CR {money(ob_credit)} | {len(code_journals)} GL journal entries</div>
                         <table class="table" style="font-size:11px;"><thead><tr><th style="width:26px;"><input type="checkbox" onclick="glmvAll(this,'{safe_string(code)}')" title="Select all"></th><th>Date</th><th>Description</th><th>Ref</th><th style="text-align:right;">Debit</th><th style="text-align:right;">Credit</th></tr></thead><tbody>{j_rows}</tbody></table>
-                        <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;padding:8px 0 2px 0;">
-                            <span style="font-size:11px;color:var(--text-muted);">Move selected to</span>
-                            <select id="glmvTo_{safe_string(code)}" style="font-size:11px;padding:5px;background:var(--bg);color:var(--text);border:1px solid var(--border);border-radius:5px;max-width:280px;">{_glmv_options}</select>
-                            <input id="glmvWhy_{safe_string(code)}" placeholder="Reason (optional)" style="font-size:11px;padding:5px;background:var(--bg);color:var(--text);border:1px solid var(--border);border-radius:5px;flex:1;min-width:140px;">
-                            <button id="glmvBtn_{safe_string(code)}" onclick="glmvMove('{safe_string(code)}')" style="font-size:11px;padding:5px 12px;background:var(--primary);color:white;border:none;border-radius:5px;cursor:pointer;">Move</button>
-                        </div>
                     </div>'''
                 else:
                     detail_html = '''<div style="padding:8px 12px;font-size:12px;color:var(--text-muted);">
@@ -1765,21 +1752,53 @@ def register_report_routes(app, db, login_required, Auth, render_page,
 
         function glmvAll(box, code) {{
             document.querySelectorAll('input.glmv[data-acc="' + code + '"]').forEach(c => c.checked = box.checked);
+            glmvSync();
         }}
 
-        async function glmvMove(code) {{
-            const boxes = Array.from(document.querySelectorAll('input.glmv[data-acc="' + code + '"]:checked'));
-            if (!boxes.length) {{ alert('Select at least one line to move.'); return; }}
-            const sel = document.getElementById('glmvTo_' + code);
+        function glmvChecked() {{
+            return Array.from(document.querySelectorAll('input.glmv:checked'));
+        }}
+
+        function glmvSync() {{
+            const boxes = glmvChecked();
+            const bar = document.getElementById('glmvBar');
+            if (!bar) return;
+            if (!boxes.length) {{
+                bar.style.display = 'none';
+                document.body.style.paddingBottom = '';
+                return;
+            }}
+            const accs = Array.from(new Set(boxes.map(b => b.dataset.acc)));
+            const from = accs.length === 1 ? ('from ' + accs[0]) : ('from ' + accs.length + ' accounts');
+            document.getElementById('glmvCount').textContent =
+                boxes.length + ' line' + (boxes.length === 1 ? '' : 's') + ' selected ' + from;
+            bar.style.display = 'block';
+            document.body.style.paddingBottom = (bar.offsetHeight + 20) + 'px';
+        }}
+
+        function glmvClear() {{
+            document.querySelectorAll('input.glmv:checked').forEach(c => c.checked = false);
+            document.querySelectorAll('input[type=checkbox][onclick^="glmvAll"]').forEach(c => c.checked = false);
+            glmvSync();
+        }}
+
+        document.addEventListener('change', function (e) {{
+            if (e.target && e.target.classList && e.target.classList.contains('glmv')) glmvSync();
+        }});
+
+        async function glmvMove() {{
+            const boxes = glmvChecked();
+            if (!boxes.length) return;
+            const sel = document.getElementById('glmvTo');
             const target = sel ? sel.value : '';
             if (!target) {{ alert('Choose a destination account.'); return; }}
-            if (target === code) {{ alert('That is the same account.'); return; }}
-            const whyEl = document.getElementById('glmvWhy_' + code);
-            const why = whyEl ? whyEl.value : '';
+            const accs = Array.from(new Set(boxes.map(b => b.dataset.acc)));
+            if (accs.length === 1 && accs[0] === target) {{ alert('That is the same account.'); return; }}
+            const why = (document.getElementById('glmvWhy') || {{}}).value || '';
             const label = sel.options[sel.selectedIndex].text;
-            if (!confirm('Move ' + boxes.length + ' line(s) from ' + code + ' to ' + label + '?\\n\\nThe lines are moved in place - no reversal entries are created.')) return;
+            if (!confirm('Move ' + boxes.length + ' line(s) to ' + label + '?\\n\\nThe lines are moved in place - no reversal entries are created.')) return;
 
-            const btn = document.getElementById('glmvBtn_' + code);
+            const btn = document.getElementById('glmvBtn');
             if (btn) {{ btn.disabled = true; btn.textContent = 'Moving...'; }}
             try {{
                 const r = await fetch('/api/reports/gl/move-lines', {{
@@ -1802,6 +1821,17 @@ def register_report_routes(app, db, login_required, Auth, render_page,
             }}
         }}
         </script>
+
+        <div id="glmvBar" style="display:none;position:fixed;left:0;right:0;bottom:0;z-index:900;background:var(--card);border-top:2px solid var(--primary);box-shadow:0 -4px 16px rgba(0,0,0,0.35);padding:10px 16px;">
+            <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;max-width:1200px;margin:0 auto;">
+                <span id="glmvCount" style="font-size:13px;font-weight:600;white-space:nowrap;"></span>
+                <span style="font-size:12px;color:var(--text-muted);white-space:nowrap;">move to</span>
+                <select id="glmvTo" style="font-size:12px;padding:7px;background:var(--bg);color:var(--text);border:1px solid var(--border);border-radius:6px;max-width:320px;">{_glmv_options}</select>
+                <input id="glmvWhy" placeholder="Reason (optional)" style="font-size:12px;padding:7px;background:var(--bg);color:var(--text);border:1px solid var(--border);border-radius:6px;flex:1;min-width:140px;">
+                <button id="glmvBtn" onclick="glmvMove()" style="font-size:13px;padding:7px 18px;background:var(--primary);color:white;border:none;border-radius:6px;cursor:pointer;font-weight:600;">Move</button>
+                <button onclick="glmvClear()" style="font-size:13px;padding:7px 14px;background:transparent;color:var(--text-muted);border:1px solid var(--border);border-radius:6px;cursor:pointer;">Clear</button>
+            </div>
+        </div>
         '''
         
         return render_page("General Ledger", content, user, "reports")
