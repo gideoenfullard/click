@@ -5107,7 +5107,7 @@ def register_purchases_routes(app, db, login_required, Auth, render_page,
                 _p_cn_num = next_document_number("SCR-", _p_existing, field="cn_number")
                 _p_cn_id = generate_id()
                 _p_ref = f"SCR-{_p_cn_id[:8]}"
-                _p_intent = (invoice.get("allocation_intent") or "stock").lower()
+                _p_intent = (invoice.get("allocation_intent") or "cos").lower()
                 _p_value_acc = gl(biz_id, "cogs") if _p_intent == "cos" else gl(biz_id, "stock")
                 _p_lines = [{"account_code": _p_value_acc, "debit": 0, "credit": _p_net}]
                 if _p_vat > 0:
@@ -5171,9 +5171,13 @@ def register_purchases_routes(app, db, login_required, Auth, render_page,
             net_amount = inv_total - inv_vat
             cn_ref = f"SCR-{cn_id[:8]}"
             
-            _cn_alloc_intent = (invoice.get("allocation_intent") or "stock").lower()
+            # Fallback is "cos", not "stock": invoices created by paths that never
+            # set allocation_intent (PO->invoice, manual capture) debit
+            # gl("purchases")/gl("cogs"), so crediting gl("stock") here left the
+            # debit and the credit on different accounts.
+            _cn_alloc_intent = (invoice.get("allocation_intent") or "cos").lower()
             if _cn_alloc_intent not in ("stock", "cos", "split"):
-                _cn_alloc_intent = "stock"
+                _cn_alloc_intent = "cos"
             _cn_item_allocs = invoice.get("item_allocations") or {}
             if isinstance(_cn_item_allocs, str):
                 try:
@@ -5603,6 +5607,15 @@ Nothing else."""
             amount = float(data.get("amount", 0))
             vat_inclusive = data.get("vat_inclusive", True)
             is_paid = data.get("is_paid", False)
+            # Cash-account suppliers (counter/COD) are paid at the till, so the
+            # purchase credits the bank, never creditors.
+            if not is_paid and supplier_id:
+                try:
+                    _sup_cash = db.get("suppliers", {"id": supplier_id, "business_id": biz_id})
+                    if _sup_cash and (_sup_cash[0] if isinstance(_sup_cash, list) else _sup_cash).get("is_cash_account"):
+                        is_paid = True
+                except Exception:
+                    pass
             
             if amount <= 0:
                 return jsonify({"success": False, "error": "Amount must be greater than zero"})
@@ -7222,12 +7235,12 @@ Nothing else."""
                 if not target_invoice_number:
                     target_invoice_number = target_invoice.get("invoice_number", "")
             
-            # ── Allocation intent (inherit from target invoice or default to stock)
-            _alloc_intent = "stock"
+            # ── Allocation intent (inherit from target invoice or default to cos)
+            _alloc_intent = "cos"
             if target_invoice:
-                _alloc_intent = (target_invoice.get("allocation_intent") or "stock").lower()
+                _alloc_intent = (target_invoice.get("allocation_intent") or "cos").lower()
                 if _alloc_intent not in ("stock", "cos", "split"):
-                    _alloc_intent = "stock"
+                    _alloc_intent = "cos"
             
             # ── Generate CN number for our system (separate from the doc's own number)
             existing_cns = db.get("supplier_credit_notes", {"business_id": biz_id}) or []

@@ -30915,6 +30915,7 @@ def _get_form_fields():
         "bank_account_type": request.form.get("bank_account_type", "").strip(),
         "category": request.form.get("category", "").strip(),
         "payment_terms": request.form.get("payment_terms", "").strip(),
+        "is_cash_account": request.form.get("is_cash_account") == "on",
         "currency": request.form.get("currency", "ZAR").strip(),
         "notes": request.form.get("notes", "").strip(),
     }
@@ -31028,6 +31029,7 @@ def _customer_form(v=None, is_edit=False):
             <div class="fs"><h3>💰 Pricing & Payment Terms</h3>
                 <div class="fg3"><div><label class="fl">Price List</label><select name="price_list" class="fi">{_pl_opts(val('price_list','retail'))}</select></div><div><label class="fl">Payment Terms</label><select name="payment_terms" class="fi">{_pt_opts(val('payment_terms'),'COD')}</select></div><div><label class="fl">Credit Limit (R)</label><input type="number" name="credit_limit" class="fi" value="{val('credit_limit','0')}" step="100"></div></div>
                 <div class="fg2"><div><label class="fl">Discount %</label><input type="number" name="discount_percentage" class="fi" value="{val('discount_percentage','0')}" step="0.5" min="0" max="100"></div><div><label class="fl">VAT Type</label><select name="vat_type" class="fi">{_vat_opts(val('vat_type'))}</select></div></div>
+                <div class="fg1"><label class="fl"><input type="checkbox" name="is_cash_account" {'checked' if v.get('is_cash_account') else ''}> Cash account (paid at the counter)</label><div class="fh">Purchases from this supplier are posted straight to the bank, not to creditors.</div></div>
                 {bal}
             </div>
             <div class="fs"><h3>📝 Notes</h3><div class="fg1"><textarea name="notes" class="fi" rows="3" placeholder="Any additional notes...">{val('notes')}</textarea></div></div>
@@ -63290,6 +63292,11 @@ def api_scan_save_supplier_invoice():
                 update_needed = True
             if update_needed:
                 db.save("suppliers", updates)
+        
+        # Cash-account suppliers (counter/COD) are paid at the till, so the
+        # purchase credits the bank, never creditors.
+        if not is_paid and supplier.get("is_cash_account"):
+            is_paid = True
         
         # ── DUPLICATE GUARD (enforced) ──────────────────────────────────
         # Same supplier + same invoice number = hard block. Blank invoice
