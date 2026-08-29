@@ -133,6 +133,59 @@ def register_payroll_routes(app, db, login_required, Auth, render_page,
                             JARVIS_HUD_CSS, THEME_REACTOR_SKINS):
     """Register all Payroll, Employee and Payslip routes with the Flask app."""
 
+    # Hardcoded payroll GL codes: name/type/category used to create the COA
+    # record if a tenant's chart is missing it, so payroll never posts to a
+    # code that does not exist in chart_of_accounts.
+    _PAYROLL_FIXED_ACCOUNTS = {
+        "6210": ("UIF & SDL - Employer Contributions", "expense", "Operating Expenses"),
+        "2210": ("UIF Payable", "liability", "Current Liabilities"),
+        "2220": ("SDL Payable", "liability", "Current Liabilities"),
+        "2310": ("Medical Aid Payable", "liability", "Current Liabilities"),
+        "2320": ("Union Fees Payable", "liability", "Current Liabilities"),
+        "2330": ("Pension Fund Payable", "liability", "Current Liabilities"),
+        "2340": ("Provident Fund Payable", "liability", "Current Liabilities"),
+        "2350": ("RMA Funeral Fund Payable", "liability", "Current Liabilities"),
+        "2360": ("Other Deductions Payable", "liability", "Current Liabilities"),
+        "1250": ("Staff Loans Receivable", "asset", "Current Assets"),
+    }
+
+    def _ensure_payroll_gl_accounts(biz_id, entries):
+        """Make sure every hardcoded code in a payroll journal exists and is
+        active in the business's chart_of_accounts. Creates missing records,
+        re-activates inactive ones. Businesses without a COA are left alone."""
+        try:
+            coa = db.get("chart_of_accounts", {"business_id": biz_id}) or []
+            if not coa:
+                return
+            by_code = {}
+            for acc in coa:
+                c = str(acc.get("account_code", "") or "").strip()
+                if c and c not in by_code:
+                    by_code[c] = acc
+            for e in entries:
+                code = str(e.get("account_code", "") or "").strip()
+                if code not in _PAYROLL_FIXED_ACCOUNTS:
+                    continue
+                name, acc_type, category = _PAYROLL_FIXED_ACCOUNTS[code]
+                existing = by_code.get(code)
+                if existing is None:
+                    db.save("chart_of_accounts", {
+                        "business_id": biz_id,
+                        "account_code": code,
+                        "account_name": name,
+                        "account_type": acc_type,
+                        "category": category,
+                        "is_active": True,
+                    })
+                    by_code[code] = {"account_code": code, "is_active": True}
+                    print(f"[PAYROLL] Created missing GL account {code} ({name}) for biz {str(biz_id)[:8]}", flush=True)
+                elif not existing.get("is_active", True):
+                    db.update("chart_of_accounts", existing.get("id"), {"is_active": True})
+                    existing["is_active"] = True
+                    print(f"[PAYROLL] Re-activated GL account {code} ({name}) for biz {str(biz_id)[:8]}", flush=True)
+        except Exception as ex:
+            print(f"[PAYROLL] _ensure_payroll_gl_accounts failed: {ex}", flush=True)
+
     @app.route("/payroll")
     @login_required
     def payroll_page():
@@ -1042,6 +1095,7 @@ def register_payroll_routes(app, db, login_required, Auth, render_page,
             provident=provident, loan=loan, other_ded=other_ded))
         payroll_entries.append({"account_code": gl(biz_id, "bank"), "debit": 0, "credit": round(net, 2)})
         try:
+            _ensure_payroll_gl_accounts(biz_id, payroll_entries)
             create_journal_entry(biz_id, pay_date, f"Salary - {emp.get('name')}", f"PAY-{payslip_id[:8]}", payroll_entries)
         except Exception as e:
             logger.error(f"[PAYROLL HOURLY] Journal entry failed for {emp.get('name')}: {e}")
@@ -1422,6 +1476,7 @@ def register_payroll_routes(app, db, login_required, Auth, render_page,
                         # Net pay to bank
                         payroll_entries.append({"account_code": gl(biz_id, "bank"), "debit": 0, "credit": round(net, 2)})  # Bank (NET pay)
                         
+                        _ensure_payroll_gl_accounts(biz_id, payroll_entries)
                         create_journal_entry(biz_id, pay_date, f"Salary - {emp.get('name')}", f"PAY-{payslip_id[:8]}", payroll_entries)
                     else:
                         logger.error(f"[PAYROLL] Payslip save failed: {response.text[:200]}")
@@ -2265,6 +2320,7 @@ def register_payroll_routes(app, db, login_required, Auth, render_page,
         payroll_entries.append({"account_code": gl(biz_id, "bank"), "debit": 0, "credit": round(net, 2)})
 
         try:
+            _ensure_payroll_gl_accounts(biz_id, payroll_entries)
             create_journal_entry(biz_id, pay_date, f"Salary - {emp.get('name')}", f"PAY-{payslip_id[:8]}", payroll_entries)
         except Exception as e:
             logger.error(f"[PAYROLL] Journal entry failed for {emp.get('name')}: {e}")
@@ -2532,6 +2588,7 @@ def register_payroll_routes(app, db, login_required, Auth, render_page,
             payroll_entries.append({"account_code": gl(biz_id, "bank"), "debit": 0, "credit": round(net, 2)})
 
             try:
+                _ensure_payroll_gl_accounts(biz_id, payroll_entries)
                 create_journal_entry(biz_id, pay_date, f"Salary - {emp.get('name')}", f"PAY-{payslip_id[:8]}", payroll_entries)
             except Exception as e:
                 logger.error(f"[POST BATCH] Journal entry failed for {emp.get('name')}: {e}")
