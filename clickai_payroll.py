@@ -1093,7 +1093,8 @@ def register_payroll_routes(app, db, login_required, Auth, render_page,
         payroll_entries.extend(_deduction_journal_lines(
             medical=medical, union_fees=union_fees, pension=pension,
             provident=provident, loan=loan, other_ded=other_ded))
-        payroll_entries.append({"account_code": gl(biz_id, "bank"), "debit": 0, "credit": round(net, 2)})
+        # Net pay: credit Net Salaries Payable, never bank - the bank allocation settles it (Sage rule)
+        payroll_entries.append({"account_code": gl(biz_id, "net_salaries"), "debit": 0, "credit": round(net, 2)})
         try:
             _ensure_payroll_gl_accounts(biz_id, payroll_entries)
             create_journal_entry(biz_id, pay_date, f"Salary - {emp.get('name')}", f"PAY-{payslip_id[:8]}", payroll_entries)
@@ -1140,7 +1141,8 @@ def register_payroll_routes(app, db, login_required, Auth, render_page,
             medical=medical, union_fees=union_fees, pension=pension,
             provident=provident, loan=loan, other_ded=other_ded,
             rma_funeral=rma_funeral))
-        entries.append({"account_code": gl(biz_id, "bank"), "debit": 0, "credit": round(net, 2)})
+        # Net pay: credit Net Salaries Payable, never bank - the bank allocation settles it (Sage rule)
+        entries.append({"account_code": gl(biz_id, "net_salaries"), "debit": 0, "credit": round(net, 2)})
         return entries
 
     def _reverse_journal_lines(entries):
@@ -1474,7 +1476,8 @@ def register_payroll_routes(app, db, login_required, Auth, render_page,
                             rma_funeral=rma_funeral))
                         
                         # Net pay to bank
-                        payroll_entries.append({"account_code": gl(biz_id, "bank"), "debit": 0, "credit": round(net, 2)})  # Bank (NET pay)
+                        # Net pay: credit Net Salaries Payable, never bank - the bank allocation settles it (Sage rule)
+                        payroll_entries.append({"account_code": gl(biz_id, "net_salaries"), "debit": 0, "credit": round(net, 2)})  # Net Salaries Payable (settled by the bank allocation)
                         
                         _ensure_payroll_gl_accounts(biz_id, payroll_entries)
                         create_journal_entry(biz_id, pay_date, f"Salary - {emp.get('name')}", f"PAY-{payslip_id[:8]}", payroll_entries)
@@ -2317,7 +2320,8 @@ def register_payroll_routes(app, db, login_required, Auth, render_page,
             medical=medical, union_fees=union_fees, pension=pension,
             provident=provident, loan=loan, other_ded=other_ded,
             rma_funeral=rma_funeral))
-        payroll_entries.append({"account_code": gl(biz_id, "bank"), "debit": 0, "credit": round(net, 2)})
+        # Net pay: credit Net Salaries Payable, never bank - the bank allocation settles it (Sage rule)
+        payroll_entries.append({"account_code": gl(biz_id, "net_salaries"), "debit": 0, "credit": round(net, 2)})
 
         try:
             _ensure_payroll_gl_accounts(biz_id, payroll_entries)
@@ -2585,7 +2589,8 @@ def register_payroll_routes(app, db, login_required, Auth, render_page,
                 medical=medical, union_fees=union_fees, pension=pension,
                 provident=provident, loan=loan, other_ded=other_ded,
                 rma_funeral=rma_funeral))
-            payroll_entries.append({"account_code": gl(biz_id, "bank"), "debit": 0, "credit": round(net, 2)})
+            # Net pay: credit Net Salaries Payable, never bank - the bank allocation settles it (Sage rule)
+            payroll_entries.append({"account_code": gl(biz_id, "net_salaries"), "debit": 0, "credit": round(net, 2)})
 
             try:
                 _ensure_payroll_gl_accounts(biz_id, payroll_entries)

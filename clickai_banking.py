@@ -4935,6 +4935,28 @@ Return ONLY the JSON array. No markdown, no explanation."""
             # SARS: No VAT claim on wages, statutory payments, fuel, entertainment
             is_no_vat = _is_no_vat_category(category)
             
+            # A salary/wage payment that settles a payslip is the PAYMENT of the
+            # payroll liability, not a second expense: the payroll journal already
+            # posted the cost. Post it to Net Salaries Payable (Sage behaviour).
+            # Wages paid without a payslip stay on the expense account, no VAT.
+            if any(k in (category or "").lower() for k in ("salar", "wage", "loon", "payroll", "remunerat")):
+                is_no_vat = True
+                try:
+                    _pay_amt = abs(float(txn.get("amount", 0) or 0))
+                    _txn_d = datetime.strptime(str(txn.get("date", ""))[:10], "%Y-%m-%d")
+                    for _ps in (db.get("payslips", {"business_id": biz_id}) or []):
+                        try:
+                            if abs(float(_ps.get("net", 0) or 0) - _pay_amt) > 2.0:
+                                continue
+                            if abs((datetime.strptime(str(_ps.get("date", ""))[:10], "%Y-%m-%d") - _txn_d).days) > 7:
+                                continue
+                        except (ValueError, TypeError):
+                            continue
+                        gl_code = gl(biz_id, "net_salaries")
+                        break
+                except Exception as _ps_err:
+                    logger.error(f"[BANK] Payslip lookup for salary payment failed: {_ps_err}")
+            
             # === SPECIAL CATEGORIES with custom GL logic ===
             # These need specific double-entry treatment, not generic expense/income
             

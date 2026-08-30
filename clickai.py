@@ -37227,7 +37227,7 @@ CLICKAI_DEFAULTS = {
     "bank": "1000", "cash": "1050", "petty_cash": "1100",
     "debtors": "1200", "stock": "1300", "vat_input": "1400",
     "equipment": "1500", "vehicles": "1600", "accum_depr": "1700",
-    "creditors": "2000", "vat_output": "2100", "paye": "2200", "uif": "2300", "loan": "2400",
+    "creditors": "2000", "vat_output": "2100", "paye": "2200", "uif": "2300", "net_salaries": "2370", "loan": "2400",
     "capital": "3000", "retained": "3100", "drawings": "3200",
     "sales": "4000", "services": "4100", "interest_received": "4200", "discount_received": "4300",
     "cogs": "5000", "purchases": "5100", "carriage_in": "5200",
@@ -37259,6 +37259,7 @@ COA_KEYWORD_MAP = [
     # PAYE/UIF — in Sage these are often EXPENSE accounts (4400/005), not liabilities
     (["sars - paye", "sars-paye", "paye", "pay as you earn", "employees tax"], "paye", None),
     (["sars - uif", "sars-uif", "uif", "unemployment"], "uif", None),
+    (["net salaries payable", "net salary payable", "salaries payable", "wages payable", "net wages payable"], "net_salaries", None),
     # Loan — can be asset (loan TO subsidiary) or liability (loan FROM bank)
     (["loan"], "loan", ["non-current assets", "non-current liabilities", "current liabilities"]),
     # Equity — MUST be in equity categories
