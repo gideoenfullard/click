@@ -43,6 +43,89 @@ def _parse_terms_days(terms):
     return 30
 
 
+
+# ── Shared GL classification (P&L, Balance Sheet, VAT201) ─────────────────
+# One rule for every report so they read the same chart the same way:
+# account_type first, then the Sage category, then the code range.
+_GL_CAT_SECTION = {
+    "sales": "income", "revenue": "income", "other income": "income",
+    "cost of sales": "cost_of_sales",
+    "expenses": "expense", "operating expenses": "expense",
+    "other expenses": "expense", "finance costs": "expense",
+    "current assets": "asset", "non-current assets": "asset", "fixed assets": "asset",
+    "current liabilities": "liability", "long-term liabilities": "liability",
+    "non-current liabilities": "liability",
+    "owners equity": "equity", "equity": "equity", "capital": "equity",
+}
+
+# Financial year runs 1 March - 28/29 February.
+_FY_START_MONTH = 3
+
+# The chart_of_accounts balance fields hold the Sage balances at migration
+# (P&L accounts = movement from 1 March 2026 to the migration date). They
+# carry no date, so a P&L only includes them when the selected period starts
+# on or before the start of that financial year.
+_COA_BALANCE_FY_START = "2026-03-01"
+
+
+def _gl_section(code, acc):
+    """Return 'income' | 'cost_of_sales' | 'expense' | 'asset' | 'liability' | 'equity' | None."""
+    acc = acc or {}
+    acc_type = str(acc.get("account_type", "") or "").strip().lower()
+    if acc_type in ("income", "revenue"):
+        return "income"
+    if acc_type in ("cost_of_sales", "cost of sales"):
+        return "cost_of_sales"
+    if acc_type == "expense":
+        return "expense"
+    if acc_type in ("asset", "liability", "equity"):
+        return acc_type
+    category = str(acc.get("category", "") or "").strip().lower()
+    if category in _GL_CAT_SECTION:
+        return _GL_CAT_SECTION[category]
+    if category:
+        return None
+    first = str(code or "")[:1]
+    if first == "4":
+        return "income"
+    if first == "5":
+        return "cost_of_sales"
+    if first in ("6", "7", "8", "9"):
+        return "expense"
+    if first == "1":
+        return "asset"
+    if first == "2":
+        return "liability"
+    if first == "3":
+        return "equity"
+    return None
+
+
+def _coa_base_balance(acc):
+    """(debit, credit) carried on a chart_of_accounts row - same rule as the GL/TB reports."""
+    debit = float(acc.get("debit", 0) or 0)
+    credit = float(acc.get("credit", 0) or 0)
+    opening = float(acc.get("opening_balance", 0) or 0)
+    if debit > 0 or credit > 0:
+        return debit, credit
+    if opening != 0:
+        acct_type = str(acc.get("category", "") or "").lower()
+        if any(t in acct_type for t in ("asset", "expense", "cost of sale", "other expense")):
+            return abs(opening), 0.0
+        if opening > 0:
+            return opening, 0.0
+        return 0.0, abs(opening)
+    return 0.0, 0.0
+
+
+def _fy_bounds(for_date):
+    """(fy_start, fy_end, label) of the financial year containing for_date (YYYY-MM-DD)."""
+    y, m = int(for_date[:4]), int(for_date[5:7])
+    fy_year = y if m >= _FY_START_MONTH else y - 1
+    fy_start = f"{fy_year}-{_FY_START_MONTH:02d}-01"
+    fy_end = f"{fy_year + 1}-{_FY_START_MONTH - 1:02d}-{29 if (fy_year + 1) % 4 == 0 else 28}"
+    return fy_start, fy_end, f"FY {fy_year}/{str(fy_year + 1)[2:]}"
+
 def register_report_routes(app, db, login_required, Auth, render_page,
                            generate_id, money, safe_string, now, today,
                            has_reactor_hud, jarvis_hud_header, jarvis_techline,
@@ -5186,26 +5269,35 @@ def register_report_routes(app, db, login_required, Auth, render_page,
         
         # Calculate date range
         today_date = datetime.now()
+        today_str = today_date.strftime("%Y-%m-%d")
+        fy_start, fy_end, fy_label = _fy_bounds(today_str)
         if period == "month":
             start_date = today_date.replace(day=1).strftime("%Y-%m-%d")
-            end_date = today_date.strftime("%Y-%m-%d")
+            end_date = today_str
             period_label = today_date.strftime("%B %Y")
         elif period == "quarter":
             quarter = (today_date.month - 1) // 3
             start_date = today_date.replace(month=quarter*3+1, day=1).strftime("%Y-%m-%d")
-            end_date = today_date.strftime("%Y-%m-%d")
+            end_date = today_str
             period_label = f"Q{quarter+1} {today_date.year}"
         elif period == "year":
-            start_date = today_date.replace(month=1, day=1).strftime("%Y-%m-%d")
-            end_date = today_date.strftime("%Y-%m-%d")
-            period_label = f"Year {today_date.year}"
+            # Financial year (1 March - 28/29 February), not the calendar year
+            start_date = fy_start
+            end_date = today_str
+            period_label = f"{fy_label} (1 Mar {fy_start[:4]} to {today_date.strftime('%d %b %Y')})"
         elif period == "all":
             start_date = "2000-01-01"
-            end_date = today_date.strftime("%Y-%m-%d")
+            end_date = today_str
             period_label = "All Time"
+        elif period == "custom":
+            start_date = (request.args.get("from") or fy_start)[:10]
+            end_date = (request.args.get("to") or today_str)[:10]
+            if end_date < start_date:
+                start_date, end_date = end_date, start_date
+            period_label = f"{start_date} to {end_date}"
         else:
             start_date = today_date.replace(day=1).strftime("%Y-%m-%d")
-            end_date = today_date.strftime("%Y-%m-%d")
+            end_date = today_str
             period_label = today_date.strftime("%B %Y")
         
         # Get GL journals filtered by date + the business chart of accounts
@@ -5219,43 +5311,44 @@ def register_report_routes(app, db, login_required, Auth, render_page,
             if _code:
                 acc_lookup[_code] = a
         
-        # Which P&L section an account belongs to: account_type first, then the
-        # Sage category, then the code range. Returns None for balance sheet accounts.
-        CAT_SECTION = {
-            "sales": "income", "revenue": "income", "other income": "income",
-            "cost of sales": "cost_of_sales",
-            "expenses": "expense", "operating expenses": "expense",
-            "other expenses": "expense", "finance costs": "expense",
-        }
-        
+        # Which P&L section an account belongs to (shared rule with the
+        # Balance Sheet and VAT201). Returns None for balance sheet accounts.
         def pnl_section(code, acc):
-            acc_type = str((acc or {}).get("account_type", "") or "").strip().lower()
-            if acc_type in ("income", "revenue"):
-                return "income"
-            if acc_type in ("cost_of_sales", "cost of sales"):
-                return "cost_of_sales"
-            if acc_type == "expense":
-                return "expense"
-            if acc_type in ("asset", "liability", "equity"):
-                return None
-            category = str((acc or {}).get("category", "") or "").strip().lower()
-            if category in CAT_SECTION:
-                return CAT_SECTION[category]
-            if category:
-                return None
-            first = code[:1]
-            if first == "4":
-                return "income"
-            if first == "5":
-                return "cost_of_sales"
-            if first in ("6", "7", "8", "9"):
-                return "expense"
-            return None
+            section = _gl_section(code, acc)
+            return section if section in ("income", "cost_of_sales", "expense") else None
         
         # Aggregate the GL by account code
         income_totals = {}
         cos_totals = {}
         expense_totals = {}
+        
+        def add_movement(code, section, debit, credit):
+            if section == "income":
+                income_totals[code] = income_totals.get(code, 0.0) + (credit - debit)
+            elif section == "cost_of_sales":
+                cos_totals[code] = cos_totals.get(code, 0.0) + (debit - credit)
+            else:
+                expense_totals[code] = expense_totals.get(code, 0.0) + (debit - credit)
+        
+        # Sage balances carried on the chart of accounts (undated) belong to
+        # the financial year of the migration - include them only when the
+        # period starts on or before that year, exactly as the TB/GL carry them.
+        include_coa_balances = start_date <= _COA_BALANCE_FY_START <= end_date
+        coa_balance_total = 0.0
+        if include_coa_balances:
+            for a in coa:
+                if not a.get("is_active", True):
+                    continue
+                code = str(a.get("account_code", "") or "").strip()
+                section = pnl_section(code, a)
+                if not code or not section:
+                    continue
+                b_dr, b_cr = _coa_base_balance(a)
+                if b_dr == 0 and b_cr == 0:
+                    continue
+                coa_balance_total += abs(b_dr - b_cr)
+                add_movement(code, section, b_dr, b_cr)
+        
         for j in journals:
             code = str(j.get("account_code", "") or "").strip()
             if not code:
@@ -5263,14 +5356,7 @@ def register_report_routes(app, db, login_required, Auth, render_page,
             section = pnl_section(code, acc_lookup.get(code))
             if not section:
                 continue
-            debit = float(j.get("debit", 0) or 0)
-            credit = float(j.get("credit", 0) or 0)
-            if section == "income":
-                income_totals[code] = income_totals.get(code, 0.0) + (credit - debit)
-            elif section == "cost_of_sales":
-                cos_totals[code] = cos_totals.get(code, 0.0) + (debit - credit)
-            else:
-                expense_totals[code] = expense_totals.get(code, 0.0) + (debit - credit)
+            add_movement(code, section, float(j.get("debit", 0) or 0), float(j.get("credit", 0) or 0))
         
         def account_label(code):
             name = str((acc_lookup.get(code) or {}).get("account_name", "") or "").strip()
@@ -5311,23 +5397,47 @@ def register_report_routes(app, db, login_required, Auth, render_page,
         cos_rows = build_rows(cos_lines, negative=True)
         expense_rows = build_rows(expense_lines)
         
+        coa_note = ""
+        if include_coa_balances and coa_balance_total:
+            coa_note = '<p style="color:var(--text-muted);font-size:12px;margin-top:-12px;margin-bottom:20px;">Includes the Sage opening balances carried on the chart of accounts (financial year of migration).</p>'
+        
+        custom_style = "" if period == "custom" else "display:none;"
         content = f'''
         <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:20px;">
             <a href="/reports" style="color:var(--text-muted);">← Back to Reports</a>
             <div style="display:flex;gap:10px;align-items:center;">
-                <select onchange="window.location='/reports/pnl?period='+this.value" style="padding:8px;border-radius:6px;background:var(--card);color:var(--text);border:1px solid var(--border);">
+                <select id="pnlPeriod" onchange="pnlPeriodChanged(this.value)" style="padding:8px;border-radius:6px;background:var(--card);color:var(--text);border:1px solid var(--border);">
                     <option value="month" {"selected" if period == "month" else ""}>This Month</option>
                     <option value="quarter" {"selected" if period == "quarter" else ""}>This Quarter</option>
-                    <option value="year" {"selected" if period == "year" else ""}>This Year</option>
+                    <option value="year" {"selected" if period == "year" else ""}>This Financial Year</option>
                     <option value="all" {"selected" if period == "all" else ""}>All Time</option>
+                    <option value="custom" {"selected" if period == "custom" else ""}>Custom Range</option>
                 </select>
+                <span id="pnlCustom" style="{custom_style}display:flex;gap:6px;align-items:center;">
+                    <input type="date" id="pnlFrom" value="{start_date}" style="padding:7px;border-radius:6px;background:var(--card);color:var(--text);border:1px solid var(--border);">
+                    <span style="color:var(--text-muted);">to</span>
+                    <input type="date" id="pnlTo" value="{end_date}" style="padding:7px;border-radius:6px;background:var(--card);color:var(--text);border:1px solid var(--border);">
+                    <button class="btn btn-secondary" onclick="pnlGoCustom()">Go</button>
+                </span>
                 <button class="btn btn-secondary" onclick="window.print();">🖨️ Print</button>
             </div>
         </div>
+        <script>
+        function pnlPeriodChanged(v) {{
+            if (v === 'custom') {{ document.getElementById('pnlCustom').style.display = 'flex'; return; }}
+            window.location = '/reports/pnl?period=' + v;
+        }}
+        function pnlGoCustom() {{
+            var f = document.getElementById('pnlFrom').value, t = document.getElementById('pnlTo').value;
+            if (!f || !t) return;
+            window.location = '/reports/pnl?period=custom&from=' + f + '&to=' + t;
+        }}
+        </script>
         
         <div class="card">
             <h2 style="margin-bottom:5px;">[CHART] Income Statement</h2>
             <p style="color:var(--text-muted);margin-bottom:20px;">For the period: {period_label}</p>
+            {coa_note}
             
             <table class="table" style="font-size:14px;">
                 <tbody>
@@ -5395,104 +5505,144 @@ def register_report_routes(app, db, login_required, Auth, render_page,
     @app.route("/reports/balance-sheet")
     @login_required
     def report_balance_sheet():
-        """Balance Sheet - Proper accounting format"""
+        """Balance Sheet - built from the general ledger (chart of accounts + journals), same source as the TB"""
         
         user = Auth.get_current_user()
         business = Auth.get_current_business()
         biz_id = business.get("id") if business else None
         
-        # ASSETS
-        # Current Assets
-        customers = db.get("customers", {"business_id": biz_id}) if biz_id else []
-        total_debtors = sum(float(c.get("balance", 0)) for c in customers if float(c.get("balance", 0)) > 0)
+        # "As at" date (default today). Journals dated after it are excluded.
+        asat = (request.args.get("asat") or today())[:10]
+        fy_start, fy_end, fy_label = _fy_bounds(asat)
         
-        stock = db.get_all_stock(biz_id)
-        stock_value = sum(
-            float(s.get("qty") or s.get("quantity") or 0) * float(s.get("cost") or s.get("cost_price") or 0) 
-            for s in stock
-        )
+        coa = db.get("chart_of_accounts", {"business_id": biz_id}) if biz_id else []
+        journals = db.get("journals", {"business_id": biz_id}) if biz_id else []
         
-        # Bank balance (from receipts - expenses - supplier payments)
-        receipts = db.get("receipts", {"business_id": biz_id}) if biz_id else []
-        total_receipts = sum(float(r.get("amount", 0)) for r in receipts)
+        acc_lookup = {}
+        for a in coa:
+            _code = str(a.get("account_code", "") or "").strip()
+            if _code:
+                acc_lookup[_code] = a
         
-        sales = db.get("sales", {"business_id": biz_id}) if biz_id else []
-        # Only cash and card sales affect bank - account sales are in debtors
-        cash_card_sales = sum(float(s.get("total", 0)) for s in sales if s.get("payment_method", "cash") in ("cash", "card"))
+        # balances[code] = net debit balance (negative = credit balance)
+        balances = {}
+        prior_pl = 0.0     # P&L movement dated before this financial year -> retained income
+        current_pl = 0.0   # P&L movement this financial year (incl. Sage balances) -> current year profit
         
-        expenses = db.get("expenses", {"business_id": biz_id}) if biz_id else []
-        total_expenses_paid = sum(float(e.get("amount", 0)) for e in expenses)
+        def is_pl(section):
+            return section in ("income", "cost_of_sales", "expense")
         
-        supplier_payments = db.get("supplier_payments", {"business_id": biz_id}) if biz_id else []
-        total_supplier_payments = sum(float(p.get("amount", 0)) for p in supplier_payments)
+        # 1. Sage balances carried on the chart of accounts (same rule as GL/TB)
+        for a in coa:
+            if not a.get("is_active", True):
+                continue
+            code = str(a.get("account_code", "") or "").strip()
+            if not code:
+                continue
+            b_dr, b_cr = _coa_base_balance(a)
+            if b_dr == 0 and b_cr == 0:
+                continue
+            section = _gl_section(code, a)
+            if is_pl(section):
+                current_pl += (b_cr - b_dr)
+            else:
+                balances[code] = balances.get(code, 0.0) + (b_dr - b_cr)
         
-        payslips = db.get("payslips", {"business_id": biz_id}) if biz_id else []
-        total_payroll_paid = sum(float(p.get("net", 0)) for p in payslips)
+        # 2. Journals up to the as-at date
+        for j in journals:
+            j_date = str(j.get("date", "") or "")[:10]
+            if not j_date or j_date > asat:
+                continue
+            code = str(j.get("account_code", "") or "").strip()
+            if not code:
+                continue
+            debit = float(j.get("debit", 0) or 0)
+            credit = float(j.get("credit", 0) or 0)
+            if debit == 0 and credit == 0:
+                continue
+            section = _gl_section(code, acc_lookup.get(code))
+            if is_pl(section):
+                if j_date < fy_start:
+                    prior_pl += (credit - debit)
+                else:
+                    current_pl += (credit - debit)
+            else:
+                balances[code] = balances.get(code, 0.0) + (debit - credit)
         
-        bank_balance = total_receipts + cash_card_sales - total_expenses_paid - total_supplier_payments - total_payroll_paid
+        # 3. Group balance sheet accounts: section -> category -> lines
+        groups = {"asset": {}, "liability": {}, "equity": {}, "unclassified": {}}
+        default_cat = {"asset": "Current Assets", "liability": "Current Liabilities",
+                       "equity": "Owners Equity", "unclassified": "Unclassified accounts"}
+        for code, bal in balances.items():
+            bal = round(bal, 2)
+            if bal == 0:
+                continue
+            acc = acc_lookup.get(code) or {}
+            section = _gl_section(code, acc)
+            if section not in ("asset", "liability", "equity"):
+                section = "unclassified"
+            cat = str(acc.get("category", "") or "").strip() or default_cat[section]
+            name = str(acc.get("account_name", "") or "").strip() or "Unmapped account"
+            # Assets shown as debit balances; liabilities/equity as credit balances
+            shown = bal if section == "asset" else -bal
+            groups[section].setdefault(cat, []).append((code, name, shown))
         
-        # VAT Receivable (input VAT from expenses)
-        vat_receivable = sum(float(e.get("vat", 0)) for e in expenses)
+        def section_rows(section):
+            rows = ""
+            total = 0.0
+            for cat in sorted(groups[section].keys()):
+                lines = sorted(groups[section][cat], key=lambda x: x[0])
+                cat_total = sum(v for _, _, v in lines)
+                total += cat_total
+                rows += f'<tr><td style="padding-left:20px;font-weight:bold;">{safe_string(cat)}</td><td></td></tr>'
+                for code, name, val in lines:
+                    rows += f'''
+                    <tr>
+                        <td style="padding-left:40px;">{safe_string(code)} - {safe_string(name)}</td>
+                        <td style="text-align:right;{'color:var(--red);' if val < 0 else ''}">{money(val)}</td>
+                    </tr>'''
+                rows += f'''
+                    <tr style="font-weight:bold;border-top:1px solid var(--border);">
+                        <td style="padding-left:20px;">Total {safe_string(cat)}</td>
+                        <td style="text-align:right;">{money(cat_total)}</td>
+                    </tr>'''
+            return rows, total
         
-        total_current_assets = total_debtors + stock_value + bank_balance + vat_receivable
-        if bank_balance < 0:
-            total_current_assets = total_debtors + stock_value + vat_receivable  # Bank overdraft goes to liabilities
+        asset_rows, total_assets = section_rows("asset")
+        liab_rows, total_liabilities = section_rows("liability")
+        equity_rows, equity_accounts_total = section_rows("equity")
+        uncl_rows, total_unclassified = section_rows("unclassified")
         
-        total_assets = total_current_assets
+        total_equity = equity_accounts_total + prior_pl + current_pl
+        balance_diff = round(total_assets - (total_liabilities + total_equity + total_unclassified), 2)
+        is_balanced = abs(balance_diff) < 0.01
         
-        # LIABILITIES
-        # Current Liabilities
-        suppliers = db.get("suppliers", {"business_id": biz_id}) if biz_id else []
-        total_creditors = sum(float(s.get("balance", 0)) for s in suppliers if float(s.get("balance", 0)) > 0)
-        
-        # VAT Payable (output VAT from sales)
-        invoices = db.get("invoices", {"business_id": biz_id}) if biz_id else []
-        vat_from_invoices = sum(float(i.get("vat", 0)) for i in invoices)
-        vat_from_sales = sum(float(s.get("vat", 0)) for s in sales)
-        vat_payable = vat_from_invoices + vat_from_sales - vat_receivable
-        if vat_payable < 0:
-            vat_payable = 0  # VAT refund due would be an asset
-        
-        bank_overdraft = abs(bank_balance) if bank_balance < 0 else 0
-        
-        total_current_liabilities = total_creditors + vat_payable + bank_overdraft
-        total_liabilities = total_current_liabilities
-        
-        # EQUITY
-        # Calculate retained earnings from profit
-        invoice_income = sum(float(inv.get("subtotal", 0)) for inv in invoices)
-        sales_income = sum(float(s.get("subtotal", 0)) for s in sales)
-        total_income = invoice_income + sales_income
-        
-        expense_total = sum(float(e.get("amount", 0)) for e in expenses)
-        payroll_total = sum(float(p.get("gross", 0)) for p in payslips)
-        
-        # Cost of sales from supplier invoices
-        supplier_invoices = db.get("supplier_invoices", {"business_id": biz_id}) if biz_id else []
-        cost_of_sales = sum(float(si.get("total", 0)) for si in supplier_invoices)
-        
-        net_profit = total_income - cost_of_sales - expense_total - payroll_total
-        
-        # Get previous year retained earnings
-        year_ends = db.get("year_ends", {"business_id": biz_id}) if biz_id else []
-        previous_retained = sum(float(ye.get("retained_earnings", 0)) for ye in year_ends)
-        
-        retained_earnings = previous_retained + net_profit
-        total_equity = retained_earnings
-        
-        # Check if balanced
-        is_balanced = abs(total_assets - (total_liabilities + total_equity)) < 0.01
-        balance_diff = total_assets - (total_liabilities + total_equity)
+        unclassified_block = ""
+        if groups["unclassified"]:
+            unclassified_block = f'''
+                    <tr style="background:rgba(245,158,11,0.1);">
+                        <td colspan="2"><strong>UNCLASSIFIED ACCOUNTS</strong> <span style="font-weight:normal;color:var(--text-muted);font-size:12px;">(no account type on the chart of accounts - fix in Settings)</span></td>
+                    </tr>
+                    {uncl_rows}
+                    <tr style="font-weight:bold;background:rgba(245,158,11,0.05);">
+                        <td>TOTAL UNCLASSIFIED</td>
+                        <td style="text-align:right;font-size:16px;">{money(total_unclassified)}</td>
+                    </tr>'''
         
         content = f'''
         <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:20px;">
             <a href="/reports" style="color:var(--text-muted);">← Back to Reports</a>
-            <button class="btn btn-secondary" onclick="window.print();">🖨️ Print</button>
+            <div style="display:flex;gap:10px;align-items:center;">
+                <span style="color:var(--text-muted);">As at</span>
+                <input type="date" id="bsAsat" value="{asat}" style="padding:7px;border-radius:6px;background:var(--card);color:var(--text);border:1px solid var(--border);">
+                <button class="btn btn-secondary" onclick="window.location='/reports/balance-sheet?asat='+document.getElementById('bsAsat').value">Go</button>
+                <button class="btn btn-secondary" onclick="window.print();">🖨️ Print</button>
+            </div>
         </div>
         
         <div class="card">
             <h2 style="margin-bottom:5px;">[CHART] Balance Sheet</h2>
-            <p style="color:var(--text-muted);margin-bottom:20px;">As at {today()}</p>
+            <p style="color:var(--text-muted);margin-bottom:20px;">As at {asat} &middot; {fy_label} &middot; Source: general ledger (chart of accounts + journals)</p>
             
             <table class="table" style="font-size:14px;">
                 <tbody>
@@ -5500,77 +5650,40 @@ def register_report_routes(app, db, login_required, Auth, render_page,
                     <tr style="background:rgba(59,130,246,0.1);">
                         <td colspan="2"><strong>ASSETS</strong></td>
                     </tr>
-                    <tr>
-                        <td style="padding-left:20px;font-weight:bold;">Current Assets</td>
-                        <td></td>
-                    </tr>
-                    <tr>
-                        <td style="padding-left:40px;">Bank</td>
-                        <td style="text-align:right;color:{'var(--green)' if bank_balance >= 0 else 'var(--text-muted)'};">{money(max(0, bank_balance))}</td>
-                    </tr>
-                    <tr>
-                        <td style="padding-left:40px;">Debtors (Trade Receivables)</td>
-                        <td style="text-align:right;">{money(total_debtors)}</td>
-                    </tr>
-                    <tr>
-                        <td style="padding-left:40px;">Inventory (Stock)</td>
-                        <td style="text-align:right;">{money(stock_value)}</td>
-                    </tr>
-                    <tr>
-                        <td style="padding-left:40px;">VAT Receivable</td>
-                        <td style="text-align:right;">{money(vat_receivable)}</td>
-                    </tr>
-                    <tr style="font-weight:bold;border-top:1px solid var(--border);">
-                        <td style="padding-left:20px;">Total Current Assets</td>
-                        <td style="text-align:right;">{money(total_current_assets)}</td>
-                    </tr>
+                    {asset_rows or "<tr><td style='padding-left:40px;color:var(--text-muted);' colspan='2'>No asset balances</td></tr>"}
                     <tr style="font-weight:bold;background:rgba(59,130,246,0.05);">
                         <td>TOTAL ASSETS</td>
                         <td style="text-align:right;font-size:16px;">{money(total_assets)}</td>
                     </tr>
                     
                     <!-- LIABILITIES -->
-                    <tr style="background:rgba(239,68,68,0.1);margin-top:20px;">
+                    <tr style="background:rgba(239,68,68,0.1);">
                         <td colspan="2"><strong>LIABILITIES</strong></td>
                     </tr>
-                    <tr>
-                        <td style="padding-left:20px;font-weight:bold;">Current Liabilities</td>
-                        <td></td>
-                    </tr>
-                    {f'<tr><td style="padding-left:40px;">Bank Overdraft</td><td style="text-align:right;color:var(--red);">{money(bank_overdraft)}</td></tr>' if bank_overdraft > 0 else ''}
-                    <tr>
-                        <td style="padding-left:40px;">Creditors (Trade Payables)</td>
-                        <td style="text-align:right;">{money(total_creditors)}</td>
-                    </tr>
-                    <tr>
-                        <td style="padding-left:40px;">VAT Payable</td>
-                        <td style="text-align:right;">{money(vat_payable)}</td>
-                    </tr>
-                    <tr style="font-weight:bold;border-top:1px solid var(--border);">
-                        <td style="padding-left:20px;">Total Current Liabilities</td>
-                        <td style="text-align:right;">{money(total_current_liabilities)}</td>
-                    </tr>
+                    {liab_rows or "<tr><td style='padding-left:40px;color:var(--text-muted);' colspan='2'>No liability balances</td></tr>"}
                     <tr style="font-weight:bold;background:rgba(239,68,68,0.05);">
                         <td>TOTAL LIABILITIES</td>
                         <td style="text-align:right;font-size:16px;">{money(total_liabilities)}</td>
                     </tr>
                     
                     <!-- EQUITY -->
-                    <tr style="background:rgba(139,92,246,0.1);margin-top:20px;">
+                    <tr style="background:rgba(139,92,246,0.1);">
                         <td colspan="2"><strong>EQUITY</strong></td>
                     </tr>
+                    {equity_rows}
                     <tr>
-                        <td style="padding-left:40px;">Retained Earnings (Previous Years)</td>
-                        <td style="text-align:right;">{money(previous_retained)}</td>
+                        <td style="padding-left:40px;">Retained income - prior periods in ClickAI (before {fy_start})</td>
+                        <td style="text-align:right;{'color:var(--red);' if prior_pl < 0 else ''}">{money(prior_pl)}</td>
                     </tr>
                     <tr>
-                        <td style="padding-left:40px;">Current Year Profit/Loss</td>
-                        <td style="text-align:right;color:{'var(--green)' if net_profit >= 0 else 'var(--red)'};">{money(net_profit)}</td>
+                        <td style="padding-left:40px;">Current year {'profit' if current_pl >= 0 else 'loss'} ({fy_label}, to {asat})</td>
+                        <td style="text-align:right;color:{'var(--green)' if current_pl >= 0 else 'var(--red)'};">{money(current_pl)}</td>
                     </tr>
                     <tr style="font-weight:bold;background:rgba(139,92,246,0.05);">
                         <td>TOTAL EQUITY</td>
                         <td style="text-align:right;font-size:16px;">{money(total_equity)}</td>
                     </tr>
+                    {unclassified_block}
                 </tbody>
             </table>
             
@@ -5578,9 +5691,9 @@ def register_report_routes(app, db, login_required, Auth, render_page,
             <div style="margin-top:20px;padding:15px;border-radius:8px;background:{'rgba(16,185,129,0.1)' if is_balanced else 'rgba(239,68,68,0.1)'};border:1px solid {'var(--green)' if is_balanced else 'var(--red)'};">
                 <div style="display:flex;justify-content:space-between;align-items:center;">
                     <span>{'' if is_balanced else '[!]'} Assets = Liabilities + Equity</span>
-                    <span style="font-weight:bold;">{money(total_assets)} = {money(total_liabilities)} + {money(total_equity)}</span>
+                    <span style="font-weight:bold;">{money(total_assets)} = {money(total_liabilities)} + {money(total_equity)}{(' + ' + money(total_unclassified) + ' unclassified') if groups["unclassified"] else ''}</span>
                 </div>
-                {f'<div style="color:var(--red);margin-top:10px;">Difference: {money(balance_diff)} - Please review entries</div>' if not is_balanced else ''}
+                {f'<div style="color:var(--red);margin-top:10px;">Difference: {money(balance_diff)} - the general ledger does not balance to this date. Check the Trial Balance.</div>' if not is_balanced else ''}
             </div>
         </div>
         '''
@@ -5595,7 +5708,7 @@ def register_report_routes(app, db, login_required, Auth, render_page,
     @app.route("/reports/vat")
     @login_required
     def report_vat():
-        """VAT201 Report - Proper SARS format with period selection"""
+        """VAT201 Report - built from the general ledger (VAT control accounts in journals)"""
         
         user = Auth.get_current_user()
         business = Auth.get_current_business()
@@ -5639,121 +5752,169 @@ def register_report_routes(app, db, login_required, Auth, render_page,
         
         start_date = f"{year}-{period_start_month:02d}-01"
         if period_end_month == 12:
-            end_date = f"{year}-12-31"
+            end_date = f"{year+1}-01-01"
         else:
             end_date = f"{year}-{period_end_month+1:02d}-01"
         
         month_names = ["", "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
         period_label = f"{month_names[period_start_month]}-{month_names[period_end_month]} {year}"
         
-        # Get data filtered by period
-        invoices = db.get("invoices", {"business_id": biz_id}) if biz_id else []
-        invoices = [i for i in invoices if start_date <= i.get("date", "") < end_date]
+        # ── Source: journals on the VAT control accounts ────────────────
+        coa = db.get("chart_of_accounts", {"business_id": biz_id}) if biz_id else []
+        acc_lookup = {}
+        for a in coa:
+            _code = str(a.get("account_code", "") or "").strip()
+            if _code:
+                acc_lookup[_code] = a
         
-        sales = db.get("sales", {"business_id": biz_id}) if biz_id else []
-        sales = [s for s in sales if start_date <= s.get("date", "") < end_date]
+        # VAT control accounts: any asset/liability account named "VAT ..." on the
+        # chart, plus the ClickAI defaults (1400 VAT Input, 2100 VAT Output).
+        vat_codes = {"1400", "2100"}
+        for code, a in acc_lookup.items():
+            nm = str(a.get("account_name", "") or "").lower()
+            if nm.startswith("vat") and _gl_section(code, a) in ("asset", "liability"):
+                vat_codes.add(code)
         
-        expenses = db.get("expenses", {"business_id": biz_id}) if biz_id else []
-        expenses = [e for e in expenses if start_date <= e.get("date", "") < end_date]
+        journals = db.get("journals", {"business_id": biz_id}) if biz_id else []
+        journals = [j for j in journals if start_date <= str(j.get("date", "") or "")[:10] < end_date]
         
-        supplier_invoices = db.get("supplier_invoices", {"business_id": biz_id}) if biz_id else []
-        supplier_invoices = [si for si in supplier_invoices if start_date <= si.get("date", "") < end_date]
+        # Group the period's lines per journal (reference + date) so the VAT
+        # line can be read together with the sale/purchase it belongs to.
+        groups = {}
+        for j in journals:
+            key = (str(j.get("reference", "") or ""), str(j.get("date", "") or "")[:10])
+            groups.setdefault(key, []).append(j)
         
-        # OUTPUT VAT (what you owe SARS)
-        # For imported invoices where vat=0, back-calculate from total (assume VAT inclusive)
-        invoice_sales_excl = 0
-        invoice_vat = 0
-        for inv in invoices:
-            subtotal = float(inv.get("subtotal", 0))
-            vat = float(inv.get("vat", 0))
-            total = float(inv.get("total", 0))
-            if vat > 0:
-                invoice_sales_excl += subtotal
-                invoice_vat += vat
-            elif total > 0:
-                # Back-calculate: total is VAT inclusive
-                calc_excl = total / 1.15
-                calc_vat = total - calc_excl
-                invoice_sales_excl += calc_excl
-                invoice_vat += calc_vat
+        def section_of(code):
+            return _gl_section(code, acc_lookup.get(code))
         
-        pos_sales_excl = sum(float(s.get("subtotal", 0)) for s in sales)
-        pos_vat = sum(float(s.get("vat", 0)) for s in sales)
+        def is_capital_asset(code):
+            cat = str((acc_lookup.get(code) or {}).get("category", "") or "").lower()
+            return section_of(code) == "asset" and ("non-current" in cat or "fixed" in cat)
         
-        total_sales_excl = invoice_sales_excl + pos_sales_excl
-        total_output_vat = invoice_vat + pos_vat
+        # Field totals (value excl VAT, VAT amount)
+        sales_excl = 0.0;    sales_vat = 0.0        # field 1  (invoices, POS, bank-allocated income)
+        cn_excl = 0.0;       cn_vat = 0.0           # credit notes (reduce field 1)
+        capital_excl = 0.0;  capital_vat = 0.0      # field 14
+        purch_excl = 0.0;    purch_vat = 0.0        # field 15 (supplier invoices, expenses, stock)
+        ret_excl = 0.0;      ret_vat = 0.0          # purchase returns / expense refunds (reduce 15)
+        other_lines = []                             # VAT control movements with no sale/purchase leg
+        no_vat_groups = []                           # cost journals in the period carrying no VAT line
         
-        # INPUT VAT (what you can claim back)
-        # Claim only the VAT actually captured on the expense. Back-calculating
-        # 15% off every expense claims input tax on salaries, insurance, interest,
-        # income tax and PAYE, none of which SARS allows. Expenses captured with no
-        # VAT are kept out of field 15a and listed below so they can be fixed at
-        # source rather than guessed at here.
-        expense_excl = 0.0
-        expense_vat = 0.0
-        no_vat_expenses = []
-        for e in expenses:
-            _amt = float(e.get("amount", 0) or 0)
-            _evat = float(e.get("vat", 0) or 0)
-            if _evat > 0:
-                expense_excl += _amt - _evat
-                expense_vat += _evat
-            elif _amt != 0:
-                no_vat_expenses.append(e)
-        no_vat_total = sum(float(e.get("amount", 0) or 0) for e in no_vat_expenses)
-
-        # Expenses with no VAT captured - listed so they can be corrected at source
-        no_vat_rows = ""
-        for e in sorted(no_vat_expenses,
-                        key=lambda x: abs(float(x.get("amount", 0) or 0)), reverse=True)[:200]:
-            no_vat_rows += (
-                "<tr>"
-                f'<td>{(e.get("date") or "")[:10]}</td>'
-                f'<td>{safe_string(e.get("description", ""))[:70]}</td>'
-                f'<td>{safe_string(e.get("category", ""))}</td>'
-                f'<td>{safe_string(e.get("category_code", ""))}</td>'
-                f'<td style="text-align:right;">{money(float(e.get("amount", 0) or 0))}</td>'
-                "</tr>"
-            )
-        no_vat_block = ""
-        if no_vat_expenses:
-            no_vat_block = f'''
-        <div class="card" style="margin-top:20px;">
-            <h3 style="margin-bottom:5px;">No VAT captured &mdash; {len(no_vat_expenses)} expenses, {money(no_vat_total)}</h3>
-            <p style="color:var(--text-muted);font-size:13px;margin-bottom:15px;">
-                These are excluded from field 15a because no VAT was recorded on them.
-                Salaries, insurance, interest, income tax and PAYE belong here and are
-                not claimable. Anything else that should carry VAT must be corrected on
-                the expense itself &mdash; this report will not assume a rate.
-            </p>
-            <table class="table" style="font-size:13px;">
-                <thead><tr><th>Date</th><th>Description</th><th>Category</th><th>GL</th>
-                <th style="text-align:right;">Amount (Incl)</th></tr></thead>
-                <tbody>{no_vat_rows}</tbody>
-            </table>
-        </div>'''
+        for key, lines in groups.items():
+            vat_dr = sum(float(l.get("debit", 0) or 0) for l in lines if l.get("account_code") in vat_codes)
+            vat_cr = sum(float(l.get("credit", 0) or 0) for l in lines if l.get("account_code") in vat_codes)
+            inc_net = 0.0; cost_net = 0.0; cap_net = 0.0
+            has_cost = False
+            for l in lines:
+                code = str(l.get("account_code", "") or "").strip()
+                if code in vat_codes:
+                    continue
+                dr = float(l.get("debit", 0) or 0); cr = float(l.get("credit", 0) or 0)
+                sec = section_of(code)
+                if sec == "income":
+                    inc_net += (cr - dr)
+                elif sec in ("cost_of_sales", "expense") or code == "1300":
+                    cost_net += (dr - cr); has_cost = True
+                elif is_capital_asset(code):
+                    cap_net += (dr - cr)
+            
+            if vat_dr == 0 and vat_cr == 0:
+                if has_cost and round(cost_net, 2) != 0:
+                    no_vat_groups.append((key, lines, cost_net))
+                continue
+            
+            vat_net = vat_cr - vat_dr
+            if round(inc_net, 2) != 0:
+                # Sale (VAT credited) or credit note (VAT debited)
+                if vat_net >= 0:
+                    sales_excl += inc_net; sales_vat += vat_net
+                else:
+                    cn_excl += -inc_net; cn_vat += -vat_net
+            elif round(cap_net, 2) != 0:
+                capital_excl += cap_net; capital_vat += -vat_net
+            elif round(cost_net, 2) != 0:
+                # Purchase (VAT debited) or return / refund (VAT credited)
+                if vat_net <= 0:
+                    purch_excl += cost_net; purch_vat += -vat_net
+                else:
+                    ret_excl += -cost_net; ret_vat += vat_net
+            else:
+                # SARS payment / refund, transfers, corrections on the VAT control only
+                other_lines.append((key, lines, vat_net))
         
-        # Supplier invoices - also back-calculate if vat=0
-        si_excl = 0
-        si_vat = 0
-        for si in supplier_invoices:
-            vat = float(si.get("vat", 0))
-            total = float(si.get("total", 0))
-            subtotal = float(si.get("subtotal", 0))
-            if vat > 0:
-                si_excl += subtotal or (total - vat)
-                si_vat += vat
-            elif total > 0:
-                calc_excl = total / 1.15
-                calc_vat = total - calc_excl
-                si_excl += calc_excl
-                si_vat += calc_vat
-        
-        total_purchases_excl = expense_excl + si_excl
-        total_input_vat = expense_vat + si_vat
+        total_sales_excl = sales_excl - cn_excl
+        total_output_vat = sales_vat - cn_vat
+        total_purchases_excl = capital_excl + purch_excl - ret_excl
+        total_input_vat = capital_vat + purch_vat - ret_vat
         
         # NET VAT
         vat_payable = total_output_vat - total_input_vat
+        
+        # Other movements on the VAT control (not part of fields 1-15)
+        other_rows = ""
+        for (ref, dt), lines, vat_net in sorted(other_lines, key=lambda x: x[0][1]):
+            desc = str((lines[0] or {}).get("description", "") or "")
+            other_rows += (
+                "<tr>"
+                f'<td>{dt}</td>'
+                f'<td>{safe_string(ref)}</td>'
+                f'<td>{safe_string(desc)[:70]}</td>'
+                f'<td style="text-align:right;">{money(vat_net)}</td>'
+                "</tr>"
+            )
+        other_block = ""
+        if other_lines:
+            other_total = sum(v for _, _, v in other_lines)
+            other_block = f'''
+        <div class="card" style="margin-top:20px;">
+            <h3 style="margin-bottom:5px;">Other movements on the VAT control account &mdash; {len(other_lines)} journals, net {money(other_total)}</h3>
+            <p style="color:var(--text-muted);font-size:13px;margin-bottom:15px;">
+                SARS payments and refunds, transfers and corrections posted straight to the VAT
+                control account. They change the balance owed to SARS but are not part of the
+                return's fields 1 to 15. Credit = increases VAT owed, debit = reduces it.
+            </p>
+            <table class="table" style="font-size:13px;">
+                <thead><tr><th>Date</th><th>Reference</th><th>Description</th>
+                <th style="text-align:right;">Net VAT (Cr &minus; Dr)</th></tr></thead>
+                <tbody>{other_rows}</tbody>
+            </table>
+        </div>'''
+        
+        # Cost journals with no VAT captured - listed so they can be corrected at source
+        no_vat_rows = ""
+        for (ref, dt), lines, amt in sorted(no_vat_groups, key=lambda x: abs(x[2]), reverse=True)[:200]:
+            desc = str((lines[0] or {}).get("description", "") or "")
+            codes = ", ".join(sorted({str(l.get("account_code", "") or "") for l in lines
+                                      if section_of(str(l.get("account_code", "") or "")) in ("cost_of_sales", "expense")
+                                      or str(l.get("account_code", "") or "") == "1300"}))
+            no_vat_rows += (
+                "<tr>"
+                f'<td>{dt}</td>'
+                f'<td>{safe_string(ref)}</td>'
+                f'<td>{safe_string(desc)[:70]}</td>'
+                f'<td>{safe_string(codes)}</td>'
+                f'<td style="text-align:right;">{money(amt)}</td>'
+                "</tr>"
+            )
+        no_vat_block = ""
+        if no_vat_groups:
+            no_vat_total = sum(a for _, _, a in no_vat_groups)
+            no_vat_block = f'''
+        <div class="card" style="margin-top:20px;">
+            <h3 style="margin-bottom:5px;">No VAT captured &mdash; {len(no_vat_groups)} cost journals, {money(no_vat_total)}</h3>
+            <p style="color:var(--text-muted);font-size:13px;margin-bottom:15px;">
+                These are excluded from field 15 because no VAT was posted with them.
+                Salaries, insurance, interest, income tax and PAYE belong here and are
+                not claimable. Anything else that should carry VAT must be corrected on
+                the source document &mdash; this report will not assume a rate.
+            </p>
+            <table class="table" style="font-size:13px;">
+                <thead><tr><th>Date</th><th>Reference</th><th>Description</th><th>GL</th>
+                <th style="text-align:right;">Amount</th></tr></thead>
+                <tbody>{no_vat_rows}</tbody>
+            </table>
+        </div>'''
         
         # Build period selector
         periods_html = ""
@@ -5766,6 +5927,8 @@ def register_report_routes(app, db, login_required, Auth, render_page,
             p_label = f"{month_names[m]}-{month_names[m+1]} {current_year-1}"
             p_value = f"{current_year-1}-{m:02d}"
             periods_html += f'<option value="{p_value}" {"selected" if period_start_month == m and year == current_year-1 else ""}>{p_label}</option>'
+        
+        vat_codes_label = ", ".join(sorted(vat_codes))
         
         content = f'''
         <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:20px;">
@@ -5780,7 +5943,7 @@ def register_report_routes(app, db, login_required, Auth, render_page,
         
         <div class="card">
             <h2 style="margin-bottom:5px;">[CHART] VAT201 Return</h2>
-            <p style="color:var(--text-muted);margin-bottom:20px;">Tax Period: {period_label}</p>
+            <p style="color:var(--text-muted);margin-bottom:20px;">Tax Period: {period_label} &middot; Source: general ledger, VAT control accounts {vat_codes_label}</p>
             
             <table class="table" style="font-size:14px;">
                 <thead>
@@ -5796,14 +5959,14 @@ def register_report_routes(app, db, login_required, Auth, render_page,
                         <td colspan="3"><strong>OUTPUT VAT (You owe SARS)</strong></td>
                     </tr>
                     <tr>
-                        <td style="padding-left:20px;">1. Standard rated sales - Invoices</td>
-                        <td style="text-align:right;">{money(invoice_sales_excl)}</td>
-                        <td style="text-align:right;">{money(invoice_vat)}</td>
+                        <td style="padding-left:20px;">1. Standard rated supplies</td>
+                        <td style="text-align:right;">{money(sales_excl)}</td>
+                        <td style="text-align:right;">{money(sales_vat)}</td>
                     </tr>
                     <tr>
-                        <td style="padding-left:20px;">1a. Standard rated sales - Cash/POS</td>
-                        <td style="text-align:right;">{money(pos_sales_excl)}</td>
-                        <td style="text-align:right;">{money(pos_vat)}</td>
+                        <td style="padding-left:20px;">Less: credit notes</td>
+                        <td style="text-align:right;">({money(cn_excl)})</td>
+                        <td style="text-align:right;">({money(cn_vat)})</td>
                     </tr>
                     <tr style="font-weight:bold;border-top:1px solid var(--border);">
                         <td style="padding-left:20px;">Total Output VAT</td>
@@ -5817,18 +5980,18 @@ def register_report_routes(app, db, login_required, Auth, render_page,
                     </tr>
                     <tr>
                         <td style="padding-left:20px;">14. Capital goods</td>
-                        <td style="text-align:right;">R0.00</td>
-                        <td style="text-align:right;">R0.00</td>
+                        <td style="text-align:right;">{money(capital_excl)}</td>
+                        <td style="text-align:right;">{money(capital_vat)}</td>
                     </tr>
                     <tr>
-                        <td style="padding-left:20px;">15. Other goods/services - Supplier invoices</td>
-                        <td style="text-align:right;">{money(si_excl)}</td>
-                        <td style="text-align:right;">{money(si_vat)}</td>
+                        <td style="padding-left:20px;">15. Other goods/services (supplier invoices, expenses, stock)</td>
+                        <td style="text-align:right;">{money(purch_excl)}</td>
+                        <td style="text-align:right;">{money(purch_vat)}</td>
                     </tr>
                     <tr>
-                        <td style="padding-left:20px;">15a. Other goods/services - Expenses</td>
-                        <td style="text-align:right;">{money(expense_excl)}</td>
-                        <td style="text-align:right;">{money(expense_vat)}</td>
+                        <td style="padding-left:20px;">Less: purchase returns / refunds</td>
+                        <td style="text-align:right;">({money(ret_excl)})</td>
+                        <td style="text-align:right;">({money(ret_vat)})</td>
                     </tr>
                     <tr style="font-weight:bold;border-top:1px solid var(--border);">
                         <td style="padding-left:20px;">Total Input VAT</td>
@@ -5857,6 +6020,7 @@ def register_report_routes(app, db, login_required, Auth, render_page,
                 </p>
             </div>
         </div>
+        {other_block}
         {no_vat_block}
         '''
         
