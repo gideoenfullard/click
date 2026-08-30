@@ -37496,6 +37496,17 @@ def create_journal_entry(biz_id: str, date: str, description: str, reference: st
             logger.error(f"[GL] UNBALANCED journal entry BLOCKED! ref={reference} debits={total_debits:.2f} credits={total_credits:.2f}")
             raise ValueError(f"Unbalanced journal blocked: {reference} (DR {total_debits:.2f} vs CR {total_credits:.2f})")
     
+    # Who posted it. Every financial action ends here, so this is the one
+    # place that gives Pulse a complete "who did what" record. Scheduler and
+    # import threads run outside a request - they post as system (blank).
+    _created_by = ""
+    try:
+        from flask import has_request_context
+        if has_request_context():
+            _created_by = session.get("user_id") or ""
+    except Exception:
+        _created_by = ""
+    
     for entry in entries:
         account_code = entry.get("account_code")
         debit = float(entry.get("debit", 0))
@@ -37510,7 +37521,8 @@ def create_journal_entry(biz_id: str, date: str, description: str, reference: st
             "account_code": account_code,
             "debit": debit,
             "credit": credit,
-            "created_at": now()
+            "created_at": now(),
+            "created_by": _created_by
         }
         
         # A dropped keep-alive connection to Supabase fails the save outright

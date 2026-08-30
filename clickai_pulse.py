@@ -801,7 +801,7 @@ def register_pulse_routes(app, db, login_required, Auth, generate_id, now, today
                 f_receipts = pool.submit(db.get, "receipts", {"business_id": biz_id})
                 f_sup_invoices = pool.submit(db.get, "supplier_invoices", {"business_id": biz_id})
                 f_sup_payments = pool.submit(db.get, "supplier_payments", {"business_id": biz_id})
-                f_journals = pool.submit(db.get, "journal_entries", {"business_id": biz_id})
+                f_journals = pool.submit(db.get, "journals", {"business_id": biz_id})
                 f_stock_mvts = pool.submit(db.get, "stock_movements", {"business_id": biz_id})
 
                 def _safe(future, label=""):
@@ -831,7 +831,7 @@ def register_pulse_routes(app, db, login_required, Auth, generate_id, now, today
                 receipts_data = _safe(f_receipts, "receipts")
                 sup_invoices = _safe(f_sup_invoices, "supplier_invoices")
                 sup_payments = _safe(f_sup_payments, "supplier_payments")
-                journals = _safe(f_journals, "journal_entries")
+                journals = _safe(f_journals, "journals")
                 stock_mvts = _safe(f_stock_mvts, "stock_movements")
 
                 try:
@@ -843,6 +843,47 @@ def register_pulse_routes(app, db, login_required, Auth, generate_id, now, today
                 pool.shutdown(wait=False)
 
             user_names = {u.get("id"): (u.get("name") or u.get("email") or "Unknown") for u in team_users}
+
+            # ── GL journals -> one action per posting (last 7 days by capture time) ──
+            # Every financial action in ClickAI ends in a journal, and the journal
+            # carries created_by/created_at. This is what makes supplier invoices,
+            # bank allocations, supplier payments, stock adjustments and manual
+            # journals visible per person, not only POS and customer invoices.
+            _gl_cutoff = (datetime.now() - timedelta(days=7)).strftime("%Y-%m-%d")
+            _gl_groups = {}
+            for _jl in journals:
+                _ca = str(_jl.get("created_at", "") or "")
+                if _ca[:10] < _gl_cutoff:
+                    continue
+                _ref = str(_jl.get("reference", "") or "")
+                _key = (_ref, _ca[:16], _jl.get("created_by") or "")
+                _g = _gl_groups.get(_key)
+                if not _g:
+                    _g = {"reference": _ref, "description": str(_jl.get("description", "") or ""),
+                          "date": str(_jl.get("date", "") or "")[:10], "created_at": _ca,
+                          "created_by": _jl.get("created_by") or "", "amount": 0.0, "lines": 0}
+                    _gl_groups[_key] = _g
+                _g["amount"] += float(_jl.get("debit", 0) or 0)
+                _g["lines"] += 1
+            journal_actions = list(_gl_groups.values())
+            # Postings whose source document is already listed from its own table
+            # (invoices, POS sales, quotes, credit notes, POs, GRVs, expenses) are
+            # left out here so they are not shown twice; system postings (COS,
+            # reversals, estimates) are skipped as well.
+            _doc_refs = set()
+            for _d in invoices: _doc_refs.add(str(_d.get("invoice_number", "") or ""))
+            for _d in sales:
+                for _k in ("sale_number", "sale_num", "number", "invoice_number", "reference"):
+                    if _d.get(_k): _doc_refs.add(str(_d.get(_k)))
+            for _d in credit_notes: _doc_refs.add(str(_d.get("credit_note_number", "") or _d.get("number", "") or ""))
+            for _d in quotes: _doc_refs.add(str(_d.get("quote_number", "") or ""))
+            for _d in purchase_orders: _doc_refs.add(str(_d.get("po_number", "") or ""))
+            for _d in grvs: _doc_refs.add("GRV " + str(_d.get("grv_number", "") or ""))
+            _doc_refs.discard("")
+            _sys_prefixes = ("COS-", "REVCOS-", "EST-", "REVEDIT-", "REFCOS-", "EXP-")
+            journal_actions = [a for a in journal_actions
+                               if a["reference"] not in _doc_refs
+                               and not a["reference"].startswith(_sys_prefixes)]
             logger.info(f"[PULSE] DB loaded in {time.time()-_start:.1f}s (parallel, {len(team_users)} users)")
 
             # Payments received live in TWO tables: 'payments' (invoice Mark
@@ -1034,7 +1075,7 @@ def register_pulse_routes(app, db, login_required, Auth, generate_id, now, today
                                          "inv_amt": 0, "q_amt": 0, "s_amt": 0, "p_amt": 0,
                                          "cn_amt": 0, "dn_amt": 0, "po_amt": 0, "j_amt": 0,
                                          "grv_amt": 0, "exp_amt": 0, "bt_amt": 0, "cu_amt": 0,
-                                         "ts_hrs": 0},
+                                         "ts_hrs": 0, "gl": 0, "gl_amt": 0},
                         "yesterday_totals": {"invoices": 0, "quotes": 0, "sales": 0, "payments": 0,
                                              "credit_notes": 0, "delivery_notes": 0, "purchase_orders": 0,
                                              "jobs": 0, "grvs": 0, "expenses": 0, "bank_txns": 0,
@@ -1042,7 +1083,7 @@ def register_pulse_routes(app, db, login_required, Auth, generate_id, now, today
                                              "inv_amt": 0, "q_amt": 0, "s_amt": 0, "p_amt": 0,
                                              "cn_amt": 0, "dn_amt": 0, "po_amt": 0, "j_amt": 0,
                                              "grv_amt": 0, "exp_amt": 0, "bt_amt": 0, "cu_amt": 0,
-                                             "ts_hrs": 0}
+                                             "ts_hrs": 0, "gl": 0, "gl_amt": 0}
                     }
 
             # Ensure ALL team members show (even idle ones)
@@ -1052,15 +1093,21 @@ def register_pulse_routes(app, db, login_required, Auth, generate_id, now, today
                     _ensure_team(uid)
 
             def _gather(records, date_field, uid_field, get_text, get_amount, icon, color, type_key, amt_key, extra_date_field=None):
-                """Generic gatherer for any record type into team_data."""
+                """Generic gatherer for any record type into team_data.
+                A person's day is judged by WHEN the record was captured
+                (created_at), not by the document date: a supplier invoice
+                dated last week that Daphne captures today is today's work."""
                 for rec in records:
-                    rec_date = str(rec.get(date_field, rec.get(extra_date_field or "created_at", "")))[:10]
+                    doc_date = str(rec.get(date_field, rec.get(extra_date_field or "created_at", "")))[:10]
+                    rec_date = str(rec.get("created_at", "") or "")[:10] or doc_date
                     if rec_date not in (today_str, yesterday_str):
                         continue
                     uid = rec.get(uid_field) or rec.get("created_by") or "unknown"
                     _ensure_team(uid)
                     amt = get_amount(rec)
                     text = get_text(rec)
+                    if doc_date and doc_date != rec_date:
+                        text += f" (dated {doc_date})"
                     ts = str(rec.get("created_at", ""))
                     time_str = ts[11:16] if len(ts) > 16 else ""
                     action = {"time": time_str, "sort": ts, "icon": icon, "color": color, "text": text, "amount": amt}
@@ -1089,11 +1136,8 @@ def register_pulse_routes(app, db, login_required, Auth, generate_id, now, today
                     lambda s: float(s.get("total", 0) or 0),
                     "&#128176;", "#10b981", "sales", "s_amt")
 
-            # Payments
-            _gather(payments, "date", "created_by",
-                    lambda p: f"Payment received from {(p.get('customer_name', '') or 'Customer')[:25]} ({p.get('payment_method', '') or 'n/a'})",
-                    lambda p: float(p.get("amount", 0) or 0),
-                    "&#10003;", "#10b981", "payments", "p_amt")
+            # Payments and bank transactions carry no created_by - they are
+            # shown per person from their GL journals below instead.
 
             # Payments received via bank recon / on-account (receipts not
             # mirrored from the payments table) — same bucket, full visibility
@@ -1145,10 +1189,12 @@ def register_pulse_routes(app, db, login_required, Auth, generate_id, now, today
                 desc = (bt.get("description", bt.get("reference", "")) or "")[:30]
                 return f"Bank {direction}: {desc}"
 
-            _gather(bank_txns, "date", "created_by",
-                    _bank_text,
-                    lambda bt: abs(float(bt.get("amount", 0) or 0)),
-                    "&#127974;", "#0ea5e9", "bank_txns", "bt_amt", "created_at")
+            # ── GL postings per person (supplier invoices, bank allocations,
+            #    supplier payments, receipts, stock adjustments, manual journals) ──
+            _gather(journal_actions, "date", "created_by",
+                    lambda a: (a.get("description") or a.get("reference") or "GL posting")[:60],
+                    lambda a: float(a.get("amount", 0) or 0),
+                    "&#128221;", "#6366f1", "gl", "gl_amt", "created_at")
 
             # ── NEW: Cash-Ups (rich detail) ──
             def _cashup_text(cu):
@@ -1216,6 +1262,7 @@ def register_pulse_routes(app, db, login_required, Auth, generate_id, now, today
                 if totals.get("bank_txns"): parts.append(f'<span style="color:#0ea5e9;">{totals["bank_txns"]} bank {fmt(totals["bt_amt"])}</span>')
                 if totals.get("cashups"): parts.append(f'<span style="color:#84cc16;">{totals["cashups"]} cash-up</span>')
                 if totals.get("timesheets"): parts.append(f'<span style="color:#a855f7;">{totals["timesheets"]} ts {totals["ts_hrs"]:.1f}h</span>')
+                if totals.get("gl"): parts.append(f'<span style="color:#6366f1;">{totals["gl"]} GL {fmt(totals["gl_amt"])}</span>')
                 return " &bull; ".join(parts) if parts else '<span style="color:#ef4444;">No activity</span>'
 
             # ── Build action lines helper ──
@@ -1262,7 +1309,7 @@ def register_pulse_routes(app, db, login_required, Auth, generate_id, now, today
 
                 # TODAY
                 if has_today:
-                    today_total_amt = sum(data["today_totals"].get(k, 0) for k in ("inv_amt", "q_amt", "s_amt", "p_amt", "exp_amt", "bt_amt", "cu_amt"))
+                    today_total_amt = sum(data["today_totals"].get(k, 0) for k in ("inv_amt", "q_amt", "s_amt", "p_amt", "exp_amt", "bt_amt", "cu_amt", "gl_amt"))
                     team_html += f'<div style="margin-bottom:8px;">'
                     team_html += f'<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;padding-bottom:4px;border-bottom:1px solid rgba(255,255,255,0.1);">'
                     team_html += f'<span style="color:#10b981;font-weight:bold;font-size:12px;">TODAY — {len(today_actions)} actions &bull; {fmt(today_total_amt)}</span>'
@@ -1273,7 +1320,7 @@ def register_pulse_routes(app, db, login_required, Auth, generate_id, now, today
 
                 # YESTERDAY (collapsed)
                 if has_yesterday:
-                    yesterday_total_amt = sum(data["yesterday_totals"].get(k, 0) for k in ("inv_amt", "q_amt", "s_amt", "p_amt", "exp_amt", "bt_amt", "cu_amt"))
+                    yesterday_total_amt = sum(data["yesterday_totals"].get(k, 0) for k in ("inv_amt", "q_amt", "s_amt", "p_amt", "exp_amt", "bt_amt", "cu_amt", "gl_amt"))
                     collapse_id = f"yday_{uid[:8]}"
                     team_html += f'<div style="margin-top:4px;">'
                     team_html += f'<div onclick="var el=document.getElementById(\'{collapse_id}\');el.style.display=el.style.display===\'none\'?\'block\':\'none\';" style="cursor:pointer;display:flex;justify-content:space-between;align-items:center;padding:4px 0;border-top:1px solid rgba(255,255,255,0.05);">'
@@ -1391,9 +1438,9 @@ def register_pulse_routes(app, db, login_required, Auth, generate_id, now, today
                           lambda sp: float(sp.get("amount", 0) or 0), "&#128181;", "#dc2626", extra_date_field="created_at")
 
             # ── FULL VISIBILITY: GL journal entries (manual adjustments) ──
-            _add_activity(journals, "date",
-                          lambda j: f'Journal: {(j.get("description", j.get("reference", "")) or "GL entry")[:30]}',
-                          lambda j: float(j.get("amount", j.get("debit", j.get("credit", 0))) or 0), "&#128221;", "#6366f1", extra_date_field="created_at")
+            _add_activity(journal_actions, "created_at",
+                          lambda j: f'GL: {(j.get("description") or j.get("reference") or "GL posting")[:40]}',
+                          lambda j: float(j.get("amount", 0) or 0), "&#128221;", "#6366f1")
 
             # ── FULL VISIBILITY: stock movements (in/out/adjustments) ──
             _add_activity(stock_mvts, "date",
