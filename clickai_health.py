@@ -740,7 +740,7 @@ def chk_tb_vs_pnl(ctx):
         sec = _gl_section(code, acc.get(code))
         if sec in ("income", "cost_of_sales", "expense"):
             tb_net += _f(j.get("credit")) - _f(j.get("debit"))
-    pnl = build_pnl_summary(_DEPS["db"], ctx["biz_id"], "2000-01-01", ctx["today"])
+    pnl = build_pnl_summary(_DEPS["db"], ctx["biz_id"], "2000-01-01", "2099-12-31")
     gap = round(tb_net - pnl["net_profit"], 2)
     if abs(gap) > TOLERANCE:
         findings.append(_finding(

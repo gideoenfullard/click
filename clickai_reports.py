@@ -437,6 +437,17 @@ def build_segment_pnl_detail(db, biz_id, start_date, end_date):
         "net": net, "net_all": round(sum(net.values()), 2),
     }
 
+def _month_end(y, m):
+    """YYYY-MM-DD of the last day of month m in year y."""
+    nxt = datetime(y + 1, 1, 1) if m == 12 else datetime(y, m + 1, 1)
+    return (nxt - timedelta(days=1)).strftime("%Y-%m-%d")
+
+
+# Periods run to their END (Sage rule), never to "today": a payroll journal
+# dated the 31st belongs to the month even when the report is run on the 30th.
+ALL_TIME_END = "2099-12-31"
+
+
 def report_period_bounds(period, from_date=None, to_date=None):
     """(start_date, end_date, label) for the shared report period selector."""
     today_date = datetime.now()
@@ -445,11 +456,11 @@ def report_period_bounds(period, from_date=None, to_date=None):
     if period == "quarter":
         quarter = (today_date.month - 1) // 3
         start = today_date.replace(month=quarter*3+1, day=1).strftime("%Y-%m-%d")
-        return start, today_str, f"Q{quarter+1} {today_date.year}"
+        return start, _month_end(today_date.year, quarter*3+3), f"Q{quarter+1} {today_date.year}"
     if period == "year":
-        return fy_start, today_str, f"{fy_label} (1 Mar {fy_start[:4]} to {today_date.strftime('%d %b %Y')})"
+        return fy_start, fy_end, f"{fy_label} (1 Mar {fy_start[:4]} to 28 Feb {fy_end[:4]})"
     if period == "all":
-        return "2000-01-01", today_str, "All Time"
+        return "2000-01-01", ALL_TIME_END, "All Time"
     if period == "last_month":
         first_this = today_date.replace(day=1)
         last_prev = first_this - timedelta(days=1)
@@ -460,7 +471,7 @@ def report_period_bounds(period, from_date=None, to_date=None):
         if end < start:
             start, end = end, start
         return start, end, f"{start} to {end}"
-    return today_date.replace(day=1).strftime("%Y-%m-%d"), today_str, today_date.strftime("%B %Y")
+    return today_date.replace(day=1).strftime("%Y-%m-%d"), _month_end(today_date.year, today_date.month), today_date.strftime("%B %Y")
 
 def register_report_routes(app, db, login_required, Auth, render_page,
                            generate_id, money, safe_string, now, today,
@@ -5611,23 +5622,24 @@ def register_report_routes(app, db, login_required, Auth, render_page,
         today_date = datetime.now()
         today_str = today_date.strftime("%Y-%m-%d")
         fy_start, fy_end, fy_label = _fy_bounds(today_str)
+        # Periods run to their end (Sage rule), never to "today"
         if period == "month":
             start_date = today_date.replace(day=1).strftime("%Y-%m-%d")
-            end_date = today_str
+            end_date = _month_end(today_date.year, today_date.month)
             period_label = today_date.strftime("%B %Y")
         elif period == "quarter":
             quarter = (today_date.month - 1) // 3
             start_date = today_date.replace(month=quarter*3+1, day=1).strftime("%Y-%m-%d")
-            end_date = today_str
+            end_date = _month_end(today_date.year, quarter*3+3)
             period_label = f"Q{quarter+1} {today_date.year}"
         elif period == "year":
             # Financial year (1 March - 28/29 February), not the calendar year
             start_date = fy_start
-            end_date = today_str
-            period_label = f"{fy_label} (1 Mar {fy_start[:4]} to {today_date.strftime('%d %b %Y')})"
+            end_date = fy_end
+            period_label = f"{fy_label} (1 Mar {fy_start[:4]} to 28 Feb {fy_end[:4]})"
         elif period == "all":
             start_date = "2000-01-01"
-            end_date = today_str
+            end_date = ALL_TIME_END
             period_label = "All Time"
         elif period == "custom":
             start_date = (request.args.get("from") or fy_start)[:10]
@@ -5637,7 +5649,7 @@ def register_report_routes(app, db, login_required, Auth, render_page,
             period_label = f"{start_date} to {end_date}"
         else:
             start_date = today_date.replace(day=1).strftime("%Y-%m-%d")
-            end_date = today_str
+            end_date = _month_end(today_date.year, today_date.month)
             period_label = today_date.strftime("%B %Y")
         
         # Get GL journals filtered by date + the business chart of accounts
