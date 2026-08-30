@@ -8345,108 +8345,30 @@ class ZaneToolHandler:
         limit = params.get("limit", 20)
         
         customers = self.db.get("customers", {"business_id": self.biz_id}) or []
-        invoices = self.db.get("invoices", {"business_id": self.biz_id}) or []
-        _all_bals = calc_all_customer_balances(self.biz_id)
         
-        # Build outstanding invoices per customer with aging
-        today = datetime.now().date()
+        # Aging comes from the same engine as the Debtors Aging report and
+        # customer statements (calc_all_customer_aging): ledger items less
+        # real allocations, oldest-first. Never re-aged from invoice status.
+        _asat = datetime.now().strftime("%Y-%m-%d")
+        _aging = calc_all_customer_aging(self.biz_id, asat=_asat)
         customer_aging = {}
-        
-        for inv in invoices:
-            if inv.get("status") not in ("outstanding", "sent", "overdue"):
-                continue
-            
-            cust_id = inv.get("customer_id", "")
-            cust_name = inv.get("customer_name", "Unknown")
-            # Outstanding calculated from source documents: total minus
-            # payments already allocated — never the full face value.
-            _paid = float(inv.get("paid_amount", inv.get("amount_paid", 0)) or 0)
-            amount = round(float(inv.get("total", 0) or 0) - _paid, 2)
-            if amount <= 0.01:
-                continue
-            
-            # Calculate age (calendar months — same as the Debtors Aging report)
-            inv_date = inv.get("date", "")
-            try:
-                inv_dt = datetime.strptime(str(inv_date)[:10], "%Y-%m-%d").date()
-                days_old = (today - inv_dt).days
-            except Exception:
-                inv_dt = today
-                days_old = 0
-            months_old = (today.year - inv_dt.year) * 12 + (today.month - inv_dt.month)
-            
-            if cust_name not in customer_aging:
-                customer_aging[cust_name] = {
-                    "name": cust_name, "phone": "", "email": "",
-                    "total": 0, "current": 0, "days_30": 0, "days_60": 0, "days_90": 0, "days_120_plus": 0,
-                    "oldest_invoice_days": 0, "invoice_count": 0
-                }
-            
-            ca = customer_aging[cust_name]
-            ca["total"] += amount
-            ca["invoice_count"] += 1
-            if days_old > ca["oldest_invoice_days"]:
-                ca["oldest_invoice_days"] = days_old
-            
-            # Aging buckets (calendar months, Sage statement-based)
-            if months_old <= 0:
-                ca["current"] += amount
-            elif months_old == 1:
-                ca["days_30"] += amount
-            elif months_old == 2:
-                ca["days_60"] += amount
-            elif months_old == 3:
-                ca["days_90"] += amount
-            else:
-                ca["days_120_plus"] += amount
-        
-        # Add phone/email from customer records
         for c in customers:
+            _a = _aging.get(c.get("id"))
+            if not _a:
+                continue
+            _total = round(float(_a.get("total", 0) or 0), 2)
+            if _total <= 0.01:
+                continue
             name = c.get("name", "")
-            if name in customer_aging:
-                customer_aging[name]["phone"] = c.get("phone", "")
-                customer_aging[name]["email"] = c.get("email", "")
-        
-        # RECONCILE each customer's aging to their CALCULATED ledger balance
-        # (invoices - receipts - credits) — oldest-first reduction so
-        # on-account payments reduce the aging; shortfall lands in the
-        # oldest bucket. Same step that makes the Debtors Aging report correct.
-        _cust_id_by_name = {}
-        for c in customers:
-            _n = (c.get("name") or "").strip().lower()
-            if _n:
-                _cust_id_by_name[_n] = c.get("id")
-        _oldest_first = ("days_120_plus", "days_90", "days_60", "days_30", "current")
-        for _name in list(customer_aging.keys()):
-            _cid = _cust_id_by_name.get((_name or "").strip().lower())
-            if not _cid or _cid not in _all_bals:
-                continue
-            row = customer_aging[_name]
-            ledger_bal = round(float(_all_bals.get(_cid, row["total"]) or 0), 2)
-            diff = round(row["total"] - ledger_bal, 2)
-            if diff > 0.01:
-                for b in _oldest_first:
-                    if diff <= 0.01:
-                        break
-                    take = min(row[b], diff)
-                    row[b] = round(row[b] - take, 2)
-                    diff = round(diff - take, 2)
-            elif diff < -0.01:
-                row["days_120_plus"] = round(row["days_120_plus"] + (-diff), 2)
-            row["total"] = round(row["current"] + row["days_30"] + row["days_60"] + row["days_90"] + row["days_120_plus"], 2)
-            if row["total"] <= 0.01:
-                del customer_aging[_name]
-        
-        # Also add customers with balance but no outstanding invoices
-        for c in customers:
-            name = c.get("name", "")
-            balance = _all_bals.get(c.get("id"), 0)
-            if balance > 0 and name not in customer_aging:
-                customer_aging[name] = {
-                    "name": name, "phone": c.get("phone", ""), "email": c.get("email", ""),
-                    "total": balance, "current": 0, "days_30": 0, "days_60": 0, 
-                    "days_90": 0, "days_120_plus": balance, "oldest_invoice_days": 0, "invoice_count": 0
-                }
+            customer_aging[name] = {
+                "name": name, "phone": c.get("phone", ""), "email": c.get("email", ""),
+                "total": _total,
+                "current": round(float(_a.get("current", 0) or 0), 2),
+                "days_30": round(float(_a.get("30", 0) or 0), 2),
+                "days_60": round(float(_a.get("60", 0) or 0), 2),
+                "days_90": round(float(_a.get("90", 0) or 0), 2),
+                "days_120_plus": round(float(_a.get("120", 0) or 0), 2),
+            }
         
         # Filter and sort
         debtors = [d for d in customer_aging.values() if d["total"] > min_amount]
@@ -8478,6 +8400,8 @@ class ZaneToolHandler:
             insight = "All debtors are within 60 days. Keep up the good collection efforts."
         
         return {
+            "as_at": _asat,
+            "source": "customer ledger aging (same engine as the Debtors Aging report and statements)",
             "total_debtors": len(debtors),
             "total_owed": total_owed,
             "aging_summary": {
@@ -8740,6 +8664,13 @@ class ZaneToolHandler:
         sales = self.db.get("sales", {"business_id": self.biz_id}) or []
         invoices = self.db.get("invoices", {"business_id": self.biz_id}) or []
         
+        # Revenue (excl VAT) comes from the general ledger income accounts -
+        # the same figure as the P&L report. Documents are only used below
+        # for transaction counts, customer ranking and payment methods.
+        from clickai_reports import build_pnl_summary
+        _gl = build_pnl_summary(self.db, self.biz_id, start, end)
+        _gl_prev = build_pnl_summary(self.db, self.biz_id, prev_start, prev_end) if prev_start else None
+        
         # Current period
         total_sales = 0
         total_invoiced = 0
@@ -8778,9 +8709,11 @@ class ZaneToolHandler:
                     prev_sales += float(s.get("total", 0) or 0)
                     prev_count += 1
         
-        # Calculate change
-        if prev_sales > 0:
-            change_pct = ((total_sales - prev_sales) / prev_sales) * 100
+        # Calculate change (GL revenue vs previous period GL revenue)
+        revenue = _gl["income"]
+        prev_revenue = _gl_prev["income"] if _gl_prev else 0
+        if prev_revenue > 0:
+            change_pct = ((revenue - prev_revenue) / prev_revenue) * 100
         else:
             change_pct = 0
         
@@ -8806,12 +8739,16 @@ class ZaneToolHandler:
         return {
             "period": period,
             "date_range": f"{start} to {end}",
-            "total_sales": total_sales,
-            "total_invoiced": total_invoiced,
-            "combined_revenue": total_sales + total_invoiced,
+            "source": "revenue from the general ledger income accounts (excl VAT), same as the P&L report",
+            "total_sales": revenue,
+            "revenue_excl_vat": revenue,
+            "revenue_by_account": _gl["income_accounts"][:10],
+            "pos_sales_incl_vat": total_sales,
+            "invoiced_incl_vat": total_invoiced,
+            "combined_revenue": revenue,
             "transaction_count": count,
             "average_sale": total_sales / count if count else 0,
-            "previous_period_sales": prev_sales,
+            "previous_period_sales": prev_revenue,
             "change_pct": round(change_pct, 1),
             "trend": trend,
             "insight": insight,
@@ -8820,12 +8757,15 @@ class ZaneToolHandler:
         }
     
     def _tool_get_expenses(self, params: dict) -> dict:
-        """Get expenses with trend analysis and insights"""
+        """Operating expenses from the general ledger (expense accounts in journals) with trend analysis"""
         category = params.get("category", "").lower()
         days_back = params.get("days_back", 30)
         limit = params.get("limit", 20)
         
-        expenses = self.db.get("expenses", {"business_id": self.biz_id}) or []
+        from clickai_reports import _gl_section
+        coa = self.db.get("chart_of_accounts", {"business_id": self.biz_id}) or []
+        acc_lookup = {str(a.get("account_code", "") or "").strip(): a for a in coa if a.get("account_code")}
+        journals = self.db.get("journals", {"business_id": self.biz_id}) or []
         now = datetime.now()
         cutoff = (now - timedelta(days=days_back)).strftime("%Y-%m-%d")
         prev_cutoff = (now - timedelta(days=days_back*2)).strftime("%Y-%m-%d")
@@ -8835,12 +8775,18 @@ class ZaneToolHandler:
         # Previous period (for comparison)
         prev_total = 0; prev_cat_totals = {}
         
-        for e in expenses:
-            ed = e.get("date", "")
+        for j in journals:
+            ed = str(j.get("date", "") or "")[:10]
             if not ed:
                 continue
-            amt = float(e.get("amount", 0) or 0)
-            c = e.get("category", "Other")
+            code = str(j.get("account_code", "") or "").strip()
+            if _gl_section(code, acc_lookup.get(code)) != "expense":
+                continue
+            amt = float(j.get("debit", 0) or 0) - float(j.get("credit", 0) or 0)
+            if amt == 0:
+                continue
+            _name = str((acc_lookup.get(code) or {}).get("account_name", "") or "").strip() or "Unmapped account"
+            c = f"{code} - {_name}"
             
             if ed >= cutoff:
                 # Current period
@@ -8848,14 +8794,14 @@ class ZaneToolHandler:
                     continue
                 total += amt
                 cat_totals[c] = cat_totals.get(c, 0) + amt
-                results.append({"description": e.get("description", ""), "amount": amt, "category": c,
-                                "date": ed, "supplier": e.get("supplier_name", "")})
+                results.append({"description": j.get("description", ""), "amount": amt, "category": c,
+                                "date": ed, "reference": j.get("reference", "")})
             elif ed >= prev_cutoff:
                 # Previous period
                 prev_total += amt
                 prev_cat_totals[c] = prev_cat_totals.get(c, 0) + amt
         
-        results.sort(key=lambda x: x["date"] or "", reverse=True)
+        results.sort(key=lambda x: (x["date"] or "", -abs(x["amount"])), reverse=True)
         
         # Calculate change
         if prev_total > 0:
@@ -8892,6 +8838,8 @@ class ZaneToolHandler:
             insight += f" Unusual: {', '.join(unusual[:2])}."
         
         return {
+            "source": "general ledger expense accounts (journals), same as the P&L report; excludes cost of sales",
+            "date_range": f"{cutoff} to {now.strftime('%Y-%m-%d')}",
             "total_expenses": total,
             "count": len(results),
             "previous_period_total": prev_total,
