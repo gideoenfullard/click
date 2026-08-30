@@ -15879,7 +15879,7 @@ class Actions:
                         elif any(x in supplier_lower for x in ["builders", "cashbuild", "hardware"]):
                             category = "Repairs & Maintenance"
                         else:
-                            category = "General Expenses"
+                            category = "Sundry Expenses"
                     
                     total = float(item_data.get("total", 0))
                     _sc_rate = float(vat_rate_for_biz(biz_id))
@@ -17325,7 +17325,7 @@ class IndustryKnowledge:
                 "Safety Equipment",
                 "Warehouse Costs",
                 "Fuel",
-                "General Expenses"
+                "Sundry Expenses"
             ],
             "common_suppliers": [
                 {"name": "Macsteel", "category": "Steel"},
@@ -17363,7 +17363,7 @@ class IndustryKnowledge:
                 "Staff Wages",
                 "Security",
                 "Advertising",
-                "General Expenses"
+                "Sundry Expenses"
             ],
             "common_suppliers": [
                 {"name": "Builders Warehouse", "category": "Hardware"},
@@ -17403,7 +17403,7 @@ class IndustryKnowledge:
                 "Linen & Laundry",
                 "Licence Fees",
                 "Entertainment",
-                "General Expenses"
+                "Sundry Expenses"
             ],
             "common_suppliers": [
                 {"name": "Makro", "category": "Wholesale"},
@@ -17444,7 +17444,7 @@ class IndustryKnowledge:
                 "Staff Wages",
                 "Municipal Rates",
                 "Insurance",
-                "General Expenses"
+                "Sundry Expenses"
             ],
             "common_suppliers": [
                 {"name": "Makro", "category": "Supplies"},
@@ -17481,7 +17481,7 @@ class IndustryKnowledge:
                 "Marketing",
                 "Office Supplies",
                 "Staff Salaries",
-                "General Expenses"
+                "Sundry Expenses"
             ],
             "common_suppliers": [
                 {"name": "Microsoft", "category": "Software"},
@@ -17516,7 +17516,7 @@ class IndustryKnowledge:
                 "Card Machine Fees",
                 "Marketing",
                 "Insurance",
-                "General Expenses"
+                "Sundry Expenses"
             ],
             "common_suppliers": [],
             "pricing_notes": "Keystone (100% markup) common for retail.",
@@ -17545,11 +17545,11 @@ class IndustryKnowledge:
         """Get expense categories for business's industry"""
         business = db.get_one("businesses", business_id)
         if not business:
-            return ["General Expenses"]
+            return ["Sundry Expenses"]
         
         industry = business.get("industry_type", "retail_general")
         profile = cls.get_profile(industry)
-        return profile.get("expense_categories", ["General Expenses"])
+        return profile.get("expense_categories", ["Sundry Expenses"])
     
     @classmethod
     def get_terminology(cls, business_id: str) -> dict:
@@ -17784,7 +17784,6 @@ class IndustryKnowledge:
                 ("Bad Debts Written Off", "7600"),
                 ("Provision for Bad Debts", "7610"),
                 ("Sundry Expenses", "7900"),
-                ("General Expenses", "7999"),
                 ("Refund", "4900"),
                 ("Ignore", ""),
             ]
@@ -32745,7 +32744,7 @@ def expenses_page():
                 </div>
                 <input type="text" id="expSupplier" class="form-input" placeholder="Supplier (optional)" style="width:100%;">
                 <select id="expCategory" class="form-input" style="width:100%;">
-                    <option value="General Expenses">General Expenses</option>
+                    <option value="Sundry Expenses">Sundry Expenses</option>
                     <option disabled>── Stock & Purchases ──</option>
                     <option value="Stock Purchases — General">Stock Purchases</option>
                     <option value="Delivery / Freight Costs">Delivery / Freight</option>
@@ -33017,7 +33016,7 @@ def api_expenses_quick_add():
         
         description = (data.get("description") or "").strip()
         total_amount = float(data.get("total") or data.get("amount") or 0)
-        category = (data.get("category") or "General Expenses").strip()
+        category = (data.get("category") or "Sundry Expenses").strip()
         supplier = (data.get("supplier") or "").strip()
         payment_method = (data.get("payment_method") or "cash").lower()
         expense_date = data.get("date") or today()
@@ -33126,7 +33125,7 @@ def api_expenses_sync_offline():
                 
                 description = (exp.get("description") or "").strip()
                 total_amount = float(exp.get("total") or exp.get("amount") or 0)
-                category = (exp.get("category") or "General Expenses").strip()
+                category = (exp.get("category") or "Sundry Expenses").strip()
                 supplier = (exp.get("supplier") or "").strip()
                 payment_method = (exp.get("payment_method") or "cash").lower()
                 expense_date = exp.get("offline_date") or today()
@@ -64293,7 +64292,7 @@ def api_scan_save_expense():
             elif any(x in supplier_name for x in ["builders", "cashbuild"]):
                 category = "Repairs & Maintenance — Building"
             else:
-                category = "General Expenses"
+                category = "Sundry Expenses"
         
         # SARS RULE: No VAT input claim on Fuel or Entertainment
         no_vat_categories = [
@@ -64460,7 +64459,7 @@ def api_scan_save_expense():
                     description=desc[:200],
                     amount=total_amount, gl_entries=journal_entries,
                     ai_reasoning=f"Scanned expense categorized as '{category}' → GL {expense_account}. VAT claimable: R{vat_claimable:.2f}. {'Multi-GL split applied.' if splits and len(splits) > 1 else 'Single GL.'}",
-                    ai_confidence="HIGH" if category != "General Expenses" else "LOW",
+                    ai_confidence="HIGH" if category != "Sundry Expenses" else "LOW",
                     ai_worker="Jacqo",
                     category=category, category_code=expense_account,
                     supplier_name=data.get("supplier_name", ""), payment_method=payment_method,
