@@ -30915,6 +30915,7 @@ def _get_form_fields():
         "category": request.form.get("category", "").strip(),
         "payment_terms": request.form.get("payment_terms", "").strip(),
         "is_cash_account": request.form.get("is_cash_account") == "on",
+        "direct_cost": request.form.get("direct_cost") == "on",
         "currency": request.form.get("currency", "ZAR").strip(),
         "notes": request.form.get("notes", "").strip(),
     }
@@ -30971,6 +30972,7 @@ def _supplier_form(v=None, is_edit=False):
             <div class="fs"><h3>💰 Payment Terms</h3>
                 <div class="fg3"><div><label class="fl">Payment Terms</label><select name="payment_terms" class="fi">{_pt_opts(val('payment_terms'),'30 Days')}</select></div><div><label class="fl">Discount %</label><input type="number" name="discount_percentage" class="fi" value="{val('discount_percentage','0')}" step="0.5" min="0" max="100"></div><div><label class="fl">Credit Limit (R)</label><input type="number" name="credit_limit" class="fi" value="{val('credit_limit','0')}" step="100"></div></div>
                 <div class="fg1"><label class="fl"><input type="checkbox" name="is_cash_account" {'checked' if v.get('is_cash_account') else ''}> Cash account (paid at the counter)</label><div class="fh">Purchases from this supplier post straight to the bank, not to creditors.</div></div>
+                <div class="fg1"><label class="fl"><input type="checkbox" name="direct_cost" {'checked' if v.get('direct_cost') else ''}> Direct cost (not stock)</label><div class="fh">Goods from this supplier are expensed to Cost of Sales on purchase. Receiving a purchase order does not move them into stock.</div></div>
                 {bal}
             </div>
             <div class="fs"><h3>📝 Notes</h3><div class="fg1"><textarea name="notes" class="fi" rows="3" placeholder="Any additional notes...">{val('notes')}</textarea></div></div>
@@ -55873,7 +55875,8 @@ def create_credit_note(invoice_id):
                         "description": item.get("description", ""),
                         "quantity": credit_qty,
                         "price": price,
-                        "total": line_total
+                        "total": line_total,
+                        "stock_id": item.get("stock_id") or ""
                     })
         else:
             # Full credit - all items
@@ -55886,7 +55889,8 @@ def create_credit_note(invoice_id):
                     "description": item.get("description", ""),
                     "quantity": qty,
                     "price": price,
-                    "total": line_total
+                    "total": line_total,
+                    "stock_id": item.get("stock_id") or ""
                 })
         
         if not credited_items:
@@ -55982,6 +55986,33 @@ def create_credit_note(invoice_id):
                 {"account_code": gl(biz_id, "debtors"), "debit": 0, "credit": float(cn_total)},
             ]
         )
+        
+        # ── STOCK RETURN + COST OF SALES REVERSAL ──
+        # Credited stock-linked lines come back into stock at cost price and
+        # the cost of sales posted on the invoice is reversed for those lines
+        # (DR Stock / CR Cost of Sales) - the mirror of the invoice COS journal.
+        try:
+            _cn_cos = 0.0
+            for _ci in credited_items:
+                _csid = _ci.get("stock_id") or ""
+                if not _csid:
+                    continue
+                _cst = db.get_one_stock(_csid)
+                if not _cst:
+                    continue
+                _cqty = float(_ci.get("quantity") or 0)
+                if _cqty <= 0:
+                    continue
+                _ccur = float(_cst.get("qty") or _cst.get("quantity") or 0)
+                db.update_stock(_csid, {"qty": _ccur + _cqty, "quantity": _ccur + _cqty}, biz_id)
+                _cn_cos += float(_cst.get("cost") or _cst.get("cost_price") or 0) * _cqty
+            if _cn_cos > 0:
+                create_journal_entry(biz_id, today(), f"COS reversal - Credit Note {cn_num}", f"REVCOS-{cn_num}", [
+                    {"account_code": gl(biz_id, "stock"), "debit": round(_cn_cos, 2), "credit": 0},
+                    {"account_code": gl(biz_id, "cogs"), "debit": 0, "credit": round(_cn_cos, 2)},
+                ])
+        except Exception as _cn_cos_err:
+            logger.error(f"[CREDIT NOTE] Stock return / COS reversal failed for {cn_num}: {_cn_cos_err}")
         
         # Customer balance is now calculated dynamically — no manual update needed
         

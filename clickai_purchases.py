@@ -3735,8 +3735,19 @@ def register_purchases_routes(app, db, login_required, Auth, render_page,
                 pass
             
             # --- GL Journal Entry for PO stock received ---
+            # Direct-cost suppliers (consumables, abrasives, parts that are
+            # expensed on purchase, never held as stock) post no stock journal:
+            # the supplier invoice already carries the cost in Cost of Sales.
+            _direct_cost = False
             try:
-                if grv_total > 0 and update_stock:
+                if po.get("supplier_id"):
+                    _sup_dc = db.get("suppliers", {"id": po.get("supplier_id"), "business_id": biz_id})
+                    if _sup_dc and (_sup_dc[0] if isinstance(_sup_dc, list) else _sup_dc).get("direct_cost"):
+                        _direct_cost = True
+            except Exception:
+                pass
+            try:
+                if grv_total > 0 and update_stock and not _direct_cost:
                     stock_acc = gl(biz_id, "stock")
                     cogs_acc = gl(biz_id, "cogs")
                     po_gl_entries = [

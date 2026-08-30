@@ -396,6 +396,7 @@ def register_invoicing_routes(app, db, login_required, Auth, render_page,
                 # === DEDUCT STOCK ===
                 # Get stock_ids from form if provided
                 stock_ids = request.form.getlist("item_stock_id[]")
+                _cos_total = 0.0
                 for i, desc in enumerate(descriptions):
                     if desc.strip() and i < len(stock_ids) and stock_ids[i]:
                         stock_id = stock_ids[i]
@@ -406,6 +407,19 @@ def register_invoicing_routes(app, db, login_required, Auth, render_page,
                             new_qty = current_qty - sold_qty
                             db.update_stock(stock_id, {"qty": new_qty, "quantity": new_qty}, biz_id)
                             logger.info(f"[INVOICE] Stock {stock_id}: {current_qty} - {sold_qty} = {new_qty}")
+                            _cos_total += float(stock_item.get("cost") or stock_item.get("cost_price") or 0) * sold_qty
+                
+                # Cost of sales for stock-linked lines: DR Cost of Sales / CR Stock
+                # at cost price, same as the POS. Without it the invoice carries
+                # revenue with no cost and the gross margin is overstated.
+                try:
+                    if _cos_total > 0:
+                        create_journal_entry(biz_id, invoice_date, f"COS - Invoice {inv_num}", f"COS-{inv_num}", [
+                            {"account_code": gl(biz_id, "cogs"), "debit": round(_cos_total, 2), "credit": 0},
+                            {"account_code": gl(biz_id, "stock"), "debit": 0, "credit": round(_cos_total, 2)},
+                        ])
+                except Exception as _cos_err:
+                    logger.error(f"[INVOICE] COS journal failed for {inv_num}: {_cos_err}")
                 
                 # Try to create journal entries (won't crash if tables don't exist)
                 try:
@@ -2228,14 +2242,24 @@ def register_invoicing_routes(app, db, login_required, Auth, render_page,
             # before the stock link was stored simply leave stock untouched.
             try:
                 _stock_delta = {}
+                _old_cos = 0.0
+                _new_cos = 0.0
+                _cost_cache = {}
+                def _unit_cost(_cid):
+                    if _cid not in _cost_cache:
+                        _cs = db.get_one_stock(_cid)
+                        _cost_cache[_cid] = float((_cs or {}).get("cost") or (_cs or {}).get("cost_price") or 0)
+                    return _cost_cache[_cid]
                 for _oi in _orig_items:
                     _osid = _oi.get("stock_id") or ""
                     if _osid:
                         _stock_delta[_osid] = _stock_delta.get(_osid, 0.0) + float(_oi.get("quantity") or _oi.get("qty") or 0)
+                        _old_cos += _unit_cost(_osid) * float(_oi.get("quantity") or _oi.get("qty") or 0)
                 for _ni in items:
                     _nsid = _ni.get("stock_id") or ""
                     if _nsid:
                         _stock_delta[_nsid] = _stock_delta.get(_nsid, 0.0) - float(_ni.get("quantity") or 0)
+                        _new_cos += _unit_cost(_nsid) * float(_ni.get("quantity") or 0)
                 for _sid, _delta in _stock_delta.items():
                     if abs(_delta) < 0.0001:
                         continue
@@ -2271,6 +2295,25 @@ def register_invoicing_routes(app, db, login_required, Auth, render_page,
                                      inv_num, _new_gl)
             except Exception as _je_err:
                 logger.error(f"[INVOICE EDIT] Journal re-post failed for {inv_num}: {_je_err}")
+            
+            # ── COS: reverse the original cost, post the corrected cost ──
+            try:
+                if _old_cos > 0:
+                    create_journal_entry(biz_id, inv_date,
+                                         f"EDIT REVERSAL of COS - Invoice {inv_num}",
+                                         f"REVCOS-{inv_num}", [
+                        {"account_code": gl(biz_id, "stock"), "debit": round(_old_cos, 2), "credit": 0},
+                        {"account_code": gl(biz_id, "cogs"), "debit": 0, "credit": round(_old_cos, 2)},
+                    ])
+                if _new_cos > 0:
+                    create_journal_entry(biz_id, inv_date,
+                                         f"COS - Invoice {inv_num} (edited)",
+                                         f"COS-{inv_num}", [
+                        {"account_code": gl(biz_id, "cogs"), "debit": round(_new_cos, 2), "credit": 0},
+                        {"account_code": gl(biz_id, "stock"), "debit": 0, "credit": round(_new_cos, 2)},
+                    ])
+            except Exception as _cos_err:
+                logger.error(f"[INVOICE EDIT] COS re-post failed for {inv_num}: {_cos_err}")
             
             # ── ALLOCATION LOG ──
             try:
@@ -5436,6 +5479,7 @@ def register_invoicing_routes(app, db, login_required, Auth, render_page,
         
         if success:
             # === DEDUCT STOCK ===
+            _cos_total = 0.0
             try:
                 items_list = json.loads(quote.get("items", "[]"))
                 all_stock = db.get_all_stock(biz_id)
@@ -5458,8 +5502,19 @@ def register_invoicing_routes(app, db, login_required, Auth, render_page,
                         new_qty = current_qty - sold_qty
                         db.update_stock(stock_item.get("id"), {"qty": new_qty, "quantity": new_qty}, biz_id)
                         logger.info(f"[QUOTE->INV ROUTE] Stock {code or stock_id}: {current_qty} - {sold_qty} = {new_qty}")
+                        _cos_total += float(stock_item.get("cost") or stock_item.get("cost_price") or 0) * sold_qty
             except Exception as e:
                 logger.error(f"[QUOTE->INV ROUTE] Stock deduction error: {e}")
+            
+            # Cost of sales for stock-linked lines (DR Cost of Sales / CR Stock), as on the POS
+            try:
+                if _cos_total > 0:
+                    create_journal_entry(biz_id, today(), f"COS - Invoice {inv_num} (from Quote)", f"COS-{inv_num}", [
+                        {"account_code": gl(biz_id, "cogs"), "debit": round(_cos_total, 2), "credit": 0},
+                        {"account_code": gl(biz_id, "stock"), "debit": 0, "credit": round(_cos_total, 2)},
+                    ])
+            except Exception as _cos_err:
+                logger.error(f"[QUOTE->INV ROUTE] COS journal failed for {inv_num}: {_cos_err}")
             
             # Create journal entries for GL
             # Debit Debtors (1200), Credit Sales (4000) + VAT Output (2100)
