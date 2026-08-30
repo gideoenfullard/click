@@ -6477,6 +6477,18 @@ ZANE_TOOLS = [
         }
     },
     {
+        "name": "get_segment_pnl",
+        "description": "Segment P&L from the general ledger: revenue, cost of sales, direct expenses and contribution per trading segment (e.g. BRUSHING, SUPPLIES, TRAILERS), overheads (SHARED/INTERNAL) per GL account with each overhead's % of total contribution and its biggest items, and net profit. Use for 'which division makes money', 'where is the biggest gap', 'are wages too high' type questions. Figures are pre-calculated - do not recompute them.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "period": {"type": "string", "description": "Time period (default this_month). Use custom with from_date/to_date for a specific range.", "enum": ["this_month", "last_month", "this_quarter", "this_year", "all", "custom"], "default": "this_month"},
+                "from_date": {"type": "string", "description": "Start date YYYY-MM-DD (only with period=custom)"},
+                "to_date": {"type": "string", "description": "End date YYYY-MM-DD (only with period=custom)"}
+            }
+        }
+    },
+    {
         "name": "get_employees",
         "description": "Get employee/payroll information.",
         "input_schema": {
@@ -8897,18 +8909,22 @@ class ZaneToolHandler:
         """Get financial overview with PRE-CALCULATED insights - Zane doesn't need to do math"""
         period = params.get("period", "this_month")
         
-        # Get raw data
-        sales = self._tool_get_sales_summary({"period": period})
-        expenses = self._tool_get_expenses({"days_back": 30 if "month" in period else 365})
+        # Income, cost of sales, expenses and profit come from the general
+        # ledger (journals + chart of accounts) - the same source as the
+        # P&L report - so Zane and the reports always agree.
+        from clickai_reports import build_pnl_summary, report_period_bounds
+        _period_map = {"this_month": "month", "last_month": "last_month", "this_year": "year"}
+        _start, _end, _label = report_period_bounds(_period_map.get(period, "month"))
+        gl = build_pnl_summary(self.db, self.biz_id, _start, _end)
         debtors = self._tool_get_debtors({"limit": 5})
         creditors = self._tool_get_creditors({"limit": 5})
         stock_val = self._tool_get_stock_valuation({})
         
         # Key numbers
-        income = sales["total_sales"]
-        exp_total = expenses["total_expenses"]
-        profit = income - exp_total
-        margin = ((profit) / income * 100) if income > 0 else 0
+        income = gl["income"]
+        exp_total = gl["cost_of_sales"] + gl["expenses"]
+        profit = gl["net_profit"]
+        margin = gl["net_margin_pct"]
         total_debtors = debtors["total_owed"]
         total_creditors = creditors["total_owed"]
         stock_cost = stock_val["total_cost_value"]
@@ -8918,7 +8934,7 @@ class ZaneToolHandler:
         # 1. Profitability assessment
         if margin >= 20:
             profit_status = "HEALTHY"
-            profit_insight = f"Gross margin of {margin:.1f}% is good for most industries."
+            profit_insight = f"Net margin of {margin:.1f}% is good for most industries."
         elif margin >= 10:
             profit_status = "OK"
             profit_insight = f"Margin of {margin:.1f}% is acceptable but could be improved."
@@ -8992,12 +9008,19 @@ class ZaneToolHandler:
         
         return {
             "period": period,
+            "period_from": _start,
+            "period_to": _end,
+            "source": gl["source"],
             "health_score": score,
             "overall_status": overall_status,
             "overall_insight": overall_insight,
             
-            # Financials (pre-calculated)
+            # Financials (pre-calculated, from the general ledger)
             "income": income,
+            "cost_of_sales": gl["cost_of_sales"],
+            "gross_profit": gl["gross_profit"],
+            "gross_margin_pct": gl["gross_margin_pct"],
+            "operating_expenses": gl["expenses"],
             "expenses": exp_total,
             "profit_loss": profit,
             "margin_pct": round(margin, 1),
@@ -9020,8 +9043,37 @@ class ZaneToolHandler:
             # Top items (limited for context)
             "top_debtors": [{"name": d["name"], "total": d["total"]} for d in debtors["debtors"][:3]],
             "top_creditors": creditors["creditors"][:3],
-            "top_expenses": list(expenses["by_category"].items())[:3]
+            "top_expenses": [(e["name"], e["amount"]) for e in gl["expense_accounts"][:3]]
         }
+    
+    def _tool_get_segment_pnl(self, params: dict) -> dict:
+        """Segment P&L from the general ledger - figures pre-calculated, Zane only interprets"""
+        from clickai_reports import build_segment_pnl, report_period_bounds
+        _period_map = {"this_month": "month", "last_month": "last_month", "this_quarter": "quarter",
+                       "this_year": "year", "all": "all", "custom": "custom"}
+        period = params.get("period", "this_month")
+        _start, _end, _label = report_period_bounds(_period_map.get(period, "month"),
+                                                    params.get("from_date"), params.get("to_date"))
+        data = build_segment_pnl(self.db, self.biz_id, _start, _end)
+        data["period_label"] = _label
+        
+        # Pre-calculated pointers so Zane can say where the gap is without doing sums
+        trading = [s for s in data["segments"] if s["segment"] != "UNASSIGNED"]
+        data["segments_ranked_by_contribution"] = [
+            {"segment": s["segment"], "contribution": s["contribution"],
+             "share_of_total_contribution_pct": round(s["contribution"] / data["total_contribution"] * 100, 1) if data["total_contribution"] else None}
+            for s in sorted(trading, key=lambda x: -x["contribution"])]
+        data["biggest_overheads"] = [
+            {"account": f'{o["code"]} - {o["name"]}', "amount": o["amount"],
+             "pct_of_contribution": o["pct_of_contribution"],
+             "biggest_items": o["top_items"][:3]}
+            for o in data["overheads"][:5]]
+        unassigned = [s for s in data["segments"] if s["segment"] == "UNASSIGNED"]
+        data["unassigned_note"] = (
+            f"R{abs(unassigned[0]['contribution']):,.2f} of P&L movement is not stamped to any segment yet"
+            if unassigned else "All P&L lines are stamped to a segment")
+        data["url"] = f"/reports/segment-pnl?period=custom&from={_start}&to={_end}"
+        return data
     
     def _tool_get_employees(self, params: dict) -> dict:
         name_filter = params.get("name", "").lower()
