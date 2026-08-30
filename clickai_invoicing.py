@@ -772,6 +772,24 @@ def register_invoicing_routes(app, db, login_required, Auth, render_page,
             }}
         }}
         
+        let _stockLinkConfirmed = false;
+        // Lines without a stock item post no cost of sales and do not reduce
+        // stock. Warn (never block) so free-text lines are a deliberate choice.
+        function unlinkedStockLines() {{
+            const descs = document.querySelectorAll('input[name="item_desc[]"]');
+            const sids = document.querySelectorAll('input[name="item_stock_id[]"]');
+            const out = [];
+            descs.forEach((d, i) => {{
+                const txt = (d.value || '').trim();
+                if (txt && !(sids[i] && sids[i].value)) out.push(txt);
+            }});
+            return out;
+        }}
+        function confirmUnlinkedStockLines() {{
+            const lines = unlinkedStockLines();
+            if (!lines.length) return true;
+            return confirm('⚠️ ' + lines.length + ' line(s) are not linked to a stock item:\\n\\n- ' + lines.slice(0, 8).join('\\n- ') + (lines.length > 8 ? '\\n- ...' : '') + '\\n\\nNo cost of sales will be posted and stock will not be reduced for these lines.\\n\\nOK = Continue anyway\\nCancel = Go back and pick the stock item');
+        }}
         document.getElementById('invoiceForm').addEventListener('submit', function(e) {{
             // Received-now methods mark the invoice PAID immediately — confirm
             // so "he will pay by EFT later" is not captured as already paid
@@ -797,6 +815,15 @@ def register_invoicing_routes(app, db, login_required, Auth, render_page,
             }}
             if (!custName) {{
                 handleCustomerChange();
+            }}
+            
+            // Warn on lines without a stock item (skip if already confirmed)
+            if (!_stockLinkConfirmed) {{
+                if (!confirmUnlinkedStockLines()) {{
+                    e.preventDefault();
+                    return false;
+                }}
+                _stockLinkConfirmed = true;
             }}
             
             // Check total is not zero (skip if already confirmed)
@@ -2494,10 +2521,31 @@ def register_invoicing_routes(app, db, login_required, Auth, render_page,
         </div>
         
         <script>
+        // Lines without a stock item post no cost of sales and do not reduce
+        // stock. Warn (never block) so free-text lines are a deliberate choice.
+        function unlinkedStockLines() {{
+            const descs = document.querySelectorAll('input[name="item_desc[]"]');
+            const sids = document.querySelectorAll('input[name="item_stock_id[]"]');
+            const out = [];
+            descs.forEach((d, i) => {{
+                const txt = (d.value || '').trim();
+                if (txt && !(sids[i] && sids[i].value)) out.push(txt);
+            }});
+            return out;
+        }}
+        function confirmUnlinkedStockLines() {{
+            const lines = unlinkedStockLines();
+            if (!lines.length) return true;
+            return confirm('⚠️ ' + lines.length + ' line(s) are not linked to a stock item:\\n\\n- ' + lines.slice(0, 8).join('\\n- ') + (lines.length > 8 ? '\\n- ...' : '') + '\\n\\nNo cost of sales will be posted and stock will not be reduced for these lines.\\n\\nOK = Continue anyway\\nCancel = Go back and pick the stock item');
+        }}
         document.addEventListener('DOMContentLoaded', function() {{
             const form = document.getElementById('invoiceEditForm');
             if (form) {{
-                form.addEventListener('submit', function() {{
+                form.addEventListener('submit', function(e) {{
+                    if (!confirmUnlinkedStockLines()) {{
+                        e.preventDefault();
+                        return false;
+                    }}
                     const sel = document.getElementById('customerSelect');
                     const nameInput = document.getElementById('customerName');
                     if (sel && nameInput && sel.value && sel.value !== 'WALKIN' && sel.value !== 'NEW') {{
@@ -4082,10 +4130,31 @@ def register_invoicing_routes(app, db, login_required, Auth, render_page,
         
         <script>
         // FAILSAFE: Sync customer name from dropdown before form submit
+        // Lines without a stock item post no cost of sales and do not reduce
+        // stock. Warn (never block) so free-text lines are a deliberate choice.
+        function unlinkedStockLines() {{
+            const descs = document.querySelectorAll('input[name="item_desc[]"]');
+            const sids = document.querySelectorAll('input[name="item_stock_id[]"]');
+            const out = [];
+            descs.forEach((d, i) => {{
+                const txt = (d.value || '').trim();
+                if (txt && !(sids[i] && sids[i].value)) out.push(txt);
+            }});
+            return out;
+        }}
+        function confirmUnlinkedStockLines() {{
+            const lines = unlinkedStockLines();
+            if (!lines.length) return true;
+            return confirm('⚠️ ' + lines.length + ' line(s) are not linked to a stock item:\\n\\n- ' + lines.slice(0, 8).join('\\n- ') + (lines.length > 8 ? '\\n- ...' : '') + '\\n\\nNo cost of sales will be posted and stock will not be reduced for these lines.\\n\\nOK = Continue anyway\\nCancel = Go back and pick the stock item');
+        }}
         document.addEventListener('DOMContentLoaded', function() {{
             const form = document.getElementById('quoteForm');
             if (form) {{
-                form.addEventListener('submit', function() {{
+                form.addEventListener('submit', function(e) {{
+                    if (!confirmUnlinkedStockLines()) {{
+                        e.preventDefault();
+                        return false;
+                    }}
                     const sel = document.getElementById('customerSelect');
                     const nameInput = document.getElementById('customerName');
                     // If a real customer is selected (not WALKIN/NEW/empty) and nameInput is empty, sync it
@@ -5096,10 +5165,31 @@ def register_invoicing_routes(app, db, login_required, Auth, render_page,
         
         <script>
         // FAILSAFE: Sync customer name from dropdown before form submit
+        // Lines without a stock item post no cost of sales and do not reduce
+        // stock. Warn (never block) so free-text lines are a deliberate choice.
+        function unlinkedStockLines() {{
+            const descs = document.querySelectorAll('input[name="item_desc[]"]');
+            const sids = document.querySelectorAll('input[name="item_stock_id[]"]');
+            const out = [];
+            descs.forEach((d, i) => {{
+                const txt = (d.value || '').trim();
+                if (txt && !(sids[i] && sids[i].value)) out.push(txt);
+            }});
+            return out;
+        }}
+        function confirmUnlinkedStockLines() {{
+            const lines = unlinkedStockLines();
+            if (!lines.length) return true;
+            return confirm('⚠️ ' + lines.length + ' line(s) are not linked to a stock item:\\n\\n- ' + lines.slice(0, 8).join('\\n- ') + (lines.length > 8 ? '\\n- ...' : '') + '\\n\\nNo cost of sales will be posted and stock will not be reduced for these lines.\\n\\nOK = Continue anyway\\nCancel = Go back and pick the stock item');
+        }}
         document.addEventListener('DOMContentLoaded', function() {{
             const form = document.getElementById('quoteForm');
             if (form) {{
-                form.addEventListener('submit', function() {{
+                form.addEventListener('submit', function(e) {{
+                    if (!confirmUnlinkedStockLines()) {{
+                        e.preventDefault();
+                        return false;
+                    }}
                     const sel = document.getElementById('customerSelect');
                     const nameInput = document.getElementById('customerName');
                     if (sel && nameInput && sel.value && sel.value !== 'WALKIN' && sel.value !== 'NEW') {{

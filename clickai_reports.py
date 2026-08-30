@@ -320,6 +320,123 @@ def build_segment_pnl(db, biz_id, start_date, end_date):
     }
 
 
+
+_SEGMENT_ORDER = ("BRUSHING", "SUPPLIES", "TRAILERS", "BEDROCK")
+
+
+def _segment_sort_key(seg):
+    if seg in _SEGMENT_ORDER:
+        return (0, _SEGMENT_ORDER.index(seg), seg)
+    if seg == _UNASSIGNED_SEGMENT:
+        return (2, 0, seg)
+    return (1, 0, seg)
+
+
+def build_segment_pnl_detail(db, biz_id, start_date, end_date):
+    """Segment P&L broken down per GL account, per trading segment and per month.
+    Same lines and rules as build_segment_pnl, so the totals agree with it and
+    with the Income Statement for the period."""
+    lines, acc_lookup, coa_included = _pl_lines(db, biz_id, start_date, end_date)
+
+    def name(code):
+        return str((acc_lookup.get(code) or {}).get("account_name", "") or "").strip() or "Unmapped account"
+
+    months = []
+    m = start_date[:7]
+    while m <= end_date[:7] and len(months) < 24:
+        months.append(m)
+        y, mo = int(m[:4]), int(m[5:7])
+        m = f"{y + 1}-01" if mo == 12 else f"{y}-{mo + 1:02d}"
+
+    # seg_acc[segment][section][code][month] = amount (P&L sign: income +, cost +)
+    seg_acc = {}
+    # oh_acc[(section, code)][month] = cost ; oh_items[(section, code)][desc] = cost
+    oh_acc = {}
+    oh_items = {}
+    for l in lines:
+        mon = l["date"][:7]
+        if mon not in months:
+            mon = months[0] if l["date"][:7] < months[0] else months[-1]
+        for seg, share in _segment_shares(l).items():
+            amt = l["amount"] * share
+            if seg in _OVERHEAD_SEGMENTS:
+                cost = amt if l["section"] != "income" else -amt
+                key = (l["section"], l["code"])
+                oh_acc.setdefault(key, {})
+                oh_acc[key][mon] = oh_acc[key].get(mon, 0.0) + cost
+                d = oh_items.setdefault(key, {})
+                dk = l["description"].strip()[:60] or l["reference"]
+                d[dk] = d.get(dk, 0.0) + cost
+            else:
+                s = seg_acc.setdefault(seg, {"income": {}, "cost_of_sales": {}, "expense": {}})
+                a = s[l["section"]].setdefault(l["code"], {})
+                a[mon] = a.get(mon, 0.0) + amt
+
+    segments = []
+    for seg in sorted(seg_acc.keys(), key=_segment_sort_key):
+        s = seg_acc[seg]
+        def section_rows(section):
+            rows = []
+            for code in sorted(s[section].keys()):
+                by_m = {mo: round(s[section][code].get(mo, 0.0), 2) for mo in months}
+                total = round(sum(by_m.values()), 2)
+                if total == 0 and not any(by_m.values()):
+                    continue
+                rows.append({"code": code, "name": name(code), "months": by_m, "total": total})
+            return rows
+        def sum_rows(rows):
+            return {mo: round(sum(r["months"][mo] for r in rows), 2) for mo in months}
+        inc = section_rows("income"); cos = section_rows("cost_of_sales"); dex = section_rows("expense")
+        inc_t = sum_rows(inc); cos_t = sum_rows(cos); dex_t = sum_rows(dex)
+        gp = {mo: round(inc_t[mo] - cos_t[mo], 2) for mo in months}
+        contrib = {mo: round(gp[mo] - dex_t[mo], 2) for mo in months}
+        segments.append({
+            "segment": seg,
+            "income": inc, "income_total": inc_t,
+            "cost_of_sales": cos, "cost_of_sales_total": cos_t,
+            "gross_profit": gp,
+            "direct_expenses": dex, "direct_expenses_total": dex_t,
+            "contribution": contrib,
+            "totals": {
+                "income": round(sum(inc_t.values()), 2), "cost_of_sales": round(sum(cos_t.values()), 2),
+                "gross_profit": round(sum(gp.values()), 2), "direct_expenses": round(sum(dex_t.values()), 2),
+                "contribution": round(sum(contrib.values()), 2),
+            },
+        })
+
+    total_contribution = {mo: round(sum(sg["contribution"][mo] for sg in segments), 2) for mo in months}
+    total_income = {mo: round(sum(sg["income_total"][mo] for sg in segments), 2) for mo in months}
+    tc_all = round(sum(total_contribution.values()), 2)
+
+    overheads = []
+    for (section, code), by_m_raw in oh_acc.items():
+        by_m = {mo: round(by_m_raw.get(mo, 0.0), 2) for mo in months}
+        total = round(sum(by_m.values()), 2)
+        if total == 0 and not any(by_m.values()):
+            continue
+        top = sorted(oh_items.get((section, code), {}).items(), key=lambda x: -abs(x[1]))[:5]
+        overheads.append({
+            "code": code, "name": name(code), "section": section, "months": by_m, "total": total,
+            "pct_of_contribution": round(total / tc_all * 100, 1) if tc_all else None,
+            "top_items": [{"description": d, "amount": round(v, 2)} for d, v in top],
+        })
+    overheads.sort(key=lambda x: -abs(x["total"]))
+    total_overheads = {mo: round(sum(o["months"][mo] for o in overheads), 2) for mo in months}
+    to_all = round(sum(total_overheads.values()), 2)
+    net = {mo: round(total_contribution[mo] - total_overheads[mo], 2) for mo in months}
+
+    return {
+        "start_date": start_date, "end_date": end_date, "months": months,
+        "includes_sage_opening_balances": coa_included,
+        "segments": segments,
+        "total_income": total_income, "total_income_all": round(sum(total_income.values()), 2),
+        "total_contribution": total_contribution, "total_contribution_all": tc_all,
+        "overheads": overheads,
+        "total_overheads": total_overheads, "total_overheads_all": to_all,
+        "overheads_pct_of_contribution": round(to_all / tc_all * 100, 1) if tc_all else None,
+        "net": net, "net_all": round(sum(net.values()), 2),
+    }
+
 def report_period_bounds(period, from_date=None, to_date=None):
     """(start_date, end_date, label) for the shared report period selector."""
     today_date = datetime.now()
@@ -5733,83 +5850,140 @@ def register_report_routes(app, db, login_required, Auth, render_page,
         user = Auth.get_current_user()
         business = Auth.get_current_business()
         biz_id = business.get("id") if business else None
+        biz_name = business.get("name", "Business") if business else "Business"
         
         period = request.args.get("period", "month")
         start_date, end_date, period_label = report_period_bounds(
             period, request.args.get("from"), request.args.get("to"))
         
-        data = build_segment_pnl(db, biz_id, start_date, end_date)
+        data = build_segment_pnl_detail(db, biz_id, start_date, end_date)
+        months = data["months"]
+        n_months = len(months)
         segments = data["segments"]
+        pnl = build_pnl_summary(db, biz_id, start_date, end_date)
         
-        def cell(v, negative=False, bold=False, colour=None):
-            style = "text-align:right;" + ("font-weight:bold;" if bold else "")
-            if colour:
-                style += f"color:{colour};"
-            elif negative:
-                style += "color:var(--red);"
-            txt = f"({money(v)})" if negative else money(v)
-            return f'<td style="{style}">{txt}</td>'
+        def mlabel(mo):
+            return datetime.strptime(mo + "-01", "%Y-%m-%d").strftime("%b %Y")
         
-        seg_headers = "".join(f'<th style="text-align:right;">{safe_string(s["segment"])}</th>' for s in segments)
+        def amt(v, negative=False, bold=False, muted=False):
+            # Costs are passed with negative=True and shown in brackets; a
+            # negative cost (a reduction) therefore shows as a plain positive.
+            if v == 0:
+                return '<td class="num muted">-</td>'
+            shown = -v if negative else v
+            cls = "num" + (" neg" if shown < 0 else "") + (" b" if bold else "") + (" muted" if muted else "")
+            txt = f"({money(abs(shown))})" if shown < 0 else money(shown)
+            return f'<td class="{cls}">{txt}</td>'
         
-        def seg_row(label, key, negative=False, bold=False, pct_key=None, total_value=None):
+        month_heads = "".join(f'<th class="num">{mlabel(mo)}</th>' for mo in months)
+        head_row = f'<tr><th></th>{month_heads}<th class="num">Total</th><th class="num">Per month</th></tr>'
+        
+        def line_row(label, by_m, total, negative=False, bold=False, indent=1, pct=None):
+            cells = "".join(amt(by_m[mo], negative=negative, bold=bold) for mo in months)
+            pct_html = f' <span class="pct">({pct:.1f}%)</span>' if pct is not None else ""
+            return (f'<tr class="{"tot" if bold else ""}"><td class="lbl i{indent}">{label}{pct_html}</td>{cells}'
+                    f'{amt(total, negative=negative, bold=bold)}{amt(round(total / n_months, 2), negative=negative, muted=True)}</tr>')
+        
+        # ── 1. Summary: one column per segment for the whole period ──
+        seg_heads = "".join(f'<th class="num">{safe_string(s["segment"])}</th>' for s in segments)
+        def sum_row(label, key, negative=False, bold=False, pct_of=None):
             cells = ""
             for s in segments:
-                v = s[key]
-                c = None
-                if bold:
-                    c = "var(--green)" if v >= 0 else "var(--red)"
-                pct = f' <span style="font-size:11px;color:var(--text-muted);">({s[pct_key]:.1f}%)</span>' if pct_key else ""
-                cells += cell(v, negative=negative, bold=bold, colour=c).replace("</td>", pct + "</td>")
-            tot = ""
-            if total_value is not None:
-                tc = ("var(--green)" if total_value >= 0 else "var(--red)") if bold else None
-                tot = cell(total_value, negative=negative, bold=bold, colour=tc)
-            else:
-                tot = "<td></td>"
-            return f'<tr style="{"font-weight:bold;" if bold else ""}"><td>{label}</td>{cells}{tot}</tr>'
-        
-        seg_table = ""
-        if segments:
-            seg_table = f'''
-            <table class="table" style="font-size:14px;">
-                <thead><tr><th></th>{seg_headers}<th style="text-align:right;">Total</th></tr></thead>
+                v = s["totals"][key]
+                p = f' <span class="pct">({(v / s["totals"]["income"] * 100):.1f}%)</span>' if pct_of and s["totals"]["income"] else ""
+                cells += amt(v, negative=negative, bold=bold).replace("</td>", p + "</td>")
+            tot = round(sum(s["totals"][key] for s in segments), 2)
+            return f'<tr class="{"tot" if bold else ""}"><td class="lbl">{label}</td>{cells}{amt(tot, negative=negative, bold=bold)}</tr>'
+        summary_table = f'''
+            <table class="seg">
+                <thead><tr><th></th>{seg_heads}<th class="num">Total</th></tr></thead>
                 <tbody>
-                    {seg_row("Revenue", "income", total_value=data["total_income"])}
-                    {seg_row("Cost of sales", "cost_of_sales", negative=True, total_value=sum(s["cost_of_sales"] for s in segments))}
-                    {seg_row("Gross profit", "gross_profit", bold=True, pct_key="gross_margin_pct", total_value=sum(s["gross_profit"] for s in segments))}
-                    {seg_row("Direct expenses", "direct_expenses", negative=True, total_value=sum(s["direct_expenses"] for s in segments))}
-                    {seg_row("Contribution", "contribution", bold=True, pct_key="contribution_margin_pct", total_value=data["total_contribution"])}
+                    {sum_row("Revenue", "income")}
+                    {sum_row("Cost of sales", "cost_of_sales", negative=True)}
+                    {sum_row("Gross profit", "gross_profit", bold=True, pct_of=True)}
+                    {sum_row("Direct expenses", "direct_expenses", negative=True)}
+                    {sum_row("Contribution", "contribution", bold=True, pct_of=True)}
                 </tbody>
-            </table>'''
-        else:
-            seg_table = '<p style="color:var(--text-muted);">No segment-stamped P&L journals in this period.</p>'
+            </table>''' if segments else '<p class="muted">No segment-stamped P&L journals in this period.</p>'
         
+        # ── 2. Per segment, per account, per month ──
+        seg_blocks = ""
+        for s in segments:
+            rows = ""
+            rows += f'<tr class="sec"><td class="lbl" colspan="{n_months + 3}">Revenue</td></tr>'
+            for r in s["income"]:
+                rows += line_row(f'{safe_string(r["code"])} - {safe_string(r["name"])}', r["months"], r["total"], indent=2)
+            rows += line_row("Total revenue", s["income_total"], s["totals"]["income"], bold=True)
+            rows += f'<tr class="sec"><td class="lbl" colspan="{n_months + 3}">Cost of sales</td></tr>'
+            for r in s["cost_of_sales"]:
+                rows += line_row(f'{safe_string(r["code"])} - {safe_string(r["name"])}', r["months"], r["total"], negative=True, indent=2)
+            gp_pct = (s["totals"]["gross_profit"] / s["totals"]["income"] * 100) if s["totals"]["income"] else None
+            rows += line_row("Gross profit", s["gross_profit"], s["totals"]["gross_profit"], bold=True, pct=gp_pct)
+            rows += f'<tr class="sec"><td class="lbl" colspan="{n_months + 3}">Direct expenses</td></tr>'
+            for r in s["direct_expenses"]:
+                rows += line_row(f'{safe_string(r["code"])} - {safe_string(r["name"])}', r["months"], r["total"], negative=True, indent=2)
+            c_pct = (s["totals"]["contribution"] / s["totals"]["income"] * 100) if s["totals"]["income"] else None
+            rows += line_row("Contribution", s["contribution"], s["totals"]["contribution"], bold=True, pct=c_pct)
+            seg_blocks += f'''
+            <h3 class="segh">{safe_string(s["segment"])}</h3>
+            <table class="seg"><thead>{head_row}</thead><tbody>{rows}</tbody></table>'''
+        
+        # ── 3. Overheads per account, per month ──
         oh_rows = ""
         for o in data["overheads"]:
             pct = f'{o["pct_of_contribution"]:.1f}%' if o["pct_of_contribution"] is not None else "-"
-            items = "".join(
-                f'<div style="font-size:12px;color:var(--text-muted);padding-left:16px;">{safe_string(i["description"])} &middot; {money(i["amount"])}</div>'
-                for i in o["top_items"] if len(o["top_items"]) > 1)
-            oh_rows += f'''
-                <tr>
-                    <td>{safe_string(o["code"])} - {safe_string(o["name"])}{items}</td>
-                    <td style="text-align:right;vertical-align:top;color:var(--red);">({money(o["amount"])})</td>
-                    <td style="text-align:right;vertical-align:top;color:var(--text-muted);">{pct}</td>
-                </tr>'''
+            items = "".join(f'<div class="item">{safe_string(i["description"])} &middot; {money(i["amount"])}</div>' for i in o["top_items"])
+            cells = "".join(amt(o["months"][mo], negative=True) for mo in months)
+            oh_rows += (f'<tr><td class="lbl">{safe_string(o["code"])} - {safe_string(o["name"])}{items}</td>{cells}'
+                        f'{amt(o["total"], negative=True)}{amt(round(o["total"] / n_months, 2), negative=True, muted=True)}'
+                        f'<td class="num muted">{pct}</td></tr>')
         oh_pct = f'{data["overheads_pct_of_contribution"]:.1f}%' if data["overheads_pct_of_contribution"] is not None else "-"
-        net = data["net_profit"]
+        oh_total_cells = "".join(amt(data["total_overheads"][mo], negative=True, bold=True) for mo in months)
+        contrib_cells = "".join(amt(data["total_contribution"][mo], bold=True) for mo in months)
+        net_cells = "".join(amt(data["net"][mo], bold=True) for mo in months)
+        
+        # ── 4. Reconciliation to the Income Statement ──
+        recon_diff = round(data["net_all"] - pnl["net_profit"], 2)
+        recon_ok = abs(recon_diff) < 0.01
         
         coa_note = ""
         if data["includes_sage_opening_balances"]:
-            coa_note = '<p style="color:var(--text-muted);font-size:12px;margin-top:-12px;margin-bottom:20px;">Includes the Sage opening balances carried on the chart of accounts (unstamped, shown under UNASSIGNED).</p>'
+            coa_note = '<p class="muted small">Includes the Sage opening balances carried on the chart of accounts (unstamped, shown under UNASSIGNED).</p>'
         
         zane_q = (f"Analyse the Segment P&L for {period_label} using the get_segment_pnl tool "
                   f"(from {start_date} to {end_date}). Tell me which trading segments carry the business, "
                   f"which overhead accounts are the biggest gap relative to total contribution, and what to fix first.")
         custom_style = "" if period == "custom" else "display:none;"
         content = f'''
-        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:20px;">
+        <style>
+        .seg {{ width:100%; border-collapse:collapse; font-size:13px; margin-bottom:6px; }}
+        .seg th, .seg td {{ padding:5px 8px; border-bottom:1px solid var(--border); white-space:nowrap; }}
+        .seg th {{ text-align:left; font-weight:600; color:var(--text-muted); font-size:12px; }}
+        .seg th.num, .seg td.num {{ text-align:right; font-variant-numeric:tabular-nums; }}
+        .seg td.lbl {{ white-space:normal; min-width:220px; }}
+        .seg td.i2 {{ padding-left:28px; }}
+        .seg tr.sec td {{ font-weight:600; background:rgba(59,130,246,0.06); padding-top:8px; }}
+        .seg tr.tot td {{ font-weight:700; border-top:1px solid var(--text-muted); }}
+        .seg td.neg {{ color:var(--red); }}
+        .seg td.b {{ font-weight:700; }}
+        .seg td.muted, .seg .muted {{ color:var(--text-muted); }}
+        .seg .pct {{ font-size:11px; color:var(--text-muted); font-weight:400; }}
+        .seg .item {{ font-size:11px; color:var(--text-muted); padding-left:14px; }}
+        .segh {{ margin:22px 0 6px; font-size:15px; letter-spacing:0.5px; }}
+        .netbox {{ margin-top:18px; padding:16px 20px; border-radius:8px; display:flex; justify-content:space-between; align-items:center; }}
+        .small {{ font-size:12px; }}
+        @media print {{
+            @page {{ size: A4 landscape; margin: 12mm; }}
+            .no-print, .sidebar, nav, #zaneChat, .zane-float, header {{ display:none !important; }}
+            .card {{ box-shadow:none; border:none; padding:0; }}
+            .seg {{ font-size:11px; }}
+            .seg th, .seg td {{ padding:3px 6px; }}
+            .segh {{ page-break-after:avoid; }}
+            table {{ page-break-inside:auto; }}
+            tr {{ page-break-inside:avoid; }}
+        }}
+        </style>
+        <div class="no-print" style="display:flex;justify-content:space-between;align-items:center;margin-bottom:20px;">
             <a href="/reports" style="color:var(--text-muted);">← Back to Reports</a>
             <div style="display:flex;gap:10px;align-items:center;">
                 <select id="segPeriod" onchange="segPeriodChanged(this.value)" style="padding:8px;border-radius:6px;background:var(--card);color:var(--text);border:1px solid var(--border);">
@@ -5827,7 +6001,7 @@ def register_report_routes(app, db, login_required, Auth, render_page,
                     <button class="btn btn-secondary" onclick="segGoCustom()">Go</button>
                 </span>
                 <button class="btn btn-primary" onclick="segAskZane()">Ask Zane</button>
-                <button class="btn btn-secondary" onclick="window.print();">🖨️ Print</button>
+                <button class="btn btn-secondary" onclick="window.print();">Print</button>
             </div>
         </div>
         <script>
@@ -5848,33 +6022,43 @@ def register_report_routes(app, db, login_required, Auth, render_page,
         </script>
         
         <div class="card">
-            <h2 style="margin-bottom:5px;">[CHART] Segment P&L</h2>
-            <p style="color:var(--text-muted);margin-bottom:20px;">For the period: {period_label} &middot; Source: general ledger, segment stamps on journal lines</p>
+            <h2 style="margin-bottom:2px;">Segment Profit &amp; Loss</h2>
+            <p class="muted" style="margin-bottom:4px;">{safe_string(biz_name)} &middot; {period_label} &middot; {n_months} month{"s" if n_months != 1 else ""}</p>
+            <p class="muted small" style="margin-bottom:16px;">Source: general ledger (journals + chart of accounts), segment stamps on journal lines. Figures exclude VAT.</p>
             {coa_note}
             
-            <h3 style="margin-bottom:8px;">Trading segments</h3>
-            {seg_table}
+            <h3 class="segh" style="margin-top:6px;">Summary by segment</h3>
+            {summary_table}
             
-            <h3 style="margin-top:24px;margin-bottom:8px;">Overheads (SHARED / INTERNAL)</h3>
-            <table class="table" style="font-size:14px;">
-                <thead><tr><th>Account</th><th style="text-align:right;">Amount</th><th style="text-align:right;">% of contribution</th></tr></thead>
+            {seg_blocks}
+            
+            <h3 class="segh">Total contribution</h3>
+            <table class="seg"><thead>{head_row}</thead><tbody>
+                <tr class="tot"><td class="lbl">Contribution - all trading segments</td>{contrib_cells}{amt(data["total_contribution_all"], bold=True)}{amt(round(data["total_contribution_all"] / n_months, 2), muted=True)}</tr>
+            </tbody></table>
+            
+            <h3 class="segh">Overheads (SHARED / INTERNAL)</h3>
+            <table class="seg">
+                <thead><tr><th></th>{month_heads}<th class="num">Total</th><th class="num">Per month</th><th class="num">% of contribution</th></tr></thead>
                 <tbody>
-                    {oh_rows or "<tr><td colspan='3' style='color:var(--text-muted);'>No overheads in this period</td></tr>"}
-                    <tr style="font-weight:bold;border-top:2px solid var(--border);">
-                        <td>Total overheads</td>
-                        <td style="text-align:right;color:var(--red);">({money(data["total_overheads"])})</td>
-                        <td style="text-align:right;">{oh_pct}</td>
-                    </tr>
+                    {oh_rows or f"<tr><td class='lbl muted' colspan='{n_months + 4}'>No overheads in this period</td></tr>"}
+                    <tr class="tot"><td class="lbl">Total overheads</td>{oh_total_cells}{amt(data["total_overheads_all"], negative=True, bold=True)}{amt(round(data["total_overheads_all"] / n_months, 2), negative=True, muted=True)}<td class="num b">{oh_pct}</td></tr>
                 </tbody>
             </table>
             
-            <div style="margin-top:20px;padding:20px;border-radius:8px;background:{'rgba(16,185,129,0.15)' if net >= 0 else 'rgba(239,68,68,0.15)'};border:2px solid {'var(--green)' if net >= 0 else 'var(--red)'};">
-                <div style="display:flex;justify-content:space-between;align-items:center;">
-                    <span style="font-size:20px;font-weight:bold;">NET {'PROFIT' if net >= 0 else 'LOSS'}</span>
-                    <span style="font-size:32px;font-weight:bold;color:{'var(--green)' if net >= 0 else 'var(--red)'};">{money(abs(net))}</span>
+            <h3 class="segh">Net profit</h3>
+            <table class="seg"><thead>{head_row}</thead><tbody>
+                <tr class="tot"><td class="lbl">Net {"profit" if data["net_all"] >= 0 else "loss"}</td>{net_cells}{amt(data["net_all"], bold=True)}{amt(round(data["net_all"] / n_months, 2), muted=True)}</tr>
+            </tbody></table>
+            
+            <div class="netbox" style="background:{'rgba(16,185,129,0.12)' if data["net_all"] >= 0 else 'rgba(239,68,68,0.12)'};border:2px solid {'var(--green)' if data["net_all"] >= 0 else 'var(--red)'};">
+                <div>
+                    <div style="font-size:18px;font-weight:700;">NET {"PROFIT" if data["net_all"] >= 0 else "LOSS"} {money(abs(data["net_all"]))}</div>
+                    <div class="muted small">Contribution {money(data["total_contribution_all"])} less overheads {money(data["total_overheads_all"])} &middot; Net margin {(data["net_all"] / data["total_income_all"] * 100) if data["total_income_all"] else 0:.1f}%</div>
                 </div>
-                <div style="text-align:right;color:var(--text-muted);font-size:12px;margin-top:5px;">
-                    Total contribution {money(data["total_contribution"])} less overheads {money(data["total_overheads"])} &middot; Net margin: {data["net_margin_pct"]:.1f}%
+                <div class="small" style="text-align:right;color:{'var(--green)' if recon_ok else 'var(--red)'};">
+                    {"Agrees with the Income Statement for the period" if recon_ok else f"Does NOT agree with the Income Statement: difference {money(recon_diff)}"}<br>
+                    <span class="muted">Income Statement net: {money(pnl["net_profit"])}</span>
                 </div>
             </div>
         </div>
