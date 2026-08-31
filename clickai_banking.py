@@ -252,6 +252,28 @@ def register_banking_routes(app, db, login_required, Auth, render_page,
             print(f"[BANK] _pl_account_codes failed: {ex}", flush=True)
         return out
 
+    def _add_bank_job_line(biz_id, job_id, ref, date, description, gross, is_no_vat):
+        """Bought-in cost line on an open job card for a bank payment. Costing
+        only - the GL was posted by the bank allocation. Carries the BNK-
+        reference so unallocate removes it again."""
+        try:
+            job = db.get_one("job_cards", job_id)
+            if not job or job.get("business_id") != biz_id or job.get("status") != "open":
+                print(f"[BANK] Job line skipped: job {str(job_id)[:8]} not found or not open", flush=True)
+                return
+            _vat, net = _split_vat(round(float(gross), 2), biz_id, is_no_vat)
+            markup = float(job.get("markup_pct") or 0)
+            u = Auth.get_current_user() or {}
+            db.save("job_card_lines", {
+                "id": generate_id(), "business_id": biz_id, "job_card_id": job_id,
+                "line_type": "other", "date": str(date)[:10], "description": str(description)[:80],
+                "amount_cost": net, "amount_charge": round(net * (1 + markup / 100.0), 2),
+                "source": "bank", "reference": ref,
+                "created_by_name": u.get("name", ""), "created_at": now()
+            })
+        except Exception as ex:
+            print(f"[BANK] Job line failed for {ref}: {ex}", flush=True)
+
     def _fetch_all_bank_txns(biz_id):
         """Fetch ALL bank transactions for a business, NEWEST FIRST, paging past any
         Supabase/PostgREST max-rows cap (often 1000). Plain db.get sends no ORDER BY,
@@ -395,6 +417,22 @@ def register_banking_routes(app, db, login_required, Auth, render_page,
                 _seg_cfg = {}
         _segment_list = [str(x).strip().upper() for x in (_seg_cfg.get("segments") or []) if str(x).strip()]
         _segment_json = json.dumps(_segment_list)
+        
+        # Open job cards for the job dropdown on money-out allocations
+        _open_jobs = []
+        try:
+            for _j in (db.get("job_cards", {"business_id": biz_id, "status": "open"}) if biz_id else []) or []:
+                _open_jobs.append({
+                    "id": _j.get("id", ""),
+                    "number": str(_j.get("job_number", "") or ""),
+                    "customer": str(_j.get("customer_name", "") or ""),
+                    "desc": str(_j.get("description", "") or "")[:40],
+                    "segment": str(_j.get("segment", "") or "").strip().upper(),
+                })
+        except Exception as _je:
+            print(f"[BANK] Open job list failed: {_je}", flush=True)
+        _open_jobs.sort(key=lambda x: x["number"])
+        _jobs_json = json.dumps(_open_jobs).replace("'", "&#39;")
         
         # Stats
         total_count = len(all_transactions)
@@ -641,7 +679,7 @@ def register_banking_routes(app, db, login_required, Auth, render_page,
             _done_more_html = (
                 '<div style="text-align:center;margin-top:14px;">'
                 f'<button id="doneShowMoreBtn" class="btn btn-secondary" onclick="showMoreDone()">'
-                f'Wys meer ({_done_total - _DONE_INITIAL} oorblywend)</button></div>'
+                f'Show more ({_done_total - _DONE_INITIAL} remaining)</button></div>'
             )
         if _done_total > _DONE_MAX_RENDER:
             _done_more_html += (
@@ -666,7 +704,6 @@ def register_banking_routes(app, db, login_required, Auth, render_page,
         .split-modal {{ background:var(--card);border-radius:16px;padding:24px;width:95%;max-width:560px;max-height:85vh;overflow-y:auto;box-shadow:0 20px 60px rgba(0,0,0,0.4);border:1px solid var(--border); }}
         .split-modal h3 {{ margin:0 0 6px 0;font-size:18px; }}
         .split-line {{ display:grid;grid-template-columns:2fr 100px 40px;gap:8px;align-items:center;padding:8px 0;border-bottom:1px solid rgba(255,255,255,0.06); }}
-        .split-line.has-segment {{ grid-template-columns:2fr 1fr 100px 40px; }}
         .split-line select, .split-line input {{ padding:8px 10px;border-radius:6px;border:1px solid var(--border);background:var(--input-bg,var(--bg));color:var(--text);font-size:13px; }}
         .split-line input[type=number] {{ text-align:right; }}
         .split-line .remove-split {{ background:none;border:none;color:var(--red);cursor:pointer;font-size:18px;padding:4px 8px;border-radius:4px; }}
@@ -872,7 +909,7 @@ def register_banking_routes(app, db, login_required, Auth, render_page,
             var btn = document.getElementById('doneShowMoreBtn');
             if (btn) {{
                 if (remaining <= 0) {{ btn.style.display = 'none'; }}
-                else {{ btn.textContent = 'Wys meer (' + remaining + ' oorblywend)'; }}
+                else {{ btn.textContent = 'Show more (' + remaining + ' remaining)'; }}
             }}
         }}
         
@@ -886,7 +923,7 @@ def register_banking_routes(app, db, login_required, Auth, render_page,
             event.target.closest('.recon-tab')?.classList.add('active');
         }}
         
-        async function categorizeTransaction(id, category, description, entityId, entityName, invoiceIds, invoiceNums, discountAllowed, segment) {{
+        async function categorizeTransaction(id, category, description, entityId, entityName, invoiceIds, invoiceNums, discountAllowed, segment, jobId) {{
             if (!category) return;
             
             // If Customer Payment or Supplier Payment and no entity chosen, prompt to pick one
@@ -922,6 +959,7 @@ def register_banking_routes(app, db, login_required, Auth, render_page,
                 if (invoiceIds && invoiceIds.length > 0) {{ payload.invoice_ids = invoiceIds; payload.invoice_nums = invoiceNums || []; }}
                 if (discountAllowed) {{ payload.discount_allowed = true; }}
                 if (segment) {{ payload.segment = segment; }}
+                if (jobId) {{ payload.job_id = jobId; }}
                 // Reallocation: only rewrite the learned rule when the user asked for it.
                 if (window._reallocLearn !== undefined) {{ payload.learn = window._reallocLearn; window._reallocLearn = undefined; }}
                 
@@ -1297,13 +1335,14 @@ def register_banking_routes(app, db, login_required, Auth, render_page,
                         <option value="">-- None / Skip ${{label}} --</option>
                         ${{optionsHtml}}
                     </select>
-                    ${{_segmentSelectHtml('allocSeg_' + txnId, 'width:100%;padding:8px;border:1px solid var(--border);border-radius:6px;background:var(--card);color:var(--text);font-size:13px;margin-bottom:8px;')}}
+                    ${{_segmentSelectHtml('allocSeg_' + txnId, 'width:100%;padding:8px;border:1px solid var(--border);border-radius:6px;background:var(--card);color:var(--text);font-size:13px;margin-bottom:8px;', isExpense ? 'allocJob_' + txnId : '')}}
+                    ${{isExpense ? _jobSelectHtml('allocJob_' + txnId, 'width:100%;padding:8px;border:1px solid var(--border);border-radius:6px;background:var(--card);color:var(--text);font-size:13px;margin-bottom:8px;', '') : ''}}
                     <div style="display:flex;gap:6px;">
                         <button onclick="confirmAllocationPick('${{txnId}}','${{safeCat}}','${{safeDesc}}')" 
                                 style="flex:1;padding:8px;background:var(--green);color:white;border:none;border-radius:6px;cursor:pointer;font-weight:700;font-size:13px;">
                             Allocate
                         </button>
-                        <button onclick="categorizeTransaction('${{txnId}}','${{safeCat}}','${{safeDesc}}','__skip__','',[],[],false,_segmentValue('allocSeg_${{txnId}}'))" 
+                        <button onclick="categorizeTransaction('${{txnId}}','${{safeCat}}','${{safeDesc}}','__skip__','',[],[],false,_segmentValue('allocSeg_${{txnId}}'),_segmentValue('allocJob_${{txnId}}'))" 
                                 style="padding:8px 12px;background:var(--card);border:1px solid var(--border);color:var(--text-muted);border-radius:6px;cursor:pointer;font-size:12px;">
                             Skip
                         </button>
@@ -1321,7 +1360,7 @@ def register_banking_routes(app, db, login_required, Auth, render_page,
             
             // If user left "None / Skip" selected, treat as skip (no entity link)
             const finalEntityId = entityId || '__skip__';
-            categorizeTransaction(txnId, category, description, finalEntityId, entityName, [], [], false, _segmentValue('allocSeg_' + txnId));
+            categorizeTransaction(txnId, category, description, finalEntityId, entityName, [], [], false, _segmentValue('allocSeg_' + txnId), _segmentValue('allocJob_' + txnId));
         }}
         
         // ═══════════════════════════════════════════════════════════
@@ -1420,7 +1459,7 @@ def register_banking_routes(app, db, login_required, Auth, render_page,
                         actionButtons = `
                             <button onclick="openSplitWithMatch('${{txnId}}', '${{description.replace(/'/g, "\\\\'")}}', ${{debit}}, ${{credit}}, '${{date}}')" 
                                     style="padding:7px 16px;font-size:12px;background:#f59e0b;border:none;color:black;border-radius:6px;cursor:pointer;font-weight:600;">
-                                ✂️ Gebruik Split
+                                ✂️ Use Split
                             </button>
                             <button onclick="categorizeTransaction('${{txnId}}', '${{data.category}}', '${{description.replace(/'/g, "\\\\'")}}')" 
                                     style="padding:7px 16px;font-size:12px;background:var(--green);border:none;color:white;border-radius:6px;cursor:pointer;font-weight:600;">
@@ -1840,16 +1879,16 @@ def register_banking_routes(app, db, login_required, Auth, render_page,
                 <!-- Matched expense from scan -->
                 <div id="splitMatchedExpense" style="display:none;"></div>
                 
-                <div style="font-size:12px;color:var(--text-muted);margin-bottom:8px;font-weight:600;">VERDEEL NA KATEGORIEË:</div>
+                <div style="font-size:12px;color:var(--text-muted);margin-bottom:8px;font-weight:600;">SPLIT INTO CATEGORIES:</div>
                 <div id="splitLines"></div>
                 
-                <button onclick="addSplitLine()" style="padding:6px 14px;font-size:12px;background:rgba(99,102,241,0.15);border:1px solid rgba(99,102,241,0.3);color:var(--primary);border-radius:6px;cursor:pointer;margin:8px 0;">+ Voeg lyn by</button>
+                <button onclick="addSplitLine()" style="padding:6px 14px;font-size:12px;background:rgba(99,102,241,0.15);border:1px solid rgba(99,102,241,0.3);color:var(--primary);border-radius:6px;cursor:pointer;margin:8px 0;">+ Add line</button>
                 
                 <div id="splitBalanceInfo" class="split-balance"></div>
                 
                 <div style="display:flex;gap:10px;margin-top:15px;">
                     <button id="splitSaveBtn" onclick="saveSplitAllocation()" class="btn btn-primary" style="flex:1;padding:12px;font-size:14px;font-weight:700;" disabled>💾 Save Split</button>
-                    <button onclick="closeSplitModal()" class="btn btn-secondary" style="padding:12px 20px;">Kanselleer</button>
+                    <button onclick="closeSplitModal()" class="btn btn-secondary" style="padding:12px 20px;">Cancel</button>
                 </div>
             </div>
         </div>
@@ -1865,11 +1904,29 @@ def register_banking_routes(app, db, login_required, Auth, render_page,
         let _splitMatchedExpenseId = '';
         let _splitAllCategories = {json_cat_list};
         let _segmentList = {_segment_json};
+        let _openJobs = {_jobs_json};
 
-        function _segmentSelectHtml(id, style) {{
+        function _segmentSelectHtml(id, style, jobSelId) {{
             if (!_segmentList.length) return '';
-            return '<select id="' + id + '" style="' + style + '"><option value="">Segment: default (by rules)</option>' +
+            const onch = jobSelId ? ' onchange="_filterJobs(\'' + jobSelId + '\', this.value)"' : '';
+            return '<select id="' + id + '" style="' + style + '"' + onch + '><option value="">Segment: default (by rules)</option>' +
                    _segmentList.map(sg => '<option value="' + sg + '">' + sg + '</option>').join('') + '</select>';
+        }}
+
+        function _jobOptions(segment) {{
+            const jobs = segment ? _openJobs.filter(j => j.segment === segment) : _openJobs;
+            return '<option value="">Job: none</option>' + jobs.map(j =>
+                '<option value="' + j.id + '">' + j.number + ' ' + (j.customer || '') + (j.desc ? ' - ' + j.desc : '') + '</option>').join('');
+        }}
+
+        function _jobSelectHtml(id, style, segment) {{
+            if (!_openJobs.length) return '';
+            return '<select id="' + id + '" style="' + style + '">' + _jobOptions(segment) + '</select>';
+        }}
+
+        function _filterJobs(jobSelId, segment) {{
+            const sel = document.getElementById(jobSelId);
+            if (sel) sel.innerHTML = _jobOptions(segment);
         }}
 
         function _segmentValue(id) {{
@@ -1969,12 +2026,13 @@ def register_banking_routes(app, db, login_required, Auth, render_page,
             const c = d.counts;
             h += '<div style="font-size:11px;color:var(--text-muted);margin-bottom:14px;">Reallocating removes: ' +
                  c.journals + ' journal line(s), ' + c.receipts + ' receipt(s), ' +
-                 c.supplier_payments + ' supplier payment(s), ' + c.expenses + ' expense(s). ' +
+                 c.supplier_payments + ' supplier payment(s), ' + c.expenses + ' expense(s), ' + (c.job_card_lines || 0) + ' job line(s). ' +
                  'The entries are removed, not reversed, so the ledger keeps one entry per transaction.</div>';
 
             h += '<div style="margin-bottom:10px;"><label style="font-size:12px;color:var(--text-muted);">Post to account</label>';
             h += '<select id="reallocAccount" class="fi" style="width:100%;padding:8px;margin-top:4px;"><option value="">Select account...</option>' + _reallocAccountOptions() + '</select></div>';
-            if (_segmentList.length) h += '<div style="margin-bottom:10px;"><label style="font-size:12px;color:var(--text-muted);">Segment</label>' + _segmentSelectHtml('reallocSegment', 'width:100%;padding:8px;margin-top:4px;') + '</div>';
+            if (_segmentList.length) h += '<div style="margin-bottom:10px;"><label style="font-size:12px;color:var(--text-muted);">Segment</label>' + _segmentSelectHtml('reallocSegment', 'width:100%;padding:8px;margin-top:4px;', t.debit > 0 ? 'reallocJob' : '') + '</div>';
+            if (t.debit > 0 && _openJobs.length) h += '<div style="margin-bottom:10px;"><label style="font-size:12px;color:var(--text-muted);">Job card (bought-in cost)</label>' + _jobSelectHtml('reallocJob', 'width:100%;padding:8px;margin-top:4px;', '') + '</div>';
 
             h += '<div style="margin-bottom:10px;"><label style="font-size:12px;color:var(--text-muted);">Reason (kept in the audit trail)</label>';
             h += '<input id="reallocReason" class="fi" style="width:100%;padding:8px;margin-top:4px;" placeholder="e.g. posted to the wrong expense account"></div>';
@@ -2023,7 +2081,7 @@ def register_banking_routes(app, db, login_required, Auth, render_page,
                 if (!d) {{ btns.forEach(b => b.disabled = false); return; }}
                 window._reallocLearn = learn;
                 closeReallocPanel();
-                await categorizeTransaction(t.id, account, t.description, '__skip__', '', [], [], false, _segmentValue('reallocSegment'));
+                await categorizeTransaction(t.id, account, t.description, '__skip__', '', [], [], false, _segmentValue('reallocSegment'), _segmentValue('reallocJob'));
                 location.reload();
             }} catch (e) {{
                 alert('Error: ' + e.message);
@@ -2090,15 +2148,18 @@ def register_banking_routes(app, db, login_required, Auth, render_page,
             const catOptions = buildCategoryOptions();
             const selectedAttr = catVal ? '' : '';
             
+            const showJob = _splitIsDebit && _openJobs.length > 0;
+            const cols = '2fr ' + (_segmentList.length ? '1fr ' : '') + (showJob ? '1.4fr ' : '') + '100px 40px';
             const html = `
-                <div class="split-line${{_segmentList.length ? ' has-segment' : ''}}" id="splitLine_${{idx}}">
+                <div class="split-line" id="splitLine_${{idx}}" style="grid-template-columns:${{cols}};">
                     <select id="splitCat_${{idx}}" onchange="updateSplitBalance()">
-                        <option value="">-- Kies kategorie --</option>
+                        <option value="">-- Select category --</option>
                         ${{catOptions}}
                     </select>
-                    ${{_segmentSelectHtml('splitSeg_' + idx, '')}}
+                    ${{_segmentSelectHtml('splitSeg_' + idx, '', showJob ? 'splitJob_' + idx : '')}}
+                    ${{showJob ? _jobSelectHtml('splitJob_' + idx, '', '') : ''}}
                     <input type="number" id="splitAmt_${{idx}}" step="0.01" min="0" placeholder="0.00" value="${{amtVal}}" oninput="updateSplitBalance()">
-                    <button class="remove-split" onclick="removeSplitLine(${{idx}})" title="Verwyder">✕</button>
+                    <button class="remove-split" onclick="removeSplitLine(${{idx}})" title="Remove">✕</button>
                 </div>
             `;
             document.getElementById('splitLines').insertAdjacentHTML('beforeend', html);
@@ -2140,7 +2201,9 @@ def register_banking_routes(app, db, login_required, Auth, render_page,
                     const cat = selects[0].value;
                     const amt = parseFloat(inputs[0].value) || 0;
                     if (cat && amt > 0) {{
-                        lines.push({{ category: cat, amount: amt, segment: (selects[1] ? selects[1].value : '') }});
+                        lines.push({{ category: cat, amount: amt,
+                                     segment: _segmentValue('splitSeg_' + row.id.replace('splitLine_', '')),
+                                     job_id: _segmentValue('splitJob_' + row.id.replace('splitLine_', '')) }});
                     }}
                 }}
             }});
@@ -2156,18 +2219,18 @@ def register_banking_routes(app, db, login_required, Auth, render_page,
             
             if (Math.abs(diff) < 0.01 && lines.length >= 2) {{
                 el.className = 'split-balance balanced';
-                el.innerHTML = `✅ Gebalanseer — R${{total.toFixed(2)}} van R${{_splitTotalAmount.toFixed(2)}}`;
+                el.innerHTML = `✅ Balanced — R${{total.toFixed(2)}} of R${{_splitTotalAmount.toFixed(2)}}`;
                 btn.disabled = false;
                 btn.style.opacity = '1';
             }} else {{
                 el.className = 'split-balance unbalanced';
                 const diffAbs = Math.abs(diff).toFixed(2);
                 if (lines.length < 2) {{
-                    el.innerHTML = `⚠️ Minimum 2 lyne nodig`;
+                    el.innerHTML = `⚠️ At least 2 lines required`;
                 }} else if (diff > 0) {{
-                    el.innerHTML = `⚠️ Nog R${{diffAbs}} oor om te verdeel (totaal: R${{_splitTotalAmount.toFixed(2)}})`;
+                    el.innerHTML = `⚠️ R${{diffAbs}} still to allocate (total: R${{_splitTotalAmount.toFixed(2)}})`;
                 }} else {{
-                    el.innerHTML = `❌ R${{diffAbs}} te veel — verminder bedrae (totaal: R${{_splitTotalAmount.toFixed(2)}})`;
+                    el.innerHTML = `❌ R${{diffAbs}} too much — reduce amounts (total: R${{_splitTotalAmount.toFixed(2)}})`;
                 }}
                 btn.disabled = true;
                 btn.style.opacity = '0.5';
@@ -2192,14 +2255,14 @@ def register_banking_routes(app, db, login_required, Auth, render_page,
                     
                     if (m.splits && m.splits.length > 1) {{
                         html += `<div style="background:rgba(16,185,129,0.1);border:1px solid rgba(16,185,129,0.3);border-radius:8px;padding:10px;margin-bottom:12px;">`;
-                        html += `<div style="font-size:12px;color:var(--green);font-weight:600;margin-bottom:6px;">📋 Hierdie slip was al gesplit — wil jy dieselfde splits gebruik?</div>`;
+                        html += `<div style="font-size:12px;color:var(--green);font-weight:600;margin-bottom:6px;">📋 This receipt was already split — use the same splits?</div>`;
                         m.splits.forEach(sp => {{
                             html += `<div style="display:flex;justify-content:space-between;padding:3px 0;font-size:13px;"><span>${{sp.category}}</span><span style="font-weight:600;">R${{parseFloat(sp.amount).toFixed(2)}}</span></div>`;
                         }});
-                        html += `<button onclick="useScanSplits()" style="margin-top:8px;padding:8px 16px;background:var(--green);color:white;border:none;border-radius:6px;cursor:pointer;font-size:13px;font-weight:600;width:100%;">✅ Gebruik hierdie splits</button>`;
+                        html += `<button onclick="useScanSplits()" style="margin-top:8px;padding:8px 16px;background:var(--green);color:white;border:none;border-radius:6px;cursor:pointer;font-size:13px;font-weight:600;width:100%;">✅ Use these splits</button>`;
                         html += `</div>`;
                     }} else {{
-                        html += `<div style="font-size:12px;color:var(--text-muted);margin-bottom:8px;">Hierdie expense was nie gesplit nie — jy kan dit nou hier split.</div>`;
+                        html += `<div style="font-size:12px;color:var(--text-muted);margin-bottom:8px;">This expense was not split — you can split it here now.</div>`;
                     }}
                     
                     container.innerHTML = html;
@@ -2250,7 +2313,7 @@ def register_banking_routes(app, db, login_required, Auth, render_page,
                     
                     // Show matched badge
                     const container = document.getElementById('splitMatchedExpense');
-                    container.innerHTML = `<div class="split-matched-badge">🔗 Splits van gescande slip gebruik</div>`;
+                    container.innerHTML = `<div class="split-matched-badge">🔗 Splits from scanned receipt applied</div>`;
                     container.style.display = 'block';
                     
                     updateSplitBalance();
@@ -2261,11 +2324,11 @@ def register_banking_routes(app, db, login_required, Auth, render_page,
         
         async function saveSplitAllocation() {{
             const lines = getSplitLines();
-            if (lines.length < 2) {{ alert('Minimum 2 lyne nodig'); return; }}
+            if (lines.length < 2) {{ alert('At least 2 lines required'); return; }}
             
             const total = lines.reduce((s, l) => s + l.amount, 0);
             if (Math.abs(total - _splitTotalAmount) > 0.01) {{
-                alert('Bedrae balanseer nie. Totaal moet R' + _splitTotalAmount.toFixed(2) + ' wees.');
+                alert('Amounts do not balance. Total must be R' + _splitTotalAmount.toFixed(2) + '.');
                 return;
             }}
             
@@ -4762,7 +4825,7 @@ Return ONLY the JSON array. No markdown, no explanation."""
             return False
 
         out = {}
-        for tbl in ("journals", "receipts", "supplier_payments", "expenses", "allocation_log"):
+        for tbl in ("journals", "receipts", "supplier_payments", "expenses", "allocation_log", "job_card_lines"):
             try:
                 rows = db.get(tbl, {"business_id": biz_id}) or []
             except Exception as e:
@@ -4842,7 +4905,7 @@ Return ONLY the JSON array. No markdown, no explanation."""
                              "status": sinv.get("status", ""), "url": ""})
 
             counts = {k: len(found.get(k) or []) for k in
-                      ("journals", "receipts", "supplier_payments", "expenses", "allocation_log")}
+                      ("journals", "receipts", "supplier_payments", "expenses", "allocation_log", "job_card_lines")}
             is_split = any(str(l.get("reference", "")).upper().startswith("BNK-SPLIT-") for l in lines)
 
             return jsonify({
@@ -4915,7 +4978,7 @@ Return ONLY the JSON array. No markdown, no explanation."""
                 logger.error(f"[REALLOC] Audit log failed (continuing): {e}")
 
             removed = {}
-            for tbl in ("journals", "receipts", "supplier_payments", "expenses", "allocation_log"):
+            for tbl in ("journals", "receipts", "supplier_payments", "expenses", "allocation_log", "job_card_lines"):
                 ids = found.get(tbl) or []
                 if ids:
                     try:
@@ -4977,6 +5040,7 @@ Return ONLY the JSON array. No markdown, no explanation."""
             _picked_invoice_nums = data.get("invoice_nums", []) or []
             _discount_allowed = bool(data.get("discount_allowed", False))
             _segment = str(data.get("segment", "") or "").strip().upper()
+            _job_id = str(data.get("job_id", "") or "").strip()
             
             if not txn_id or not category:
                 return jsonify({"success": False, "error": "Missing data"})
@@ -5654,6 +5718,11 @@ Return ONLY the JSON array. No markdown, no explanation."""
             except Exception:
                 pass
             
+            # Bought-in cost on the chosen job card (money out, normal categories only)
+            if _job_id and (debit > 0 or amount < 0) and category not in special_categories:
+                _add_bank_job_line(biz_id, _job_id, ref, txn_date, description,
+                                   debit if debit > 0 else abs(amount), is_no_vat)
+            
             return jsonify({"success": True, "message": f"Categorized as {category}"})
             
         except Exception as e:
@@ -5733,7 +5802,7 @@ Return ONLY the JSON array. No markdown, no explanation."""
                                         return jsonify({
                                             "success": True,
                                             "category": "Split: " + " + ".join([s.get("category", "")[:20] for s in _splits[:3]]),
-                                            "reason": f"Hierdie lyk soos die slip wat jy gescanned het ({_exp.get('supplier_name', '')}) — dit was gesplit: {_split_desc}. Klik Split om dieselfde verdeling te gebruik.",
+                                            "reason": f"This looks like the receipt you scanned ({_exp.get('supplier_name', '')}) — it was split: {_split_desc}. Click Split to use the same split.",
                                             "confidence": 0.85,
                                             "source": "expense_split_match",
                                             "needs_clarification": False,
@@ -6158,6 +6227,11 @@ Return ONLY the JSON array. No markdown, no explanation."""
                     
                     # Learn from each split category
                     BankLearning.learn_from_categorization(biz_id, description, sp_category)
+                    
+                    _sp_job = str(sp.get("job_id", "") or "").strip()
+                    if _sp_job:
+                        _add_bank_job_line(biz_id, _sp_job, ref, txn_date,
+                                           f"{description[:40]} [{sp_category[:25]}]", sp_amount, is_no_vat)
                 
                 # Credit Bank for the full amount
                 journal_entries.append({"account_code": gl(biz_id, "bank"), "debit": 0, "credit": round(txn_amount, 2)})

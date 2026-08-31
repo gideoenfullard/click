@@ -38,6 +38,16 @@ def register_jobcards_routes(app, db, login_required, Auth, render_page,
             n = f'{(e.get("first_name") or "").strip()} {(e.get("last_name") or "").strip()}'.strip()
         return n or "Employee"
 
+    def _segments(business):
+        """Trading segments configured on the business (custom_prices.segments)."""
+        cfg = (business or {}).get("custom_prices") or {}
+        if isinstance(cfg, str):
+            try:
+                cfg = json.loads(cfg)
+            except Exception:
+                cfg = {}
+        return [str(x).strip().upper() for x in (cfg.get("segments") or []) if str(x).strip()]
+
     def _job_lines(biz_id, job_id):
         lines = db.get("job_card_lines", {"business_id": biz_id, "job_card_id": job_id}) or []
         return sorted(lines, key=lambda x: (x.get("date") or "", x.get("created_at") or ""))
@@ -146,6 +156,7 @@ def register_jobcards_routes(app, db, login_required, Auth, render_page,
                 "trailer_reg": request.form.get("trailer_reg", "").strip().upper(),
                 "description": request.form.get("description", "").strip(),
                 "markup_pct": float(request.form.get("markup_pct") or 0),
+                "segment": (request.form.get("segment") or "").strip().upper() or None,
                 "status": "open",
                 "date": request.form.get("date") or today(),
                 "notes": "",
@@ -161,6 +172,15 @@ def register_jobcards_routes(app, db, login_required, Auth, render_page,
                            key=lambda c: (c.get("name") or "").lower())
         cust_opts = '<option value="">— Select customer —</option>' + "".join(
             f'<option value="{c.get("id")}">{safe_string(c.get("name", ""))}</option>' for c in customers)
+        _segs = _segments(business)
+        seg_field = ""
+        if _segs:
+            seg_opts = '<option value="">— Select segment —</option>' + "".join(f'<option value="{sg}">{sg}</option>' for sg in _segs)
+            seg_field = f'''
+                <div style="margin-bottom:15px;width:260px;">
+                    <label style="display:block;margin-bottom:4px;font-weight:600;">Segment</label>
+                    <select name="segment" style="width:100%;padding:10px;border:1px solid var(--border);border-radius:6px;background:var(--bg);color:var(--text);">{seg_opts}</select>
+                </div>'''
 
         content = f'''
         <h2 style="margin-bottom:20px;">New Job Card</h2>
@@ -180,6 +200,7 @@ def register_jobcards_routes(app, db, login_required, Auth, render_page,
                         <input type="date" name="date" value="{today()}" style="width:100%;padding:10px;border:1px solid var(--border);border-radius:6px;background:var(--bg);color:var(--text);">
                     </div>
                 </div>
+                {seg_field}
                 <div style="margin-bottom:15px;">
                     <label style="display:block;margin-bottom:4px;font-weight:600;">Job Description</label>
                     <input type="text" name="description" required placeholder="e.g. Brake overhaul and chassis repair" style="width:100%;padding:10px;border:1px solid var(--border);border-radius:6px;background:var(--bg);color:var(--text);">
