@@ -355,6 +355,20 @@ def register_banking_routes(app, db, login_required, Auth, render_page,
         _entity_json_customers = json.dumps(_cust_list).replace("'", "&#39;")
         _entity_json_suppliers = json.dumps(_supp_list).replace("'", "&#39;")
         
+        # GL account list (code + name) for the reallocate panel; the JS falls back
+        # to the category names above for a business without a chart of accounts
+        _coa_rows = db.get("chart_of_accounts", {"business_id": biz_id}) if biz_id else []
+        _gl_pick = []
+        for _a in (_coa_rows or []):
+            if not _a.get("is_active", True) or str(_a.get("source", "") or "") == "System Account":
+                continue
+            _gc = str(_a.get("account_code", "") or _a.get("code", "") or "").strip()
+            _gn = str(_a.get("account_name", "") or _a.get("name", "") or "").strip()
+            if _gc and _gn:
+                _gl_pick.append({"code": _gc, "name": _gn})
+        _gl_pick.sort(key=lambda x: x["code"])
+        _realloc_json_gl = json.dumps(_gl_pick).replace("'", "&#39;")
+        
         # Stats
         total_count = len(all_transactions)
         auto_count = len(auto_matched)
@@ -1824,6 +1838,14 @@ def register_banking_routes(app, db, login_required, Auth, render_page,
         let _entitySuppliers = {_entity_json_suppliers};
         
         let _reallocTxn = null;
+        let _reallocGlAccounts = {_realloc_json_gl};
+
+        function _reallocAccountOptions() {{
+            if (_reallocGlAccounts.length) {{
+                return _reallocGlAccounts.map(a => '<option value="' + a.name.replace(/"/g, '&quot;') + '">' + a.code + ' &mdash; ' + a.name + '</option>').join('');
+            }}
+            return _splitAllCategories.map(c => '<option value="' + c + '">' + c + '</option>').join('');
+        }}
 
         async function openReallocPanel(txnId) {{
             document.getElementById('reallocOverlay').classList.add('active');
@@ -1908,6 +1930,9 @@ def register_banking_routes(app, db, login_required, Auth, render_page,
                  c.supplier_payments + ' supplier payment(s), ' + c.expenses + ' expense(s). ' +
                  'The entries are removed, not reversed, so the ledger keeps one entry per transaction.</div>';
 
+            h += '<div style="margin-bottom:10px;"><label style="font-size:12px;color:var(--text-muted);">Post to account</label>';
+            h += '<select id="reallocAccount" class="fi" style="width:100%;padding:8px;margin-top:4px;"><option value="">Select account...</option>' + _reallocAccountOptions() + '</select></div>';
+
             h += '<div style="margin-bottom:10px;"><label style="font-size:12px;color:var(--text-muted);">Reason (kept in the audit trail)</label>';
             h += '<input id="reallocReason" class="fi" style="width:100%;padding:8px;margin-top:4px;" placeholder="e.g. posted to the wrong expense account"></div>';
 
@@ -1941,8 +1966,10 @@ def register_banking_routes(app, db, login_required, Auth, render_page,
         async function startReallocate() {{
             if (!_reallocTxn) return;
             const t = _reallocTxn.txn;
+            const account = (document.getElementById('reallocAccount') || {{}}).value || '';
+            if (!account) {{ alert('Select the account to post this transaction to.'); return; }}
             const learn = !!(document.getElementById('reallocLearn') || {{}}).checked;
-            if (!confirm('Remove the current allocation for this transaction and post it somewhere else?')) return;
+            if (!confirm('Remove the current allocation for this transaction and post it to ' + account + '?')) return;
             const btns = document.querySelectorAll('#reallocBody button');
             btns.forEach(b => b.disabled = true);
             try {{
@@ -1950,7 +1977,8 @@ def register_banking_routes(app, db, login_required, Auth, render_page,
                 if (!d) {{ btns.forEach(b => b.disabled = false); return; }}
                 window._reallocLearn = learn;
                 closeReallocPanel();
-                showAllCategories(t.id, t.description, window._allCategories || [], 'Post this transaction to:');
+                await categorizeTransaction(t.id, account, t.description, '__skip__');
+                location.reload();
             }} catch (e) {{
                 alert('Error: ' + e.message);
                 btns.forEach(b => b.disabled = false);
