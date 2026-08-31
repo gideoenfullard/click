@@ -2900,6 +2900,8 @@ def register_stock_routes(app, db, login_required, Auth, render_page,
             sent = 0
             skipped = 0
             failed = 0
+            skipped_names = []
+            failed_names = []
             
             for customer in target_customers:
                 # ALWAYS prefer the Accounts Department contact; fall back to the
@@ -2911,6 +2913,7 @@ def register_stock_routes(app, db, login_required, Auth, render_page,
                 
                 if not email or "@" not in email:
                     skipped += 1
+                    skipped_names.append(str(customer.get("name", "") or customer.get("id", "")))
                     continue
                 
                 # Get this customer's invoices
@@ -2923,9 +2926,11 @@ def register_stock_routes(app, db, login_required, Auth, render_page,
                         logger.info(f"[BULK-EMAIL] Statement sent to {customer.get('name')} ({email}) [{'accounts' if email == accounts_email else 'primary'}]")
                     else:
                         failed += 1
+                        failed_names.append(f"{customer.get('name', '')} ({email})")
                         logger.error(f"[BULK-EMAIL] Failed to send to {customer.get('name')} ({email})")
                 except Exception as e:
                     failed += 1
+                    failed_names.append(f"{customer.get('name', '')} ({email}): {e}")
                     logger.error(f"[BULK-EMAIL] Error sending to {customer.get('name')}: {e}")
             
             # Update last sent timestamp
@@ -2950,6 +2955,8 @@ def register_stock_routes(app, db, login_required, Auth, render_page,
                 "sent": sent,
                 "skipped": skipped,
                 "failed": failed,
+                "skipped_names": skipped_names,
+                "failed_names": failed_names,
                 "message": f"Statements sent to {sent} customers"
             })
             

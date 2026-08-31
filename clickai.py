@@ -28578,7 +28578,10 @@ def customers_page():
             document.getElementById('sendingOverlay').remove();
             
             if (result.success) {{
-                alert(`✅ Statements sent!\\n\\nEmailed: ${{result.sent}}\\n⏭️ Skipped (no email): ${{result.skipped}}\\n❌ Failed: ${{result.failed}}`);
+                let _msg = `✅ Statements sent!\n\nEmailed: ${{result.sent}}\n⏭️ Skipped (no email): ${{result.skipped}}\n❌ Failed: ${{result.failed}}`;
+                if ((result.skipped_names || []).length) _msg += `\n\nSkipped (no email):\n` + result.skipped_names.join('\n');
+                if ((result.failed_names || []).length) _msg += `\n\nFailed:\n` + result.failed_names.join('\n');
+                alert(_msg);
             }} else {{
                 alert('❌ ' + (result.error || 'Failed to send statements'));
             }}
@@ -35142,6 +35145,14 @@ def bulk_statements_page():
                     <div>⏭️ Skipped: ${{result.skipped}} (no email)</div>
                     <div>❌ Failed: ${{result.failed}}</div>
                 `;
+                const _skippedNames = result.skipped_names || [];
+                const _failedNames = result.failed_names || [];
+                if (_skippedNames.length) {{
+                    document.getElementById('progressText').innerHTML += `<div style="margin-top:10px;text-align:left;font-size:13px;"><strong>Skipped (no email address):</strong><ul style="margin:4px 0 0 18px;padding:0;">${{_skippedNames.map(n => '<li>' + n + '</li>').join('')}}</ul></div>`;
+                }}
+                if (_failedNames.length) {{
+                    document.getElementById('progressText').innerHTML += `<div style="margin-top:10px;text-align:left;font-size:13px;color:var(--red);"><strong>Failed:</strong><ul style="margin:4px 0 0 18px;padding:0;">${{_failedNames.map(n => '<li>' + n + '</li>').join('')}}</ul></div>`;
+                }}
             }} else {{
                 document.getElementById('progressText').innerHTML = `<div style="color:var(--red);">❌ Error: ${{result.error}}</div>`;
             }}
