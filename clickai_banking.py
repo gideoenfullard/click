@@ -1898,6 +1898,7 @@ def register_banking_routes(app, db, login_required, Auth, render_page,
             h += '<div style="font-size:12px;font-weight:600;color:var(--text-muted);margin-bottom:6px;">GENERAL LEDGER ENTRIES POSTED</div>';
             if (!d.journal_lines.length) {{
                 h += '<div style="color:var(--text-muted);margin-bottom:14px;">No journal entries found for this transaction.</div>';
+                if (t.matched) h += '<div style="font-size:12px;color:#f59e0b;margin-bottom:14px;">Posted outside the bank module (manual journal or opening balance). Reallocating will NOT remove that entry &mdash; it will post a second one. Correct the original journal in Journals instead.</div>';
             }} else {{
                 h += '<div style="border:1px solid var(--border);border-radius:8px;overflow:hidden;margin-bottom:14px;">';
                 h += '<table style="width:100%;font-size:12px;border-collapse:collapse;">';
@@ -1970,6 +1971,9 @@ def register_banking_routes(app, db, login_required, Auth, render_page,
             if (!account) {{ alert('Select the account to post this transaction to.'); return; }}
             const learn = !!(document.getElementById('reallocLearn') || {{}}).checked;
             if (!confirm('Remove the current allocation for this transaction and post it to ' + account + '?')) return;
+            if (t.matched && !_reallocTxn.journal_lines.length) {{
+                if (!confirm('This transaction was posted outside the bank module. Its existing journal will stay in the ledger and a second entry will be posted. Continue anyway?')) return;
+            }}
             const btns = document.querySelectorAll('#reallocBody button');
             btns.forEach(b => b.disabled = true);
             try {{
