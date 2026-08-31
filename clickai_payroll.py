@@ -208,11 +208,8 @@ def register_payroll_routes(app, db, login_required, Auth, render_page,
         approved_batches = db.get("timesheet_batches", {"business_id": biz_id, "status": "approved"}) if biz_id else []
         staging_batches = timesheet_batches + approved_batches
         
-        # Get recent payslips: every slip of the latest pay month, plus the 10 before it
-        _sorted_slips = sorted(payslips, key=lambda x: x.get("date", ""), reverse=True)
-        _latest_month = str(_sorted_slips[0].get("date", "") or "")[:7] if _sorted_slips else ""
-        recent_payslips = [p for p in _sorted_slips if str(p.get("date", "") or "")[:7] == _latest_month]
-        recent_payslips += [p for p in _sorted_slips if str(p.get("date", "") or "")[:7] != _latest_month][:10]
+        # Get recent payslips
+        recent_payslips = sorted(payslips, key=lambda x: x.get("date", ""), reverse=True)[:30]
         
         # Calculate totals
         total_salaries = sum(float(e.get("basic_salary", 0)) for e in employees)
