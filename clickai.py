@@ -37525,6 +37525,9 @@ def create_journal_entry(biz_id: str, date: str, description: str, reference: st
             "created_at": now(),
             "created_by": _created_by
         }
+        # Optional trading-segment stamp supplied by the caller on P&L lines
+        if entry.get("segment"):
+            row["segment"] = str(entry.get("segment")).strip().upper()
         
         # A dropped keep-alive connection to Supabase fails the save outright
         # (the shared DB session is built with max_retries=0), which silently

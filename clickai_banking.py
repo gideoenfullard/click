@@ -236,6 +236,22 @@ def register_banking_routes(app, db, login_required, Auth, render_page,
                             ensure_gl_account=None):
     """Register all Banking routes with the Flask app."""
 
+    def _pl_account_codes(biz_id):
+        """Codes of income / expense / cost-of-sales accounts in the business's
+        chart of accounts. Segment stamps go on these lines only; a business
+        without a COA gets an empty set and no stamping."""
+        out = set()
+        try:
+            for a in (db.get("chart_of_accounts", {"business_id": biz_id}) or []):
+                t = str(a.get("account_type", "") or "").strip().lower()
+                if t in ("income", "revenue", "other_income", "expense", "cost_of_sales", "cogs"):
+                    c = str(a.get("account_code", "") or "").strip()
+                    if c:
+                        out.add(c)
+        except Exception as ex:
+            print(f"[BANK] _pl_account_codes failed: {ex}", flush=True)
+        return out
+
     def _fetch_all_bank_txns(biz_id):
         """Fetch ALL bank transactions for a business, NEWEST FIRST, paging past any
         Supabase/PostgREST max-rows cap (often 1000). Plain db.get sends no ORDER BY,
@@ -368,6 +384,17 @@ def register_banking_routes(app, db, login_required, Auth, render_page,
                 _gl_pick.append({"code": _gc, "name": _gn})
         _gl_pick.sort(key=lambda x: x["code"])
         _realloc_json_gl = json.dumps(_gl_pick).replace("'", "&#39;")
+        
+        # Trading segments configured for this business (custom_prices.segments).
+        # No list = no segment field anywhere on the page.
+        _seg_cfg = (business or {}).get("custom_prices") or {}
+        if isinstance(_seg_cfg, str):
+            try:
+                _seg_cfg = json.loads(_seg_cfg)
+            except Exception:
+                _seg_cfg = {}
+        _segment_list = [str(x).strip().upper() for x in (_seg_cfg.get("segments") or []) if str(x).strip()]
+        _segment_json = json.dumps(_segment_list)
         
         # Stats
         total_count = len(all_transactions)
@@ -639,6 +666,7 @@ def register_banking_routes(app, db, login_required, Auth, render_page,
         .split-modal {{ background:var(--card);border-radius:16px;padding:24px;width:95%;max-width:560px;max-height:85vh;overflow-y:auto;box-shadow:0 20px 60px rgba(0,0,0,0.4);border:1px solid var(--border); }}
         .split-modal h3 {{ margin:0 0 6px 0;font-size:18px; }}
         .split-line {{ display:grid;grid-template-columns:2fr 100px 40px;gap:8px;align-items:center;padding:8px 0;border-bottom:1px solid rgba(255,255,255,0.06); }}
+        .split-line.has-segment {{ grid-template-columns:2fr 1fr 100px 40px; }}
         .split-line select, .split-line input {{ padding:8px 10px;border-radius:6px;border:1px solid var(--border);background:var(--input-bg,var(--bg));color:var(--text);font-size:13px; }}
         .split-line input[type=number] {{ text-align:right; }}
         .split-line .remove-split {{ background:none;border:none;color:var(--red);cursor:pointer;font-size:18px;padding:4px 8px;border-radius:4px; }}
@@ -858,7 +886,7 @@ def register_banking_routes(app, db, login_required, Auth, render_page,
             event.target.closest('.recon-tab')?.classList.add('active');
         }}
         
-        async function categorizeTransaction(id, category, description, entityId, entityName, invoiceIds, invoiceNums, discountAllowed) {{
+        async function categorizeTransaction(id, category, description, entityId, entityName, invoiceIds, invoiceNums, discountAllowed, segment) {{
             if (!category) return;
             
             // If Customer Payment or Supplier Payment and no entity chosen, prompt to pick one
@@ -893,6 +921,7 @@ def register_banking_routes(app, db, login_required, Auth, render_page,
                 if (entityId && entityId !== '__skip__') {{ payload.entity_id = entityId; payload.entity_name = entityName || ''; }}
                 if (invoiceIds && invoiceIds.length > 0) {{ payload.invoice_ids = invoiceIds; payload.invoice_nums = invoiceNums || []; }}
                 if (discountAllowed) {{ payload.discount_allowed = true; }}
+                if (segment) {{ payload.segment = segment; }}
                 // Reallocation: only rewrite the learned rule when the user asked for it.
                 if (window._reallocLearn !== undefined) {{ payload.learn = window._reallocLearn; window._reallocLearn = undefined; }}
                 
@@ -1268,12 +1297,13 @@ def register_banking_routes(app, db, login_required, Auth, render_page,
                         <option value="">-- None / Skip ${{label}} --</option>
                         ${{optionsHtml}}
                     </select>
+                    ${{_segmentSelectHtml('allocSeg_' + txnId, 'width:100%;padding:8px;border:1px solid var(--border);border-radius:6px;background:var(--card);color:var(--text);font-size:13px;margin-bottom:8px;')}}
                     <div style="display:flex;gap:6px;">
                         <button onclick="confirmAllocationPick('${{txnId}}','${{safeCat}}','${{safeDesc}}')" 
                                 style="flex:1;padding:8px;background:var(--green);color:white;border:none;border-radius:6px;cursor:pointer;font-weight:700;font-size:13px;">
                             Allocate
                         </button>
-                        <button onclick="categorizeTransaction('${{txnId}}','${{safeCat}}','${{safeDesc}}','__skip__','')" 
+                        <button onclick="categorizeTransaction('${{txnId}}','${{safeCat}}','${{safeDesc}}','__skip__','',[],[],false,_segmentValue('allocSeg_${{txnId}}'))" 
                                 style="padding:8px 12px;background:var(--card);border:1px solid var(--border);color:var(--text-muted);border-radius:6px;cursor:pointer;font-size:12px;">
                             Skip
                         </button>
@@ -1291,7 +1321,7 @@ def register_banking_routes(app, db, login_required, Auth, render_page,
             
             // If user left "None / Skip" selected, treat as skip (no entity link)
             const finalEntityId = entityId || '__skip__';
-            categorizeTransaction(txnId, category, description, finalEntityId, entityName, [], []);
+            categorizeTransaction(txnId, category, description, finalEntityId, entityName, [], [], false, _segmentValue('allocSeg_' + txnId));
         }}
         
         // ═══════════════════════════════════════════════════════════
@@ -1834,6 +1864,17 @@ def register_banking_routes(app, db, login_required, Auth, render_page,
         let _splitLineCount = 0;
         let _splitMatchedExpenseId = '';
         let _splitAllCategories = {json_cat_list};
+        let _segmentList = {_segment_json};
+
+        function _segmentSelectHtml(id, style) {{
+            if (!_segmentList.length) return '';
+            return '<select id="' + id + '" style="' + style + '"><option value="">Segment: default (by rules)</option>' +
+                   _segmentList.map(sg => '<option value="' + sg + '">' + sg + '</option>').join('') + '</select>';
+        }}
+
+        function _segmentValue(id) {{
+            return (document.getElementById(id) || {{}}).value || '';
+        }}
         let _entityCustomers = {_entity_json_customers};
         let _entitySuppliers = {_entity_json_suppliers};
         
@@ -1905,7 +1946,7 @@ def register_banking_routes(app, db, login_required, Auth, render_page,
                 h += '<tr style="background:var(--bg);"><th style="padding:6px;text-align:left;">Account</th><th style="padding:6px;text-align:right;">Debit</th><th style="padding:6px;text-align:right;">Credit</th></tr>';
                 d.journal_lines.forEach(l => {{
                     h += '<tr style="border-top:1px solid var(--border);">';
-                    h += '<td style="padding:6px;"><b>' + l.code + '</b> ' + (l.name || '') + '<div style="font-size:10px;color:var(--text-muted);">' + (l.description || '') + '</div></td>';
+                    h += '<td style="padding:6px;"><b>' + l.code + '</b> ' + (l.name || '') + (l.segment ? ' <span style="font-size:10px;color:#22d3ee;">' + l.segment + '</span>' : '') + '<div style="font-size:10px;color:var(--text-muted);">' + (l.description || '') + '</div></td>';
                     h += '<td style="padding:6px;text-align:right;">' + (l.debit ? _rMoney(l.debit) : '-') + '</td>';
                     h += '<td style="padding:6px;text-align:right;">' + (l.credit ? _rMoney(l.credit) : '-') + '</td>';
                     h += '</tr>';
@@ -1933,6 +1974,7 @@ def register_banking_routes(app, db, login_required, Auth, render_page,
 
             h += '<div style="margin-bottom:10px;"><label style="font-size:12px;color:var(--text-muted);">Post to account</label>';
             h += '<select id="reallocAccount" class="fi" style="width:100%;padding:8px;margin-top:4px;"><option value="">Select account...</option>' + _reallocAccountOptions() + '</select></div>';
+            if (_segmentList.length) h += '<div style="margin-bottom:10px;"><label style="font-size:12px;color:var(--text-muted);">Segment</label>' + _segmentSelectHtml('reallocSegment', 'width:100%;padding:8px;margin-top:4px;') + '</div>';
 
             h += '<div style="margin-bottom:10px;"><label style="font-size:12px;color:var(--text-muted);">Reason (kept in the audit trail)</label>';
             h += '<input id="reallocReason" class="fi" style="width:100%;padding:8px;margin-top:4px;" placeholder="e.g. posted to the wrong expense account"></div>';
@@ -1981,7 +2023,7 @@ def register_banking_routes(app, db, login_required, Auth, render_page,
                 if (!d) {{ btns.forEach(b => b.disabled = false); return; }}
                 window._reallocLearn = learn;
                 closeReallocPanel();
-                await categorizeTransaction(t.id, account, t.description, '__skip__');
+                await categorizeTransaction(t.id, account, t.description, '__skip__', '', [], [], false, _segmentValue('reallocSegment'));
                 location.reload();
             }} catch (e) {{
                 alert('Error: ' + e.message);
@@ -2049,11 +2091,12 @@ def register_banking_routes(app, db, login_required, Auth, render_page,
             const selectedAttr = catVal ? '' : '';
             
             const html = `
-                <div class="split-line" id="splitLine_${{idx}}">
+                <div class="split-line${{_segmentList.length ? ' has-segment' : ''}}" id="splitLine_${{idx}}">
                     <select id="splitCat_${{idx}}" onchange="updateSplitBalance()">
                         <option value="">-- Kies kategorie --</option>
                         ${{catOptions}}
                     </select>
+                    ${{_segmentSelectHtml('splitSeg_' + idx, '')}}
                     <input type="number" id="splitAmt_${{idx}}" step="0.01" min="0" placeholder="0.00" value="${{amtVal}}" oninput="updateSplitBalance()">
                     <button class="remove-split" onclick="removeSplitLine(${{idx}})" title="Verwyder">✕</button>
                 </div>
@@ -2097,7 +2140,7 @@ def register_banking_routes(app, db, login_required, Auth, render_page,
                     const cat = selects[0].value;
                     const amt = parseFloat(inputs[0].value) || 0;
                     if (cat && amt > 0) {{
-                        lines.push({{ category: cat, amount: amt }});
+                        lines.push({{ category: cat, amount: amt, segment: (selects[1] ? selects[1].value : '') }});
                     }}
                 }}
             }});
@@ -4784,6 +4827,7 @@ Return ONLY the JSON array. No markdown, no explanation."""
                             "debit": round(float(j.get("debit", 0) or 0), 2),
                             "credit": round(float(j.get("credit", 0) or 0), 2),
                             "reference": j.get("reference", ""),
+                            "segment": j.get("segment", "") or "",
                         })
             lines.sort(key=lambda x: (x["date"], x["code"]))
 
@@ -4932,6 +4976,7 @@ Return ONLY the JSON array. No markdown, no explanation."""
             _picked_invoice_ids = data.get("invoice_ids", []) or []
             _picked_invoice_nums = data.get("invoice_nums", []) or []
             _discount_allowed = bool(data.get("discount_allowed", False))
+            _segment = str(data.get("segment", "") or "").strip().upper()
             
             if not txn_id or not category:
                 return jsonify({"success": False, "error": "Missing data"})
@@ -5015,10 +5060,17 @@ Return ONLY the JSON array. No markdown, no explanation."""
             # so the ledger can show where the transaction was allocated in the GL.
             _alloc_gl_lines = []
             _orig_create_journal_entry = create_journal_entry
+            _pl_codes = _pl_account_codes(biz_id) if _segment else set()
             def _cje(_b, _d, _ds, _r, _lines):
                 try:
                     if _lines:
                         _alloc_gl_lines.extend(_lines)
+                    # Segment stamp on the P&L line(s) only; bank, VAT and other
+                    # balance-sheet lines never carry a segment
+                    if _segment and category not in special_categories:
+                        for _l in _lines or []:
+                            if str(_l.get("account_code", "") or "").strip() in _pl_codes:
+                                _l["segment"] = _segment
                 except Exception:
                     pass
                 return _orig_create_journal_entry(_b, _d, _ds, _r, _lines)
@@ -6041,6 +6093,7 @@ Return ONLY the JSON array. No markdown, no explanation."""
             txn_date = txn.get("date", today())
             ref = f"BNK-SPLIT-{txn_id[:8]}"
             user = Auth.get_current_user()
+            _pl_codes = _pl_account_codes(biz_id) if any(sp.get("segment") for sp in splits) else set()
             
             # Build category summary for the transaction record
             split_categories = []
@@ -6072,14 +6125,15 @@ Return ONLY the JSON array. No markdown, no explanation."""
                     sp_gl = IndustryKnowledge.get_gl_code(sp_category, business_id=biz_id)
                     
                     is_no_vat = _is_no_vat_category(sp_category)
+                    sp_segment = str(sp.get("segment", "") or "").strip().upper() if sp_gl in _pl_codes else ""
                     
                     if is_no_vat:
                         # No VAT claim — full amount to expense
-                        journal_entries.append({"account_code": sp_gl, "debit": sp_amount, "credit": 0})
+                        journal_entries.append({"account_code": sp_gl, "debit": sp_amount, "credit": 0, "segment": sp_segment})
                     else:
                         # VAT inclusive — split out VAT
                         vat, net = _split_vat(sp_amount, biz_id, False)
-                        journal_entries.append({"account_code": sp_gl, "debit": net, "credit": 0})
+                        journal_entries.append({"account_code": sp_gl, "debit": net, "credit": 0, "segment": sp_segment})
                         if vat > 0:
                             journal_entries.append({"account_code": gl(biz_id, "vat_input"), "debit": vat, "credit": 0})
                     
@@ -6125,8 +6179,9 @@ Return ONLY the JSON array. No markdown, no explanation."""
                     
                     # VAT on income
                     vat, net = _split_vat(sp_amount, biz_id, _is_no_vat_category(sp_category))
+                    sp_segment = str(sp.get("segment", "") or "").strip().upper() if sp_gl in _pl_codes else ""
                     
-                    journal_entries.append({"account_code": sp_gl, "debit": 0, "credit": net})
+                    journal_entries.append({"account_code": sp_gl, "debit": 0, "credit": net, "segment": sp_segment})
                     if vat > 0:
                         journal_entries.append({"account_code": gl(biz_id, "vat_output"), "debit": 0, "credit": vat})
                 
