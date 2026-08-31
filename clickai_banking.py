@@ -1908,7 +1908,7 @@ def register_banking_routes(app, db, login_required, Auth, render_page,
 
         function _segmentSelectHtml(id, style, jobSelId) {{
             if (!_segmentList.length) return '';
-            const onch = jobSelId ? ' onchange="_filterJobs(\'' + jobSelId + '\', this.value)"' : '';
+            const onch = jobSelId ? ' data-job-sel="' + jobSelId + '" onchange="_filterJobs(this.dataset.jobSel, this.value)"' : '';
             return '<select id="' + id + '" style="' + style + '"' + onch + '><option value="">Segment: default (by rules)</option>' +
                    _segmentList.map(sg => '<option value="' + sg + '">' + sg + '</option>').join('') + '</select>';
         }}
