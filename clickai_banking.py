@@ -386,8 +386,8 @@ def register_banking_routes(app, db, login_required, Auth, render_page,
         # Customer + Supplier lists for entity picker (when allocating payments)
         _all_customers = db.get("customers", {"business_id": biz_id}) if biz_id else []
         _all_suppliers = db.get("suppliers", {"business_id": biz_id}) if biz_id else []
-        _cust_list = [{"id": c.get("id",""), "name": c.get("name","")} for c in (_all_customers or []) if c.get("name")]
-        _supp_list = [{"id": s.get("id",""), "name": s.get("name","")} for s in (_all_suppliers or []) if s.get("name")]
+        _cust_list = [{"id": c.get("id",""), "code": str(c.get("code","") or "").strip(), "name": c.get("name","")} for c in (_all_customers or []) if c.get("name")]
+        _supp_list = [{"id": s.get("id",""), "code": str(s.get("code","") or "").strip(), "name": s.get("name","")} for s in (_all_suppliers or []) if s.get("name")]
         _cust_list.sort(key=lambda x: x["name"].upper())
         _supp_list.sort(key=lambda x: x["name"].upper())
         _entity_json_customers = json.dumps(_cust_list).replace("'", "&#39;")
@@ -1039,7 +1039,7 @@ def register_banking_routes(app, db, login_required, Auth, render_page,
             
             let optionsHtml = entities.map(e => {{
                 const selected = (preCustomer && e.id === preCustomer) ? ' selected' : '';
-                return `<option value="${{e.id}}" data-name="${{(e.name||'').replace(/"/g,'&quot;')}}"${{selected}}>${{e.name}}</option>`;
+                return `<option value="${{e.id}}" data-name="${{(e.name||'').replace(/"/g,'&quot;')}}"${{selected}}>${{e.code ? e.code + ' — ' : ''}}${{e.name}}</option>`;
             }}).join('');
             
             const safeDesc = (description || '').replace(/'/g, "\\\\'");
@@ -1064,14 +1064,14 @@ def register_banking_routes(app, db, login_required, Auth, render_page,
                 </div>` : '';
             
             actionCell.innerHTML = `
-                <div style="background:rgba(139,92,246,0.08);border:1px solid rgba(139,92,246,0.25);border-radius:10px;padding:12px;min-width:320px;">
+                <div style="background:rgba(139,92,246,0.08);border:1px solid rgba(139,92,246,0.25);border-radius:10px;padding:12px;min-width:460px;">
                     <div style="font-size:13px;font-weight:700;color:#8b5cf6;margin-bottom:8px;">${{category}} — Select ${{label}}</div>
                     ${{comboBanner}}${{discBanner}}${{stmtBanner}}
                     <select id="entityPick_${{txnId}}" onchange="loadEntityInvoices('${{txnId}}','${{category}}')" style="width:100%;padding:8px;border:1px solid var(--border);border-radius:6px;background:var(--card);color:var(--text);font-size:13px;margin-bottom:8px;">
                         <option value="">-- Select ${{label}} --</option>
                         ${{optionsHtml}}
                     </select>
-                    <div id="invList_${{txnId}}" style="max-height:200px;overflow-y:auto;margin-bottom:8px;"></div>
+                    <div id="invList_${{txnId}}" style="max-height:480px;overflow-y:auto;margin-bottom:8px;"></div>
                     <div style="display:flex;gap:6px;">
                         <button onclick="confirmEntityPick('${{txnId}}','${{category}}','${{safeDesc}}')" 
                                 style="flex:1;padding:8px;background:var(--green);color:white;border:none;border-radius:6px;cursor:pointer;font-weight:700;font-size:13px;">
@@ -1311,7 +1311,7 @@ def register_banking_routes(app, db, login_required, Auth, render_page,
             const optionsHtml = entities.map(e => {{
                 const sel = (e.id === preSelectedId) ? ' selected' : '';
                 const safeName = (e.name || '').replace(/"/g, '&quot;');
-                return `<option value="${{e.id}}" data-name="${{safeName}}"${{sel}}>${{e.name}}</option>`;
+                return `<option value="${{e.id}}" data-name="${{safeName}}"${{sel}}>${{e.code ? e.code + ' — ' : ''}}${{e.name}}</option>`;
             }}).join('');
             
             const safeDesc = (description || '').replace(/'/g, "\\\\'");
