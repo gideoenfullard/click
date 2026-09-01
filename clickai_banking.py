@@ -2428,9 +2428,15 @@ def register_banking_routes(app, db, login_required, Auth, render_page,
             except Exception:
                 return 0.0
 
-        # Statement side: imported bank transactions (movement + any running balance)
-        txns = db.get("bank_transactions", {"business_id": biz_id}) or []
-        txns.sort(key=lambda x: str(x.get("date", ""))[:10])
+        # Statement side: imported bank transactions (movement + any running balance).
+        # Lines tagged "Covered by opening balance" are pre-cutover - they are already
+        # inside the GL opening - so they are left out of the statement movement and
+        # out of the matching below.
+        _COVERED = "Covered by opening balance"
+        txns_all = db.get("bank_transactions", {"business_id": biz_id}) or []
+        txns_all.sort(key=lambda x: str(x.get("date", ""))[:10])
+        txns = [t for t in txns_all if str(t.get("category", "") or "") != _COVERED]
+        covered_count = len(txns_all) - len(txns)
         bank_credits = sum(_f(t.get("credit")) for t in txns)
         bank_debits = sum(_f(t.get("debit")) for t in txns)
         bank_movement = bank_credits - bank_debits
@@ -2462,22 +2468,25 @@ def register_banking_routes(app, db, login_required, Auth, render_page,
         gl_movement = gl_dr - gl_cr
         gl_balance = gl_opening + gl_movement
 
-        # Bank opening/closing: prefer the statement's real balances (entered by the
-        # user), because some bank formats carry no per-line running balance. Fall back
-        # to the imported running balance, then to the GL opening + movement.
+        # Bank opening/closing. The statement side starts at the cutover opening (the
+        # same figure the GL starts from) and moves by the imported lines. A closing
+        # balance typed in from the paper statement takes priority. The per-line
+        # running balance is NOT used to anchor either end: within a day it depends on
+        # import order and can sit one line out, which used to invent an "opening gap".
         if stmt_close is not None:
             bank_closing = stmt_close
             bank_opening = stmt_open if stmt_open is not None else gl_opening
             have_bank_balance = True
-        elif _with_bal:
-            _first, _last = _with_bal[0], _with_bal[-1]
-            bank_opening = _f(_first.get("balance")) - (_f(_first.get("credit")) - _f(_first.get("debit")))
-            bank_closing = _f(_last.get("balance"))
-            have_bank_balance = True
         else:
-            bank_opening = gl_opening
-            bank_closing = bank_opening + bank_movement
+            bank_opening = stmt_open if stmt_open is not None else gl_opening
+            bank_closing = round(bank_opening + bank_movement, 2)
             have_bank_balance = False
+        # Import completeness check: the last imported running balance against the
+        # closing the imported lines imply. A gap means statement lines are missing
+        # or duplicated (or the cutover tag is on the wrong lines).
+        imported_closing = _f(_with_bal[-1].get("balance")) if _with_bal else None
+        import_gap = (round(imported_closing - (gl_opening + bank_movement), 2)
+                      if imported_closing is not None else None)
 
         # Difference, decomposed so the arithmetic always ties
         difference = round(bank_closing - gl_balance, 2)
@@ -2596,6 +2605,7 @@ def register_banking_routes(app, db, login_required, Auth, render_page,
             "gl_opening": gl_opening, "gl_balance": gl_balance,
             "difference": difference, "opening_gap": opening_gap,
             "unalloc_net": unalloc_net, "residual": residual,
+            "covered_count": covered_count, "imported_closing": imported_closing, "import_gap": import_gap,
             "unalloc": unalloc, "gl_only": gl_only, "misplaced": misplaced,
             "duplicates": duplicates, "dup_excess_total": dup_excess_total,
             "over_reversals": over_reversals, "over_rev_total": over_rev_total,
@@ -2959,7 +2969,7 @@ def register_banking_routes(app, db, login_required, Auth, render_page,
 
         cards = ('<div style="display:flex;gap:14px;flex-wrap:wrap;margin-bottom:18px;">'
                  + _card("Bank statement balance", bank_closing, _bal_color,
-                         ("From your entered statement closing balance" if stmt_entered else ("From the bank's running balance" if have_bank_balance else "Opening + movement (no running balance imported)")))
+                         ("From your entered statement closing balance" if stmt_entered else f"Cutover opening + imported statement lines ({R.get('covered_count', 0)} pre-cutover lines excluded)"))
                  + _card("GL bank balance (code " + bank_code + ")", gl_balance, _gl_color, "Opening balance + journals on the bank account")
                  + _card("Difference", difference, _diff_color,
                          "Reconciled — the books match the bank" if _reconciled else "Bank minus books — accounted for below")
@@ -2971,7 +2981,12 @@ def register_banking_routes(app, db, login_required, Auth, render_page,
                      f'Difference of <b style="color:{_diff_color};">{money(difference)}</b> = '
                      f'opening balance gap <b>{money(opening_gap)}</b> '
                      f'+ unallocated statement lines <b>{money(unalloc_net)}</b> ({len(unalloc)}) '
-                     f'+ other GL bank postings <b>{money(residual)}</b>.</p></div>')
+                     f'+ other GL bank postings <b>{money(residual)}</b>.</p>'
+                     + ((f'<p style="margin:8px 0 0 0;color:#f59e0b;font-size:13px;">The imported running balance ends at <b>{money(R["imported_closing"])}</b>, '
+                         f'which is <b>{money(R["import_gap"])}</b> away from what the imported lines add up to. '
+                         f'Statement lines may be missing or duplicated - check the paper statement against the import.</p>')
+                        if R.get("import_gap") is not None and abs(R["import_gap"]) >= 0.01 else "")
+                     + '</div>')
 
         # 1. Opening balance
         ob_rows = (f'<tr><td>Bank statement opening</td><td style="text-align:right;font-variant-numeric:tabular-nums;">{money(bank_opening)}</td></tr>'
@@ -3159,7 +3174,7 @@ function escapeHtmlRecon(s){return (s||'').replace(/&/g,'&amp;').replace(/</g,'&
             '<button type="submit" class="btn btn-primary">Apply</button>'
             '<a href="/banking/reconcile" class="btn btn-secondary">Clear</a>'
             '</form>'
-            '<p style="margin:8px 0 0 0;font-size:12px;color:var(--text-muted);">For bank formats without a per-line running balance, enter the closing balance from your statement (use a minus sign for an overdraft). Leave blank to use the imported balance.</p>'
+            '<p style="margin:8px 0 0 0;font-size:12px;color:var(--text-muted);">Enter the closing balance from your paper statement (use a minus sign for an overdraft) to anchor the bank side to the real statement. Leave blank to use the cutover opening plus the imported lines.</p>'
             '</div>')
         _stmt_js = ('<script>window.RECON_STMT={open:%s,close:%s};</script>'
                     % (("%.2f" % _stmt_open_in) if _stmt_open_in is not None else "null",
