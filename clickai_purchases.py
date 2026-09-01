@@ -446,6 +446,15 @@ def register_purchases_routes(app, db, login_required, Auth, render_page,
         _jobcard_options = '<option value="">— No job card —</option>' + "".join(
             f'<option value="{_jc.get("id")}">{_jc.get("job_number", "")} — {(_jc.get("trailer_reg") or "")[:12]} {(_jc.get("description") or "")[:40]}</option>'
             for _jc in sorted(_open_job_cards or [], key=lambda x: x.get("job_number", ""), reverse=True))
+        # Tick-box rows: one invoice can be split across several job cards
+        _jobcard_checks = "".join(
+            f'<div style="display:flex;align-items:center;gap:8px;padding:3px 0;">'
+            f'<input type="checkbox" class="capInvJobChk" value="{_jc.get("id")}" onchange="capInvJobChanged()">'
+            f'<span style="flex:1;font-size:13px;">{_jc.get("job_number", "")} — {(_jc.get("trailer_reg") or "")[:12]} {(_jc.get("description") or "")[:40]}</span>'
+            f'<input type="number" class="capInvJobAmt" data-job="{_jc.get("id")}" step="0.01" min="0" placeholder="0.00" oninput="capInvUpdateSplitInfo()" style="display:none;width:110px;padding:4px 6px;border:1px solid var(--border);border-radius:4px;background:var(--card);color:var(--text);font-size:12px;text-align:right;">'
+            f'</div>'
+            for _jc in sorted(_open_job_cards or [], key=lambda x: x.get("job_number", ""), reverse=True)
+        ) or '<div style="font-size:12px;color:var(--text-muted);">No open job cards</div>'
         
         # Fetch GL accounts - try ALL sources: accounts, chart_of_accounts, then full defaults
         _gl_options = ""
@@ -1168,10 +1177,14 @@ def register_purchases_routes(app, db, login_required, Auth, render_page,
                         <input type="text" id="capInvDesc" placeholder="e.g. Diesel for bakkie, Stationery" style="width:100%;padding:10px;border:1px solid var(--border);border-radius:6px;background:var(--bg);color:var(--text);">
                     </div>
                     <div>
-                        <label style="display:block;margin-bottom:4px;font-weight:600;font-size:13px;">Link to Job Card (optional)</label>
-                        <select id="capInvJobCard" style="width:100%;padding:10px;border:1px solid var(--border);border-radius:6px;background:var(--bg);color:var(--text);font-size:13px;">
-                            {_jobcard_options}
-                        </select>
+                        <label style="display:block;margin-bottom:4px;font-weight:600;font-size:13px;">Link to Job Card(s) (optional) — tick more than one to split the amount</label>
+                        <div id="capInvJobList" style="max-height:150px;overflow:auto;border:1px solid var(--border);border-radius:6px;background:var(--bg);padding:6px 10px;">
+                            {_jobcard_checks}
+                        </div>
+                        <div id="capInvJobSplit" style="display:none;margin-top:6px;font-size:12px;align-items:center;justify-content:space-between;gap:8px;">
+                            <span id="capInvJobSplitInfo"></span>
+                            <button type="button" onclick="capInvSplitEqual()" style="padding:4px 10px;background:var(--card);color:var(--text);border:1px solid var(--border);border-radius:4px;cursor:pointer;font-size:12px;white-space:nowrap;">Split equally</button>
+                        </div>
                     </div>
                     <div>
                         <label style="display:block;margin-bottom:4px;font-weight:600;font-size:13px;">GL Account (Expense Type)</label>
@@ -1186,7 +1199,7 @@ def register_purchases_routes(app, db, login_required, Auth, render_page,
                     </div>
                     <div>
                         <label style="display:block;margin-bottom:4px;font-weight:600;font-size:13px;">{"Amount" if supplier.get("vat_registered") is False else "Amount (VAT Inclusive)"}</label>
-                        <input type="number" id="capInvAmount" placeholder="0.00" step="0.01" min="0.01" oninput="updateCapInvDiscount()" style="width:100%;padding:10px;border:1px solid var(--border);border-radius:6px;background:var(--bg);color:var(--text);font-size:18px;font-weight:700;">
+                        <input type="number" id="capInvAmount" placeholder="0.00" step="0.01" min="0.01" oninput="updateCapInvDiscount();capInvUpdateSplitInfo()" style="width:100%;padding:10px;border:1px solid var(--border);border-radius:6px;background:var(--bg);color:var(--text);font-size:18px;font-weight:700;">
                     </div>
                     <div style="display:flex;align-items:center;gap:8px;">
                         <input type="checkbox" id="capInvVat" {"disabled" if supplier.get("vat_registered") is False else "checked"} onchange="updateCapInvDiscount()">
@@ -1375,6 +1388,61 @@ def register_purchases_routes(app, db, login_required, Auth, render_page,
             btn.textContent = '🤖 Suggest';
         }}
         
+        function capInvJobChanged() {{
+            const checked = [...document.querySelectorAll('.capInvJobChk:checked')];
+            const multi = checked.length > 1;
+            document.querySelectorAll('.capInvJobAmt').forEach(inp => {{
+                const on = multi && checked.some(c => c.value === inp.dataset.job);
+                inp.style.display = on ? '' : 'none';
+                if (!on) inp.value = '';
+            }});
+            document.getElementById('capInvJobSplit').style.display = multi ? 'flex' : 'none';
+            if (multi) capInvUpdateSplitInfo();
+        }}
+        
+        function capInvSplitEqual() {{
+            const total = parseFloat(document.getElementById('capInvAmount').value) || 0;
+            const checked = [...document.querySelectorAll('.capInvJobChk:checked')];
+            if (!total || checked.length < 2) return;
+            const each = Math.floor(total / checked.length * 100) / 100;
+            const rem = Math.round((total - each * checked.length) * 100) / 100;
+            checked.forEach((c, i) => {{
+                const inp = document.querySelector('.capInvJobAmt[data-job="' + c.value + '"]');
+                if (inp) inp.value = (i === 0 ? Math.round((each + rem) * 100) / 100 : each).toFixed(2);
+            }});
+            capInvUpdateSplitInfo();
+        }}
+        
+        function capInvUpdateSplitInfo() {{
+            const el = document.getElementById('capInvJobSplitInfo');
+            const checked = [...document.querySelectorAll('.capInvJobChk:checked')];
+            if (!el || checked.length < 2) return;
+            const total = parseFloat(document.getElementById('capInvAmount').value) || 0;
+            let sum = 0;
+            checked.forEach(c => {{
+                const inp = document.querySelector('.capInvJobAmt[data-job="' + c.value + '"]');
+                sum += parseFloat(inp ? inp.value : 0) || 0;
+            }});
+            const diff = Math.round((total - sum) * 100) / 100;
+            if (Math.abs(diff) < 0.01) {{
+                el.style.color = 'var(--green)';
+                el.textContent = 'Split balanced: R' + sum.toFixed(2);
+            }} else {{
+                el.style.color = 'var(--red)';
+                el.textContent = 'R' + Math.abs(diff).toFixed(2) + (diff > 0 ? ' still to allocate' : ' too much') + ' (invoice R' + total.toFixed(2) + ')';
+            }}
+        }}
+        
+        function capInvJobSplits() {{
+            const checked = [...document.querySelectorAll('.capInvJobChk:checked')];
+            const total = parseFloat(document.getElementById('capInvAmount').value) || 0;
+            if (checked.length < 2) return checked.map(c => ({{ job_card_id: c.value, amount: total }}));
+            return checked.map(c => {{
+                const inp = document.querySelector('.capInvJobAmt[data-job="' + c.value + '"]');
+                return {{ job_card_id: c.value, amount: parseFloat(inp ? inp.value : 0) || 0 }};
+            }});
+        }}
+        
         async function submitCaptureInvoice() {{
             const btn = document.getElementById('capInvBtn');
             btn.disabled = true;
@@ -1391,7 +1459,7 @@ def register_purchases_routes(app, db, login_required, Auth, render_page,
                 amount: parseFloat(document.getElementById('capInvAmount').value) || 0,
                 vat_inclusive: document.getElementById('capInvVat').checked,
                 is_paid: document.getElementById('capInvPaid').checked,
-                job_card_id: document.getElementById('capInvJobCard') ? document.getElementById('capInvJobCard').value : ''
+                job_splits: capInvJobSplits()
             }};
             
             if (!data.amount) {{
@@ -1401,6 +1469,17 @@ def register_purchases_routes(app, db, login_required, Auth, render_page,
                 btn.disabled = false;
                 btn.textContent = 'Save Invoice';
                 return;
+            }}
+            if (data.job_splits.length > 1) {{
+                const splitSum = Math.round(data.job_splits.reduce((a, s) => a + s.amount, 0) * 100) / 100;
+                if (Math.abs(splitSum - data.amount) > 0.01 || data.job_splits.some(s => s.amount <= 0)) {{
+                    msg.style.display = 'block';
+                    msg.style.color = 'var(--red)';
+                    msg.textContent = 'Job split amounts must add up to the invoice amount';
+                    btn.disabled = false;
+                    btn.textContent = 'Save Invoice';
+                    return;
+                }}
             }}
             
             try {{
@@ -5690,6 +5769,18 @@ Nothing else."""
                 existing = db.get("supplier_invoices", {"business_id": biz_id}) or []
                 invoice_number = next_document_number("SINV", existing, "invoice_number")
             
+            # ── Job card split (validated BEFORE anything is saved) ──
+            # job_splits: [{job_card_id, amount}] in invoice (gross) terms. A single
+            # job_card_id from older callers becomes a one-line split.
+            job_card_id = (data.get("job_card_id") or "").strip()
+            job_splits = [s for s in (data.get("job_splits") or []) if (s.get("job_card_id") or "").strip()]
+            if not job_splits and job_card_id:
+                job_splits = [{"job_card_id": job_card_id, "amount": total_amount}]
+            if len(job_splits) > 1:
+                _split_sum = round(sum(float(s.get("amount") or 0) for s in job_splits), 2)
+                if abs(_split_sum - total_amount) > 0.05 or any(float(s.get("amount") or 0) <= 0 for s in job_splits):
+                    return jsonify({"success": False, "error": f"Job split (R{_split_sum:,.2f}) does not match the invoice total (R{total_amount:,.2f})"})
+            
             # Create supplier invoice record
             invoice = RecordFactory.supplier_invoice(
                 business_id=biz_id,
@@ -5711,27 +5802,44 @@ Nothing else."""
             if not success:
                 return jsonify({"success": False, "error": f"Failed to save: {err}"})
             
-            # ── Link to job card: tag the invoice and drop the cost on the card ──
-            job_card_id = (data.get("job_card_id") or "").strip()
-            if job_card_id:
+            # ── Link to job card(s): tag the invoice and drop the cost on each card ──
+            # Net cost is apportioned by the split amounts; the last line absorbs rounding.
+            _job_segments = set()
+            if job_splits:
                 try:
-                    _jc = db.get_one("job_cards", job_card_id)
-                    if _jc and _jc.get("business_id") == biz_id and _jc.get("status") == "open":
-                        db.update("supplier_invoices", inv_id, {"job_card_id": job_card_id})
+                    _net_left = net_amount
+                    for _i, _sp in enumerate(job_splits):
+                        _jid = (_sp.get("job_card_id") or "").strip()
+                        _jc = db.get_one("job_cards", _jid)
+                        if not (_jc and _jc.get("business_id") == biz_id and _jc.get("status") == "open"):
+                            logger.error(f"[CAPTURE INV] Job card {_jid[:8]} not found or not open - skipped")
+                            continue
+                        if len(job_splits) == 1:
+                            _net_part = net_amount
+                            db.update("supplier_invoices", inv_id, {"job_card_id": _jid})
+                        elif _i == len(job_splits) - 1:
+                            _net_part = round(_net_left, 2)
+                        else:
+                            _net_part = round(net_amount * float(_sp.get("amount") or 0) / total_amount, 2) if total_amount else 0
+                        _net_left = round(_net_left - _net_part, 2)
                         _markup = float(_jc.get("markup_pct") or 0)
-                        _jc_charge = round(net_amount * (1 + _markup / 100.0), 2)
+                        _jc_charge = round(_net_part * (1 + _markup / 100.0), 2)
                         db.save("job_card_lines", {
-                            "id": generate_id(), "business_id": biz_id, "job_card_id": job_card_id,
+                            "id": generate_id(), "business_id": biz_id, "job_card_id": _jid,
                             "line_type": "other", "date": inv_date,
-                            "description": f"{supplier_name} — {invoice_number}" + (f" — {description}" if description else ""),
-                            "amount_cost": net_amount, "amount_charge": _jc_charge,
+                            "description": f"{supplier_name} — {invoice_number}" + (f" — {description}" if description else "") + (f" (split {_i + 1}/{len(job_splits)})" if len(job_splits) > 1 else ""),
+                            "amount_cost": _net_part, "amount_charge": _jc_charge,
                             "source": "supplier_invoice", "source_id": inv_id,
                             "created_by_name": user.get("name", "") if user else "",
                             "created_at": now()
                         })
-                        logger.info(f"[CAPTURE INV] Linked to job card {_jc.get('job_number')}: cost R{net_amount} charge R{_jc_charge}")
+                        if str(_jc.get("segment", "") or "").strip():
+                            _job_segments.add(str(_jc.get("segment")).strip().upper())
+                        logger.info(f"[CAPTURE INV] Linked to job card {_jc.get('job_number')}: cost R{_net_part} charge R{_jc_charge}")
                 except Exception as _jce:
                     logger.error(f"[CAPTURE INV] Job card link failed (invoice still saved): {_jce}")
+            # One segment across the chosen job(s) stamps the expense line; mixed segments are left to the rules
+            _exp_segment = next(iter(_job_segments)) if len(_job_segments) == 1 else ""
             
             # Update supplier balance (if not paid, add to creditors)
             if supplier_id and not is_paid:
@@ -5752,7 +5860,7 @@ Nothing else."""
                 if is_paid:
                     # Already paid: Debit Expense (full net) + VAT Input, Credit Discount Received + Bank
                     journal_entries = [
-                        {"account_code": gl_code, "debit": gross_net, "credit": 0},
+                        {"account_code": gl_code, "debit": gross_net, "credit": 0, "segment": _exp_segment},
                     ]
                     if vat_amount > 0:
                         journal_entries.append({"account_code": gl(biz_id, "vat_input"), "debit": vat_amount, "credit": 0})
@@ -5762,7 +5870,7 @@ Nothing else."""
                 else:
                     # On account: Debit Expense (full net) + VAT Input, Credit Discount Received + Creditors
                     journal_entries = [
-                        {"account_code": gl_code, "debit": gross_net, "credit": 0},
+                        {"account_code": gl_code, "debit": gross_net, "credit": 0, "segment": _exp_segment},
                     ]
                     if vat_amount > 0:
                         journal_entries.append({"account_code": gl(biz_id, "vat_input"), "debit": vat_amount, "credit": 0})

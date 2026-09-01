@@ -28578,9 +28578,9 @@ def customers_page():
             document.getElementById('sendingOverlay').remove();
             
             if (result.success) {{
-                let _msg = `✅ Statements sent!\n\nEmailed: ${{result.sent}}\n⏭️ Skipped (no email): ${{result.skipped}}\n❌ Failed: ${{result.failed}}`;
-                if ((result.skipped_names || []).length) _msg += `\n\nSkipped (no email):\n` + result.skipped_names.join('\n');
-                if ((result.failed_names || []).length) _msg += `\n\nFailed:\n` + result.failed_names.join('\n');
+                let _msg = `✅ Statements sent!\\n\\nEmailed: ${{result.sent}}\\n⏭️ Skipped (no email): ${{result.skipped}}\\n❌ Failed: ${{result.failed}}`;
+                if ((result.skipped_names || []).length) _msg += `\\n\\nSkipped (no email):\\n` + result.skipped_names.join('\\n');
+                if ((result.failed_names || []).length) _msg += `\\n\\nFailed:\\n` + result.failed_names.join('\\n');
                 alert(_msg);
             }} else {{
                 alert('❌ ' + (result.error || 'Failed to send statements'));
