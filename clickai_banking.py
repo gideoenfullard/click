@@ -71,18 +71,23 @@ def _bank_fingerprint(date, description, amount=0.0, debit=0.0, credit=0.0, bala
     and corrupted the bank balance. If 'amount' is 0 it is derived from
     credit - debit.
 
-    The running BALANCE is included because it is unique per statement line: two
-    genuinely different transactions on the same day with the same description and
-    amount (e.g. two R4.90 card-purchase fees) have different running balances, so
-    they no longer collide and get one silently dropped. A re-import of the same
-    statement has identical balances, so it is still deduped. When no balance is
-    available it normalises to 0 on both sides (falls back to old behaviour).
+    Dedup identity is (date, description, signed amount) with a COUNT-based merge:
+    the importer keeps a repeat of the same line only when the statement shows more
+    copies than the books already hold. Two genuine same-day fees survive; a
+    re-import or an overlapping statement is skipped. The running balance is NOT
+    part of the identity: reconstructed/extracted balances differ between imports
+    of the same lines (proven 31 Aug 2026 — overlap imported twice), so matching
+    on balance lets duplicates in. The balance element in this tuple is kept only
+    for logging.
+
+    The description collapses internal whitespace, because the same line arrives
+    with different spacing from different extractions.
 
     Used by BOTH the existing-transaction load and the per-row dedup check, so the
     two can never drift apart again.
     """
     d = str(date or "")[:10]
-    desc = (description or "").strip().upper()[:80]
+    desc = " ".join((description or "").strip().upper().split())[:80]
     amt = round(float(amount or 0), 2)
     if not amt:
         amt = round(round(float(credit or 0), 2) - round(float(debit or 0), 2), 2)
@@ -4082,24 +4087,23 @@ Return ONLY the JSON array. No markdown, no explanation."""
             _chain_rows = []
             
             # ═══════════════════════════════════════════════════════════════
-            # DEDUP: Build fingerprint set of existing transactions
-            # Prevents re-importing the same statement twice
-            # Uses TWO layers: exact match + fuzzy match (date+amount only)
+            # DEDUP: count-based merge on (date, description, signed amount).
+            # The books hold N copies of a line; the import keeps copy N+1 onward
+            # only. Balance is deliberately NOT part of the identity - see
+            # _bank_fingerprint.
             # ═══════════════════════════════════════════════════════════════
             existing_txns = db.get("bank_transactions", {"business_id": biz_id}) or []
-            existing_fingerprints = set()
             from collections import Counter as _Counter
-            existing_counts = _Counter()   # balance-less key -> copies already in the books
+            existing_counts = _Counter()   # (date, description, signed amount) -> copies already in the books
             for et in existing_txns:
                 _efp = _bank_fingerprint(
                     et.get("date", ""), et.get("description"),
                     et.get("amount", 0), et.get("debit", 0), et.get("credit", 0),
                     et.get("balance", 0))
-                existing_fingerprints.add(_efp)
-                existing_counts[_efp[:3]] += 1   # (date, description, signed amount) — ignores balance
+                existing_counts[_efp[:3]] += 1
             seen_in_file = _Counter()          # same key -> copies seen so far in THIS import
             
-            logger.info(f"[BANK IMPORT] Dedup: {len(existing_fingerprints)} signed fingerprints loaded")
+            logger.info(f"[BANK IMPORT] Dedup: {sum(existing_counts.values())} existing lines over {len(existing_counts)} keys")
             
             # ═══════════════════════════════════════════════════════════════
             # PRE-CACHE: Load all bank patterns ONCE instead of per-transaction
@@ -4258,30 +4262,21 @@ Return ONLY the JSON array. No markdown, no explanation."""
                                         round(float(credit or 0), 2), running_balance))
                     
                     # ═══════════════════════════════════════════════════════════════
-                    # DEDUP CHECK.
-                    #  • Statement WITH a running balance: the balance uniquely marks
-                    #    each line, so an exact re-import is caught while two genuine
-                    #    same-day/same-amount charges (e.g. two R4.90 card fees, which
-                    #    have different running balances) are BOTH kept.
-                    #  • Statement WITHOUT a running balance: fall back to a COUNT-based
-                    #    merge — keep every genuine repeat (several R4.90 fees on a day)
-                    #    but still dedupe a re-import, by skipping only as many identical
-                    #    lines as the books already hold.
-                    # Erring toward keeping a line is safe (visible, removable); silently
-                    # dropping one corrupts the bank balance.
+                    # DEDUP CHECK - count-based merge, balance-independent.
+                    # The books hold N copies of (date, description, signed amount);
+                    # this import keeps a line only once the statement shows MORE
+                    # than N copies. So: several genuine R4.90 fees on one day all
+                    # survive, while a re-import or an overlapping statement skips
+                    # exactly the copies the books already have - even when the two
+                    # imports carry different running balances for the same line
+                    # (which is what let the 31 Aug 2026 overlap in twice).
                     # ═══════════════════════════════════════════════════════════════
                     fingerprint = _bank_fingerprint(txn_date, description, amount, debit, credit, running_balance)
                     _dedup_key = fingerprint[:3]   # (date, description, signed amount)
                     seen_in_file[_dedup_key] += 1
-                    if running_balance is not None:
-                        if fingerprint in existing_fingerprints:
-                            skipped_dupes += 1
-                            continue
-                        existing_fingerprints.add(fingerprint)
-                    else:
-                        if seen_in_file[_dedup_key] <= existing_counts[_dedup_key]:
-                            skipped_dupes += 1
-                            continue
+                    if seen_in_file[_dedup_key] <= existing_counts[_dedup_key]:
+                        skipped_dupes += 1
+                        continue
                     
                     # A transaction is only a duplicate when its date, full description
                     # AND signed amount all match an existing one (the exact check above).
@@ -4790,11 +4785,13 @@ Return ONLY the JSON array. No markdown, no explanation."""
             
             dupe_msg = f" ({skipped_dupes} duplicates skipped)" if skipped_dupes > 0 else ""
             range_msg = f" ({skipped_out_of_range} outside date range)" if skipped_out_of_range > 0 else ""
+            gap_msg = (f" — WARNING: {balance_gaps} balance gap(s) in the statement's running balance: "
+                       f"line(s) may be missing from this import, check against the paper statement")                      if balance_gaps else ""
             logger.info(f"[BANK IMPORT] Done: {imported} imported, {skipped_dupes} dupes skipped, {skipped_out_of_range} out-of-range skipped, {auto_matched} auto-matched, {suggested} suggested")
             
             return jsonify({
                 "success": True, 
-                "message": f"Imported {imported} transactions{dupe_msg}{range_msg}",
+                "message": f"Imported {imported} transactions{dupe_msg}{range_msg}{gap_msg}",
                 "stats": {
                     "total": imported,
                     "auto_matched": auto_matched,
