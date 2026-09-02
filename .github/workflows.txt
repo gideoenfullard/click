@@ -1,0 +1,15 @@
+name: Deploy to Fly
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    concurrency: deploy-group
+    steps:
+      - uses: actions/checkout@v4
+      - uses: superfly/flyctl-actions/setup-flyctl@master
+      - run: flyctl deploy --remote-only
+        env:
+          FLY_API_TOKEN: ${{ FlyV1 fm2_lJPECAAAAAAAEOZFxBB7FyqXnm3megsDQMPJBwSewrVodHRwczovL2FwaS5mbHkuaW8vdjGWAJLOABXgFB8Lk7lodHRwczovL2FwaS5mbHkuaW8vYWFhL3YxxDw8yMspIFFKfRUQBdxpwIEVEXsGyT3Cx4n/2VvFIggrV7y5lGm96HexayyFcZHGvccCv6tJAQ039nsp6BfETpcl9uvFcT1XXyPy61oCTqi9+DsBqYd0UG7PlTJn6eZCGqqE7steGeE0rXkcw7oIm5FI0peCxqUY/QhTNxsWj8gk7PrnQdS69jna8NblRQ2SlAORgc4AxWgKHwWRgqdidWlsZGVyH6J3Zx8BxCC6EVWcJrf2OkT0KtuXlA03/jJ1Gg7wfpBRpHlrTvx7qg==,fm2_lJPETpcl9uvFcT1XXyPy61oCTqi9+DsBqYd0UG7PlTJn6eZCGqqE7steGeE0rXkcw7oIm5FI0peCxqUY/QhTNxsWj8gk7PrnQdS69jna8NblRcQQ29i1F9QapD9WrWBtsEuiVcO5aHR0cHM6Ly9hcGkuZmx5LmlvL2FhYS92MZgEks5qmBBAzwAAAAFBK6ZOF84AFQCmCpHOABUApgzEEAEd8rxNQ1aadxmJjytVX4PEIOkJlf327819YyMmm3fBxcv+lNF2+ZxtQF2cNFKtHfq8}}
