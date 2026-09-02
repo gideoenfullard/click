@@ -928,6 +928,18 @@ def register_banking_routes(app, db, login_required, Auth, render_page,
             event.target.closest('.recon-tab')?.classList.add('active');
         }}
         
+        function _escJs(v) {{
+            // Safe for a string inside an onclick attribute built via innerHTML:
+            // backslash first, then quote for the JS string, then the characters
+            // that would end the HTML attribute or the script context.
+            return String(v == null ? '' : v)
+                .replace(/\\\\/g, '\\\\\\\\')
+                .replace(/'/g, "\\\\'")
+                .replace(/"/g, '&quot;')
+                .replace(/</g, '&lt;')
+                .replace(/>/g, '&gt;');
+        }}
+
         async function categorizeTransaction(id, category, description, entityId, entityName, invoiceIds, invoiceNums, discountAllowed, segment, jobId) {{
             if (!category) return;
             
@@ -1047,7 +1059,7 @@ def register_banking_routes(app, db, login_required, Auth, render_page,
                 return `<option value="${{e.id}}" data-name="${{(e.name||'').replace(/"/g,'&quot;')}}"${{selected}}>${{e.code ? e.code + ' — ' : ''}}${{e.name}}</option>`;
             }}).join('');
             
-            const safeDesc = (description || '').replace(/'/g, "\\\\'");
+            const safeDesc = _escJs(description);
             
             // Combo banner — shown only when ClickAI pre-selected based on multi-invoice match
             const comboBanner = hasCombo ? `
@@ -1319,7 +1331,7 @@ def register_banking_routes(app, db, login_required, Auth, render_page,
                 return `<option value="${{e.id}}" data-name="${{safeName}}"${{sel}}>${{e.code ? e.code + ' — ' : ''}}${{e.name}}</option>`;
             }}).join('');
             
-            const safeDesc = (description || '').replace(/'/g, "\\\\'");
+            const safeDesc = _escJs(description);
             const safeCat = (category || '').replace(/'/g, "\\\\'");
             
             const matchBanner = preSelectedId ? `
@@ -1407,21 +1419,21 @@ def register_banking_routes(app, db, login_required, Auth, render_page,
                 // Zane asks with clickable plain-language options
                 if (data.success && data.needs_clarification && data.options) {{
                     let optionsHtml = '';
-                    const safeDesc = description.replace(/'/g, "\\\\'");
+                    const safeDesc = _escJs(description);
                     data.options.forEach(opt => {{
                         if (opt.value === 'manual') {{
                             // "None of these" -> show full dropdown
                             optionsHtml += `
                                 <button onclick="showAllCategories('${{txnId}}','${{safeDesc}}',window._allCategories||[],'Pick the category:')"
                                         style="padding:8px 14px;background:var(--card);border:1px solid var(--border);color:var(--text);border-radius:6px;cursor:pointer;font-size:12px;margin:3px;">
-                                    ${{opt.label}}
+                                    ${{_escJs(opt.label)}}
                                 </button>`;
                         }} else {{
                             // Plain language option -> send back to Zane to map to GL category
                             optionsHtml += `
-                                <button onclick="askZaneBank('${{txnId}}', '${{safeDesc}}', ${{debit}}, ${{credit}}, '${{date}}', '${{opt.label}}')"
+                                <button onclick="askZaneBank('${{txnId}}', '${{safeDesc}}', ${{debit}}, ${{credit}}, '${{date}}', '${{_escJs(opt.label)}}')"
                                         style="padding:8px 14px;background:var(--primary);color:white;border:none;border-radius:6px;cursor:pointer;font-size:12px;margin:3px;">
-                                    ${{opt.label}}
+                                    ${{_escJs(opt.label)}}
                                 </button>`;
                         }}
                     }});
@@ -1462,29 +1474,29 @@ def register_banking_routes(app, db, login_required, Auth, render_page,
                             splits: data.matched_splits || []
                         }};
                         actionButtons = `
-                            <button onclick="openSplitWithMatch('${{txnId}}', '${{description.replace(/'/g, "\\\\'")}}', ${{debit}}, ${{credit}}, '${{date}}')" 
+                            <button onclick="openSplitWithMatch('${{txnId}}', '${{_escJs(description)}}', ${{debit}}, ${{credit}}, '${{date}}')" 
                                     style="padding:7px 16px;font-size:12px;background:#f59e0b;border:none;color:black;border-radius:6px;cursor:pointer;font-weight:600;">
                                 ✂️ Use Split
                             </button>
-                            <button onclick="categorizeTransaction('${{txnId}}', '${{data.category}}', '${{description.replace(/'/g, "\\\\'")}}')" 
+                            <button onclick="categorizeTransaction('${{txnId}}', '${{_escJs(data.category)}}', '${{_escJs(description)}}')" 
                                     style="padding:7px 16px;font-size:12px;background:var(--green);border:none;color:white;border-radius:6px;cursor:pointer;font-weight:600;">
                                 As een boek
                             </button>
-                            <button onclick="showAllCategories('${{txnId}}', '${{description.replace(/'/g, "\\\\'")}}')" 
+                            <button onclick="showAllCategories('${{txnId}}', '${{_escJs(description)}}')" 
                                     style="padding:7px 16px;font-size:12px;background:var(--card);border:1px solid var(--border);color:var(--text);border-radius:6px;cursor:pointer;">
                                 Ander
                             </button>`;
                     }} else {{
                         actionButtons = `
-                            <button onclick="categorizeTransaction('${{txnId}}', '${{data.category}}', '${{description.replace(/'/g, "\\\\'")}}')" 
+                            <button onclick="categorizeTransaction('${{txnId}}', '${{_escJs(data.category)}}', '${{_escJs(description)}}')" 
                                     style="padding:7px 16px;font-size:12px;background:var(--green);border:none;color:white;border-radius:6px;cursor:pointer;font-weight:600;">
                                 Yes, Allocate
                             </button>
-                            <button onclick="openSplitModal('${{txnId}}', '${{description.replace(/'/g, "\\\\'")}}', ${{debit}}, ${{credit}}, '${{date}}')" 
+                            <button onclick="openSplitModal('${{txnId}}', '${{_escJs(description)}}', ${{debit}}, ${{credit}}, '${{date}}')" 
                                     style="padding:7px 16px;font-size:12px;background:rgba(245,158,11,0.2);border:1px solid #f59e0b;color:#f59e0b;border-radius:6px;cursor:pointer;">
                                 Split
                             </button>
-                            <button onclick="showAllCategories('${{txnId}}', '${{description.replace(/'/g, "\\\\'")}}')" 
+                            <button onclick="showAllCategories('${{txnId}}', '${{_escJs(description)}}')" 
                                     style="padding:7px 16px;font-size:12px;background:var(--card);border:1px solid var(--border);color:var(--text);border-radius:6px;cursor:pointer;">
                                 Different category
                             </button>`;
@@ -1492,11 +1504,11 @@ def register_banking_routes(app, db, login_required, Auth, render_page,
                     
                     actionCell.innerHTML = `
                         <div style="background:rgba(139,92,246,0.08);border:1px solid rgba(139,92,246,0.25);border-radius:10px;padding:12px;min-width:260px;position:relative;">
-                            <button onclick="resetAskZane('${{txnId}}', '${{description.replace(/'/g, "\\\\'")}}', ${{debit}}, ${{credit}}, '${{date}}')" 
+                            <button onclick="resetAskZane('${{txnId}}', '${{_escJs(description)}}', ${{debit}}, ${{credit}}, '${{date}}')" 
                                     style="position:absolute;top:6px;right:8px;background:none;border:none;color:var(--text-muted);cursor:pointer;font-size:16px;padding:2px 6px;border-radius:4px;line-height:1;" 
                                     title="Close">✕</button>
                             <div style="font-size:11px;color:var(--text-muted);margin-bottom:6px;">${{confText}}${{learnedBadge}}</div>
-                            <div style="font-size:14px;font-weight:700;color:var(--text);margin-bottom:4px;">${{data.category}}</div>
+                            <div style="font-size:14px;font-weight:700;color:var(--text);margin-bottom:4px;">${{_escJs(data.category)}}</div>
                             <div style="font-size:12px;color:var(--text-muted);margin-bottom:10px;line-height:1.4;">${{data.reason}}</div>
                             ${{vatWarning}}
                             <div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:8px;">
@@ -1509,7 +1521,7 @@ def register_banking_routes(app, db, login_required, Auth, render_page,
                 }}
                 
             }} catch (err) {{
-                const safeDesc = description.replace(/'/g, "\\'");
+                const safeDesc = _escJs(description);
                 actionCell.innerHTML = `<div style="color:var(--red);font-size:12px;position:relative;padding-right:22px;">
                     <button onclick="resetAskZane('${{txnId}}', '${{safeDesc}}', ${{debit}}, ${{credit}}, '${{date}}')" 
                             style="position:absolute;top:-2px;right:0;background:none;border:none;color:var(--text-muted);cursor:pointer;font-size:14px;line-height:1;" title="Close">✕</button>
@@ -1523,7 +1535,7 @@ def register_banking_routes(app, db, login_required, Auth, render_page,
             const actionCell = row ? row.querySelectorAll('td')[row.querySelectorAll('td').length - 1] : null;
             if (!actionCell) return;
             
-            const safeDesc = description.replace(/'/g, "\\'");
+            const safeDesc = _escJs(description);
             const catOptions = (window._allCategories || []).map(c => `<option value="${{c}}">${{c}}</option>`).join('');
             actionCell.innerHTML = `
                 <div style="display:flex;gap:5px;flex-wrap:wrap;align-items:center;">
@@ -1541,7 +1553,7 @@ def register_banking_routes(app, db, login_required, Auth, render_page,
             if (!actionCell) return;
             
             if (!cats || !cats.length) cats = window._allCategories || [];
-            const safeDesc = description.replace(/'/g, "\\\\'");
+            const safeDesc = _escJs(description);
             const uid = 'sc_' + txnId;
             
             // Get debit/credit from the row for resetAskZane
@@ -2032,7 +2044,7 @@ def register_banking_routes(app, db, login_required, Auth, render_page,
             h += '<div style="font-size:11px;color:var(--text-muted);margin-bottom:14px;">Reallocating removes: ' +
                  c.journals + ' journal line(s), ' + c.receipts + ' receipt(s), ' +
                  c.supplier_payments + ' supplier payment(s), ' + c.expenses + ' expense(s), ' + (c.job_card_lines || 0) + ' job line(s). ' +
-                 'The entries are removed, not reversed, so the ledger keeps one entry per transaction.</div>';
+                 'The old entries are deleted completely before the new posting - nothing stays behind and nothing is double-counted.</div>';
 
             h += '<div style="margin-bottom:10px;"><label style="font-size:12px;color:var(--text-muted);">Post to account</label>';
             h += '<select id="reallocAccount" class="fi" style="width:100%;padding:8px;margin-top:4px;"><option value="">Select account...</option>' + _reallocAccountOptions() + '</select></div>';
@@ -4239,6 +4251,11 @@ Return ONLY the JSON array. No markdown, no explanation."""
                         except (ValueError, TypeError):
                             running_balance = None
                     
+                    if not description:
+                        continue
+                    # Stray CSV/PDF quote artifacts around the text break the JS
+                    # click-handlers downstream (proven 2 Sep 2026, JOHN'S line).
+                    description = description.replace('"', '').strip()
                     if not description:
                         continue
                     
