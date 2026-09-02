@@ -2181,7 +2181,15 @@ def register_banking_routes(app, db, login_required, Auth, render_page,
         }}
         
         function buildCategoryOptions() {{
-            return _splitAllCategories.map(c => `<option value="${{c}}">${{c}}</option>`).join('');
+            let h = '<optgroup label="Categories">'
+                  + _splitAllCategories.map(c => `<option value="${{c}}">${{c}}</option>`).join('')
+                  + '</optgroup>';
+            if (_reallocGlAccounts.length) {{
+                h += '<optgroup label="Accounts">'
+                   + _reallocGlAccounts.map(a => '<option value="' + a.name.replace(/"/g, '&quot;') + '">' + a.code + ' &mdash; ' + a.name + '</option>').join('')
+                   + '</optgroup>';
+            }}
+            return h;
         }}
         
         function addSplitLine(category, amount) {{
@@ -5131,6 +5139,12 @@ Return ONLY the JSON array. No markdown, no explanation."""
             
             # SARS: No VAT claim on wages, statutory payments, fuel, entertainment
             is_no_vat = _is_no_vat_category(category)
+            # A posting to a balance-sheet account (anything outside the P&L code
+            # set) settles or moves a balance - VAT never applies, whatever the
+            # name says. Only enforceable when the business has a COA.
+            _pl_codes_vat = _pl_account_codes(biz_id)
+            if _pl_codes_vat and gl_code not in _pl_codes_vat:
+                is_no_vat = True
             
             # A salary/wage payment that settles a payslip is the PAYMENT of the
             # payroll liability, not a second expense: the payroll journal already
@@ -6218,7 +6232,7 @@ Return ONLY the JSON array. No markdown, no explanation."""
             txn_date = txn.get("date", today())
             ref = f"BNK-SPLIT-{txn_id[:8]}"
             user = Auth.get_current_user()
-            _pl_codes = _pl_account_codes(biz_id) if any(sp.get("segment") for sp in splits) else set()
+            _pl_codes = _pl_account_codes(biz_id)
             
             # Build category summary for the transaction record
             split_categories = []
@@ -6250,6 +6264,8 @@ Return ONLY the JSON array. No markdown, no explanation."""
                     sp_gl = IndustryKnowledge.get_gl_code(sp_category, business_id=biz_id)
                     
                     is_no_vat = _is_no_vat_category(sp_category)
+                    if _pl_codes and sp_gl not in _pl_codes:
+                        is_no_vat = True   # balance-sheet target - no VAT, whatever the name says
                     sp_segment = str(sp.get("segment", "") or "").strip().upper() if sp_gl in _pl_codes else ""
                     
                     if is_no_vat:
@@ -6307,8 +6323,9 @@ Return ONLY the JSON array. No markdown, no explanation."""
                     sp_category = sp.get("category", "Sales")
                     sp_gl = IndustryKnowledge.get_gl_code(sp_category, business_id=biz_id)
                     
-                    # VAT on income
-                    vat, net = _split_vat(sp_amount, biz_id, _is_no_vat_category(sp_category))
+                    # VAT on income - none when the target is a balance-sheet account
+                    _inc_no_vat = _is_no_vat_category(sp_category) or bool(_pl_codes and sp_gl not in _pl_codes)
+                    vat, net = _split_vat(sp_amount, biz_id, _inc_no_vat)
                     sp_segment = str(sp.get("segment", "") or "").strip().upper() if sp_gl in _pl_codes else ""
                     
                     journal_entries.append({"account_code": sp_gl, "debit": 0, "credit": net, "segment": sp_segment})
