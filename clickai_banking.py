@@ -1956,10 +1956,27 @@ def register_banking_routes(app, db, login_required, Auth, render_page,
         let _reallocGlAccounts = {_realloc_json_gl};
 
         function _reallocAccountOptions() {{
+            // Payments & transfers need their own double-entry treatment (and for
+            // customer / supplier payments an entity + invoices), so they are
+            // offered here explicitly instead of only plain GL accounts.
+            let h = '<optgroup label="Payments &amp; transfers">'
+                  + '<option value="CAT:Card Settlement">Card Settlement (bank &harr; card clearing)</option>'
+                  + '<option value="CAT:Transfer">Transfer between accounts</option>'
+                  + '<option value="CAT:Owner Drawings">Owner Drawings</option>'
+                  + '<option value="CAT:Loan Repayment">Loan Repayment</option>'
+                  + '<option value="UNALLOC:customer">Customer Payment &mdash; send back to the list to pick the customer + invoices</option>'
+                  + '<option value="UNALLOC:supplier">Supplier Payment &mdash; send back to the list to pick the supplier + invoices</option>'
+                  + '</optgroup>';
             if (_reallocGlAccounts.length) {{
-                return _reallocGlAccounts.map(a => '<option value="' + a.name.replace(/"/g, '&quot;') + '">' + a.code + ' &mdash; ' + a.name + '</option>').join('');
+                h += '<optgroup label="Accounts">'
+                   + _reallocGlAccounts.map(a => '<option value="' + a.name.replace(/"/g, '&quot;') + '">' + a.code + ' &mdash; ' + a.name + '</option>').join('')
+                   + '</optgroup>';
+            }} else {{
+                h += '<optgroup label="Categories">'
+                   + _splitAllCategories.map(c => '<option value="' + c + '">' + c + '</option>').join('')
+                   + '</optgroup>';
             }}
-            return _splitAllCategories.map(c => '<option value="' + c + '">' + c + '</option>').join('');
+            return h;
         }}
 
         async function openReallocPanel(txnId) {{
@@ -2086,8 +2103,12 @@ def register_banking_routes(app, db, login_required, Auth, render_page,
             const t = _reallocTxn.txn;
             const account = (document.getElementById('reallocAccount') || {{}}).value || '';
             if (!account) {{ alert('Select the account to post this transaction to.'); return; }}
+            const isUnalloc = account.indexOf('UNALLOC:') === 0;
+            const postCat = account.indexOf('CAT:') === 0 ? account.slice(4) : account;
             const learn = !!(document.getElementById('reallocLearn') || {{}}).checked;
-            if (!confirm('Remove the current allocation for this transaction and post it to ' + account + '?')) return;
+            if (isUnalloc) {{
+                if (!confirm('Remove the current allocation? The line goes back to the Needs-you list, where you pick the ' + account.slice(8) + ' and tick the invoices.')) return;
+            }} else if (!confirm('Remove the current allocation for this transaction and post it to ' + postCat + '?')) return;
             if (t.matched && !_reallocTxn.journal_lines.length) {{
                 if (!confirm('This transaction was posted outside the bank module. Its existing journal will stay in the ledger and a second entry will be posted. Continue anyway?')) return;
             }}
@@ -2095,10 +2116,16 @@ def register_banking_routes(app, db, login_required, Auth, render_page,
             btns.forEach(b => b.disabled = true);
             try {{
                 const d = await _doUnallocate();
-                if (!d) {{ btns.forEach(b => b.disabled = false); return; }}
+                if (!d) {{ btns.forEach(b => b.disabled = true); return; }}
+                if (isUnalloc) {{
+                    closeReallocPanel();
+                    alert('Done - the line is back in the Needs-you list. Allocate it there with the ' + account.slice(8) + ' picker and tick the invoices it pays.');
+                    location.reload();
+                    return;
+                }}
                 window._reallocLearn = learn;
                 closeReallocPanel();
-                await categorizeTransaction(t.id, account, t.description, '__skip__', '', [], [], false, _segmentValue('reallocSegment'), _segmentValue('reallocJob'));
+                await categorizeTransaction(t.id, postCat, t.description, '__skip__', '', [], [], false, _segmentValue('reallocSegment'), _segmentValue('reallocJob'));
                 location.reload();
             }} catch (e) {{
                 alert('Error: ' + e.message);
